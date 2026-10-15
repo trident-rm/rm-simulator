@@ -43,6 +43,7 @@ mod staging;
 #[cfg(feature = "steam")]
 mod steam_support;
 mod title;
+mod zone_debug;
 
 use bevy::prelude::*;
 use clap::Parser;
@@ -127,8 +128,12 @@ fn main() -> AppExit {
         .add_plugins(graphics::GraphicsPlugin)
         .add_plugins(hud::HudPlugin)
         .add_plugins(debug_panel::DebugPanelPlugin)
+        .add_plugins(zone_debug::ZoneDebugPlugin)
         .insert_resource(debug_panel::DebugOptions {
             stats: args.render_stats,
+            zones: args.zones,
+            rfid_zones: args.rfid_zones,
+            zone_labels: args.zone_labels,
         })
         .insert_resource(bevy::pbr::wireframe::WireframeConfig {
             global: args.wireframe,

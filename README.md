@@ -100,7 +100,7 @@ The essentials, for driving and for match control:
 | R | Toggle chassis spin (6 rad/s) while driving |
 | V | Toggle first- and third-person view while driving |
 | C | Cycle physics colliders: Off / Overlay / Only |
-| F3 | Open / close debug panel: collider Off / Overlay / Only, visual wireframe, rendering statistics, remote motion buffering, reset own robot to spawn |
+| F3 | Open / close debug panel: collider Off / Overlay / Only, visual wireframe, buff/RFID zones and labels, rendering statistics, remote motion buffering, reset own robot to spawn |
 | Space / Left Shift | Move up / down (flying); Space jumps with balance Infantry |
 | F5 | Start the match (or reset a finished one) (local world or referee) |
 | F6 | Pause or resume the world clock (local world or referee) |
@@ -212,6 +212,12 @@ Crate ownership, tick order, restore and ECS boundaries are documented in
 [simulation architecture](docs/architecture-refactor.md).
 
 ## Field assets
+
+[RMUC 2027 map support](docs/rmuc2027-field.md) adapts the new source export
+to the existing runtime layout for scenery and physics exploration. Enable
+`season-2027` alongside the default feature and select its package with
+`--cad-assets`; the bundled 2026 package remains the default.
+
 
 The exported RMUC map is versioned in `field/` through Git LFS. After cloning, run
 `git lfs install` and `git lfs pull --include='field/**'` to download it.

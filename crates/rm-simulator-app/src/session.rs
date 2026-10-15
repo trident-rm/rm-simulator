@@ -60,6 +60,8 @@ struct PredictionState {
 /// The app's view of the simulation, refreshed once per frame.
 #[derive(Resource)]
 pub struct Session {
+    /// Season of the verified CAD package; practice rules can remain disabled.
+    pub season: rm_simulator_world::season::Season,
     prediction: PredictionState,
     shots: shots::LocalShots,
     /// Every wall-clock reading in the session and its client comes from here.
@@ -412,6 +414,7 @@ impl Session {
         };
         let now = time.now();
         let session = Session {
+            season: cad.season,
             deployment_ground,
             prediction: PredictionState {
                 worker: predictor,
@@ -1338,6 +1341,8 @@ pub(crate) fn test_cad_assets() -> CadAssets {
         source_tessellated_collision: false,
     };
     CadAssets {
+        season: rm_simulator_world::season::Season::Rm2026,
+        rest_pose_only: false,
         root: "unused".into(),
         floor_top_cad_m: 0.0,
         collision_solids: false,

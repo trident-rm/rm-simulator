@@ -18,6 +18,7 @@ source file.
 |---|---|
 | What the simulator is, install, controls, options | `README.md` |
 | Complete CLI reference, bindings, HUD, presets | `docs/app-options.md` |
+| RMUC 2027 runtime adapter and candidate inspection | `docs/rmuc2027-field.md` |
 | Field package layout, discovery, composition, collision | `docs/field-package.md` |
 | Build, test, release and commit workflow | `docs/development.md`, `CONTRIBUTING.md` |
 | RM2026 rulebook clauses the referee implements | `docs/referee-rules.md` |
@@ -126,6 +127,12 @@ outside Git; only the approved runtime package belongs in LFS. Record package
 updates in `scripts/release-field.json` and verify with `inspect_assets`.
 Never bake geometry into code beyond the fitted physics and world constants.
 See `docs/field-package.md` for composition, collision contracts and deployment.
+
+The RMUC 2027 sandbox displays the complete equipment roster through
+`server::roster`; only Infantry 3/4 and the manual Sentry have practice models.
+`server::zone_catalog` contains debug footprints, separate from the live world
+zones. Its 2027 Figure 5-23 estimates and inferred tunnel interiors are not
+referee detectors. F3, CLI and console toggles draw them without enabling rules.
 
 ## Layout
 

@@ -184,7 +184,9 @@ pub fn load_terrain(cad: &CadAssets) -> anyhow::Result<Terrain> {
     }
     let mut fixtures = CollisionMesh::default();
     for (name, asset) in [("rune", &cad.rune), ("outpost", &cad.outpost)] {
-        let fixed = if let Some(semantics) = asset.physics_semantics() {
+        let fixed = if cad.rest_pose_only {
+            collision_mesh::load_glb(&asset.physics_file(&cad.root))?
+        } else if let Some(semantics) = asset.physics_semantics() {
             collision_mesh::load_glb_selected(
                 &asset.physics_file(&cad.root),
                 &semantics.fixed_primitives,
@@ -320,6 +322,9 @@ fn load_asset_collision(
     cad: &CadAssets,
     asset: &crate::cad_assets::CadAsset,
 ) -> anyhow::Result<CollisionMesh> {
+    if cad.rest_pose_only {
+        return collision_mesh::load_glb(&asset.physics_file(&cad.root));
+    }
     if let Some(semantics) = asset.physics_semantics() {
         let excluded: Vec<_> = semantics
             .joints
@@ -347,6 +352,9 @@ fn load_mechanisms(
     asset: &crate::cad_assets::CadAsset,
     output: &mut Vec<MechanismMesh>,
 ) -> anyhow::Result<()> {
+    if cad.rest_pose_only {
+        return Ok(());
+    }
     let Some(semantics) = asset.physics_semantics() else {
         return Ok(());
     };
@@ -645,6 +653,18 @@ impl Default for LayoutOptions {
 ///
 /// Panics if the rune asset has no placement.
 pub fn field_config(cad: &CadAssets, options: &LayoutOptions) -> FieldConfig {
+    if cad.rest_pose_only {
+        return FieldConfig {
+            runes: Vec::new(),
+            outposts: Vec::new(),
+            bases: Vec::new(),
+            chassis: Vec::new(),
+            zones: Vec::new(),
+            referee: None,
+            floor_height_m: if options.terrain { CATCH_FLOOR_M } else { 0.0 },
+            projectile_policy: options.projectile_policy,
+        };
+    }
     let rune_root = &cad.rune.placements[0];
     let runes: Vec<RuneConfig> = options
         .rune
@@ -1002,6 +1022,8 @@ mod tests {
     #[test]
     fn layout_options_place_runes_outposts_and_the_referee() {
         let cad = CadAssets {
+            season: rm_simulator_world::season::Season::Rm2026,
+            rest_pose_only: false,
             root: std::path::PathBuf::new(),
             floor_top_cad_m: crate::cad_assets::FLOOR_TOP_CAD_M,
             collision_solids: true,

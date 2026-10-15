@@ -49,6 +49,7 @@ joined with `--connect` takes those from the server.
 | `--debug-panel` | Open the F3 debug panel at startup |
 | `--network-stats MODE` | Show local network diagnostics; also selectable in P/F3 |
 | `--render-stats` | Show frame and renderer CPU statistics at startup |
+| `--zones` / `--rfid-zones` / `--zone-labels` | Show seasonal buff volumes, functional RFID footprints and names/traversal order; also selectable in F3. 2027 estimates are debug-only. |
 | `--wireframe` | Draw visual mesh wireframe lines if supported by the GPU |
 | `--no-field-collision` | Skip the CAD collision meshes; only a flat floor at height zero and armor collide |
 | `--no-referee` | Run the field without a referee: the rune is active from the start and there is no match |
@@ -265,7 +266,7 @@ an NVIDIA laptop GPU; Mac performance still needs separate measurements.
 | R | Toggle chassis spin (6 rad/s) while driving |
 | V | Toggle first- and third-person view while driving |
 | C | Cycle physics colliders: Off / Overlay / Only |
-| F3 | Open / close debug panel: collider Off / Overlay / Only, visual wireframe, rendering statistics, remote motion buffering, reset own robot to spawn |
+| F3 | Open / close debug panel: collider Off / Overlay / Only, visual wireframe, buff/RFID zones and labels, rendering statistics, remote motion buffering, reset own robot to spawn |
 | Space / Left Shift | Move up / down (flying); Space jumps once per grounded press on balance Infantry |
 | F6 | Pause or resume the world clock (local world or referee) |
 | F7 | Step the world one manual step (three 128 Hz ticks, 23.4375 ms) while paused (local world or referee) |

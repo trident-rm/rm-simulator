@@ -25,8 +25,10 @@ mod lifecycle;
 pub mod math;
 pub mod net;
 pub mod protocol;
+pub mod roster;
 pub mod simulation;
 pub mod snapshot_codec;
+pub mod zone_catalog;
 
 pub mod semantics;
 

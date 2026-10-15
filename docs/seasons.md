@@ -48,6 +48,13 @@ adding another package with its defaults can enable 2026 again. `--all-features`
 intentionally enables both seasons. Optional features such as `steam` and
 `referee-link` remain independent.
 
+## RMUC 2027 map exploration
+
+A combined build can also load the [2027 runtime field](rmuc2027-field.md) as a
+rest-pose physics sandbox. Its manifest identifies the season and disables all
+legacy match targets, zones and the referee. This is separate from full 2027
+match admission; the existing host/session path still requires `season-2026`.
+
 ## Admission and compatibility
 
 `rm_simulator_gameplay::season::Season` distinguishes the stable serialized

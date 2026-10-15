@@ -58,6 +58,35 @@ pub struct Appearance(pub RenderingConfig);
 /// base gate, dart target and dart door mechanisms. Instance order is the
 /// renderer's spawn order and must stay stable across joins.
 pub fn cad_instances(cad: &CadAssets, rune_faces: bool, base_plates: bool) -> Vec<CadInstance> {
+    if cad.rest_pose_only {
+        let arena = transform_of(&cad.arena_pose());
+        let mut instances = Vec::new();
+        for asset in [
+            &cad.floor,
+            &cad.arena_static,
+            &cad.rune,
+            &cad.outpost,
+            &cad.base,
+            &cad.tech_core,
+        ]
+        .into_iter()
+        .chain(&cad.static_assets)
+        {
+            let transforms = if asset.placements.is_empty() {
+                vec![arena]
+            } else {
+                asset.placements.iter().map(transform_of).collect()
+            };
+            instances.extend(transforms.into_iter().map(|transform| CadInstance {
+                team: None,
+                file: asset.file.clone(),
+                transform,
+                role: CadRole::Static { base_color: None },
+            }));
+        }
+        return instances;
+    }
+
     let arena = transform_of(&cad.arena_pose());
     let mut instances = vec![
         CadInstance {
@@ -843,6 +872,8 @@ mod tests {
             source_tessellated_collision: false,
         };
         let cad = CadAssets {
+            season: rm_simulator_world::season::Season::Rm2026,
+            rest_pose_only: false,
             root: std::path::PathBuf::new(),
             floor_top_cad_m: -1.6,
             collision_solids: true,
@@ -873,6 +904,20 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn rest_pose_cad_keeps_source_color_and_never_binds_old_animation() {
+        let mut cad = crate::session::test_cad_assets();
+        cad.rest_pose_only = true;
+        cad.season = rm_simulator_world::season::Season::Rm2027;
+        cad.floor.placements.clear();
+        cad.arena_static.placements.clear();
+        let instances = cad_instances(&cad, true, true);
+        assert_eq!(instances.len(), 6);
+        assert_eq!(instances[0].transform, transform_of(&cad.arena_pose()));
+        assert!(instances.iter().all(|instance| instance.team.is_none()
+            && matches!(instance.role, CadRole::Static { base_color: None })));
+    }
+
     #[test]
     fn activated_runes_blink_at_the_configured_rate() {
         // 2 Hz: lit for the first quarter second of each half second.

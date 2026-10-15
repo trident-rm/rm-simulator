@@ -847,6 +847,20 @@ pub fn update_panel_rows(
                 String::new(),
                 String::new(),
             ]);
+            if team.is_some() {
+                for slot in rm_simulator_server::roster::slots(session.season) {
+                    rows.push([
+                        format!("{} {}", slot.number, slot.name),
+                        slot.equipment.into(),
+                        if slot.prototype.is_none() {
+                            "Not implemented"
+                        } else {
+                            "Practice prototype"
+                        }
+                        .into(),
+                    ]);
+                }
+            }
             for p in session.roster.iter().filter(|p| p.team == team) {
                 let robot = session
                     .referee()

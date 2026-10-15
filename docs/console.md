@@ -121,7 +121,7 @@ positive pitch looks up. Camera pitch follows the existing gameplay limits.
 | `cursor` | `x`, `y` | Set pointer position in logical pixels from the upper-left corner, for UI picking |
 | `capture` | `captured: bool` | Set gameplay mouse capture for automation without grabbing the OS cursor; explicit capture bypasses OS focus blocking until release or disconnect |
 | `release_inputs` | None | Release all console-held keys/buttons and gameplay capture |
-| `inspect` | Optional `debug_panel`, `wireframe`, `render_stats` booleans, `collision_view: "hidden"`, `"overlay"` or `"alone"` | Set runtime inspection options |
+| `inspect` | Optional `debug_panel`, `wireframe`, `render_stats`, `zones`, `rfid_zones`, `zone_labels` booleans, `collision_view: "hidden"`, `"overlay"` or `"alone"` | Set runtime inspection options |
 | `world` | `command`: multiplayer protocol `Command` object | Submit a world command through the existing session, with its normal host permissions |
 | `quit` | None | Reply, then exit |
 

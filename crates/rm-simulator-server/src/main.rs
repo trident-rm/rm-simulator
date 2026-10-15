@@ -39,6 +39,15 @@ fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     rm_simulator_world::season::Season::Rm2026.require_playable()?;
     let cad = cad_assets::load(&args.host.cad_assets)?;
+    println!(
+        "CAD season: RM{}, mode: {}",
+        cad.season.year(),
+        if cad.rest_pose_only {
+            "rest-pose physics sandbox (no match referee)"
+        } else {
+            "live field"
+        }
+    );
     let options = args.host.layout_options();
     let simulation = Simulation::from_cad(
         &cad,
@@ -95,10 +104,22 @@ fn main() -> anyhow::Result<()> {
     };
     println!(
         "field: {} rune(s), {} outpost(s), chassis {}, referee {}, floor catch {} m",
-        options.rune.map_or(0, |_| 2),
-        cad.outpost.placements.len(),
+        if cad.rest_pose_only {
+            0
+        } else {
+            options.rune.map_or(0, |_| 2)
+        },
+        if cad.rest_pose_only {
+            0
+        } else {
+            cad.outpost.placements.len()
+        },
         if args.no_chassis { "no" } else { "per player" },
-        if options.referee { "yes" } else { "no" },
+        if options.referee && !cad.rest_pose_only {
+            "yes"
+        } else {
+            "no"
+        },
         if options.terrain {
             layout::CATCH_FLOOR_M
         } else {

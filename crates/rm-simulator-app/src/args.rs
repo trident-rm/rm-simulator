@@ -153,6 +153,15 @@ pub struct Args {
     /// Show frame and render pass statistics at startup.
     #[arg(long)]
     pub render_stats: bool,
+    /// Draw buff-zone inspection volumes (F3 toggles them at runtime).
+    #[arg(long)]
+    pub zones: bool,
+    /// Draw seasonal RFID detection footprints without enabling their rules.
+    #[arg(long)]
+    pub rfid_zones: bool,
+    /// Label visible zones with their names and traversal order.
+    #[arg(long)]
+    pub zone_labels: bool,
     /// Draw visual meshes with wireframe lines when supported by the GPU.
     #[arg(long)]
     pub wireframe: bool,

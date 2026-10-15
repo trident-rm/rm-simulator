@@ -102,14 +102,20 @@ struct DeploymentGizmos;
 fn enter(
     mut commands: Commands,
     config: Res<StagingConfig>,
+    session: Res<Session>,
     mut hud: Query<&mut Node, With<crate::hud::HudRoot>>,
 ) {
+    let robot = if rm_simulator_server::roster::supports(session.season, config.0.robot) {
+        config.0.robot
+    } else {
+        Robot::Infantry3
+    };
     commands.insert_resource(SideHover::default());
     commands.insert_resource(Stage {
         step: Step::Side,
         team: config.0.team.into(),
-        robot: config.0.robot,
-        chassis: if config.0.chassis.config(config.0.robot).is_ok() {
+        robot,
+        chassis: if config.0.chassis.config(robot).is_ok() {
             config.0.chassis
         } else {
             Chassis::Auto
@@ -492,7 +498,19 @@ fn ui(
                     format!("{} side", stage.team.name()),
                     16.0,
                 );
-                for robot in Robot::ALL {
+                for slot in rm_simulator_server::roster::slots(session.season) {
+                    let Some(robot) = slot.prototype else {
+                        label(
+                            &mut commands,
+                            panel,
+                            format!(
+                                "{} {} — not implemented\n{}",
+                                slot.number, slot.name, slot.equipment
+                            ),
+                            14.0,
+                        );
+                        continue;
+                    };
                     button(
                         &mut commands,
                         panel,

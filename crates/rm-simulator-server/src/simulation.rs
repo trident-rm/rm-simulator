@@ -151,6 +151,7 @@ pub struct FireRecord {
 /// [`advance`](Simulation::advance) and [`step`](Simulation::step), and only in
 /// whole fixed 128 Hz ticks.
 pub struct Simulation {
+    roster_season: rm_simulator_world::season::Season,
     /// Lobby password every remote seat must present. The embedded owner seat
     /// is exempt because it already holds the simulation.
     pub(crate) password: String,
@@ -211,6 +212,7 @@ impl Simulation {
             progress(BuildProgress::TerrainReady(terrain.describe()));
         }
         let mut simulation = Self::new(field, paused);
+        simulation.roster_season = cad.season;
         if let Some(config) = chassis {
             progress(BuildProgress::PreparingChassis);
             simulation = simulation.with_spawner(ChassisSpawner { config, terrain });
@@ -223,6 +225,7 @@ impl Simulation {
     /// and no prediction scene is advertised.
     pub fn new(field: Field, paused: bool) -> Self {
         Self {
+            roster_season: rm_simulator_world::season::Season::Rm2026,
             password: String::new(),
             bots: Default::default(),
             input_epoch: 0,
@@ -440,12 +443,24 @@ impl Simulation {
         robot: Robot,
         chassis: crate::protocol::Chassis,
     ) -> Result<u32, String> {
+        self.validate_roster(robot)?;
         self.spawn_in_slot(
             team,
             Some(chassis.config(robot)?),
             robot.kind(),
             Some(robot),
         )
+    }
+    fn validate_roster(&self, robot: Robot) -> Result<(), String> {
+        if crate::roster::supports(self.roster_season, robot) {
+            Ok(())
+        } else {
+            Err(format!(
+                "{} is not available in the {:?} roster",
+                robot.name(),
+                self.roster_season
+            ))
+        }
     }
     fn spawn_in_slot(
         &mut self,
@@ -514,6 +529,7 @@ impl Simulation {
         spawn_m: [f64; 3],
         yaw_deg: f64,
     ) -> Result<u32, String> {
+        self.validate_roster(robot)?;
         let config = chassis.config(robot)?;
         let spawner = self
             .spawner
@@ -532,6 +548,7 @@ impl Simulation {
         chassis: crate::protocol::Chassis,
         position_m: [f64; 2],
     ) -> Result<u32, String> {
+        self.validate_roster(robot)?;
         let config = chassis.config(robot)?;
         if !position_m.into_iter().all(f64::is_finite) {
             return Err("spawn position must be finite".into());
@@ -1154,6 +1171,8 @@ mod tests {
             source_tessellated_collision: false,
         };
         CadAssets {
+            season: rm_simulator_world::season::Season::Rm2026,
+            rest_pose_only: false,
             root: std::path::PathBuf::from("missing-builder-test-package"),
             floor_top_cad_m: crate::cad_assets::FLOOR_TOP_CAD_M,
             collision_solids: false,
@@ -1174,6 +1193,27 @@ mod tests {
             referee: true,
             projectile_policy: Default::default(),
         }
+    }
+
+    #[test]
+    fn rest_pose_cad_has_no_old_referee_targets_or_zones() {
+        let mut cad = cad_without_files();
+        cad.season = rm_simulator_world::season::Season::Rm2027;
+        cad.rest_pose_only = true;
+        let options = build_options(); // Explicitly asks for old targets and referee.
+        let config = field_config(&cad, &options);
+        assert!(config.runes.is_empty() && config.outposts.is_empty());
+        assert!(config.bases.is_empty() && config.zones.is_empty());
+        assert!(config.referee.is_none());
+        let mut simulation = Simulation::from_cad(&cad, &options, None, true, |_| {}).unwrap();
+        let snapshot = simulation.snapshot();
+        assert!(snapshot.runes.is_empty() && snapshot.outposts.is_empty());
+        assert!(snapshot.referee.is_none());
+        assert!(
+            simulation
+                .apply(&Command::Referee(RefereeCommand::StartMatch))
+                .is_err()
+        );
     }
 
     #[test]
@@ -2587,5 +2627,30 @@ mod tests {
         simulation.apply(&fire).unwrap();
         assert_eq!(simulation.fire_records().len(), 1);
         assert_eq!(simulation.snapshot().shots_fired, 1);
+    }
+}
+
+#[cfg(test)]
+mod seasonal_roster_tests {
+    use super::*;
+    #[test]
+    fn host_rejects_removed_roles_before_creating_a_chassis() {
+        let mut simulation = Simulation::new(Field::new(&Default::default()).unwrap(), true);
+        simulation.roster_season = rm_simulator_world::season::Season::Rm2027;
+        for robot in [Robot::Hero, Robot::Engineer, Robot::Infantry5, Robot::Drone] {
+            assert!(
+                simulation
+                    .spawn_robot(Team::Red, robot)
+                    .unwrap_err()
+                    .contains("roster")
+            );
+            assert!(
+                simulation
+                    .spawn_robot_at(Team::Red, robot, [0., 0., 1.], 0.)
+                    .unwrap_err()
+                    .contains("roster")
+            );
+        }
+        assert!(simulation.field.snapshot().chassis.is_empty());
     }
 }

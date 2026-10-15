@@ -5,20 +5,15 @@
 use super::*;
 use rm_simulator_world::{RobotKind, RobotSnapshot};
 
-const SLOTS: [(u8, RobotKind); 6] = [
-    (1, RobotKind::Hero),
-    (2, RobotKind::Engineer),
-    (3, RobotKind::Infantry),
-    (4, RobotKind::Infantry),
-    (6, RobotKind::Drone),
-    (7, RobotKind::Sentry),
-];
+use rm_simulator_server::roster::{Slot, slots};
+use rm_simulator_world::season::Season;
 const DIM: Color = Color::srgb(0.38, 0.42, 0.46);
 
 /// One team's robot slot row, holding a chassis id per slot or `None` when empty.
 #[derive(Component)]
 pub(super) struct TeamSlots {
     team: Team,
+    season: Season,
     // Bind to chassis identity rather than position in a received snapshot.
     occupants: Vec<Option<u32>>,
 }
@@ -39,9 +34,10 @@ struct RobotStatus {
     id: u32,
     kind: RobotKind,
     hp: Option<(u32, u32)>,
+    number: Option<u8>,
 }
 
-/// Spawn one team's six fixed robot slots under the given score card.
+/// Spawn one team's complete official equipment slots under the given score card.
 pub(super) fn spawn(commands: &mut Commands, parent: Entity, team: Team) {
     let row = container(
         commands,
@@ -54,9 +50,10 @@ pub(super) fn spawn(commands: &mut Commands, parent: Entity, team: Team) {
     );
     commands.entity(row).insert(TeamSlots {
         team,
-        occupants: vec![None; SLOTS.len()],
+        season: Season::Rm2026,
+        occupants: vec![None; slots(Season::Rm2026).len()],
     });
-    for index in 0..SLOTS.len() {
+    for index in 0..slots(Season::Rm2026).len() {
         spawn_slot(commands, row, team, index);
     }
 }
@@ -82,11 +79,18 @@ fn kind_name(kind: RobotKind) -> &'static str {
         RobotKind::Sentry => "SENTRY",
     }
 }
-fn reconcile(occupants: &mut Vec<Option<u32>>, robots: &[RobotStatus]) {
+fn matches(slot: &Slot, robot: &RobotStatus) -> bool {
+    slot.prototype.is_some_and(|p| {
+        robot
+            .number
+            .map_or(p.kind() == robot.kind, |number| slot.number == number)
+    })
+}
+fn reconcile(occupants: &mut Vec<Option<u32>>, robots: &[RobotStatus], slots: &[Slot]) {
     for (index, occupant) in occupants.iter_mut().enumerate() {
         if !robots
             .iter()
-            .any(|r| Some(r.id) == *occupant && (index >= SLOTS.len() || r.kind == SLOTS[index].1))
+            .any(|r| Some(r.id) == *occupant && (index >= slots.len() || matches(&slots[index], r)))
         {
             *occupant = None;
         }
@@ -98,7 +102,7 @@ fn reconcile(occupants: &mut Vec<Option<u32>>, robots: &[RobotStatus]) {
             continue;
         }
         let index = (0..occupants.len())
-            .find(|&i| occupants[i].is_none() && (i >= SLOTS.len() || SLOTS[i].1 == robot.kind));
+            .find(|&i| occupants[i].is_none() && (i >= slots.len() || matches(&slots[i], robot)));
         if let Some(index) = index {
             occupants[index] = Some(robot.id);
         } else {
@@ -106,7 +110,12 @@ fn reconcile(occupants: &mut Vec<Option<u32>>, robots: &[RobotStatus]) {
         }
     }
 }
-fn presentation(index: usize, robot: Option<&RobotStatus>, team: Team) -> (String, f32, Color) {
+fn presentation(
+    index: usize,
+    robot: Option<&RobotStatus>,
+    team: Team,
+    slots: &[Slot],
+) -> (String, f32, Color) {
     if let Some(robot) = robot {
         let health = robot
             .hp
@@ -116,9 +125,9 @@ fn presentation(index: usize, robot: Option<&RobotStatus>, team: Team) -> (Strin
         } else {
             kind_name(robot.kind)
         };
-        let slot = SLOTS
+        let slot = slots
             .get(index)
-            .map_or_else(|| "+".into(), |(number, _)| number.to_string());
+            .map_or_else(|| "+".into(), |slot| slot.number.to_string());
         let text = format!("{slot} {status}\n#{}\n{health}", robot.id);
         let fraction = robot.hp.map_or(0., |(hp, max)| {
             (hp as f32 / max.max(1) as f32).clamp(0., 1.)
@@ -130,11 +139,32 @@ fn presentation(index: usize, robot: Option<&RobotStatus>, team: Team) -> (Strin
         };
         (text, fraction, color)
     } else {
-        let title = SLOTS.get(index).map_or_else(
+        let title = slots.get(index).map_or_else(
             || "+ EXTRA".into(),
-            |(number, kind)| format!("{number} {}", kind_name(*kind)),
+            |slot| {
+                format!(
+                    "{} {}",
+                    slot.number,
+                    match slot.name {
+                        "Hero" => "HERO",
+                        "Engineer" => "ENG",
+                        "Heavy" => "HEAVY",
+                        "Infantry 3" | "Infantry 4" | "Infantry 5" => "INF",
+                        "Drone" => "DRONE",
+                        "Aerial system" => "AIR",
+                        "Sentry" => "SENTRY",
+                        "Dart system" => "DART",
+                        _ => "RADAR",
+                    }
+                )
+            },
         );
-        (format!("{title}\nEMPTY\n--"), 0., DIM)
+        let status = if slots.get(index).is_some_and(|s| s.prototype.is_none()) {
+            "NO SIM"
+        } else {
+            "EMPTY"
+        };
+        (format!("{title}\n{status}\n--"), 0., DIM)
     }
 }
 
@@ -152,6 +182,16 @@ pub(super) fn update(
         return;
     };
     for (entity, mut row) in &mut rows {
+        let slots = slots(session.season);
+        if row.season != session.season {
+            commands.entity(entity).despawn_children();
+            row.season = session.season;
+            row.occupants = vec![None; slots.len()];
+            for index in 0..slots.len() {
+                spawn_slot(&mut commands, entity, row.team, index);
+            }
+            continue;
+        }
         // The chassis and HP come from the same authoritative snapshot. A roster
         // update can arrive separately; spectators never create health slots.
         let robots: Vec<_> = session
@@ -165,13 +205,29 @@ pub(super) fn update(
                     .and_then(|r| r.robots.iter().find(|r| r.id == c.id && r.team == row.team));
                 RobotStatus {
                     id: c.id,
-                    kind: health.map_or(RobotKind::Infantry, |r| r.kind),
+                    kind: health.map_or_else(
+                        || {
+                            session
+                                .roster
+                                .iter()
+                                .find(|p| p.chassis == Some(c.id))
+                                .and_then(|p| p.robot)
+                                .map_or(RobotKind::Infantry, |r| r.kind())
+                        },
+                        |r| r.kind,
+                    ),
+                    number: session
+                        .roster
+                        .iter()
+                        .find(|p| p.chassis == Some(c.id))
+                        .and_then(|p| p.robot)
+                        .map(|r| r.number()),
                     hp: health.map(|r| (r.hp, r.max_hp)),
                 }
             })
             .collect();
         let old_len = row.occupants.len();
-        reconcile(&mut row.occupants, &robots);
+        reconcile(&mut row.occupants, &robots, slots);
         for index in old_len..row.occupants.len() {
             spawn_slot(&mut commands, entity, row.team, index);
         }
@@ -180,7 +236,7 @@ pub(super) fn update(
                 continue;
             }
             let robot = row.occupants[slot.index].and_then(|id| robots.iter().find(|r| r.id == id));
-            let (value, _, tint) = presentation(slot.index, robot, row.team);
+            let (value, _, tint) = presentation(slot.index, robot, row.team, slots);
             if text.0 != value {
                 text.0 = value;
             }
@@ -193,7 +249,7 @@ pub(super) fn update(
                 continue;
             }
             let robot = row.occupants[slot.index].and_then(|id| robots.iter().find(|r| r.id == id));
-            let (_, fraction, tint) = presentation(slot.index, robot, row.team);
+            let (_, fraction, tint) = presentation(slot.index, robot, row.team, slots);
             let width = percent(fraction * 100.);
             if node.width != width {
                 node.width = width;
@@ -293,6 +349,50 @@ mod tests {
     }
 
     #[test]
+    fn official_number_takes_precedence_over_same_kind_order() {
+        let mut infantry4 = robot(2, RobotKind::Infantry, 200);
+        infantry4.number = Some(4);
+        let mut occupants = vec![None; 7];
+        reconcile(&mut occupants, &[infantry4], slots(Season::Rm2027));
+        assert_eq!(occupants[1], None);
+        assert_eq!(occupants[2], Some(2));
+    }
+
+    #[test]
+    fn season_2027_has_complete_equipment_without_legacy_hero_alias() {
+        let mut session = populated_session();
+        session.season = Season::Rm2027;
+        let mut app = App::new();
+        app.insert_resource(session)
+            .add_systems(Startup, |mut commands: Commands| {
+                let root = commands.spawn_empty().id();
+                spawn(&mut commands, root, Team::Red);
+                spawn(&mut commands, root, Team::Blue);
+            })
+            .add_systems(Update, update);
+        for _ in 0..4 {
+            app.update();
+        }
+        let texts: Vec<_> = app
+            .world_mut()
+            .query::<&Text>()
+            .iter(app.world())
+            .map(|t| t.0.clone())
+            .collect();
+        for name in [
+            "1 HEAVY", "3 INF", "4 INF", "6 AIR", "7 SENTRY", "8 DART", "9 RADAR",
+        ] {
+            assert!(
+                texts.iter().any(|t| t.starts_with(name)),
+                "missing {name}: {texts:?}"
+            );
+        }
+        assert!(texts.iter().any(|t| t.starts_with("1 HEAVY\nNO SIM")));
+        // A stale Hero snapshot remains an extra practice chassis, never Heavy.
+        assert!(!texts.iter().any(|t| t.starts_with("1 HERO")));
+    }
+
+    #[test]
     fn tab_shows_both_teams_while_held_and_toolbar_can_keep_it_open() {
         let mut app = App::new();
         app.insert_resource(populated_session())
@@ -356,46 +456,76 @@ mod tests {
             id,
             kind,
             hp: Some((hp, 200)),
+            number: None,
         }
     }
     #[test]
     fn duplicate_types_overflow_and_departure_does_not_move_survivors() {
-        let mut slots = vec![None; 6];
+        let mut occupants = vec![None; 9];
+        let slots = slots(Season::Rm2026);
         let robots = vec![
             robot(7, RobotKind::Infantry, 200),
             robot(2, RobotKind::Infantry, 100),
             robot(9, RobotKind::Infantry, 0),
             robot(1, RobotKind::Hero, 200),
         ];
-        reconcile(&mut slots, &robots);
+        reconcile(&mut occupants, &robots, slots);
         assert_eq!(
-            slots,
-            vec![Some(1), None, Some(2), Some(7), None, None, Some(9)]
+            occupants,
+            vec![
+                Some(1),
+                None,
+                Some(2),
+                Some(7),
+                Some(9),
+                None,
+                None,
+                None,
+                None
+            ]
         );
-        reconcile(&mut slots, &[robots[0].clone(), robots[2].clone()]);
-        assert_eq!(slots, vec![None, None, None, Some(7), None, None, Some(9)]);
         reconcile(
-            &mut slots,
+            &mut occupants,
+            &[robots[0].clone(), robots[2].clone()],
+            slots,
+        );
+        assert_eq!(
+            occupants,
+            vec![None, None, None, Some(7), Some(9), None, None, None, None]
+        );
+        reconcile(
+            &mut occupants,
             &[
                 robots[0].clone(),
                 robots[2].clone(),
                 robot(12, RobotKind::Infantry, 200),
             ],
+            slots,
         );
-        assert_eq!(slots[2], Some(12));
+        assert_eq!(occupants[2], Some(12));
     }
     #[test]
     fn empty_dead_and_damaged_are_distinct() {
-        let (empty, fill, color) = presentation(0, None, Team::Red);
+        let (empty, fill, color) = presentation(0, None, Team::Red, slots(Season::Rm2026));
         assert!(empty.contains("EMPTY"));
         assert_eq!(fill, 0.);
         assert_eq!(color, DIM);
-        let (dead, fill, color) = presentation(0, Some(&robot(4, RobotKind::Hero, 0)), Team::Red);
+        let (dead, fill, color) = presentation(
+            0,
+            Some(&robot(4, RobotKind::Hero, 0)),
+            Team::Red,
+            slots(Season::Rm2026),
+        );
         assert!(dead.contains("DOWN"));
         assert!(dead.contains("#4"));
         assert_eq!(fill, 0.);
         assert_eq!(color, DIM);
-        let (_, fill, color) = presentation(0, Some(&robot(4, RobotKind::Hero, 50)), Team::Blue);
+        let (_, fill, color) = presentation(
+            0,
+            Some(&robot(4, RobotKind::Hero, 50)),
+            Team::Blue,
+            slots(Season::Rm2026),
+        );
         assert_eq!(fill, 0.25);
         assert_eq!(color, team_color(Team::Blue));
     }

@@ -17,6 +17,9 @@ use rm_simulator_world::{BaseConfig, Pose};
 /// plate, the dart carriage or the rail limits are missing, or when a fitted
 /// sheet has an implausible size.
 pub fn load(cad: &CadAssets) -> anyhow::Result<Vec<BaseConfig>> {
+    if cad.rest_pose_only {
+        return Ok(vec![]);
+    }
     let Some(semantics) = cad.base.visual_semantics() else {
         return Ok(vec![]);
     };

@@ -24,6 +24,7 @@ Git history.
 | App automation, headless rendering and screenshots | [Console](console.md) |
 | Testing a custom client over the referee protocol | [Referee link](referee-link.md) |
 | Packet metadata and local channel diagnostics | [Network tracing](network-tracing.md) |
+| RMUC 2027 source partitions, runtime build and visual review | [2027 field](rmuc2027-field.md) |
 | Field package layout, discovery, composition, collision | [Field package](field-package.md) |
 | Asset contracts and composition | [Semantic assets](semantic-assets.md) |
 | Reproducible simplification and installation | [Field detail](field-detail.md) |

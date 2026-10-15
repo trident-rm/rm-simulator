@@ -124,6 +124,12 @@ pub enum ConsoleCommand {
         collision_view: Option<String>,
         /// Shows or hides the render statistics in the debug panel.
         render_stats: Option<bool>,
+        /// Show buff-zone inspection volumes.
+        zones: Option<bool>,
+        /// Show functional RFID detection footprints.
+        rfid_zones: Option<bool>,
+        /// Show zone names and traversal sequence labels.
+        zone_labels: Option<bool>,
     },
     /// Submits a multiplayer protocol command through the ordinary session.
     World {
@@ -554,6 +560,9 @@ pub(crate) fn execute(world: &mut World, command: ConsoleCommand) -> Result<Wait
             wireframe,
             collision_view,
             render_stats,
+            zones,
+            rfid_zones,
+            zone_labels,
         } => {
             let view = collision_view
                 .map(|view| match view.as_str() {
@@ -573,6 +582,18 @@ pub(crate) fn execute(world: &mut World, command: ConsoleCommand) -> Result<Wait
                 world
                     .resource_mut::<bevy::pbr::wireframe::WireframeConfig>()
                     .global = wireframe;
+            }
+            {
+                let mut options = world.resource_mut::<crate::debug_panel::DebugOptions>();
+                if let Some(value) = zones {
+                    options.zones = value;
+                }
+                if let Some(value) = rfid_zones {
+                    options.rfid_zones = value;
+                }
+                if let Some(value) = zone_labels {
+                    options.zone_labels = value;
+                }
             }
             if let Some(stats) = render_stats {
                 world

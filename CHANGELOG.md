@@ -4,6 +4,16 @@
 
 ## Unreleased
 
+- Show complete seasonal RMUC equipment rosters, including unsupported Heavy,
+  aerial, dart and radar equipment, and restrict 2027 deployment to available
+  Infantry/Sentry practice prototypes. Add F3/CLI/console zone and RFID overlays
+  with traversal labels and explicitly approximate 2027 diagram footprints.
+
+- Load an RMUC 2027 CAD rest-pose sandbox through the existing runtime
+  package layout. A reproducible adapter partitions the new source products,
+  preserves source colors and collision geometry, and disables old referee
+  targets and zones. The bundled RM2026 field remains the default.
+
 - Add isolated RMUC 2027 territory control behind `season-2027`: capture,
   rollback, contested progress, temporary-control scoring, base protection
   queries, outpost transfers/rebuild events and validated component snapshots.

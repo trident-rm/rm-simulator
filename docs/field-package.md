@@ -6,6 +6,10 @@ Composition, deployment, collision contracts and loading of the RMUC 2026 field
 package. The [project README](../README.md) carries the user-facing summary;
 the [documentation index](README.md) lists every guide.
 
+The [RMUC 2027 runtime field](rmuc2027-field.md) uses this same directory
+contract through a source-partition adapter. It remains a separate rest-pose
+physics sandbox while 2027 joint/scoring bindings are reviewed.
+
 ## Composition
 
 The default package is built by the sibling `rm-map-tools` project

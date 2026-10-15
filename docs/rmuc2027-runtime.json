@@ -1,0 +1,13 @@
+{
+  "_license": "SPDX-License-Identifier: MIT OR Apache-2.0",
+  "_copyright": "Copyright (c) 2026 hxyulin <hxyulin@proton.me>",
+  "source_sha256": "a5ad3ede3b7674fc98f2e73b71717216383cb2b4b5dcdbe900c2038918bea8e0",
+  "source_file": "RMUC2027_V1.0.0.stp",
+  "central_asset": "centre-platform",
+  "selections": {
+    "rune": {"product_id": 1354629, "placements": 1},
+    "outpost": {"product_id": 2603236, "placements": 2},
+    "tech-core": {"product_id": 1751926, "placements": 2}
+  },
+  "status": "Source-product partitions for CAD rest-pose inspection. No reviewed moving joints or scoring frames. Visual review required before animation bindings."
+}

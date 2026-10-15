@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! Extracted RMUC2026 CAD manifest: asset files, checksums and placements.
+//! RMUC runtime CAD manifests: asset files, checksums and placements.
 //! Placements are converted from the CAD's Z-up arena frame into world FLU
 //! metres, with the playing floor at height zero.
 use crate::math::{gltf_root_pose, quat_length, quat_normalize};
@@ -87,6 +87,12 @@ struct Manifest {
     schema_version: u32,
     /// Declared length unit; only `metres` is accepted.
     units: String,
+    /// Explicit season identity; absent means the legacy RMUC 2026 package.
+    #[serde(default)]
+    season: Option<rm_simulator_world::season::Season>,
+    /// Rest-pose packages supply geometry without reviewed rule/joint bindings.
+    #[serde(default)]
+    rest_pose_only: bool,
     /// Top of the playing floor in the arena frame; absent in the V2.0.0
     /// extraction, which uses [`FLOOR_TOP_CAD_M`].
     #[serde(default)]
@@ -244,6 +250,11 @@ pub struct CadAsset {
 /// records, and the named assets the layout needs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CadAssets {
+    /// Season of the source CAD, independent of match engine availability.
+    pub season: rm_simulator_world::season::Season,
+    /// Draw and collide with the complete CAD rest pose; do not fit old targets,
+    /// animate old joints or enable a referee on this package.
+    pub rest_pose_only: bool,
     /// Package root. Every manifest path is resolved inside it, and every
     /// listed file is read only after its checksum matches.
     pub root: PathBuf,
@@ -329,6 +340,28 @@ pub fn arena_pose(floor_top_cad_m: f64) -> Pose {
 pub fn load(root: &Path) -> anyhow::Result<CadAssets> {
     let arena = read_manifest(&root.join("manifest.json"))?;
     let equipment = read_manifest(&root.join("equipment/manifest.json"))?;
+    let season = arena
+        .season
+        .unwrap_or(rm_simulator_world::season::Season::Rm2026);
+    ensure!(
+        season
+            == equipment
+                .season
+                .unwrap_or(rm_simulator_world::season::Season::Rm2026)
+            && arena.rest_pose_only == equipment.rest_pose_only,
+        "field and equipment season/rest-pose modes differ"
+    );
+    if season == rm_simulator_world::season::Season::Rm2027 {
+        ensure!(
+            season.is_enabled(),
+            "RM2027 CAD requires the season-2027 Cargo feature"
+        );
+        ensure!(
+            arena.rest_pose_only,
+            "RM2027 CAD currently requires rest_pose_only; match bindings are unavailable"
+        );
+    }
+
     let arena_semantics = arena
         .articulation
         .as_ref()
@@ -500,6 +533,8 @@ pub fn load(root: &Path) -> anyhow::Result<CadAssets> {
         static_assets.push(scenery);
     }
     Ok(CadAssets {
+        season,
+        rest_pose_only: arena.rest_pose_only,
         static_assets,
         root: root.to_path_buf(),
         floor_top_cad_m,
@@ -799,6 +834,25 @@ mod tests {
             save(&manifest);
             assert!(load(&dir).is_err());
         }
+        // A 2027 runtime package must agree across manifests, be explicitly
+        // rest-pose-only and be enabled by the build; never inherit 2026 rules.
+        manifest["static_assets"] = serde_json::json!([]);
+        manifest["season"] = serde_json::json!("2027");
+        manifest["rest_pose_only"] = serde_json::json!(true);
+        save(&manifest);
+        assert!(load(&dir).is_err()); // Equipment still identifies the legacy season.
+        std::fs::write(dir.join("equipment/manifest.json"), manifest.to_string()).unwrap();
+        if cfg!(feature = "season-2027") {
+            let cad = load(&dir).unwrap();
+            assert_eq!(cad.season, rm_simulator_world::season::Season::Rm2027);
+            assert!(cad.rest_pose_only);
+        } else {
+            assert!(load(&dir).unwrap_err().to_string().contains("season-2027"));
+        }
+        manifest["rest_pose_only"] = serde_json::json!(false);
+        save(&manifest);
+        std::fs::write(dir.join("equipment/manifest.json"), manifest.to_string()).unwrap();
+        assert!(load(&dir).is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]

@@ -745,7 +745,7 @@ not interchangeable with the drivetrain's assumed shared power budget.
 
 | Issue | Evidence | Required follow-up |
 |---|---|---|
-| Exact 2027 field/collision geometry | UC chapter 4 and UL §§3.2, 4.2 contain drawings; no 2027 CAD/package supplied | Obtain/build separately identified packages, verify transforms, triangles and ownership |
+| 2027 field/collision geometry | UC chapter 4; checksum-pinned RMUC source package now adapted by [the runtime builder](rmuc2027-field.md) | Rest-pose composition verified; visual review, moving joints and detector frames still needed. UL remains separate |
 | Armor detection geometry/artwork | ROB §2.1.4 promises pattern details later | Obtain module/drawing assets; do not carry old 101 × 94 mm detection area forward without validation |
 | Aerial-impact detection | UC Table 5-1 explicitly pending | Await force/time/area-impulse thresholds; do not approximate as a projectile rule |
 | Armor statistics singularities | UC §5.2 divides by σ and opposing accuracy | Decide zero-spread/no-hit/no-launch cases from official clarification |

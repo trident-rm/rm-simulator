@@ -203,3 +203,33 @@ Render a CAD-free comparison with:
 ```sh
 cargo run -p rm-simulator-render --example robots -- /tmp/robots.png healthy front all
 ```
+
+## Seasonal RMUC rosters
+
+The verified field package selects the displayed roster. `server::roster` is
+shared by deployment, HUD and host admission; it distinguishes official equipment
+from available practice prototypes. The ordinary `Robot` wire enum continues to
+identify existing drivable prototypes, so an unsupported system never becomes a
+fake pilot or chassis. Free practice still permits duplicate prototypes; roster
+counts are a reference, not a competition registration enforcement system.
+
+| Number | RMUC 2026 | RMUC 2027 (Table 3-1) | 2027 practice support |
+|---|---|---|---|
+| 1 | Hero | Heavy ×1 | Not implemented |
+| 2 | Engineer | — | — |
+| 3 | Infantry 3 | Infantry 3 ×1 | Omni / assisted balance |
+| 4 | Infantry 4 | Infantry 4 ×1 | Omni / assisted balance |
+| 5 | Infantry 5 | — | — |
+| 6 | Drone | Aerial system: one hangar + four aircraft | Not implemented |
+| 7 | Sentry | Sentry ×1 | Manual omni prototype |
+| 8 | Dart system | One launcher + four darts | Not implemented |
+| 9 | Radar | One compute module + one sensor module | Not implemented |
+
+These are active equipment slots, excluding reserves. The 2026 list includes all
+optional role slots rather than enforcing a legal lineup. The HUD always shows
+all slots, including empty or unimplemented equipment. Tab lists subordinate
+equipment counts. Connected deployment offers implemented prototypes and lists
+unsupported systems. A 2027 host rejects Hero, Engineer, Infantry 5 and the old
+Drone through both ordinary and staged spawn paths. The old Drone is not a
+2027 aerial system, and Hero is not a Heavy approximation. Infantry and Sentry
+remain practice prototypes; full 2027 match admission is still unavailable.

@@ -38,7 +38,12 @@ impl Plugin for DebugPanelPlugin {
         ))
         .add_systems(
             Update,
-            (spawn_panel, sync_panel, sync_buffer_status)
+            (
+                spawn_panel,
+                sync_panel,
+                sync_buffer_status,
+                sync_zone_choices,
+            )
                 .chain()
                 .after(crate::hud::menu_input)
                 .after(crate::hud::panel_input)
@@ -54,6 +59,12 @@ pub(crate) struct DebugOptions {
     /// Whether the frame and render pass statistics overlay is drawn. Set by
     /// `--render-stats`, the panel checkbox and the console `inspect` command.
     pub stats: bool,
+    /// Buff-zone inspection volumes; drawing does not enable rule enforcement.
+    pub zones: bool,
+    /// Functional RFID detection footprints, including approximate 2027 areas.
+    pub rfid_zones: bool,
+    /// Labels for visible zone footprints.
+    pub zone_labels: bool,
 }
 /// Marker for the panel root node; `sync_panel` shows it while
 /// `HudState::debug` is set, and match teardown despawns it.
@@ -71,6 +82,8 @@ struct CollisionChoice(CollisionView);
 struct StatsChoice;
 #[derive(Component)]
 struct WireframeChoice;
+#[derive(Component)]
+struct ZoneChoice(u8);
 
 fn spawn_panel(
     mut commands: Commands,
@@ -115,6 +128,20 @@ fn spawn_panel(
         ThemedText,
         label_font.clone(),
     ));
+    for (index, caption) in [
+        (0, "Buff-zone volumes"),
+        (1, "RFID detection areas"),
+        (2, "Zone names / traversal order"),
+    ] {
+        commands.spawn_scene(bsn! {
+            @FeathersCheckbox { @caption: bsn! { Text(caption) ThemedText } }
+            AccessibleLabel(caption)
+            on(move |change: On<ValueChange<bool>>, mut options: ResMut<DebugOptions>| {
+                match index { 0 => options.zones=change.value, 1 => options.rfid_zones=change.value, _ => options.zone_labels=change.value }
+            })
+        }).insert((ChildOf(panel), ZoneChoice(index)));
+    }
+    commands.spawn((ChildOf(panel), Text::new("Green: RFID footprints; boxes: inspection height\n2027: Figure 5-23 estimates (~10 cm); hidden tunnel pads inferred.\nDebug only; 2027 buffs/control are not connected."), ThemedText, label_font.clone()));
     commands.spawn_scene(bsn! {
         @FeathersButton { @caption: bsn! { Text("Network stats: Off / Compact / Detailed") ThemedText } }
         ActivateOnPress
@@ -473,6 +500,27 @@ fn sync_buffer_status(
     for mut text in &mut labels {
         if text.0 != value {
             text.0.clone_from(&value);
+        }
+    }
+}
+
+fn sync_zone_choices(
+    mut commands: Commands,
+    options: Res<DebugOptions>,
+    choices: Query<(Entity, &ZoneChoice, Has<Checked>)>,
+) {
+    for (entity, choice, checked) in &choices {
+        let value = match choice.0 {
+            0 => options.zones,
+            1 => options.rfid_zones,
+            _ => options.zone_labels,
+        };
+        if value != checked {
+            if value {
+                commands.entity(entity).insert(Checked);
+            } else {
+                commands.entity(entity).remove::<Checked>();
+            }
         }
     }
 }
