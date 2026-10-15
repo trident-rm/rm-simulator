@@ -128,3 +128,18 @@ Record every user-visible change under `Unreleased` in
 [CHANGELOG.md](../CHANGELOG.md), and keep the README option and control tables
 current with the code. Keep dated measurements tied to their recorded revision
 and asset hashes.
+
+## Dependency updates
+
+Use `cargo update --dry-run` to inspect compatible lockfile updates, then run
+`just verify` after applying them. Keep Bevy and its UI/render integrations on
+compatible release lines; a Bevy migration is separate from a lockfile refresh.
+
+The workspace expands Bevy 0.19's `3d`, `3d_bevy_render` and `3d_api` feature
+bundles to select `zstd_c` for KTX2 textures. This reuses the native Zstd backend
+already used for network compression and preserves the other rendering features.
+Those bundles force `zstd_rust` and vulnerable `ruzstd` 0.8
+([RUSTSEC-2026-0344](https://rustsec.org/advisories/RUSTSEC-2026-0344.html));
+adding `zstd_c` alongside them does not remove the Rust backend. When changing
+Bevy features, inspect `cargo tree --workspace --all-features -i ruzstd` and the
+resolved feature graph, and smoke-test the renderer's compressed lookup textures.

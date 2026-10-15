@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Remove vulnerable `ruzstd` texture decoding (RUSTSEC-2026-0344) by selecting
+  Bevy's native Zstd backend while retaining the existing 3D rendering features.
+  Refresh compatible Cargo dependencies.
+
 - Connect bound RMUC 2027 V1.0.0 fields to a native control/structure match:
   height-aware RFID, per-robot expiry and eligibility, contested capture,
   temporary-control scoring, Fortress opening and the live control HUD.

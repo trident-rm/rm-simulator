@@ -35,7 +35,18 @@ sha2 = "0.10"
 # Wire-compression candidate: ZSTD with a trained checkpoint dictionary.
 # `legacy` and `arrays` are unused; `zdict_builder` trains the embedded dictionary.
 zstd = { version = "0.13", default-features = false, features = ["zdict_builder"] }
-bevy = { version = "0.19.1", default-features = false, features = ["3d", "ui", "default_font"] }
+# Expand Bevy 0.19's `3d` / `3d_bevy_render` / `3d_api` bundles so KTX2
+# decoding uses our existing native Zstd backend. The bundles force zstd_rust
+# and ruzstd 0.8, affected by RUSTSEC-2026-0344; simply adding zstd_c is additive.
+# Keep the rest of the 3d feature set when updating Bevy.
+bevy = { version = "0.19.1", default-features = false, features = [
+    "default_app", "default_platform", "scene", "picking",
+    "common_api", "bevy_light", "bevy_mikktspace", "ktx2",
+    "morph_animation", "morph", "smaa_luts", "tonemapping_luts", "zstd_c",
+    "bevy_render", "bevy_core_pipeline", "bevy_gizmos_render",
+    "bevy_anti_alias", "bevy_gltf", "bevy_pbr", "bevy_post_process",
+    "gltf_animation", "ui", "default_font",
+] }
 
 # Bevy is unusably slow unoptimized; keep the app itself debuggable.
 [profile.dev.package."*"]
