@@ -37,6 +37,7 @@ struct Args {
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    rm_simulator_world::season::Season::Rm2026.require_playable()?;
     let cad = cad_assets::load(&args.host.cad_assets)?;
     let options = args.host.layout_options();
     let simulation = Simulation::from_cad(

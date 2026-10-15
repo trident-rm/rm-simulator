@@ -33,6 +33,8 @@ use serde::{Deserialize, Serialize};
 /// The match engine the referee runs, so callers can read
 /// [`RefereeSnapshot::game`] without depending on it directly.
 pub use rm_simulator_gameplay as gameplay;
+/// Season identities and admission checks shared with standalone gameplay.
+pub use rm_simulator_gameplay::season;
 pub use rm_simulator_physics::{Pose, tick_ns};
 
 /// One armor module pose on a rotating mechanism, keyed by face index.
@@ -175,6 +177,9 @@ impl Default for FieldConfig {
 /// whose snapshot disagrees with the geometry on hand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum FieldError {
+    /// The requested season is disabled or its gameplay is not implemented.
+    #[error(transparent)]
+    Season(#[from] season::SeasonError),
     /// A rune pose or motion parameter failed validation (section 5.5.2 bounds).
     #[error("invalid rune configuration: {0}")]
     Rune(#[from] RuneError),
@@ -295,7 +300,8 @@ pub struct Field {
     zones: Vec<zones::ZoneArea>,
 }
 impl Field {
-    /// Build a field from a layout, validating every rune, outpost and base.
+    /// Build an RM2026 field, validating every rune, outpost and base.
+    /// Requires the `season-2026` Cargo feature.
     /// Chassis listed in the config join immediately, in order, so their ids
     /// match their index. The clock starts at tick zero.
     ///
@@ -317,6 +323,26 @@ impl Field {
     /// assert!(field.referee().is_none());
     /// ```
     pub fn new(config: &FieldConfig) -> Result<Self, FieldError> {
+        Self::new_for_season(season::Season::Rm2026, config)
+    }
+
+    /// Build a field only for an enabled season with implemented gameplay.
+    ///
+    /// RM2027 currently returns [`FieldError::Season`] before constructing
+    /// any physics or rule state. Existing layouts describe RM2026 only.
+    ///
+    /// ```
+    /// use rm_simulator_world::{Field, FieldConfig, FieldError, season::Season};
+    /// assert!(matches!(
+    ///     Field::new_for_season(Season::Rm2027, &FieldConfig::default()),
+    ///     Err(FieldError::Season(_)),
+    /// ));
+    /// ```
+    pub fn new_for_season(
+        season: season::Season,
+        config: &FieldConfig,
+    ) -> Result<Self, FieldError> {
+        season.require_playable()?;
         for base in &config.bases {
             base.validate().map_err(FieldError::Mesh)?;
         }
@@ -1215,6 +1241,8 @@ impl Field {
         geometry: &StaticGeometry,
         floor_height_m: f64,
     ) -> Result<Self, FieldError> {
+        // Current checkpoints have the RM2026 wire schema and rules only.
+        season::Season::Rm2026.require_playable()?;
         let rules = snapshot
             .restore
             .as_ref()
@@ -1298,6 +1326,51 @@ impl Field {
         self.physics
             .reset_chassis(state)
             .map_err(FieldError::Chassis)
+    }
+}
+
+#[cfg(test)]
+mod season_tests {
+    use super::*;
+
+    #[test]
+    fn season_admission_applies_before_field_construction() {
+        for season in [season::Season::Rm2026, season::Season::Rm2027] {
+            assert_eq!(
+                Field::new_for_season(season, &FieldConfig::default()).map(|_| ()),
+                season.require_playable().map_err(FieldError::Season),
+            );
+        }
+        assert_eq!(
+            Field::new(&FieldConfig::default()).map(|_| ()),
+            season::Season::Rm2026
+                .require_playable()
+                .map_err(FieldError::Season),
+        );
+    }
+
+    #[cfg(not(feature = "season-2026"))]
+    #[test]
+    fn season_disabled_restore_cannot_import_2026_rules() {
+        // A disabled season is refused before decoding or validating a field.
+        let snapshot = FieldSnapshot {
+            bases: vec![],
+            tick: 0,
+            time_ns: 0,
+            runes: vec![],
+            outposts: vec![],
+            projectiles: vec![],
+            chassis: vec![],
+            hits: vec![],
+            shots_fired: 0,
+            hits_detected: 0,
+            referee: None,
+            restore: None,
+        };
+        assert!(matches!(
+            Field::restore(&snapshot, &StaticGeometry::default(), 0.0),
+            Err(FieldError::Season(season::SeasonError::Disabled(2026))),
+        ));
     }
 }
 

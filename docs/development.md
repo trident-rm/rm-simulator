@@ -40,6 +40,7 @@ The shell sets `CARGO_TARGET_DIR="$PWD/target/nix"`, so Nix builds land in
 | `just verify` | The full pre-PR gate; see below |
 | `just run <args>` / `just server <args>` | Interactive app / headless server |
 | `just world-test` | Renderer-independent world tests |
+| `just season-test` | Season admission and isolated rules with neither, each and both features |
 | `just gameplay-test` / `just gameplay-demo` | Gameplay tests / headless `match` example |
 | `just network-test` / `just network-trial <scenario>` | Harness tests with real UDP / one scenario against built binaries |
 | `just bench-build` / `just bench-render <config>` | Build the benchmark / run a sweep without recompiling |
@@ -58,14 +59,15 @@ and `field/`. Clippy remains in `just verify` and CI's full workspace gate.
 3. `cargo check --workspace --all-targets --all-features --locked`
 4. `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
 5. `cargo test --workspace --all-features --locked`
-6. `python3 scripts/check-module-dependencies.py`
-7. `python3 scripts/check-mpl-compliance.py`
-8. `python3 scripts/stage-release-field.py --verify-only --allow-lfs-pointers`, the field inventory CI checks (also `just field-check`)
-9. `python3 -m unittest discover -s scripts/tests`, every Python regression test
-10. `python3 -m doctest scripts/check-mpl-compliance.py`
-11. `cargo deny check advisories bans licenses sources`
+6. `python3 scripts/check-season-features.py`, season admission and feature matrix
+7. `python3 scripts/check-module-dependencies.py`
+8. `python3 scripts/check-mpl-compliance.py`
+9. `python3 scripts/stage-release-field.py --verify-only --allow-lfs-pointers`, the field inventory CI checks (also `just field-check`)
+10. `python3 -m unittest discover -s scripts/tests`, every Python regression test
+11. `python3 -m doctest scripts/check-mpl-compliance.py`
+12. `cargo deny check advisories bans licenses sources`
 
-Steps 6-11 are the same commands CI runs, so a green `just verify` should mean a
+Steps 6-12 are the same commands CI runs, so a green `just verify` should mean a
 green CI job. If the two lists ever disagree, fix the target rather than adding a
 second command line.
 

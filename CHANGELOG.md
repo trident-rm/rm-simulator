@@ -4,6 +4,19 @@
 
 ## Unreleased
 
+- Add isolated RMUC 2027 territory control behind `season-2027`: capture,
+  rollback, contested progress, temporary-control scoring, base protection
+  queries, outpost transfers/rebuild events and validated component snapshots.
+  Full RM2027 match admission remains unavailable.
+
+- Add a cited reference for the three RM2027 V1.0.0 manuals, including RMUC,
+  RMUL 3v3, RMUL Infantry and robot construction changes, while preserving
+  the implemented RM2026 rules digest.
+- Add additive `season-2026` (default) and `season-2027` build features with
+  combined-build support and admission checks. Full RM2027 matches remain
+  unavailable; unsupported seasons return errors instead of running RM2026 mechanics.
+  See [season builds](docs/seasons.md).
+
 - Opt-in referee link (`referee-link` feature, `--referee-link`): an embedded
   MQTT broker publishes the RoboMaster custom-client state topics for the
   piloted robot and plays the client's `KeyboardMouseControl` as local input;

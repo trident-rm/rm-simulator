@@ -196,6 +196,8 @@ impl Session {
         spawn_yaw_deg: f64,
         progress: impl Fn(f32, &str),
     ) -> anyhow::Result<Opened> {
+        // The current protocol and field schema describe RM2026 sessions only.
+        rm_simulator_world::season::Season::Rm2026.require_playable()?;
         let role = if args.staging && !args.referee {
             Role::Spectator
         } else {

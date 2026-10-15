@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
-# Referee rules digest
+# RM2026 referee rules digest
 
 What the simulator's referee implements, taken from the RoboMaster 2026
 University Championship Rule Manual V2.1.0 (2026-07-17), so the manual does
@@ -16,6 +16,9 @@ for every rule below except the clock's rune schedule and rune activation,
 which stay in the world. See [gameplay.md](gameplay.md) for the engine's
 implemented rules, its integration boundary and the manual's ambiguous
 clauses.
+
+For the separate 2027 source interpretation, see [2027 rules](rules-2027.md).
+Those requirements do not replace this implemented 2026 baseline.
 
 ## Contents
 

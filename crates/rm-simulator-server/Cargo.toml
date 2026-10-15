@@ -14,8 +14,13 @@ workspace = true
 name = "rm-simulator-server"
 path = "src/main.rs"
 
+[features]
+default = ["season-2026"]
+season-2026 = ["rm-simulator-world/season-2026"]
+season-2027 = ["rm-simulator-world/season-2027"]
+
 [dependencies]
-rm-simulator-world = { version = "0.1.0", path = "../rm-simulator-world" }
+rm-simulator-world = { version = "0.1.0", path = "../rm-simulator-world", default-features = false }
 anyhow.workspace = true
 clap.workspace = true
 serde = { workspace = true, features = ["std"] }

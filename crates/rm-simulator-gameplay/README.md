@@ -9,6 +9,10 @@ the English RoboMaster 2026 University Championship Rule Manual V2.1.0
 (2026-07-17). It sits at the bottom of the layering: the world crate depends on
 it, and it depends on no other simulator crate.
 
+An optional `season-2027` feature adds the independent RMUC 2027
+[`rmuc_2027::Control`](../../docs/gameplay.md#rmuc-2027-control-component)
+territory component. Full 2027 match creation remains unavailable.
+
 ## Modules
 
 | File | Owns |
@@ -17,6 +21,7 @@ it, and it depends on no other simulator crate.
 | `src/state.rs` | The state model: `Team`, `RobotKind`, `Caliber`, `Config`, `Phase`, `Snapshot`, `Event`, rounds, deliveries and zone contacts. |
 | `src/zones.rs` | Section 5.5.3 buff point constants, terrain crossing courses and the Fortress cooling and reserve formulas. |
 | `src/performance.rs` | `Performance`, `Stats` and the Hero and Infantry types: HP, chassis power, heat limit and cooling by level (Tables 5-12 to 5-14). |
+| `src/rmuc_2027.rs` | Feature-gated UC 2027 territory capture, recovery, scoring, outpost ownership transfer and restorable component state. |
 | `src/coverage.rs` | `RULES`, the inventory of sections 5.1-5.8 and 6-9, with each group's section, `Support` status and remaining work. |
 | `src/policy.rs` | Internal allowance and income policies. |
 

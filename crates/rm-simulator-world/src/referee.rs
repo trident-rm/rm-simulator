@@ -834,6 +834,7 @@ pub fn game_caliber(caliber: crate::Caliber) -> gp::Caliber {
 }
 fn game_error(error: gp::Error) -> &'static str {
     match error {
+        gp::Error::Season(_) => "RM2026 gameplay is disabled in this build",
         gp::Error::Phase => "the command is not valid in this match phase",
         gp::Error::Robot => "unknown robot id",
         gp::Error::Invalid => "invalid value",

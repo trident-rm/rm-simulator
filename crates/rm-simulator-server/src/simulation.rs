@@ -195,6 +195,7 @@ impl Simulation {
         paused: bool,
         mut progress: impl FnMut(BuildProgress),
     ) -> anyhow::Result<Self> {
+        rm_simulator_world::season::Season::Rm2026.require_playable()?;
         let terrain = if options.terrain {
             progress(BuildProgress::ReadingTerrain);
             Some(load_terrain(cad)?)

@@ -29,6 +29,10 @@ hooks:
 module-deps:
     python3 scripts/check-module-dependencies.py
 
+# Feature availability and refusal of unimplemented seasons, without rendering.
+season-test:
+    python3 scripts/check-season-features.py
+
 mpl:
     python3 scripts/check-mpl-compliance.py
 
@@ -38,6 +42,7 @@ verify:
     cargo check --workspace --all-targets --all-features --locked
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
     cargo test --workspace --all-features --locked
+    python3 scripts/check-season-features.py
     python3 scripts/check-module-dependencies.py
     python3 scripts/check-mpl-compliance.py
     python3 scripts/stage-release-field.py --verify-only --allow-lfs-pointers

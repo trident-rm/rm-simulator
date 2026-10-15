@@ -19,6 +19,11 @@ the CAD scene handling, and the armor artwork masks were reused from the sibling
 `../Vision/rm-vision-sim` repository; see `NOTICE.md`. The
 [documentation index](docs/README.md) lists the current guides.
 
+The [2027 rules reference](docs/rules-2027.md) interprets the new season manuals.
+[Season build features](docs/seasons.md) support separate and combined builds;
+RM2027 has an isolated [control component](docs/gameplay.md#rmuc-2027-control-component);
+full RM2027 matches remain unavailable, and RM2026 remains the default.
+
 ## Contents
 
 - [Quick start](#quick-start)

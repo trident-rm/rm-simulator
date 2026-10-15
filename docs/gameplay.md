@@ -5,6 +5,8 @@
 `rm-simulator-gameplay` runs a match without Bevy, Rapier, CAD, networking or
 host time. It is pinned to the English RoboMaster 2026 University Championship
 Rule Manual V2.1.0, dated 2026-07-17. It does not silently adopt later releases.
+The [2027 rules reference](rules-2027.md) is a separate future implementation
+baseline; [season builds](seasons.md) explains feature availability and admission.
 
 ```sh
 just gameplay-test
@@ -19,12 +21,76 @@ Read this guide before changing either gameplay integration.
 
 ## Contents
 
+- [RMUC 2027 control component](#rmuc-2027-control-component)
 - [Live integration and ownership](#live-integration-and-ownership)
 - [API and clock](#api-and-clock)
 - [Rule coverage and unsupported elements](#rule-coverage-and-unsupported-elements)
 - [Implemented consequences](#implemented-consequences)
 - [Result comparison](#result-comparison)
 - [Ambiguities and application choices](#ambiguities-and-application-choices)
+
+## RMUC 2027 control component
+
+With `season-2027`, `rm_simulator_gameplay::rmuc_2027::Control` implements the
+UC V1.0.0 territory state machine separately from `Game`. It is not used by the
+live referee yet and does not enable full 2027 match admission. The 2026 rule
+inventory and engine below retain their existing meaning.
+
+The component implements UC §5.6.2, Tables 5-20–5-21, and the ownership-transfer
+part of §5.6.1:
+
+- Four territories start fully controlled by their original teams. Each combines
+  its two constituent buff points; team presence at either point counts.
+- Five seconds of uncontested opposing activation changes full control to
+  temporary control for the opposing team. Incomplete progress rolls back at the
+  same rate when occupation ends; opposing presence anywhere in the same
+  territory pauses progress.
+- Five seconds without the temporary controller's activation gives full control
+  to the other team, even if no robot is present. The temporary controller's
+  return rolls incomplete recovery back. Only the initial owner can fully
+  control a base territory.
+- Outpost destruction changes full control to temporary control for the same
+  team, or temporary control to full control for its current controller. Physical
+  outpost ownership is separate. A completed full-control transfer rebuilds the
+  outpost for its new owner and emits a 500 HP rebuild event.
+- **Temporary and full control both earn points**, per the user-selected
+  interpretation of the manual's unqualified wording. Both outpost territories
+  award 1 point/s; both base territories award 3 points/s. Base protection still
+  requires full control of that team's original outpost territory.
+
+`set_activation(side, point, [red_present, blue_present])` replaces resolved team
+presence at one point. The caller must enforce robot eligibility, zone disabling
+and the two-second activation expiry before submitting it. Changing points within
+one territory preserves aggregate occupation continuity. Robot count does not
+multiply capture speed. `outpost_destroyed(side)` observes an authoritative
+physical destruction; it does not simulate damage or launch a projectile.
+
+`advance_ns(duration_ns)` advances only running-round time, clamped at 420 s.
+Scores settle at each elapsed whole second. Capture/recovery completes before a
+score award at the same timestamp, so a capture at exactly 5 s can earn that
+second's points. Observations applied after advancing affect future time only.
+Each control-state transition starts fresh progress, including transitions due
+to destruction; partial progress is not carried into a different transition.
+These settlement and progress-reset choices are explicit simulation policies,
+not additional timing precision specified by the manual.
+
+The component owns no base HP, robot HP, rotor, buffs, winner or match lifecycle.
+Callers consume `base_protected` and rebuild events and use cumulative points
+in the future 2027 result comparison. In particular, an outpost rebuild event is
+not an instruction to restart its rotor. Other 2027 rules and full checkpoint/
+network integration remain unavailable.
+
+`Control::snapshot()` includes activations, partial progress, scores, physical
+owners and elapsed nanoseconds. Serialize this snapshot and validate it with
+`Control::restore` to resume the same computation. This is a component snapshot,
+not a full `Game` or world checkpoint. Event sequences and scores are independent
+of how elapsed time is partitioned, including 128 Hz caller steps.
+
+```sh
+# Component unit tests and examples without enabling the 2026 engine.
+cargo test --locked -p rm-simulator-gameplay --no-default-features --features season-2027 --lib rmuc_2027
+cargo test --locked -p rm-simulator-gameplay --no-default-features --features season-2027 --doc rmuc_2027
+```
 
 ## Live integration and ownership
 

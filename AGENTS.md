@@ -20,7 +20,9 @@ source file.
 | Complete CLI reference, bindings, HUD, presets | `docs/app-options.md` |
 | Field package layout, discovery, composition, collision | `docs/field-package.md` |
 | Build, test, release and commit workflow | `docs/development.md`, `CONTRIBUTING.md` |
-| Rulebook clauses the referee implements | `docs/referee-rules.md` |
+| RM2026 rulebook clauses the referee implements | `docs/referee-rules.md` |
+| RM2027 manuals, interpretation and unresolved requirements | `docs/rules-2027.md` |
+| Season build features and admission boundaries | `docs/seasons.md` |
 | Standalone gameplay engine and its live integration | `docs/gameplay.md` |
 | Crate ownership, ticks, restore, ECS | `docs/architecture-refactor.md` |
 | Physics reuse without a match or server | `docs/physics-reuse.md` |
@@ -32,6 +34,14 @@ two disagree, this file wins.
 
 ## Context
 
+- **Season scope.** Existing gameplay and checkpoints implement the documented
+  RMUC 2026 subset. `season-2026` is the default; additive `season-2027` enables
+  infrastructure and isolated gameplay components, including RMUC territory
+  control, but must not admit a match using 2026 mechanics. The
+  supplied 2027 V1.0.0 manuals (2026-10-15) are interpreted separately in
+  `docs/rules-2027.md`; RMUC, RMUL 3v3 and RMUL Infantry require distinct
+  competition/revision identities before playable 2027 support. See
+  `docs/seasons.md` for the feature matrix and remaining integration.
 - **Rules source.** The RoboMaster 2026 University Championship Rule Manual
   (V2.1.0, 2026-07-17) is the main rules baseline. The live base damage
   table was checked against V2.2.0; see `docs/referee-rules.md` for that
