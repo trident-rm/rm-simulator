@@ -525,6 +525,7 @@ pub fn to_title(world: &mut World, status: Option<String>) {
     if world.contains_resource::<SceneInput>() {
         // An empty scene despawns the chassis and hides the projectile pool.
         world.insert_resource(SceneInput(Some(SceneState::default())));
+        world.insert_resource(rm_simulator_render::targets::TargetInput::default());
     }
     teardown(world);
     if status.is_some() && world.contains_resource::<crate::screenshot::ScreenshotRequest>() {

@@ -15,6 +15,9 @@
 //! Scoring counts temporary and full control, the user-selected interpretation
 //! of §5.6.2. Base protection still requires full control (§5.6.1).
 
+/// Live RMUC 2027 control/structure match subset.
+pub mod match_rules;
+
 use crate::Team;
 use serde::{Deserialize, Serialize};
 
@@ -184,7 +187,7 @@ pub struct Event {
     pub kind: EventKind,
 }
 
-/// Changes needed by future match integration, in deterministic application order.
+/// Changes consumed by the native match adapter, in deterministic order.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventKind {
     /// A territory completed an occupation, absence or destruction transition.
@@ -239,7 +242,7 @@ pub enum Error {
 /// assert_eq!(control.snapshot().points, [1, 0]);
 /// # Ok::<(), rm_simulator_gameplay::rmuc_2027::Error>(())
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Control {
     state: Snapshot,
 }

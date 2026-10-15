@@ -4,9 +4,9 @@
 
 Engineering interpretation of the three Chinese V1.0.0 manuals released on
 2026-10-15. This is a reference for implementation, not a claim that the simulator
-implements the full 2027 season. The isolated [control component](gameplay.md#rmuc-2027-control-component)
-implements territory transitions and scoring behind `season-2027`. Existing gameplay remains the documented
-2026 baseline in [referee rules](referee-rules.md) and [gameplay](gameplay.md).
+implements the full 2027 season. The [control component](gameplay.md#rmuc-2027-control-component) now drives a
+[source-bound RMUC 2027 control/structure subset](rmuc2027-field.md#enable-the-live-controlstructure-subset)
+behind `season-2027`. Existing 2026 gameplay remains the documented baseline in [referee rules](referee-rules.md) and [gameplay](gameplay.md).
 [Season builds](seasons.md) describes the build infrastructure and its limits.
 
 The largest changes are the merger of Hero and Engineer into 重装机器人,
@@ -745,7 +745,7 @@ not interchangeable with the drivetrain's assumed shared power budget.
 
 | Issue | Evidence | Required follow-up |
 |---|---|---|
-| 2027 field/collision geometry | UC chapter 4; checksum-pinned RMUC source package now adapted by [the runtime builder](rmuc2027-field.md) | Rest-pose composition verified; visual review, moving joints and detector frames still needed. UL remains separate |
+| 2027 field/collision geometry | UC chapter 4; checksum-pinned RMUC source package now adapted by [the runtime builder](rmuc2027-field.md) | Rest-pose composition reviewed; live source-bound outpost rotation, base motion and fitted detector envelopes available. Final masks and base travel remain approximate; see runtime guide. UL remains separate |
 | Armor detection geometry/artwork | ROB §2.1.4 promises pattern details later | Obtain module/drawing assets; do not carry old 101 × 94 mm detection area forward without validation |
 | Aerial-impact detection | UC Table 5-1 explicitly pending | Await force/time/area-impulse thresholds; do not approximate as a projectile rule |
 | Armor statistics singularities | UC §5.2 divides by σ and opposing accuracy | Decide zero-spread/no-hit/no-launch cases from official clarification |

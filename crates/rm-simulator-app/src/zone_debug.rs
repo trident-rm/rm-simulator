@@ -18,6 +18,7 @@ struct ZoneLegend;
 #[derive(Resource)]
 struct Catalog {
     season: rm_simulator_world::season::Season,
+    live: bool,
     areas: Vec<Area>,
 }
 impl Plugin for ZoneDebugPlugin {
@@ -49,13 +50,28 @@ fn prepare(
     catalog: Option<Res<Catalog>>,
     labels: Query<Entity, Or<(With<ZoneLabel>, With<ZoneLegend>)>>,
 ) {
-    if catalog.is_some_and(|c| c.season == session.season) {
+    if catalog
+        .is_some_and(|c| c.season == session.season && c.live == session.rmuc_2027().is_some())
+    {
         return;
     }
     for entity in &labels {
         commands.entity(entity).despawn();
     }
-    let areas = areas(session.season);
+    let mut areas = areas(session.season);
+    if let Some(native) = session.rmuc_2027() {
+        for area in &mut areas {
+            if let Some(point) = area.control_point()
+                && let Some(zone) = native
+                    .config
+                    .zones
+                    .iter()
+                    .find(|z| z.side == area.side && z.point == point)
+            {
+                area.floor_m = zone.floor_m;
+            }
+        }
+    }
     for (index, area) in areas.iter().enumerate() {
         commands.spawn((
             ZoneLabel(index),
@@ -77,12 +93,15 @@ fn prepare(
         ));
     }
     commands.spawn((ZoneLegend, Node { position_type: PositionType::Absolute, left:px(18.), bottom:px(125.), display:Display::None, padding:UiRect::all(px(7.)), ..default() },
-        GlobalZIndex(15), Text::new(if session.season == rm_simulator_world::season::Season::Rm2027 {
+        GlobalZIndex(15), Text::new(if session.rmuc_2027().is_some() {
+            "2027 LIVE CONTROL | Red/blue: active | Amber: contested\nDiagram RFID (~10 cm); terrain/supply overlays inspection only\nBoxes show antenna height; hidden tunnel pads inferred"
+        } else if session.season == rm_simulator_world::season::Season::Rm2027 {
             "2027 ZONE INSPECTION | Green: RFID | Boxes: height band\nFigure 5-23 estimates (~10 cm); tunnel interiors inferred\nX-ray outlines; no 2027 buff/control enforcement"
         } else { "2026 ZONE INSPECTION | Green: referee RFID footprints\nBoxes: height band | X-ray outlines" }),
         TextFont {font_size:bevy::text::FontSize::Px(13.),..default()}, TextColor(Color::WHITE), BackgroundColor(Color::srgba(0.,0.,0.,0.85)), Pickable::IGNORE));
     commands.insert_resource(Catalog {
         season: session.season,
+        live: session.rmuc_2027().is_some(),
         areas,
     });
 }
@@ -91,6 +110,7 @@ fn visible(area: &Area, options: &DebugOptions) -> bool {
 }
 fn draw(
     options: Res<DebugOptions>,
+    session: Res<Session>,
     catalog: Option<Res<Catalog>>,
     camera: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     mut gizmos: Gizmos<ZoneGizmos>,
@@ -112,7 +132,24 @@ fn draw(
         if !visible(area, &options) {
             continue;
         }
-        let color = if area.rfid {
+        let active = session.rmuc_2027().and_then(|r| {
+            area.control_point().map(|point| {
+                let (territory, index) = match point {
+                    rm_simulator_world::rmuc_2027::Point::Outpost => (area.side.index(), 0),
+                    rm_simulator_world::rmuc_2027::Point::CentralHighland => (area.side.index(), 1),
+                    rm_simulator_world::rmuc_2027::Point::Base => (2 + area.side.index(), 0),
+                    rm_simulator_world::rmuc_2027::Point::Fortress => (2 + area.side.index(), 1),
+                };
+                r.game.control.snapshot().territories[territory].activations[index]
+            })
+        });
+        let color = if active == Some([true, true]) {
+            Color::srgb(1., 0.7, 0.1)
+        } else if active == Some([true, false]) {
+            Color::srgb(1., 0.2, 0.1)
+        } else if active == Some([false, true]) {
+            Color::srgb(0.1, 0.5, 1.)
+        } else if area.rfid {
             Color::srgb(0.1, 1., 0.65)
         } else if area.side == Team::Red {
             Color::srgb(1., 0.3, 0.15)

@@ -47,7 +47,8 @@ def main():
             ("rm-simulator-world", "season_tests"),
         ]
         if "season-2027" in features.split(","):
-            checks.append(("rm-simulator-gameplay", "rmuc_2027::tests"))
+            checks.append(("rm-simulator-gameplay", "rmuc_2027::"))
+            checks.append(("rm-simulator-world", "rmuc_2027::tests"))
         for package, test_filter in checks:
             command = [
                 "cargo", "test", "--locked", "-p", package,

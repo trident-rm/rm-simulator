@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Shared collision geometry, moving scenery and read-only clearance queries.
-use crate::{Team, projectile::vector};
+use crate::{
+    Team,
+    projectile::{pose, vector},
+};
 use rapier3d_f64::prelude::*;
 
 /// An owned snapshot of physics shapes, excluding the catch half-space.
@@ -38,19 +41,23 @@ pub struct StaticGeometry {
     pub(crate) shapes: Vec<(rapier3d_f64::prelude::Pose, SharedShape)>,
     /// Interaction groups for [`Self::shapes`], index for index.
     pub(crate) collision_groups: Vec<InteractionGroups>,
-    /// Articulated parts as shape index, role, team and the part translation in
-    /// metres at mechanism fraction 0 and 1.
-    pub(crate) mechanisms: Vec<(usize, crate::motion::Mechanism, Team, [[f64; 3]; 2])>,
+    /// Articulated parts as shape index, role, team and typed source motion frame.
+    pub(crate) mechanisms: Vec<(
+        usize,
+        crate::motion::Mechanism,
+        Team,
+        crate::motion::MotionFrame,
+    )>,
 }
-/// One translating CAD collider. Rotation is baked into `geometry`; translations
-/// are supplied separately so debug renderers can retain the same mesh.
+/// One caller-driven CAD collider with a typed motion frame. Source placement
+/// is baked into `geometry`; debug renderers retain the shared rest-frame mesh.
 pub struct MovingGeometry {
     /// Which mechanism moves this part.
     pub kind: crate::motion::Mechanism,
     /// Team whose [`crate::motion::MechanismState`] entry drives it.
     pub team: Team,
-    /// Part translation in metres at mechanism fraction 0 and 1.
-    pub translations_m: [[f64; 3]; 2],
+    /// Rest frame and prescribed translation endpoints or source rotor axis.
+    pub motion: crate::motion::MotionFrame,
     /// The part's own shapes, held at the origin of its untranslated frame.
     pub geometry: StaticGeometry,
 }
@@ -86,10 +93,13 @@ impl StaticGeometry {
             .map(|(index, kind, team, offsets)| {
                 let (mut pose, shape) = self.shapes[*index].clone();
                 pose.translation = Vector::ZERO;
+                if *kind == crate::motion::Mechanism::Outpost {
+                    pose = Default::default();
+                }
                 MovingGeometry {
                     kind: *kind,
                     team: *team,
-                    translations_m: *offsets,
+                    motion: *offsets,
                     geometry: Self {
                         shapes: vec![(pose, shape)],
                         ..Self::default()
@@ -163,9 +173,7 @@ impl StaticGeometry {
         }
         for (index, kind, team, offsets) in &self.mechanisms {
             let fraction = state.fraction(*kind, *team);
-            result.shapes[*index].0.translation = vector(std::array::from_fn(|i| {
-                offsets[0][i] + (offsets[1][i] - offsets[0][i]) * fraction
-            }));
+            result.shapes[*index].0 = pose(offsets.pose(fraction));
         }
         result
     }

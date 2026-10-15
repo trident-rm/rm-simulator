@@ -94,7 +94,8 @@ use serde::{Deserialize, Serialize};
 /// Version 50 adds the Drone's Aerial Safety Rope to the chassis configuration
 /// and the `MapMarker` command.
 /// Version 52 adds connected deployment and the reliable ownership receipt.
-pub const PROTOCOL_VERSION: u32 = 52;
+/// Version 53 carries the RMUC 2027 V1.0.0 control/structure authority.
+pub const PROTOCOL_VERSION: u32 = 53;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///

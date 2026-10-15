@@ -230,7 +230,7 @@ pub(crate) struct DynamicCollisionWireframe(usize);
 struct MovingMesh {
     kind: rm_simulator_world::referee::Mechanism,
     team: rm_simulator_world::Team,
-    translations_m: [[f64; 3]; 2],
+    motion: rm_simulator_world::referee::MotionFrame,
     mesh: Mesh,
 }
 
@@ -251,20 +251,24 @@ pub(crate) struct DynamicWireframe {
 struct MovingMeshPose {
     kind: rm_simulator_world::referee::Mechanism,
     team: rm_simulator_world::Team,
-    translations_m: [[f64; 3]; 2],
+    motion: rm_simulator_world::referee::MotionFrame,
 }
 impl MovingMeshPose {
     fn transform(&self, scene: &rm_simulator_render::sync::SceneState) -> Transform {
         use rm_simulator_world::referee::Mechanism;
         let fraction = match self.kind {
+            Mechanism::Outpost => scene
+                .outposts
+                .get(self.team.index())
+                .map_or(0., |o| o.angle_rad),
             Mechanism::Base => f64::from(scene.base_open_fraction[self.team.index()]),
             Mechanism::DartDoor => f64::from(scene.dart_door_open[self.team.index()]),
             Mechanism::DartTarget => f64::from(scene.dart_target_fraction),
         };
-        Transform::from_translation(flu_position(std::array::from_fn(|i| {
-            self.translations_m[0][i]
-                + (self.translations_m[1][i] - self.translations_m[0][i]) * fraction
-        })))
+        let pose = self.motion.pose(fraction);
+        let mut transform = Transform::default();
+        rm_simulator_render::apply_pose(&mut transform, crate::frames::pose_flu(pose));
+        transform
     }
 }
 
@@ -356,7 +360,7 @@ pub fn dynamic_colliders(
                         MovingMesh {
                             kind: part.kind,
                             team: part.team,
-                            translations_m: part.translations_m,
+                            motion: part.motion,
                             mesh: wireframe_mesh(&CollisionMesh {
                                 vertices_m,
                                 triangles,
@@ -382,7 +386,7 @@ pub fn dynamic_colliders(
                     MovingMeshPose {
                         kind: part.kind,
                         team: part.team,
-                        translations_m: part.translations_m,
+                        motion: part.motion,
                     },
                     meshes.add(part.mesh),
                 )
@@ -494,6 +498,7 @@ mod tests {
             .insert_resource(Player::at(Vec3::ZERO, 1.2, 0.4))
             .insert_resource(Drive::new(id, true))
             .init_resource::<SceneInput>()
+            .init_resource::<rm_simulator_render::targets::TargetInput>()
             .add_systems(Update, crate::scene::publish_scene);
         app.update();
         let before = app.world().resource::<SceneInput>().0.clone();
@@ -514,6 +519,7 @@ mod tests {
             .insert_resource(Player::at(Vec3::ZERO, 1.2, 0.4))
             .insert_resource(Drive::new(id, true))
             .init_resource::<SceneInput>()
+            .init_resource::<rm_simulator_render::targets::TargetInput>()
             .add_systems(Update, crate::scene::publish_scene);
         app.update();
         let snapshot = &app.world().resource::<Session>().snapshot;

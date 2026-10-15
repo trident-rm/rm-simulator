@@ -25,6 +25,7 @@ mod lifecycle;
 pub mod math;
 pub mod net;
 pub mod protocol;
+pub mod rmuc_2027;
 pub mod roster;
 pub mod simulation;
 pub mod snapshot_codec;

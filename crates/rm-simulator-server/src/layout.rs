@@ -97,7 +97,7 @@ pub struct Terrain {
     /// crossing this XY perimeter is absorbed. `None` leaves the field without
     /// projectile bounds.
     pub projectile_bounds_m: Option<[[f64; 3]; 2]>,
-    /// Moving mechanisms, one entry per placed prismatic joint.
+    /// Moving mechanisms, one entry per placed translation or rotor joint.
     pub mechanisms: Vec<MechanismMesh>,
     /// The floor and arena visual meshes and the
     /// placed static scenery, as one triangle soup; also the ground the
@@ -121,10 +121,9 @@ pub struct MechanismMesh {
     pub mechanism: rm_simulator_world::referee::Mechanism,
     /// Team the placement belongs to, from its x side.
     pub team: Team,
-    /// Displacement of the subtree in FLU metres at fraction `0` and `1` of the
-    /// mechanism's travel: the two joint limits scaled onto the world slide
-    /// axis.
-    pub offsets_m: [[f64; 3]; 2],
+    /// Translation endpoints in metres, or a source rotor pivot and unit axis.
+    /// Drawing and collision resolve the same typed motion frame.
+    pub motion: rm_simulator_world::referee::MotionFrame,
 }
 /// Prismatic mechanisms driven by referee controls or simulation time.
 pub fn mechanism_joint(
@@ -184,7 +183,9 @@ pub fn load_terrain(cad: &CadAssets) -> anyhow::Result<Terrain> {
     }
     let mut fixtures = CollisionMesh::default();
     for (name, asset) in [("rune", &cad.rune), ("outpost", &cad.outpost)] {
-        let fixed = if cad.rest_pose_only {
+        let fixed = if cad.rmuc_2027.is_some() {
+            crate::rmuc_2027::fixed_collision(cad, asset)?
+        } else if cad.rest_pose_only {
             collision_mesh::load_glb(&asset.physics_file(&cad.root))?
         } else if let Some(semantics) = asset.physics_semantics() {
             collision_mesh::load_glb_selected(
@@ -200,6 +201,7 @@ pub fn load_terrain(cad: &CadAssets) -> anyhow::Result<Terrain> {
             !fixed.triangles.is_empty(),
             "{name} visual mesh has no `{FIXED_NODE}` node"
         );
+        load_mechanisms(cad, asset, &mut mechanisms)?;
         for placement in &asset.placements {
             fixtures.append(fixed.placed(placement));
         }
@@ -322,6 +324,9 @@ fn load_asset_collision(
     cad: &CadAssets,
     asset: &crate::cad_assets::CadAsset,
 ) -> anyhow::Result<CollisionMesh> {
+    if cad.rmuc_2027.is_some() {
+        return crate::rmuc_2027::fixed_collision(cad, asset);
+    }
     if cad.rest_pose_only {
         return collision_mesh::load_glb(&asset.physics_file(&cad.root));
     }
@@ -352,6 +357,9 @@ fn load_mechanisms(
     asset: &crate::cad_assets::CadAsset,
     output: &mut Vec<MechanismMesh>,
 ) -> anyhow::Result<()> {
+    if cad.rmuc_2027.is_some() {
+        return crate::rmuc_2027::mechanisms(cad, asset, output);
+    }
     if cad.rest_pose_only {
         return Ok(());
     }
@@ -386,10 +394,12 @@ fn load_mechanisms(
                 mesh: mesh.placed(placement),
                 mechanism,
                 team: side_team(placement.translation_m[0]),
-                offsets_m: joint
-                    .limits
-                    .expect("bounded mechanism")
-                    .map(|v| axis.map(|a| a * v)),
+                motion: rm_simulator_world::referee::MotionFrame::Translation {
+                    offsets_m: joint
+                        .limits
+                        .expect("bounded mechanism")
+                        .map(|v| axis.map(|a| a * v)),
+                },
             });
         }
     }
@@ -428,13 +438,24 @@ pub fn add_terrain(field: &mut Field, terrain: &Terrain) -> anyhow::Result<()> {
         field.add_static_mesh(mesh.vertices_m.clone(), mesh.triangles.clone())?;
     }
     for part in &terrain.mechanisms {
-        field.add_mechanism_mesh(
-            part.mesh.vertices_m.clone(),
-            part.mesh.triangles.clone(),
-            part.mechanism,
-            part.team,
-            part.offsets_m,
-        )?;
+        match part.motion {
+            rm_simulator_world::referee::MotionFrame::Translation { offsets_m } => field
+                .add_mechanism_mesh(
+                    part.mesh.vertices_m.clone(),
+                    part.mesh.triangles.clone(),
+                    part.mechanism,
+                    part.team,
+                    offsets_m,
+                )?,
+            rm_simulator_world::referee::MotionFrame::Rotation { pivot_m, axis } => field
+                .add_rotor_mesh(
+                    part.mesh.vertices_m.clone(),
+                    part.mesh.triangles.clone(),
+                    part.team,
+                    pivot_m,
+                    axis,
+                )?,
+        }
     }
     Ok(())
 }
@@ -655,6 +676,10 @@ impl Default for LayoutOptions {
 pub fn field_config(cad: &CadAssets, options: &LayoutOptions) -> FieldConfig {
     if cad.rest_pose_only {
         return FieldConfig {
+            rmuc_2027: options
+                .referee
+                .then(|| cad.rmuc_2027.as_ref().map(|b| b.config()))
+                .flatten(),
             runes: Vec::new(),
             outposts: Vec::new(),
             bases: Vec::new(),
@@ -704,6 +729,7 @@ pub fn field_config(cad: &CadAssets, options: &LayoutOptions) -> FieldConfig {
         })
         .collect();
     FieldConfig {
+        rmuc_2027: None,
         bases: vec![],
         floor_height_m: if options.terrain { CATCH_FLOOR_M } else { 0.0 },
         chassis: Vec::new(),
@@ -1022,6 +1048,7 @@ mod tests {
     #[test]
     fn layout_options_place_runes_outposts_and_the_referee() {
         let cad = CadAssets {
+            rmuc_2027: None,
             season: rm_simulator_world::season::Season::Rm2026,
             rest_pose_only: false,
             root: std::path::PathBuf::new(),

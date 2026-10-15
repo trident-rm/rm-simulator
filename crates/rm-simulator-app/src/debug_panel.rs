@@ -141,7 +141,7 @@ fn spawn_panel(
             })
         }).insert((ChildOf(panel), ZoneChoice(index)));
     }
-    commands.spawn((ChildOf(panel), Text::new("Green: RFID footprints; boxes: inspection height\n2027: Figure 5-23 estimates (~10 cm); hidden tunnel pads inferred.\nDebug only; 2027 buffs/control are not connected."), ThemedText, label_font.clone()));
+    commands.spawn((ChildOf(panel), Text::new("Green: RFID footprints; boxes: inspection height\n2027: Figure 5-23 estimates (~10 cm); hidden tunnel pads inferred.\nBound 2027 maps drive control; other areas are inspection only."), ThemedText, label_font.clone()));
     commands.spawn_scene(bsn! {
         @FeathersButton { @caption: bsn! { Text("Network stats: Off / Compact / Detailed") ThemedText } }
         ActivateOnPress

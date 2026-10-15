@@ -130,9 +130,15 @@ See `docs/field-package.md` for composition, collision contracts and deployment.
 
 The RMUC 2027 sandbox displays the complete equipment roster through
 `server::roster`; only Infantry 3/4 and the manual Sentry have practice models.
-`server::zone_catalog` contains debug footprints, separate from the live world
-zones. Its 2027 Figure 5-23 estimates and inferred tunnel interiors are not
-referee detectors. F3, CLI and console toggles draw them without enabling rules.
+`server::zone_catalog` contains diagram footprints. Bound RMUC 2027 V1.0.0
+packages use its control-point subset as approximate antenna polygons; terrain,
+supply and other unsupported areas remain inspection-only. Never feed these
+into the 2026 referee. `gameplay::rmuc_2027::match_rules` owns the live 2027
+control/structure subset; `world::rmuc_2027` adapts contacts and source detector
+geometry and preserves the entire authority in `FieldRestore`. Source-body
+bindings are built by `scripts/bind-rmuc2027-structures.py`; the shared tower
+frame stays fixed, detector masks are source-envelope approximations and base
+shield travel is illustrative. See `docs/rmuc2027-field.md` before extending it.
 
 ## Layout
 

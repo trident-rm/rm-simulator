@@ -5,8 +5,9 @@
 `rm-simulator-gameplay` runs a match without Bevy, Rapier, CAD, networking or
 host time. It is pinned to the English RoboMaster 2026 University Championship
 Rule Manual V2.1.0, dated 2026-07-17. It does not silently adopt later releases.
-The [2027 rules reference](rules-2027.md) is a separate future implementation
-baseline; [season builds](seasons.md) explains feature availability and admission.
+The [2027 rules reference](rules-2027.md) is a separate implementation baseline.
+The [live 2027 control/structure subset](rmuc2027-field.md#enable-the-live-controlstructure-subset)
+uses `rmuc_2027::match_rules::Match`, not the 2026 `Game`; [season builds](seasons.md) explains feature availability and admission.
 
 ```sh
 just gameplay-test
@@ -31,9 +32,9 @@ Read this guide before changing either gameplay integration.
 
 ## RMUC 2027 control component
 
-With `season-2027`, `rm_simulator_gameplay::rmuc_2027::Control` implements the
-UC V1.0.0 territory state machine separately from `Game`. It is not used by the
-live referee yet and does not enable full 2027 match admission. The 2026 rule
+`rm_simulator_gameplay::rmuc_2027::Control` implements the UC V1.0.0 territory
+state machine separately from the legacy `Game`. The native 2027 match adapter
+now consumes it; live world admission requires `season-2027` and source bindings. The 2026 rule
 inventory and engine below retain their existing meaning.
 
 The component implements UC §5.6.2, Tables 5-20–5-21, and the ownership-transfer
@@ -76,9 +77,10 @@ not additional timing precision specified by the manual.
 
 The component owns no base HP, robot HP, rotor, buffs, winner or match lifecycle.
 Callers consume `base_protected` and rebuild events and use cumulative points
-in the future 2027 result comparison. In particular, an outpost rebuild event is
-not an instruction to restart its rotor. Other 2027 rules and full checkpoint/
-network integration remain unavailable.
+in the native 2027 result comparison. In particular, an outpost rebuild event is
+not an instruction to restart its rotor. The enclosing match/world adapters
+carry these values through checkpoints and the network; the component itself
+still has no geometry or physics dependencies.
 
 `Control::snapshot()` includes activations, partial progress, scores, physical
 owners and elapsed nanoseconds. Serialize this snapshot and validate it with
@@ -298,3 +300,23 @@ ambiguous result requires `Adjudicate`; the engine never guesses a winner.
   occupation grace period does not count as continued scanning.
 
 These choices are documented and tested where they affect observable state.
+
+## Live RMUC 2027 control and structures
+
+`rmuc_2027::match_rules::Match` owns the explicit RMUC 2027 V1.0.0 subset:
+countdown/round clock, per-robot RFID expiry, eligibility and mutual exclusion,
+Fortress timers, control, base/outpost HP, physical ownership and rebuilds,
+permanent rotor stops, attack totals and single-round results. It receives
+physical contact observations and explicit nanosecond durations only.
+`rm-simulator-world::rmuc_2027::State` supplies source detector geometry and
+height-aware polygon contacts, with the whole state in `FieldRestore`.
+
+The [field guide](rmuc2027-field.md#enable-the-live-controlstructure-subset)
+documents startup, approximations, tie ordering and intentionally unsupported
+mechanics. Existing 2026 `Game` admission, balance tables and referee behavior
+remain unchanged. 2027 component types always compile for a stable protocol
+schema; the world checks `season-2027` before creation or restore.
+
+The native `FieldSnapshot.rmuc_2027` presentation state remains available when a
+viewer drops `restore`. Checkpoints encode the authority once and reconstruct
+this view; restore and checkpoint encoding reject mismatched copies.

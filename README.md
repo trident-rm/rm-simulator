@@ -22,7 +22,8 @@ the CAD scene handling, and the armor artwork masks were reused from the sibling
 The [2027 rules reference](docs/rules-2027.md) interprets the new season manuals.
 [Season build features](docs/seasons.md) support separate and combined builds;
 RM2027 has an isolated [control component](docs/gameplay.md#rmuc-2027-control-component);
-full RM2027 matches remain unavailable, and RM2026 remains the default.
+a bound map also enables the [2027 control/structure match subset](docs/rmuc2027-field.md#enable-the-live-controlstructure-subset).
+RM2026 remains the default; other 2027 systems are still unsupported.
 
 ## Contents
 
@@ -216,7 +217,9 @@ Crate ownership, tick order, restore and ECS boundaries are documented in
 [RMUC 2027 map support](docs/rmuc2027-field.md) adapts the new source export
 to the existing runtime layout for scenery and physics exploration. Enable
 `season-2027` alongside the default feature and select its package with
-`--cad-assets`; the bundled 2026 package remains the default.
+`--cad-assets`; the bundled 2026 package remains the default. A checksummed
+structure binding enables live RFID capture, scoring, base/outpost HP and
+ownership transfers. See the guide for coverage and geometry approximations.
 
 
 The exported RMUC map is versioned in `field/` through Git LFS. After cloning, run
@@ -487,7 +490,7 @@ does not acknowledge its execution by the host.
 | 50 | Adds the Drone's Aerial Safety Rope to the chassis configuration and the `MapMarker` command. |
 | 52 | Adds connected deployment and the reliable ownership receipt. |
 
-The current protocol version is 52, defined by `PROTOCOL_VERSION` in
+The current protocol version is 53, defined by `PROTOCOL_VERSION` in
 `crates/rm-simulator-server/src/protocol.rs`. GNS sends redundant controls
 and retried shot intents unreliably; scheduling receipts and terminal shot results
 remain reliable. There is no shooter-view fire path or input-acknowledgement

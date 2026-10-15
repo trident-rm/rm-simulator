@@ -21,6 +21,11 @@ pub struct PredictionScene {
     pub package_sha256: Option<String>,
 }
 impl PredictionScene {
+    /// Whether the local verified package matches the host's package identity.
+    pub fn matches_package(&self, cad: &CadAssets) -> bool {
+        self.package_sha256.is_some() && package_hash(cad) == self.package_sha256
+    }
+
     /// Record the construction settings a client needs, from the same CAD and
     /// options that built the field. Returns None when terrain is enabled but
     /// the package manifests cannot be read.

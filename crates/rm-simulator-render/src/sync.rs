@@ -173,10 +173,12 @@ pub struct SceneSyncSet;
 pub struct SceneSyncPlugin;
 impl Plugin for SceneSyncPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SceneInput>().add_systems(
-            Update,
-            (sync_bases, sync_outposts, sync_rune, sync_rune_effects).in_set(SceneSyncSet),
-        );
+        app.add_plugins(crate::targets::TargetPlugin)
+            .init_resource::<SceneInput>()
+            .add_systems(
+                Update,
+                (sync_bases, sync_outposts, sync_rune, sync_rune_effects).in_set(SceneSyncSet),
+            );
     }
 }
 

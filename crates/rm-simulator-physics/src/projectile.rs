@@ -572,7 +572,7 @@ pub struct WorldPhysics {
         ColliderHandle,
         crate::motion::Mechanism,
         crate::Team,
-        [[f64; 3]; 2],
+        crate::motion::MotionFrame,
     )>,
     /// Every scoring collider: a face index into `targets`, or a chassis
     /// armor module.
@@ -589,7 +589,7 @@ pub struct WorldPhysics {
 pub(crate) fn vector(v: [f64; 3]) -> Vector {
     Vector::new(v[0], v[1], v[2])
 }
-fn pose(p: Pose) -> Pose3 {
+pub(crate) fn pose(p: Pose) -> Pose3 {
     let [w, x, y, z] = p.rotation_wxyz;
     Pose3::from_parts(
         vector(p.translation_m),
@@ -752,7 +752,7 @@ impl WorldPhysics {
     /// Add one articulated part as a fixed mesh that
     /// [`Self::sync_mechanisms`] translates. `offsets_m` are the part's world
     /// translations in metres at mechanism fraction 0 and 1, and the vertices
-    /// describe the part in its untranslated frame.
+    /// describe the part in its untranslated frame. Rotors use `add_rotor_mesh`.
     pub fn add_mechanism_mesh(
         &mut self,
         vertices: Vec<[f64; 3]>,
@@ -764,8 +764,40 @@ impl WorldPhysics {
         if !offsets_m.iter().all(|v| finite(*v)) {
             return Err("nonfinite mechanism offset");
         }
+        if mechanism == crate::motion::Mechanism::Outpost {
+            return Err("use add_rotor_mesh for rotational geometry");
+        }
         let handle = self.add_static_mesh(vertices, triangles)?;
-        self.mechanisms.push((handle, mechanism, team, offsets_m));
+        self.mechanisms.push((
+            handle,
+            mechanism,
+            team,
+            crate::motion::MotionFrame::Translation { offsets_m },
+        ));
+        Ok(())
+    }
+    /// Add a prescribed rotor from rest-frame world triangles and a source
+    /// pivot in metres plus its dimensionless unit world axis.
+    pub fn add_rotor_mesh(
+        &mut self,
+        vertices: Vec<[f64; 3]>,
+        triangles: Vec<[u32; 3]>,
+        team: crate::Team,
+        pivot_m: [f64; 3],
+        axis: [f64; 3],
+    ) -> Result<(), &'static str> {
+        if !pivot_m.iter().chain(&axis).all(|v| v.is_finite())
+            || (axis.iter().map(|v| v * v).sum::<f64>() - 1.).abs() > 1e-6
+        {
+            return Err("invalid rotor pivot/axis");
+        }
+        let handle = self.add_static_mesh(vertices, triangles)?;
+        self.mechanisms.push((
+            handle,
+            crate::motion::Mechanism::Outpost,
+            team,
+            crate::motion::MotionFrame::Rotation { pivot_m, axis },
+        ));
         Ok(())
     }
     /// Whether resolving articulated scenery is necessary for this world.
@@ -778,12 +810,10 @@ impl WorldPhysics {
     pub fn sync_mechanisms(&mut self, state: &crate::motion::MechanismState) {
         for (handle, mechanism, team, offsets) in &self.mechanisms {
             let fraction = state.fraction(*mechanism, *team);
-            let position = vector(std::array::from_fn(|i| {
-                offsets[0][i] + (offsets[1][i] - offsets[0][i]) * fraction
-            }));
+            let position = pose(offsets.pose(fraction));
             let collider = &mut self.world.colliders[*handle];
-            if collider.translation() != position {
-                collider.set_translation(position);
+            if *collider.position() != position {
+                collider.set_position(position);
             }
         }
     }
@@ -1774,6 +1804,38 @@ mod tests {
         }
     }
     #[test]
+    fn rotating_source_mesh_retains_pivot_and_motion_through_geometry_restore() {
+        let mut physics = WorldPhysics::new(&[], 0.);
+        physics
+            .add_rotor_mesh(
+                vec![[3., 0., 1.], [4., 0., 1.], [3., 1., 1.]],
+                vec![[0, 1, 2]],
+                crate::Team::Red,
+                [2., 0., 0.],
+                [0., 0., 1.],
+            )
+            .unwrap();
+        let state = crate::motion::MechanismState {
+            outpost_angle_rad: [std::f64::consts::FRAC_PI_2, 0.],
+            ..Default::default()
+        };
+        physics.sync_mechanisms(&state);
+        let geometry = physics.static_geometry_snapshot(true);
+        let (vertices, _) = geometry.clone().into_triangles();
+        assert!(
+            vertices
+                .iter()
+                .any(|p| (p[0] - 2.).abs() < 1e-9 && (p[1] - 1.).abs() < 1e-9)
+        );
+        let mut restored = WorldPhysics::new(&[], 0.);
+        restored.insert_geometry(&geometry);
+        restored.sync_mechanisms(&state);
+        assert_eq!(
+            geometry.into_triangles(),
+            restored.static_geometry_snapshot(true).into_triangles()
+        );
+    }
+    #[test]
     fn cached_clearance_matches_exhaustive_queries_after_motion() {
         let mut physics = WorldPhysics::new(&[], 0.);
         for x in 0..50 {
@@ -1823,7 +1885,9 @@ mod tests {
                 0,
                 crate::motion::Mechanism::DartDoor,
                 Team::Red,
-                [[0.; 3], [10., 0., 0.]],
+                crate::motion::MotionFrame::Translation {
+                    offsets_m: [[0.; 3], [10., 0., 0.]],
+                },
             )],
             ..Default::default()
         };

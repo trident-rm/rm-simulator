@@ -12,6 +12,7 @@ pub mod chassis;
 pub mod outpost;
 pub mod projectile;
 pub mod referee;
+pub mod rmuc_2027;
 pub mod rune;
 mod scoring;
 pub mod zones;
@@ -117,6 +118,9 @@ pub struct ChassisPlacement {
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FieldConfig {
+    /// RMUC 2027 V1.0.0 control/structure subset; mutually exclusive with 2026 rules.
+    #[serde(default)]
+    pub rmuc_2027: Option<rmuc_2027::Config>,
     /// Live bases. `ArmorTarget::Base` indexes this list; empty means no base
     /// is simulated and none can be destroyed.
     #[serde(default)]
@@ -153,6 +157,7 @@ pub struct FieldConfig {
 impl Default for FieldConfig {
     fn default() -> Self {
         Self {
+            rmuc_2027: None,
             zones: Vec::new(),
             bases: Vec::new(),
             floor_height_m: 0.0,
@@ -221,6 +226,8 @@ pub enum FieldError {
 /// against armor registers that touch once more.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FieldRestore {
+    /// Complete RMUC 2027 authority and geometry, absent for 2026.
+    pub rmuc_2027: Option<rmuc_2027::State>,
     /// Every rune's activation state, held angle and seeded target stream.
     pub runes: Vec<Rune>,
     /// Every outpost's rotor stop and HP.
@@ -243,6 +250,9 @@ pub struct FieldRestore {
 /// rules' hidden state as well as what a viewer draws.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FieldSnapshot {
+    /// Native 2027 view, retained even when a drawing-only decoder drops restore.
+    /// The checkpoint codec derives this from the matching authority record.
+    pub rmuc_2027: Option<rmuc_2027::State>,
     /// Every base's fitted geometry, HP and shield.
     pub bases: Vec<BaseSnapshot>,
     /// Ticks elapsed since the field was built.
@@ -286,6 +296,7 @@ pub struct FieldSnapshot {
 /// assert_eq!(field.time_ns(), tick_ns());
 /// ```
 pub struct Field {
+    rmuc_2027: Option<rmuc_2027::State>,
     bases: Vec<BaseSnapshot>,
     floor_height_m: f64,
     tick: u64,
@@ -300,8 +311,9 @@ pub struct Field {
     zones: Vec<zones::ZoneArea>,
 }
 impl Field {
-    /// Build an RM2026 field, validating every rune, outpost and base.
-    /// Requires the `season-2026` Cargo feature.
+    /// Build the explicit configured ruleset. Ordinary configs require
+    /// `season-2026`; a source-bound `rmuc_2027` config requires `season-2027`
+    /// and admits only the documented RMUC 2027 control/structure subset.
     /// Chassis listed in the config join immediately, in order, so their ids
     /// match their index. The clock starts at tick zero.
     ///
@@ -323,13 +335,20 @@ impl Field {
     /// assert!(field.referee().is_none());
     /// ```
     pub fn new(config: &FieldConfig) -> Result<Self, FieldError> {
-        Self::new_for_season(season::Season::Rm2026, config)
+        Self::new_for_season(
+            if config.rmuc_2027.is_some() {
+                season::Season::Rm2027
+            } else {
+                season::Season::Rm2026
+            },
+            config,
+        )
     }
 
     /// Build a field only for an enabled season with implemented gameplay.
     ///
-    /// RM2027 currently returns [`FieldError::Season`] before constructing
-    /// any physics or rule state. Existing layouts describe RM2026 only.
+    /// RM2027 requires an explicit [`FieldConfig::rmuc_2027`] source binding.
+    /// An ordinary 2026 config is refused when labelled 2027.
     ///
     /// ```
     /// use rm_simulator_world::{Field, FieldConfig, FieldError, season::Season};
@@ -342,7 +361,29 @@ impl Field {
         season: season::Season,
         config: &FieldConfig,
     ) -> Result<Self, FieldError> {
-        season.require_playable()?;
+        if let Some(live_config) = config.rmuc_2027.as_ref()
+            && season == season::Season::Rm2027
+        {
+            if !season.is_enabled() {
+                return Err(season::SeasonError::Disabled(2027).into());
+            }
+            if config.referee.is_some()
+                || !config.runes.is_empty()
+                || !config.outposts.is_empty()
+                || !config.bases.is_empty()
+                || !config.zones.is_empty()
+            {
+                return Err(FieldError::Restore(
+                    "2027 field cannot contain 2026 rule geometry",
+                ));
+            }
+            live_config.validate().map_err(FieldError::Restore)?;
+        } else {
+            season.require_playable()?;
+            if config.rmuc_2027.is_some() {
+                return Err(FieldError::Restore("2027 config needs 2027 identity"));
+            }
+        }
         for base in &config.bases {
             base.validate().map_err(FieldError::Mesh)?;
         }
@@ -401,8 +442,21 @@ impl Field {
             .map(BaseSnapshot::new)
             .collect();
         let mut faces = Vec::new();
-        Self::write_target_faces(&runes, &outposts, &bases, None, 0, &mut faces);
+        let rmuc_2027 = config.rmuc_2027.clone().map(|config| rmuc_2027::State {
+            game: rmuc_2027::match_rules::Match::new(config.rotor_direction),
+            config,
+        });
+        Self::write_target_faces(
+            &runes,
+            &outposts,
+            &bases,
+            rmuc_2027.as_ref(),
+            None,
+            0,
+            &mut faces,
+        );
         let mut field = Self {
+            rmuc_2027,
             bases,
             floor_height_m: config.floor_height_m,
             tick: 0,
@@ -436,11 +490,16 @@ impl Field {
         runes: &[Rune],
         outposts: &[Outpost],
         bases: &[BaseSnapshot],
+        rmuc_2027: Option<&rmuc_2027::State>,
         dart_since_ns: Option<u64>,
         time_ns: u64,
         faces: &mut Vec<TargetFace>,
     ) {
         faces.clear();
+        if let Some(state) = rmuc_2027 {
+            state.faces(faces);
+            return;
+        }
         let dart = referee::dart_target_position(dart_since_ns, time_ns);
         for (base, state) in bases.iter().enumerate() {
             for plate in 0..7 {
@@ -503,6 +562,21 @@ impl Field {
         self.sync_mechanisms();
         Ok(())
     }
+    /// Register a source rotor's exact rest-frame world triangles, pivot in
+    /// metres and dimensionless unit axis. Rules supply the angle each tick.
+    pub fn add_rotor_mesh(
+        &mut self,
+        vertices_m: Vec<[f64; 3]>,
+        triangles: Vec<[u32; 3]>,
+        team: Team,
+        pivot_m: [f64; 3],
+        axis: [f64; 3],
+    ) -> Result<(), FieldError> {
+        self.physics
+            .add_rotor_mesh(vertices_m, triangles, team, pivot_m, axis)
+            .map_err(FieldError::Mesh)
+    }
+
     /// The fixed collision geometry the physics actually holds (meshes
     /// and boxes; not the catch floor), as one triangle soup in
     /// world FLU metres, for debugging views.
@@ -601,6 +675,30 @@ impl Field {
         shot: Shot,
         shooter: Option<u32>,
     ) -> Result<u64, FieldError> {
+        if let Some(state) = &self.rmuc_2027 {
+            if shot.caliber != Caliber::Mm17 {
+                return Err(FieldError::Referee(
+                    "2027 Heavy launcher suppression is not implemented",
+                ));
+            }
+            if state.game.phase == rmuc_2027::match_rules::Phase::Countdown
+                || state.game.phase == rmuc_2027::match_rules::Phase::Finished
+            {
+                return Err(FieldError::Referee(
+                    "2027 launcher unavailable in this phase",
+                ));
+            }
+            if shooter.is_some_and(|id| {
+                state
+                    .game
+                    .robots
+                    .iter()
+                    .find(|r| r.id == id)
+                    .is_none_or(|r| r.hp == 0 || !r.online)
+            }) {
+                return Err(FieldError::Referee("2027 robot is defeated or offline"));
+            }
+        }
         if let Some(referee) = &self.referee {
             referee
                 .check_launch(shooter, shot.caliber)
@@ -658,10 +756,25 @@ impl Field {
     /// assert_eq!(field.chassis_team(2), Some(Team::Blue));
     /// ```
     pub fn add_chassis(&mut self, placement: &ChassisPlacement) -> Result<u32, FieldError> {
+        if self.rmuc_2027.is_some()
+            && !matches!(placement.kind, RobotKind::Infantry | RobotKind::Sentry)
+        {
+            return Err(FieldError::Referee("unsupported 2027 ground role"));
+        }
         let id = self
             .physics
             .add_chassis(placement.team, placement.config.clone(), placement.spawn)
             .map_err(FieldError::Chassis)?;
+        if let Some(state) = &mut self.rmuc_2027 {
+            let role = match placement.kind {
+                RobotKind::Infantry => rmuc_2027::match_rules::GroundRole::Infantry,
+                RobotKind::Sentry => rmuc_2027::match_rules::GroundRole::Sentry,
+                _ => return Err(FieldError::Referee("unsupported 2027 ground role")),
+            };
+            state
+                .game
+                .add_robot(id, referee::game_team(placement.team), role);
+        }
         if let Some(referee) = &mut self.referee {
             referee
                 .add_robot(id, placement.team, placement.kind, placement.performance)
@@ -674,6 +787,12 @@ impl Field {
         self.physics
             .remove_chassis(id)
             .map_err(FieldError::Chassis)?;
+        if let Some(state) = &mut self.rmuc_2027 {
+            state.game.robots.retain(|r| r.id != id);
+            if state.game.phase == rmuc_2027::match_rules::Phase::Running {
+                state.game.activations();
+            }
+        }
         if let Some(referee) = &mut self.referee {
             referee.remove_robot(id).map_err(FieldError::Referee)?;
         }
@@ -717,6 +836,12 @@ impl Field {
     /// Cut the drive of every chassis whose robot the referee has defeated
     /// and restore the revived ones.
     fn sync_defeats(&mut self) {
+        if let Some(state) = &self.rmuc_2027 {
+            for robot in &state.game.robots {
+                self.physics.set_chassis_defeated(robot.id, robot.hp == 0);
+            }
+            return;
+        }
         let Some(referee) = &self.referee else {
             return;
         };
@@ -845,6 +970,13 @@ impl Field {
     pub fn referee(&self) -> Option<&Referee> {
         self.referee.as_ref()
     }
+    /// Supply the host's random shared rotor direction for the next 2027 round.
+    /// The selected sign is carried into the match checkpoint at Start.
+    pub fn set_rmuc_2027_rotor_direction(&mut self, direction: i8) {
+        if let Some(state) = &mut self.rmuc_2027 {
+            state.config.rotor_direction = if direction < 0 { -1 } else { 1 };
+        }
+    }
     /// Forward an operator command to the referee, stamped with the field's
     /// own clock. Base and outpost HP overrides are applied to the physical
     /// objects here rather than inside the referee; `StartMatch` and
@@ -874,6 +1006,106 @@ impl Field {
     /// ```
     pub fn referee_command(&mut self, command: RefereeCommand) -> Result<(), FieldError> {
         let now_ns = self.time_ns();
+        if let Some(state) = &mut self.rmuc_2027 {
+            use rmuc_2027::match_rules::{Match, Phase};
+            match command {
+                RefereeCommand::StartMatch => {
+                    if state.game.phase != Phase::Idle {
+                        return Err(FieldError::Referee(
+                            "reset the 2027 match before starting again",
+                        ));
+                    }
+                    state.game.start(state.config.rotor_direction);
+                }
+                RefereeCommand::ResetMatch => {
+                    let robots = state.game.robots.clone();
+                    state.game = Match::new(state.config.rotor_direction);
+                    for r in robots {
+                        state.game.add_robot(r.id, r.team, r.role);
+                    }
+                }
+                RefereeCommand::FinishMatch => {
+                    if !matches!(state.game.phase, Phase::Countdown | Phase::Running) {
+                        return Err(FieldError::Referee("no active 2027 round to finish"));
+                    }
+                    state.game.finish();
+                }
+                RefereeCommand::SetBaseHp {
+                    team,
+                    hp,
+                    shield_hp,
+                } => {
+                    if shield_hp != 0 || hp > rmuc_2027::match_rules::BASE_HP {
+                        return Err(FieldError::Referee(
+                            "2027 bases have at most 10000 HP and no virtual shield",
+                        ));
+                    }
+                    state.game.set_base_hp(referee::game_team(team), hp)
+                }
+                RefereeCommand::SetOutpostHp { outpost, hp } => {
+                    let side = *Team::BOTH
+                        .get(outpost as usize)
+                        .ok_or(FieldError::Referee("invalid 2027 outpost"))?;
+                    if hp > 1000 || (hp > 0 && state.game.outpost_hp[side.index()] == 0) {
+                        return Err(FieldError::Referee(
+                            "2027 outpost rebuild requires a control transfer; HP maximum is 1000",
+                        ));
+                    }
+                    state.game.set_outpost_hp(referee::game_team(side), hp);
+                }
+                RefereeCommand::SetBaseOpen { team, open } => {
+                    state.game.base_open[team.index()] = open
+                }
+                RefereeCommand::SetRobotHp { robot, hp } => {
+                    let r = state
+                        .game
+                        .robots
+                        .iter_mut()
+                        .find(|r| r.id == robot)
+                        .ok_or(FieldError::Referee("unknown 2027 robot"))?;
+                    r.hp = hp.min(r.max_hp);
+                    if r.hp == 0 {
+                        r.expires_ns = [None; 8];
+                    }
+                }
+                RefereeCommand::ReviveRobot { robot } => {
+                    let r = state
+                        .game
+                        .robots
+                        .iter_mut()
+                        .find(|r| r.id == robot)
+                        .ok_or(FieldError::Referee("unknown 2027 robot"))?;
+                    r.hp = r.max_hp;
+                    r.expires_ns = [None; 8];
+                }
+                RefereeCommand::DamageRobot { robot, amount } => {
+                    let r = state
+                        .game
+                        .robots
+                        .iter_mut()
+                        .find(|r| r.id == robot)
+                        .ok_or(FieldError::Referee("unknown 2027 robot"))?;
+                    r.hp = r.hp.saturating_sub(amount);
+                    if r.hp == 0 {
+                        r.expires_ns = [None; 8];
+                    }
+                }
+                _ => {
+                    return Err(FieldError::Referee(
+                        "command is outside the 2027 control/structure subset",
+                    ));
+                }
+            }
+            if state.game.phase == Phase::Running {
+                state.game.activations();
+            }
+            for r in &state.game.robots {
+                self.physics
+                    .set_chassis_defeated(r.id, r.hp == 0 && state.game.phase != Phase::Idle);
+            }
+            self.sync_mechanisms();
+            return Ok(());
+        }
         let referee = self
             .referee
             .as_mut()
@@ -949,7 +1181,7 @@ impl Field {
             .ok_or(FieldError::TickOverflow)?;
         while self.tick < end {
             let idle = self.physics.is_idle();
-            if idle && self.referee.is_none() {
+            if idle && self.referee.is_none() && self.rmuc_2027.is_none() {
                 for rune in &mut self.runes {
                     rune.advance_to(end * tick_ns())?;
                 }
@@ -967,6 +1199,7 @@ impl Field {
                             &self.runes,
                             &self.outposts,
                             &self.bases,
+                            self.rmuc_2027.as_ref(),
                             self.referee
                                 .as_ref()
                                 .and_then(Referee::dart_target_since_ns),
@@ -1004,6 +1237,7 @@ impl Field {
                 self.sync_structures(next_ns);
                 self.sync_defeats();
             }
+            self.advance_2027(tick_ns());
             self.sync_mechanisms();
             if idle {
                 continue;
@@ -1014,6 +1248,7 @@ impl Field {
                         &self.runes,
                         &self.outposts,
                         &self.bases,
+                        self.rmuc_2027.as_ref(),
                         self.referee
                             .as_ref()
                             .and_then(Referee::dart_target_since_ns),
@@ -1110,7 +1345,11 @@ impl Field {
     /// Resolve match state only when articulated scenery actually needs it.
     fn sync_mechanisms(&mut self) {
         if self.physics.has_mechanisms() {
-            let state = referee::mechanism_state(self.referee.as_ref(), self.time_ns());
+            let mut state = referee::mechanism_state(self.referee.as_ref(), self.time_ns());
+            if let Some(r) = &self.rmuc_2027 {
+                state.outpost_angle_rad = Team::BOTH.map(|t| r.angle_rad(t));
+                state.base_open_fraction = r.game.base_open.map(|v| if v { 1. } else { 0. });
+            }
             self.physics.sync_mechanisms(&state);
         }
     }
@@ -1137,6 +1376,9 @@ impl Field {
     /// assert!(field.armor_disabled(face));
     /// ```
     pub fn armor_disabled(&self, target: ArmorTarget) -> bool {
+        if let Some(state) = &self.rmuc_2027 {
+            return state.disabled(target);
+        }
         match target {
             ArmorTarget::Base { base, .. } => {
                 self.bases.get(base as usize).is_none_or(|b| b.hp == 0)
@@ -1170,6 +1412,7 @@ impl Field {
     pub fn snapshot(&self) -> FieldSnapshot {
         let time_ns = self.time_ns();
         FieldSnapshot {
+            rmuc_2027: self.rmuc_2027.clone(),
             bases: self.bases.clone(),
             tick: self.tick,
             time_ns,
@@ -1186,6 +1429,7 @@ impl Field {
             hits_detected: self.hits_detected,
             referee: self.referee.as_ref().map(Referee::snapshot),
             restore: Some(FieldRestore {
+                rmuc_2027: self.rmuc_2027.clone(),
                 runes: self.runes.clone(),
                 outposts: self.outposts.clone(),
                 referee: self.referee.clone(),
@@ -1241,8 +1485,28 @@ impl Field {
         geometry: &StaticGeometry,
         floor_height_m: f64,
     ) -> Result<Self, FieldError> {
-        // Current checkpoints have the RM2026 wire schema and rules only.
-        season::Season::Rm2026.require_playable()?;
+        // The explicit native authority chooses restore admission; never infer
+        // a season from a team, HP value or CAD position.
+        let incoming_2027 = snapshot.restore.as_ref().and_then(|r| r.rmuc_2027.as_ref());
+        if let Some(state) = incoming_2027 {
+            if !season::Season::Rm2027.is_enabled() {
+                return Err(season::SeasonError::Disabled(2027).into());
+            }
+            state.config.validate().map_err(FieldError::Restore)?;
+            state.game.validate().map_err(FieldError::Restore)?;
+            if !snapshot.bases.is_empty()
+                || !snapshot.outposts.is_empty()
+                || !snapshot.runes.is_empty()
+                || snapshot.referee.is_some()
+            {
+                return Err(FieldError::Restore("mixed season checkpoint"));
+            }
+        } else {
+            season::Season::Rm2026.require_playable()?;
+        }
+        if snapshot.rmuc_2027.as_ref() != incoming_2027 {
+            return Err(FieldError::Restore("2027 view differs from its authority"));
+        }
         let rules = snapshot
             .restore
             .as_ref()
@@ -1273,6 +1537,7 @@ impl Field {
             &runes,
             &outposts,
             &snapshot.bases,
+            incoming_2027,
             rules
                 .referee
                 .as_ref()
@@ -1286,6 +1551,7 @@ impl Field {
             .map_err(FieldError::Restore)?;
         physics.insert_geometry(geometry);
         let mut field = Self {
+            rmuc_2027: rules.rmuc_2027.clone(),
             bases: snapshot.bases.clone(),
             floor_height_m,
             tick: snapshot.tick,
@@ -1354,6 +1620,7 @@ mod season_tests {
     fn season_disabled_restore_cannot_import_2026_rules() {
         // A disabled season is refused before decoding or validating a field.
         let snapshot = FieldSnapshot {
+            rmuc_2027: None,
             bases: vec![],
             tick: 0,
             time_ns: 0,
@@ -1755,10 +2022,7 @@ mod tests {
                 .unwrap()
                 .snapshot()
                 .dart_target_position(field.time_ns());
-            let translation: [f64; 3] = std::array::from_fn(|i| {
-                part.translations_m[0][i]
-                    + (part.translations_m[1][i] - part.translations_m[0][i]) * fraction
-            });
+            let translation = part.motion.pose(fraction).translation_m;
             let moved: Vec<[f64; 3]> = vertices
                 .iter()
                 .map(|v| std::array::from_fn(|i| v[i] + translation[i]))
@@ -2102,6 +2366,7 @@ mod tests {
             &field.runes,
             &field.outposts,
             &field.bases,
+            field.rmuc_2027.as_ref(),
             None,
             now_ns,
             &mut expected,
@@ -2200,6 +2465,7 @@ mod tests {
     /// A field with a chassis and a 15 degree ramp mesh ahead of it.
     fn ramp_field() -> FieldConfig {
         FieldConfig {
+            rmuc_2027: None,
             bases: vec![],
             runes: Vec::new(),
             outposts: Vec::new(),

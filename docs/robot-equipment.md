@@ -232,4 +232,6 @@ equipment counts. Connected deployment offers implemented prototypes and lists
 unsupported systems. A 2027 host rejects Hero, Engineer, Infantry 5 and the old
 Drone through both ordinary and staged spawn paths. The old Drone is not a
 2027 aerial system, and Hero is not a Heavy approximation. Infantry and Sentry
-remain practice prototypes; full 2027 match admission is still unavailable.
+remain practice prototypes. The bound RMUC 2027 field supports the limited
+live control/base/outpost subset described in [the field guide](rmuc2027-field.md);
+full 2027 equipment and match rules remain incomplete.

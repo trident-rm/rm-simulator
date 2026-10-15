@@ -150,6 +150,10 @@ pub struct Opened {
 #[path = "session_shots.rs"]
 mod shots;
 impl Session {
+    /// Live 2027 rules from the authoritative checkpoint, including RFID expiry.
+    pub fn rmuc_2027(&self) -> Option<&rm_simulator_world::rmuc_2027::State> {
+        self.snapshot.rmuc_2027.as_ref()
+    }
     /// Debug drawing reads only the client's verified asset geometry.
     pub fn collision_geometry(
         &self,
@@ -198,8 +202,12 @@ impl Session {
         spawn_yaw_deg: f64,
         progress: impl Fn(f32, &str),
     ) -> anyhow::Result<Opened> {
-        // The current protocol and field schema describe RM2026 sessions only.
-        rm_simulator_world::season::Season::Rm2026.require_playable()?;
+        // Admission follows the loaded package; native rules need source bindings.
+        if !cad.season.is_enabled() {
+            return Err(
+                rm_simulator_world::season::SeasonError::Disabled(cad.season.year()).into(),
+            );
+        }
         let role = if args.staging && !args.referee {
             Role::Spectator
         } else {
@@ -348,6 +356,23 @@ impl Session {
             .ok_or_else(|| anyhow::anyhow!("the host sent no initial state"))?
             .clone();
         let snapshot = state.field;
+        if snapshot
+            .restore
+            .as_ref()
+            .is_some_and(|r| r.rmuc_2027.is_some())
+        {
+            anyhow::ensure!(
+                cad.season == rm_simulator_world::season::Season::Rm2027 && cad.rmuc_2027.is_some(),
+                "host runs RMUC 2027 V1.0.0; load its bound 2027 field package"
+            );
+            anyhow::ensure!(
+                welcome
+                    .prediction_scene
+                    .as_ref()
+                    .is_some_and(|s| s.matches_package(cad)),
+                "RMUC 2027 host/client field packages differ"
+            );
+        }
         let paused = state.paused;
         // The eye starts where the chassis is (a remote host places it),
         // else at the requested point.
@@ -992,10 +1017,7 @@ impl Session {
     /// Read-only scenery for aim-assist visibility; no reduced physics world.
     pub fn aim_geometry(&self) -> Option<rm_simulator_world::StaticGeometry> {
         self.prediction.geometry.as_ref().map(|geometry| {
-            geometry.at_mechanisms(&rm_simulator_world::referee::mechanism_view(
-                self.snapshot.referee.as_ref(),
-                self.fire_time_ns(),
-            ))
+            geometry.at_mechanisms(&self.snapshot.mechanism_view(self.fire_time_ns()))
         })
     }
     /// Camera-only correction. Collision and the sampled shot muzzle stay unmodified.
@@ -1018,10 +1040,7 @@ impl Session {
         if !remote_near
             && self.prediction.geometry.as_ref().is_some_and(|geometry| {
                 geometry
-                    .at_mechanisms(&rm_simulator_world::referee::mechanism_view(
-                        self.snapshot.referee.as_ref(),
-                        self.frame_time_ns,
-                    ))
+                    .at_mechanisms(&self.snapshot.mechanism_view(self.frame_time_ns))
                     .sphere_clear(center, 0.15)
             })
         {
@@ -1230,7 +1249,17 @@ pub fn advance_world(
         .controls
         .just_pressed(InputAction::Start, &keys, buttons.as_deref())
     {
-        match session.referee().map(|referee| referee.phase) {
+        match session.referee().map(|referee| referee.phase).or_else(|| {
+            session.rmuc_2027().map(|r| {
+                use rm_simulator_world::rmuc_2027::match_rules::Phase;
+                match r.game.phase {
+                    Phase::Idle => MatchPhase::Idle,
+                    Phase::Countdown => MatchPhase::Countdown,
+                    Phase::Running => MatchPhase::Running,
+                    Phase::Finished => MatchPhase::Finished,
+                }
+            })
+        }) {
             Some(MatchPhase::Idle) => session.apply(Command::Referee(RefereeCommand::StartMatch)),
             Some(MatchPhase::Finished) => {
                 session.apply(Command::Referee(RefereeCommand::ResetMatch))
@@ -1341,6 +1370,7 @@ pub(crate) fn test_cad_assets() -> CadAssets {
         source_tessellated_collision: false,
     };
     CadAssets {
+        rmuc_2027: None,
         season: rm_simulator_world::season::Season::Rm2026,
         rest_pose_only: false,
         root: "unused".into(),

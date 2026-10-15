@@ -7,12 +7,11 @@ package layout: `manifest.json`, floor and arena GLBs, rune and outpost GLBs,
 and `equipment/manifest.json` with base and tech-core GLBs. The 2026 package
 remains separate and stays the default.
 
-The initial 2027 package supports source-colored scenery, complete static
-collision, free-camera inspection and chassis exploration. It is explicitly a
-**CAD rest-pose sandbox**. It has no live referee, scoring targets, moving
-mechanisms or 2026 buff zones. The independent 2027 control component is not yet
-connected to the field. This keeps source geometry available for inspection
-before animation and detector bindings are verified.
+The initial package is a **CAD rest-pose sandbox** with source-colored scenery,
+static collision and chassis exploration. A separately generated, checksummed
+structure binding enables the **RMUC 2027 V1.0.0 control/structure match subset**
+described below. The bundled 2026 field remains unchanged; no 2026 referee,
+armor damage table or rune is enabled on the 2027 field.
 
 ## Build from rm-map-tools
 
@@ -96,9 +95,9 @@ simulator's 48 perimeter triangles in addition to the source collision count.
 
 ## Run and inspect
 
-Use a combined build: the current session/physics host uses `season-2026`, and
-loading the new CAD requires `season-2027`. This does not run a 2026 referee on
-the new map. A 2027-only build still cannot open a full application session.
+Loading 2027 CAD requires `season-2027`. The unbound rest-pose package still uses
+the legacy practice host and needs a combined build. A bound package selects
+its explicit 2027 ruleset and supports a 2027-only or combined build.
 
 ```sh
 nix develop -c cargo run --locked -p rm-simulator-server \
@@ -110,15 +109,15 @@ nix develop -c cargo run --locked -p rm-simulator-app --features season-2027 -- 
 
 Omit `--fly` to explore using the existing training chassis. These models are
 physics tools, not a claim of 2027 robot construction compliance. Match controls
-cannot start a referee on a rest-pose package. Imported colors are kept without
+cannot start a match on an unbound rest-pose package. Imported colors are kept without
 team recoloring or the legacy scenery override. Prediction uses the normal
 matching-package hashes and the same collision geometry.
 
 For reproducible captures, add `--window-mode headless --console`, then use
 [the app console](console.md) to set the camera and request screenshots. `C`
 (or the console's inspection command) can overlay the actual collision meshes.
-The existing practice HUD still uses its 2026 roster labels; it does not
-represent a 2027 match roster.
+The HUD uses the complete 2027 equipment roster; unsupported systems remain
+labelled `NO SIM`.
 
 Before promoting this candidate to the bundled field or binding animation,
 visually check the full arena, central rune/core separation, both outposts,
@@ -153,6 +152,115 @@ bases and outposts, with roughly ±0.10 m horizontal precision and approximate
 surface heights. Three hidden tunnel interiors per side are inferred between
 visible ends and explicitly labelled. **Figure 5-24** specifies embedded module
 card spacing and dead zones, not a surveyed detection map. The overlay shows
-functional areas, not every embedded card or a physical RF field. These debug
-shapes deliberately do not populate `FieldConfig::zones` or drive capture,
-traversal, buffs or RFID expiry. Those require reviewed detector bindings.
+functional areas, not every embedded card or a physical RF field. On an unbound package these are inspection-only shapes. On a bound package,
+base, Fortress, central-highland and outpost footprints supply approximate
+body/antenna contacts to the native 2027 adapter. They never populate the 2026
+`FieldConfig::zones`. Terrain traversal, supply, assembly and vantage overlays
+remain inspection-only; embedded-card dead zones and RF propagation are not
+simulated.
+
+## Enable the live control/structure subset
+
+Generate a separate candidate from the pinned split source. Keep the original
+sandbox intact; the command refuses an existing output directory:
+
+```sh
+../rm-map-tools/ocpenv/bin/python scripts/bind-rmuc2027-structures.py \
+  --package local-assets/field-2027 \
+  --split ../rm-map-tools/out/rm2027/RMUC2027_V1.0.0/split \
+  --map-tools ../rm-map-tools --out local-assets/field-2027-live
+
+nix develop -c cargo run --locked -p rm-simulator-app --features season-2027 -- \
+  --cad-assets local-assets/field-2027-live --zones --rfid-zones
+```
+
+F5 starts the simulator's five-second countdown, followed by the seven-minute
+running phase. F6 pauses, F7 steps. Remote match controls retain the normal
+referee permission checks. Start again after Finish resets the round. Operator
+`ReviveRobot`/`SetRobotHp` remain available; automatic respawn is not part of
+this subset. Use `--fly` for a referee camera or omit it to drive Infantry 3/4
+or the manual Sentry. Both hosts and clients must use the same bound package.
+A 2027-only build uses `--no-default-features --features season-2027` before
+Cargo's `--` separator.
+
+The binding sidecar is named and SHA-256-pinned by `manifest.json`; it identifies
+**RMUC 2027 V1.0.0**, not RMUL or an unspecified season. Loading validates its
+source hash, detector poses, dimensions, axis vectors and joint contracts.
+Prediction uses the same package fingerprint and authoritative restored rules.
+
+### RFID and control
+
+The world samples chassis body centres at 128 Hz against the functional polygon
+and its 0.45 m height band. This is an explicit antenna approximation, using the
+reviewed diagram footprints. Band floors are calibrated from the verified ground
+at footprint vertices, edge midpoints and centre, selecting plausible surfaces
+near the diagram's level and adding 10 mm tolerance. This retains sloped edges
+without selecting a tunnel below an elevated point. A deck above/below a
+point cannot activate it merely by sharing x/y. Each eligible ground robot has
+its own two-second expiry for each point; pause freezes that clock. Death,
+offline status and departure remove eligibility immediately.
+
+Central-highland activation is mutually exclusive between teams. The first
+eligible side keeps its latch through expiry; simultaneous first detections use
+ascending chassis id as a deterministic simulation tie-break. Different points
+in one territory can still contest. Outpost RFID requires full control of its
+territory. Own Fortress requires loss of own outpost-territory control, allows
+only the first own robot, and opposing Fortress also requires three minutes and
+control of that side's outpost territory (§5.6.4). Opposing Fortress occupation
+opens base protective armor after ten seconds, retaining paused progress for
+three seconds after death/expiry.
+
+The existing five-second capture/rollback engine settles control before a
+coincident whole-second award. **Temporary control earns points**, as requested:
+both outposts give 1/s, both bases 3/s. The HUD shows points, each territory's
+full/temporary controller, progress, activation flags, contests and Fortress
+progress. RFID outlines turn red/blue while active and amber when contested.
+
+### Structures, damage and motion
+
+- UC §5.6.1 starts bases at 10,000 HP without the 2026 virtual shield and
+  outposts at 1,000 HP. Full control of one's original outpost territory gives
+  the corresponding base 100% defense. Temporary control does not.
+- Calibrated 17 mm projectile contacts apply **20 HP**, including the centre and
+  every bound base plate (UC Table 5-2). The 2026 centre bonus and upper-front
+  5 HP exception are not used. Detection retains UC §5.1.1's greater-than-12 m/s
+  normal speed and 50 ms per-module interval.
+- Destruction reports to the control engine. A completed physical ownership
+  transfer rebuilds the outpost at **500 HP**; owner, HP, color and damage
+  attribution remain distinct from original field side and temporary control.
+- Both rotors use one host-randomized direction per round and a five-second
+  ramp to 0.8π rad/s. First destruction, opposing current owner's base armor
+  opening or three minutes permanently stops that rotor. Rebuild never restarts
+  it. The source towers tilt about 1.5°; drawing, detector faces and collider
+  motion share the fitted three-dimensional axis.
+- Base destruction compares remaining base HP immediately. At timeout compare
+  accumulated control, attack damage actually applied to enemy HP, then remaining
+  robot HP, then draw (UC §5.8). Physical contacts are applied in their stable
+  per-tick contact order; simultaneous destruction is not batched.
+
+The exporter identifies every source solid by a unique geometry/face-count
+match and preserves the remaining surface model with its exact face count.
+It tessellates all source faces at 1 mm / 0.35 rad and records source-part and
+script hashes. All 43 outpost bodies and 27 base bodies are retained. Fifteen
+outpost armor-module bodies rotate; the shared tower frame stays fixed. The
+three base protective-armor bodies translate, with matching collision geometry.
+No old reconstructed armor or artwork is copied.
+
+**Binding approximations requiring visual review:** the active dot-matrix mask
+is not supplied, so detector rectangles use the source modules' projected
+front envelopes, offset 1.5 mm outside the skin. Only the three source-present
+base armor modules are bound; missing lower modules and dart detectors are not
+invented. Base shield travel is an **illustrative 0.25 m** displacement, without
+a claimed official end stop or travel duration. Plain colored detector panels
+are an inspection visual, not final 2027 artwork. The regenerated source assets
+have 405,623 triangles per outpost and 487,164 per base before instancing;
+`structure-binding-build.json` records the new counts separately from the
+original sandbox adapter's report.
+
+This is a playable, single-round control/structure subset. Fixed practice HP
+uses level-one HP-priority Infantry (200 HP, UC Table 5-13) and semi-automatic
+Sentry (200 HP, UC Table 3-6). It does not add experience, heat, ammunition
+logistics, automatic respawn, field buffs/traversal rewards, rune/dart/aerial/radar
+mechanics or Heavy. 42 mm hits are refused until Heavy launch observations can
+implement the mandatory damage-suppression rules. Those omissions are shown in
+the HUD; they never fall back to the 2026 engine.

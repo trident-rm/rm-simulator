@@ -24,6 +24,24 @@ pub struct Area {
     /// True for an RFID detection area; false for a larger mechanism footprint.
     pub rfid: bool,
 }
+impl Area {
+    /// Constituent control point for 2027 capture, or `None` for inspection-only
+    /// terrain, supply, assembly and vantage footprints.
+    pub fn control_point(&self) -> Option<rm_simulator_world::rmuc_2027::Point> {
+        use rm_simulator_world::rmuc_2027::Point;
+        if self.id.ends_with("central-highland") {
+            Some(Point::CentralHighland)
+        } else if self.id.ends_with("outpost") {
+            Some(Point::Outpost)
+        } else if self.id.ends_with("base") {
+            Some(Point::Base)
+        } else if self.id.ends_with("fortress") {
+            Some(Point::Fortress)
+        } else {
+            None
+        }
+    }
+}
 /// Build the selected season's inspection areas without enabling gameplay rules.
 /// 2026 uses the existing referee footprints; 2027 uses Figure 5-23 and §5.6.4.
 pub fn areas(season: Season) -> Vec<Area> {

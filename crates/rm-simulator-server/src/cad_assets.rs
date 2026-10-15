@@ -83,6 +83,8 @@ pub fn cad_point_to_flu(point: [f64; 3], floor_top_cad_m: f64) -> [f64; 3] {
 /// any asset is read.
 #[derive(Deserialize)]
 struct Manifest {
+    #[serde(default)]
+    rmuc2027_bindings: Option<BindingFile>,
     /// Manifest schema version; only 1 is accepted.
     schema_version: u32,
     /// Declared length unit; only `metres` is accepted.
@@ -110,6 +112,11 @@ struct Manifest {
     articulation: Option<crate::semantics::Descriptor>,
     /// One entry per named asset.
     assets: std::collections::BTreeMap<String, ManifestAsset>,
+}
+#[derive(Deserialize)]
+struct BindingFile {
+    file: String,
+    sha256: String,
 }
 /// One named asset in a manifest: the files to verify and where they sit.
 #[derive(Deserialize)]
@@ -250,6 +257,8 @@ pub struct CadAsset {
 /// records, and the named assets the layout needs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CadAssets {
+    /// Verified optional RMUC 2027 V1.0.0 source detector/motion bindings.
+    pub rmuc_2027: Option<crate::rmuc_2027::Bindings>,
     /// Season of the source CAD, independent of match engine availability.
     pub season: rm_simulator_world::season::Season,
     /// Draw and collide with the complete CAD rest pose; do not fit old targets,
@@ -532,7 +541,24 @@ pub fn load(root: &Path) -> anyhow::Result<CadAssets> {
         let scenery = asset(&arena, name, "", count)?;
         static_assets.push(scenery);
     }
+    let rmuc_2027 = arena
+        .rmuc2027_bindings
+        .as_ref()
+        .map(|binding| -> anyhow::Result<crate::rmuc_2027::Bindings> {
+            ensure!(
+                season == rm_simulator_world::season::Season::Rm2027
+                    && binding.file == "rmuc2027-bindings.json",
+                "invalid 2027 binding path/season"
+            );
+            let path = root.join(&binding.file);
+            verify_sha256(&path, &binding.sha256)?;
+            let value: crate::rmuc_2027::Bindings = serde_json::from_slice(&std::fs::read(path)?)?;
+            value.validate()?;
+            Ok(value)
+        })
+        .transpose()?;
     Ok(CadAssets {
+        rmuc_2027,
         season,
         rest_pose_only: arena.rest_pose_only,
         static_assets,

@@ -17,6 +17,8 @@ pub enum Mechanism {
     DartDoor,
     /// The dart rail target, shared by both teams.
     DartTarget,
+    /// Rotation around the caller-supplied outpost pivot and unit axis.
+    Outpost,
 }
 
 /// Resolved positions supplied by the caller; physics never consults a referee.
@@ -28,6 +30,7 @@ pub enum Mechanism {
 /// };
 ///
 /// let state = MechanismState {
+///     outpost_angle_rad: [0.; 2],
 ///     base_open_fraction: [1.0, 0.0],
 ///     dart_door_open: [true, true],
 ///     dart_target_fraction: 0.25,
@@ -43,6 +46,8 @@ pub enum Mechanism {
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MechanismState {
+    /// Outpost angles in radians by original field side, Red then Blue.
+    pub outpost_angle_rad: [f64; 2],
     /// Base shield plates, red then blue: 0 shut, 1 open (the far end of the
     /// captured travel), in between while moving ([`base_open_fraction`]).
     pub base_open_fraction: [f64; 2],
@@ -52,11 +57,12 @@ pub struct MechanismState {
     pub dart_target_fraction: f64,
 }
 impl MechanismState {
-    /// Interpolation fraction for one mechanism: the base's travel fraction,
+    /// Coordinate for one mechanism: outpost radians, the base's travel fraction,
     /// a dart door's 1.0 when open and 0.0 when shut, and the dart target's
     /// own fraction.
     pub fn fraction(&self, mechanism: Mechanism, team: Team) -> f64 {
         match mechanism {
+            Mechanism::Outpost => self.outpost_angle_rad[team.index()],
             Mechanism::Base => self.base_open_fraction[team.index()],
             Mechanism::DartDoor => f64::from(self.dart_door_open[team.index()]),
             Mechanism::DartTarget => self.dart_target_fraction,
@@ -66,6 +72,7 @@ impl MechanismState {
 impl Default for MechanismState {
     fn default() -> Self {
         Self {
+            outpost_angle_rad: [0.; 2],
             base_open_fraction: [0.0; 2],
             dart_door_open: [true; 2],
             dart_target_fraction: 0.0,
@@ -537,5 +544,47 @@ pub mod rune {
                 rotation_wxyz: multiply(hub.rotation_wxyz, spin),
             }
         })
+    }
+}
+
+/// The geometric frame of a caller-driven rigid scenery part.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MotionFrame {
+    /// Linear motion between two world translations.
+    Translation {
+        /// Closed/open translations in world FLU metres.
+        offsets_m: [[f64; 3]; 2],
+    },
+    /// Rotation around a source-fitted axis; geometry stays in its rest frame.
+    Rotation {
+        /// World FLU pivot in metres.
+        pivot_m: [f64; 3],
+        /// Unit, dimensionless world FLU rotation axis.
+        axis: [f64; 3],
+    },
+}
+impl MotionFrame {
+    /// Resolve a pure transform from a linear fraction or rotation angle in
+    /// radians. No solver, clock or rule state is read.
+    pub fn pose(self, value: f64) -> Pose {
+        match self {
+            Self::Translation { offsets_m } => Pose::at(std::array::from_fn(|i| {
+                offsets_m[0][i] + (offsets_m[1][i] - offsets_m[0][i]) * value
+            })),
+            Self::Rotation { pivot_m, axis } => {
+                let half = value / 2.;
+                let q = [
+                    half.cos(),
+                    axis[0] * half.sin(),
+                    axis[1] * half.sin(),
+                    axis[2] * half.sin(),
+                ];
+                let rotated = outpost::rotate(q, pivot_m);
+                Pose {
+                    translation_m: std::array::from_fn(|i| pivot_m[i] - rotated[i]),
+                    rotation_wxyz: q,
+                }
+            }
+        }
     }
 }

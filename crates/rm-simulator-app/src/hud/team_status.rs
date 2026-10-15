@@ -222,7 +222,12 @@ pub(super) fn update(
                         .find(|p| p.chassis == Some(c.id))
                         .and_then(|p| p.robot)
                         .map(|r| r.number()),
-                    hp: health.map(|r| (r.hp, r.max_hp)),
+                    hp: health.map(|r| (r.hp, r.max_hp)).or_else(|| {
+                        session
+                            .rmuc_2027()
+                            .and_then(|s| s.game.robots.iter().find(|r| r.id == c.id))
+                            .map(|r| (r.hp, r.max_hp))
+                    }),
                 }
             })
             .collect();

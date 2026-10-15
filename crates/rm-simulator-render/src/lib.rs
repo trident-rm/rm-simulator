@@ -14,6 +14,7 @@ pub mod projectile;
 pub mod quality;
 pub mod rune;
 pub mod sync;
+pub mod targets;
 use bevy::{
     camera::{Exposure, Hdr},
     core_pipeline::tonemapping::Tonemapping,

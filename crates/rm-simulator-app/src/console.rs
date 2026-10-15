@@ -727,6 +727,7 @@ fn state(world: &mut World) -> Value {
         "presentation_time_ns": session.presentation_time_ns(),
         "role":session.role, "chassis_id":session.chassis_id,
         "chassis":session.own_chassis(),
+        "rmuc_2027":session.rmuc_2027().map(|state|&state.game),
         "presented_chassis":session.presented_chassis(),
         "pending_shots":session.pending_shots(),
         "auto_aim":world.get_resource::<crate::auto_aim::AutoAim>().map(|aim| json!({

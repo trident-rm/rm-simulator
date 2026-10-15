@@ -4,7 +4,8 @@
 //!
 //! Features are additive: enabling both seasons keeps both identities. Enabling
 //! a season does not imply its match engine is implemented. Existing gameplay and
-//! field constructors use RM2026; RM2027 admission fails until its rules land.
+//! standalone Game constructors use RM2026. A native 2027 world subset has its
+//! own explicit source-bound configuration and feature admission.
 
 use serde::{Deserialize, Serialize};
 
@@ -18,7 +19,8 @@ pub enum Season {
     /// RoboMaster 2026; current rules implement the documented RMUC subset.
     #[serde(rename = "2026")]
     Rm2026,
-    /// RoboMaster 2027; isolated control rules exist, but match admission is unavailable.
+    /// RoboMaster 2027; the native control/structure world subset uses explicit
+    /// RMUC source bindings. The legacy Game API does not implement this season.
     #[serde(rename = "2027")]
     Rm2027,
 }
@@ -30,7 +32,9 @@ pub enum SeasonError {
     #[error("RM{0} is disabled in this build; enable Cargo feature season-{0}")]
     Disabled(u16),
     /// The season is enabled, but its match engine is not ready.
-    #[error("RM{0} matches are not implemented; isolated season components cannot start a match")]
+    #[error(
+        "RM{0} is not implemented by the legacy Game API; select an explicit supported world ruleset"
+    )]
     Unimplemented(u16),
 }
 
@@ -64,8 +68,9 @@ impl Season {
 
     /// Whether a match engine exists, independently of feature selection.
     ///
-    /// `true` means the simulator's documented subset exists, not that every
-    /// rulebook clause is enforced. Isolated rule components do not qualify.
+    /// `true` means the standalone legacy `Game` implements its documented
+    /// subset. The native 2027 world's explicit source-bound admission is
+    /// separate from this legacy API.
     /// See `docs/gameplay.md` for the integration boundary.
     pub const fn has_gameplay(self) -> bool {
         matches!(self, Self::Rm2026)

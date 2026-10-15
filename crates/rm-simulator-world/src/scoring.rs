@@ -12,7 +12,20 @@ enum DetectionOutcome {
 impl Field {
     fn detect(&self, time_ns: u64, contact: &Contact) -> DetectionOutcome {
         let is_rune = matches!(contact.target, ArmorTarget::Rune { .. });
-        let Some(offset) = projectile::scoring_offset(contact.target, contact.local_m) else {
+        let offset = if let Some(detector) = self
+            .rmuc_2027
+            .as_ref()
+            .and_then(|s| s.detector(contact.target))
+        {
+            let [x, y, z] = contact.local_m;
+            ((-0.004..=0.012).contains(&x)
+                && y.abs() <= detector.half_m[0]
+                && z.abs() <= detector.half_m[1])
+                .then_some([y, z])
+        } else {
+            projectile::scoring_offset(contact.target, contact.local_m)
+        };
+        let Some(offset) = offset else {
             return DetectionOutcome::Rejected(Rejection::OutsideTarget);
         };
         if is_rune && contact.caliber != Caliber::Mm17 {
@@ -60,6 +73,27 @@ impl Field {
         self.last_detection_ns.insert(contact.target, time_ns);
         hit.detected = true;
         self.hits_detected += 1;
+        if let Some(state) = &mut self.rmuc_2027 {
+            let target = match contact.target {
+                ArmorTarget::Base { base, .. } => {
+                    Some(gameplay::Target::Base(gameplay::Team::BOTH[base as usize]))
+                }
+                ArmorTarget::Outpost { outpost, .. } => Some(gameplay::Target::Outpost(
+                    gameplay::Team::BOTH[outpost as usize],
+                )),
+                ArmorTarget::Chassis { chassis, .. } => Some(gameplay::Target::Robot(chassis)),
+                _ => None,
+            };
+            if let Some(target) = target {
+                hit.damage = state.game.hit(
+                    target,
+                    contact.shooter,
+                    referee::game_caliber(contact.caliber),
+                );
+            }
+            self.sync_defeats();
+            return Ok(hit);
+        }
         match contact.target {
             ArmorTarget::Base { base, plate } => {
                 let team = self.bases[base as usize].config.team;

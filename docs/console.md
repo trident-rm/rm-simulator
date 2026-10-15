@@ -195,3 +195,7 @@ ticks, release the controls, then capture. Each tick is 7.8125 ms at the fixed
 128 Hz rate. Free-camera keyboard
 movement and held firing use app frames and are not deterministic tick scripts;
 use explicit camera poses or the `world` command for those cases.
+
+For a bound 2027 match, `state.rmuc_2027` exposes the native ruleset, phase,
+control, per-robot RFID expiries, structure HP/owners, rotor stops and result.
+The object is read-only; changes still use authorized `world` commands.

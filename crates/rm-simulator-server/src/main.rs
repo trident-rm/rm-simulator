@@ -37,12 +37,14 @@ struct Args {
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    rm_simulator_world::season::Season::Rm2026.require_playable()?;
+
     let cad = cad_assets::load(&args.host.cad_assets)?;
     println!(
         "CAD season: RM{}, mode: {}",
         cad.season.year(),
-        if cad.rest_pose_only {
+        if cad.rmuc_2027.is_some() && !args.host.no_referee {
+            "RMUC 2027 V1.0.0 control/structure match subset"
+        } else if cad.rest_pose_only {
             "rest-pose physics sandbox (no match referee)"
         } else {
             "live field"

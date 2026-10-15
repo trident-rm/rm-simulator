@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 hxyulin <hxyulin@proton.me>
+//! Plain source-fitted detector panels; no season rules or legacy armor artwork.
+use crate::{PoseFlu, TeamColor, apply_pose};
+use bevy::prelude::*;
+
+/// Caller-owned appearance of one detector panel.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TargetAppearance {
+    /// Stable caller identity, unique within one input frame.
+    pub id: u64,
+    /// Detector centre in FLU metres, +x outward.
+    pub pose: PoseFlu,
+    /// Width and height in metres.
+    pub size_m: [f32; 2],
+    /// Current physical owner, independent of original field side.
+    pub team: TeamColor,
+    /// True for a destroyed or inactive detector.
+    pub disabled: bool,
+    /// Caller-resolved strike flash.
+    pub flash: bool,
+}
+/// Replace every frame; an empty list removes every panel.
+#[derive(Resource, Default)]
+pub struct TargetInput(pub Vec<TargetAppearance>);
+#[derive(Component)]
+struct Panel(TargetAppearance);
+/// Install the passive panel renderer. Requires mesh and material assets to draw.
+pub struct TargetPlugin;
+impl Plugin for TargetPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<TargetInput>()
+            .add_systems(Update, sync.in_set(crate::sync::SceneSyncSet));
+    }
+}
+fn transform(a: &TargetAppearance) -> Transform {
+    let mut t = Transform::default();
+    apply_pose(&mut t, a.pose);
+    t.scale = Vec3::new(a.size_m[0], a.size_m[1], 0.002);
+    t
+}
+fn color(a: &TargetAppearance) -> Color {
+    if a.disabled {
+        Color::srgb(0.025, 0.025, 0.025)
+    } else if a.flash {
+        Color::srgb(0.5, 0.5, 0.5)
+    } else {
+        a.team.light().0
+    }
+}
+fn sync(
+    mut commands: Commands,
+    input: Res<TargetInput>,
+    meshes: Option<ResMut<Assets<Mesh>>>,
+    materials: Option<ResMut<Assets<StandardMaterial>>>,
+    mut panels: Query<(
+        Entity,
+        &mut Panel,
+        &mut Transform,
+        &MeshMaterial3d<StandardMaterial>,
+    )>,
+) {
+    let (Some(mut meshes), Some(mut materials)) = (meshes, materials) else {
+        return;
+    };
+    for (entity, mut old, mut t, material) in &mut panels {
+        let Some(a) = input.0.iter().find(|a| a.id == old.0.id) else {
+            commands.entity(entity).despawn();
+            continue;
+        };
+        if old.0 != *a {
+            if old.0.pose != a.pose || old.0.size_m != a.size_m {
+                *t = transform(a);
+            }
+            if (old.0.team, old.0.disabled, old.0.flash) != (a.team, a.disabled, a.flash)
+                && let Some(mut m) = materials.get_mut(&material.0)
+            {
+                m.base_color = color(a);
+                m.emissive = LinearRgba::from(color(a)) * 0.8;
+            }
+            old.0 = a.clone();
+        }
+    }
+    for a in &input.0 {
+        if panels.iter().any(|(_, p, _, _)| p.0.id == a.id) {
+            continue;
+        }
+        commands.spawn((
+            Panel(a.clone()),
+            Mesh3d(meshes.add(Cuboid::new(1., 1., 1.))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: color(a),
+                emissive: LinearRgba::from(color(a)) * 0.8,
+                ..default()
+            })),
+            transform(a),
+        ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn caller_changes_owner_darkness_pose_and_removes_panels_without_rules() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .add_plugins(TargetPlugin);
+        let a = TargetAppearance {
+            id: 42,
+            pose: PoseFlu {
+                translation_m: [1., 2., 3.],
+                rotation_wxyz: [1., 0., 0., 0.],
+            },
+            size_m: [0.09, 0.092],
+            team: TeamColor::Red,
+            disabled: false,
+            flash: false,
+        };
+        app.world_mut().resource_mut::<TargetInput>().0 = vec![a.clone()];
+        app.update();
+        let entity = app
+            .world_mut()
+            .query_filtered::<Entity, With<Panel>>()
+            .single(app.world())
+            .unwrap();
+        assert_eq!(
+            app.world().get::<Transform>(entity).unwrap().translation,
+            crate::flu_position([1., 2., 3.])
+        );
+        let mut b = a;
+        b.team = TeamColor::Blue;
+        b.disabled = true;
+        b.pose.translation_m[0] = 2.;
+        app.world_mut().resource_mut::<TargetInput>().0 = vec![b.clone()];
+        app.update();
+        let material = &app
+            .world()
+            .get::<MeshMaterial3d<StandardMaterial>>(entity)
+            .unwrap()
+            .0;
+        assert_eq!(
+            app.world()
+                .resource::<Assets<StandardMaterial>>()
+                .get(material)
+                .unwrap()
+                .base_color,
+            color(&b)
+        );
+        assert_eq!(
+            app.world().get::<Transform>(entity).unwrap().translation,
+            crate::flu_position([2., 2., 3.])
+        );
+        app.world_mut().resource_mut::<TargetInput>().0.clear();
+        app.update();
+        assert!(
+            app.world_mut()
+                .query::<&Panel>()
+                .iter(app.world())
+                .next()
+                .is_none()
+        );
+    }
+}

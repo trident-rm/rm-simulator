@@ -243,6 +243,8 @@ pub enum Hud {
     /// Section 5.5.3.9 Fortress banner: when an opponent's Fortress opens
     /// and each capture's countdown; empty while neither applies.
     Fortress,
+    /// RMUC 2027 territory ownership, capture and activation summary.
+    Control,
     /// Local robot card: kind, HP, speed and drive mode.
     Robot,
     /// Shot speed, caliber and remaining ammo.
@@ -319,7 +321,10 @@ fn label(commands: &mut Commands, parent: Entity, kind: Hud, class: &str) {
         kind,
         Text::new(""),
         TextLayout::justify(
-            if matches!(kind, Hud::Clock | Hud::Hint | Hud::AutoAim | Hud::Fortress) {
+            if matches!(
+                kind,
+                Hud::Clock | Hud::Hint | Hud::AutoAim | Hud::Fortress | Hud::Control
+            ) {
                 Justify::Center
             } else {
                 Justify::Left
@@ -403,6 +408,7 @@ pub fn spawn_hud(commands: &mut Commands) {
     label(commands, root, Hud::Ammo, "ammo");
     label(commands, root, Hud::AutoAim, "auto-aim");
     label(commands, root, Hud::Fortress, "fortress");
+    label(commands, root, Hud::Control, "control-2027");
     label(commands, root, Hud::Notice, "notices");
     label(commands, root, Hud::Connection, "connection-toast");
     label(commands, root, Hud::Hint, "hint");
@@ -532,6 +538,39 @@ pub fn spawn_hud(commands: &mut Commands) {
 }
 
 fn clock_text(session: &Session) -> String {
+    if let Some(state) = session.rmuc_2027() {
+        use rm_simulator_world::gameplay::rmuc_2027::ROUND_NS;
+        use rm_simulator_world::rmuc_2027::match_rules::Phase;
+        let game = &state.game;
+        let phase = if session.paused {
+            "PAUSED"
+        } else {
+            match game.phase {
+                Phase::Idle => "READY 2027",
+                Phase::Countdown => "COUNTDOWN",
+                Phase::Running => "RMUC 2027",
+                Phase::Finished => "FINISHED",
+            }
+        };
+        let remaining = if game.phase == Phase::Countdown {
+            game.countdown_ns
+        } else {
+            ROUND_NS.saturating_sub(game.elapsed_ns())
+        };
+        let seconds = remaining.div_ceil(1_000_000_000);
+        let mut text = format!("{phase}\n{:02}:{:02}", seconds / 60, seconds % 60);
+        if let Some(result) = &game.result {
+            text.push_str(&format!(
+                "\n{}",
+                result.winner.map_or("DRAW", |t| if t.index() == 0 {
+                    "RED WINS"
+                } else {
+                    "BLUE WINS"
+                })
+            ));
+        }
+        return text;
+    }
     let Some(r) = session.referee() else {
         return "PRACTICE".into();
     };
@@ -741,8 +780,94 @@ fn fortress_text(referee: &rm_simulator_world::RefereeSnapshot) -> String {
     lines.join("\n")
 }
 
+fn control_2027_text(session: &Session) -> String {
+    let Some(state) = session.rmuc_2027() else {
+        return String::new();
+    };
+    use rm_simulator_world::gameplay::rmuc_2027::{ControlState, Territory};
+    let g = &state.game;
+    let mut lines = vec![
+        "RMUC 2027 control/structure subset | other economy/respawn/rune rules disabled".into(),
+    ];
+    for territory in Territory::ALL {
+        let t = &g.control.snapshot().territories[territory.index()];
+        let team = if t.control.team().index() == 0 {
+            "RED"
+        } else {
+            "BLUE"
+        };
+        let strength = if matches!(t.control, ControlState::Full(_)) {
+            "FULL"
+        } else {
+            "TEMP"
+        };
+        let points = match territory {
+            Territory::RedOutpost | Territory::BlueOutpost => "OUTPOST + HIGHLAND",
+            _ => "BASE + FORTRESS",
+        };
+        let side = if territory.initial_team().index() == 0 {
+            "RED"
+        } else {
+            "BLUE"
+        };
+        let activation = t
+            .activations
+            .iter()
+            .fold([false; 2], |v, a| [v[0] || a[0], v[1] || a[1]]);
+        lines.push(format!(
+            "{side} {points}: {team} {strength}  {:.2}/5 s  RFID {}{}{}",
+            t.progress_ns as f64 * 1e-9,
+            if activation[0] { "R" } else { "-" },
+            if activation[1] { "B" } else { "-" },
+            if activation == [true, true] {
+                " CONTESTED"
+            } else {
+                ""
+            }
+        ));
+    }
+    for r in &g.robots {
+        for side in 0..2 {
+            if r.fortress_ns[side] > 0 {
+                lines.push(format!(
+                    "#{} Fortress {} {:.2}/10 s",
+                    r.id,
+                    if side == 0 { "RED" } else { "BLUE" },
+                    r.fortress_ns[side] as f64 * 1e-9
+                ));
+            }
+        }
+    }
+    lines.join("\n")
+}
+
 fn team_text(session: &Session, team: Team) -> String {
     let mut text = team.name().to_uppercase();
+    if let Some(state) = session.rmuc_2027() {
+        let g = &state.game;
+        let i = team.index();
+        let owner = rm_simulator_world::gameplay::Team::BOTH[i];
+        let outpost: u32 = g
+            .control
+            .snapshot()
+            .outposts
+            .iter()
+            .zip(g.outpost_hp)
+            .filter(|(o, _)| o.owner == owner)
+            .map(|(_, hp)| hp)
+            .sum();
+        return format!(
+            "{text}  CTRL {}  BASE {}{}{}  OUTPOST {outpost}",
+            g.control.snapshot().points[i],
+            g.base_hp[i],
+            if g.control.base_protected(owner) {
+                " PROTECTED"
+            } else {
+                ""
+            },
+            if g.base_open[i] { " OPEN" } else { "" }
+        );
+    }
     if let Some(base) = session
         .snapshot
         .bases
@@ -887,7 +1012,17 @@ pub fn update_panel_rows(
                         }
                     ),
                     label,
-                    robot.map_or_else(|| "--".into(), |r| format!("{} / {} HP", r.hp, r.max_hp)),
+                    robot.map_or_else(
+                        || {
+                            session
+                                .rmuc_2027()
+                                .and_then(|s| {
+                                    s.game.robots.iter().find(|r| Some(r.id) == p.chassis)
+                                })
+                                .map_or("--".into(), |r| format!("{} / {} HP", r.hp, r.max_hp))
+                        },
+                        |r| format!("{} / {} HP", r.hp, r.max_hp),
+                    ),
                 ]);
             }
             // Roster and world updates travel separately. Keep every live robot
@@ -901,7 +1036,15 @@ pub fn update_panel_rows(
                 rows.push([
                     format!("Robot #{}", chassis.id),
                     robot.map_or_else(|| "Pilot".into(), |r| format!("#{} {:?}", r.id, r.kind)),
-                    robot.map_or_else(|| "--".into(), |r| format!("{} / {} HP", r.hp, r.max_hp)),
+                    robot.map_or_else(
+                        || {
+                            session
+                                .rmuc_2027()
+                                .and_then(|s| s.game.robots.iter().find(|r| r.id == chassis.id))
+                                .map_or("--".into(), |r| format!("{} / {} HP", r.hp, r.max_hp))
+                        },
+                        |r| format!("{} / {} HP", r.hp, r.max_hp),
+                    ),
                 ]);
             }
         }
@@ -971,6 +1114,7 @@ pub fn update_hud(
             }),
             Hud::Team(team) => team_text(&session, *team),
             Hud::Fortress => session.referee().map_or_else(String::new, fortress_text),
+            Hud::Control => control_2027_text(&session),
             Hud::Clock => clock_text(&session),
             Hud::Robot => {
                 let speed = session
@@ -987,6 +1131,14 @@ pub fn update_hud(
                 );
                 if let Some(state) = ammo {
                     value.push_str(&robot_status(state, round_ticks));
+                }
+                if let Some(r) = session.rmuc_2027().and_then(|s| {
+                    s.game
+                        .robots
+                        .iter()
+                        .find(|r| Some(r.id) == session.chassis_id)
+                }) {
+                    value = format!("#{} {:?}\n{} / {} HP", r.id, r.role, r.hp, r.max_hp);
                 }
                 if let Some(drive) = &drive {
                     let tether = session
@@ -1115,7 +1267,18 @@ pub fn update_hud(
         }
     }
     for (mut node, mut color) in &mut health {
-        let fraction = robot.map_or(0., |r| r.hp as f32 / r.max_hp.max(1) as f32);
+        let fraction = session
+            .rmuc_2027()
+            .and_then(|s| {
+                s.game
+                    .robots
+                    .iter()
+                    .find(|r| Some(r.id) == session.chassis_id)
+            })
+            .map_or_else(
+                || robot.map_or(0., |r| r.hp as f32 / r.max_hp.max(1) as f32),
+                |r| r.hp as f32 / r.max_hp as f32,
+            );
         node.width = percent(100. * fraction);
         color.0 = if fraction < 0.2 {
             team_color(Team::Red)

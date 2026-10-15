@@ -107,6 +107,7 @@ struct Header {
 /// with no restore, or with views that differ from it, cannot be encoded.
 #[derive(Serialize, Deserialize)]
 struct DerivedRules {
+    rmuc_2027: Option<rm_simulator_world::rmuc_2027::State>,
     runes: Vec<Aligned<rm_simulator_world::Rune>>,
     outposts: Vec<Aligned<rm_simulator_world::Outpost>>,
     referee: Aligned<Option<rm_simulator_world::Referee>>,
@@ -117,6 +118,7 @@ struct DerivedRules {
 impl DerivedRules {
     fn new(restore: &rm_simulator_world::FieldRestore) -> Self {
         Self {
+            rmuc_2027: restore.rmuc_2027.clone(),
             runes: restore.runes.iter().cloned().map(Aligned).collect(),
             outposts: restore.outposts.iter().cloned().map(Aligned).collect(),
             referee: Aligned(restore.referee.clone()),
@@ -127,6 +129,7 @@ impl DerivedRules {
     }
     fn into_restore(self) -> rm_simulator_world::FieldRestore {
         rm_simulator_world::FieldRestore {
+            rmuc_2027: self.rmuc_2027,
             runes: self.runes.into_iter().map(|rune| rune.0).collect(),
             outposts: self.outposts.into_iter().map(|outpost| outpost.0).collect(),
             referee: self.referee.0,
@@ -371,7 +374,8 @@ impl PlayerSnapshot {
                         .iter()
                         .zip(&restore.outposts)
                         .all(|(view, outpost)| *view == outpost.snapshot(field.time_ns))
-                    && field.referee == restore.referee.as_ref().map(|r| r.snapshot()) =>
+                    && field.referee == restore.referee.as_ref().map(|r| r.snapshot())
+                    && field.rmuc_2027 == restore.rmuc_2027 =>
             {
                 DerivedRules::new(restore)
             }
@@ -597,6 +601,7 @@ impl PlayerSnapshot {
                 shots_fired: header.shots_fired,
                 hits_detected: header.hits_detected,
                 referee,
+                rmuc_2027: restore.as_ref().and_then(|rules| rules.rmuc_2027.clone()),
                 restore,
             },
         })
@@ -1136,6 +1141,60 @@ pub fn decode_checkpoint_with(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "season-2027")]
+    #[test]
+    fn live_2027_checkpoint_keeps_capture_expiry_ownership_and_source_bindings() {
+        use rm_simulator_world::{
+            FieldConfig, Pose, RefereeCommand,
+            rmuc_2027::{Config, Detector, Tower},
+        };
+        let d = Detector {
+            pose: Pose::at([3., 0., 1.]),
+            half_m: [0.045, 0.044],
+        };
+        let mut field = Field::new(&FieldConfig {
+            rmuc_2027: Some(Config {
+                bases: [vec![d.clone()], vec![d.clone()]],
+                outposts: [
+                    Tower {
+                        pivot_m: [3., 0., 1.],
+                        axis: [0., 0., 1.],
+                        detectors: vec![d.clone(); 3],
+                    },
+                    Tower {
+                        pivot_m: [-3., 0., 1.],
+                        axis: [0., 0., 1.],
+                        detectors: vec![d; 3],
+                    },
+                ],
+                zones: vec![],
+                rotor_direction: -1,
+            }),
+            runes: vec![],
+            outposts: vec![],
+            ..Default::default()
+        })
+        .unwrap();
+        field.referee_command(RefereeCommand::StartMatch).unwrap();
+        field
+            .step(6_000_000_000 / rm_simulator_world::tick_ns())
+            .unwrap();
+        field
+            .referee_command(RefereeCommand::SetOutpostHp { outpost: 0, hp: 0 })
+            .unwrap();
+        assert_rules_round_trip(&mut field, 700);
+        let mut state = SimulationState {
+            bots: vec![],
+            input_epoch: 0,
+            shot_results: vec![],
+            snapshot_id: 0,
+            paused: false,
+            field: field.snapshot(),
+        };
+        assert!(checkpoint_node(&state).is_ok());
+        state.field.rmuc_2027 = None;
+        assert!(checkpoint_node(&state).is_err());
+    }
     #[test]
     fn outpost_rule_state_round_trips_json_and_bitpack() {
         // The JSON shape is the world crate's serialized rule state; the binary

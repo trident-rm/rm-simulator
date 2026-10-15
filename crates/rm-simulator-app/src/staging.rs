@@ -597,9 +597,10 @@ fn publish(
     session: ResMut<Session>,
     drive: Option<Res<Drive>>,
     input: ResMut<rm_simulator_render::sync::SceneInput>,
+    targets: ResMut<rm_simulator_render::targets::TargetInput>,
     capture: Option<Res<crate::screenshot::ScreenshotRequest>>,
 ) {
-    crate::scene::publish_scene(session, drive, input, capture);
+    crate::scene::publish_scene(session, drive, input, targets, capture);
 }
 fn publish_preview(
     mut input: ResMut<rm_simulator_render::sync::SceneInput>,

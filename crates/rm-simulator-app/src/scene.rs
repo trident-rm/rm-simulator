@@ -77,11 +77,49 @@ pub fn cad_instances(cad: &CadAssets, rune_faces: bool, base_plates: bool) -> Ve
             } else {
                 asset.placements.iter().map(transform_of).collect()
             };
-            instances.extend(transforms.into_iter().map(|transform| CadInstance {
-                team: None,
-                file: asset.file.clone(),
-                transform,
-                role: CadRole::Static { base_color: None },
+            instances.extend(transforms.into_iter().map(|transform| {
+                let side =
+                    rm_simulator_server::layout::side_team(-f64::from(transform.translation.z))
+                        .index();
+                let joints = cad
+                    .rmuc_2027
+                    .as_ref()
+                    .map(|b| {
+                        b.motions(cad, asset)
+                            .iter()
+                            .map(|m| rm_simulator_render::cad::CadJoint {
+                                id: m.id.clone(),
+                                axis: Vec3::from_array(m.axis.map(|v| v as f32)),
+                                prismatic: m.limits.is_some(),
+                                limits: m.limits.map(|v| v.map(|v| v as f32)),
+                                driver: Some(if m.limits.is_some() {
+                                    rm_simulator_render::cad::JointDriver::BaseOpening {
+                                        team: side,
+                                    }
+                                } else {
+                                    rm_simulator_render::cad::JointDriver::Outpost {
+                                        index: side as u32,
+                                    }
+                                }),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                CadInstance {
+                    team: None,
+                    file: asset.file.clone(),
+                    transform,
+                    role: if joints.is_empty() {
+                        CadRole::Static { base_color: None }
+                    } else {
+                        CadRole::Semantic {
+                            scene: 0,
+                            joints,
+                            hidden_ids: vec![],
+                            rune_faces: vec![],
+                        }
+                    },
+                }
             }));
         }
         return instances;
@@ -195,6 +233,9 @@ pub fn cad_instances(cad: &CadAssets, rune_faces: bool, base_plates: bool) -> Ve
                             .index();
                             rm_simulator_server::layout::mechanism_joint(joint).map(|kind| {
                                 match kind {
+                                    rm_simulator_world::referee::Mechanism::Outpost => {
+                                        JointDriver::Outpost { index: team as u32 }
+                                    }
                                     rm_simulator_world::referee::Mechanism::Base => {
                                         JointDriver::BaseOpening { team }
                                     }
@@ -505,6 +546,7 @@ pub fn publish_scene(
     mut session: ResMut<Session>,
     drive: Option<Res<Drive>>,
     mut input: ResMut<SceneInput>,
+    mut targets: ResMut<rm_simulator_render::targets::TargetInput>,
     capture: Option<Res<crate::screenshot::ScreenshotRequest>>,
 ) {
     if capture.is_none() {
@@ -587,6 +629,77 @@ pub fn publish_scene(
             appearance
         })
         .collect();
+    targets.0.clear();
+    if let Some(state) = snapshot.rmuc_2027.as_ref() {
+        let round_ns = state.game.elapsed_ns()
+            + if !session.paused
+                && state.game.phase == rm_simulator_world::rmuc_2027::match_rules::Phase::Running
+            {
+                time_ns.saturating_sub(snapshot.time_ns)
+            } else {
+                0
+            };
+        scene.base_open_fraction = state.game.base_open.map(|v| if v { 1. } else { 0. });
+        scene.outposts = Team::BOTH
+            .map(|side| {
+                let tower = &state.config.outposts[side.index()];
+                OutpostAppearance {
+                    disabled: state.game.outpost_hp[side.index()] == 0,
+                    origin: pose_flu(rm_simulator_world::Pose::at(tower.pivot_m)),
+                    angle_rad: state.angle_at(side, round_ns),
+                    armors: std::array::from_fn(|i| {
+                        pose_flu(state.rotated_at(side, tower.detectors[i].pose, round_ns))
+                    }),
+                    hit_flash: [false; 3],
+                }
+            })
+            .to_vec();
+        for side in Team::BOTH {
+            let i = side.index();
+            let owner = match state.game.control.snapshot().outposts[i].owner {
+                rm_simulator_world::gameplay::Team::Red => Team::Red,
+                rm_simulator_world::gameplay::Team::Blue => Team::Blue,
+            };
+            for (index, d) in state.config.bases[i].iter().enumerate() {
+                let target = ArmorTarget::Base {
+                    base: i as u32,
+                    plate: index as u32,
+                };
+                targets
+                    .0
+                    .push(rm_simulator_render::targets::TargetAppearance {
+                        id: (i * 32 + index) as u64,
+                        pose: pose_flu(d.pose),
+                        size_m: d.half_m.map(|v| (v * 2.) as f32),
+                        team: team_color(side),
+                        disabled: state.game.base_hp[i] == 0,
+                        flash: hits.iter().any(|h| h.target == target),
+                    });
+            }
+            for (index, d) in state.config.outposts[i].detectors.iter().enumerate() {
+                let target = ArmorTarget::Outpost {
+                    outpost: i as u32,
+                    face: index as u32,
+                };
+                targets
+                    .0
+                    .push(rm_simulator_render::targets::TargetAppearance {
+                        id: (128 + i * 32 + index) as u64,
+                        pose: pose_flu(state.rotated_at(side, d.pose, round_ns)),
+                        size_m: d.half_m.map(|v| (v * 2.) as f32),
+                        team: team_color(owner),
+                        disabled: state.game.outpost_hp[i] == 0,
+                        flash: hits.iter().any(|h| h.target == target),
+                    });
+            }
+        }
+        for c in &mut scene.chassis {
+            if let Some(r) = state.game.robots.iter().find(|r| r.id == c.id) {
+                c.defeated = r.hp == 0;
+                c.hp_fraction = r.hp as f32 / r.max_hp as f32;
+            }
+        }
+    }
     input.0 = Some(scene);
 }
 
@@ -872,6 +985,7 @@ mod tests {
             source_tessellated_collision: false,
         };
         let cad = CadAssets {
+            rmuc_2027: None,
             season: rm_simulator_world::season::Season::Rm2026,
             rest_pose_only: false,
             root: std::path::PathBuf::new(),

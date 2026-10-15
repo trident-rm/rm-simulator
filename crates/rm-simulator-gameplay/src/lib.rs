@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! Deterministic RMUC 2026 gameplay and isolated RMUC 2027 control rules.
+//! Deterministic RMUC 2026 gameplay and the native RMUC 2027 control/structure subset.
 //! Independent of physics, CAD and Bevy.
 //!
 //! Call [`Game::command`] with authoritative observations and [`Game::step`]
@@ -13,8 +13,7 @@ pub mod coverage;
 mod engine;
 mod performance;
 mod policy;
-/// Independent RMUC 2027 control rules; full 2027 matches remain unavailable.
-#[cfg(feature = "season-2027")]
+/// RMUC 2027 control and the native control/structure match subset.
 pub mod rmuc_2027;
 pub mod season;
 mod state;

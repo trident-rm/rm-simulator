@@ -2,11 +2,11 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Season builds
 
-The current engine, field package and network schema implement the documented
-RMUC 2026 subset. RM2027 has an explicit identity and feature so its implementation
-can develop alongside RM2026. The feature includes an isolated
-[RMUC 2027 control component](gameplay.md#rmuc-2027-control-component), but does
-not enable playable RM2027 matches. The [2027 rules reference](rules-2027.md) records the new manuals;
+RMUC 2026 retains its documented match engine. RM2027 adds an independent
+[control component](gameplay.md#rmuc-2027-control-component) and a playable
+[RMUC 2027 V1.0.0 control/structure subset](rmuc2027-field.md#enable-the-live-controlstructure-subset)
+through an explicitly bound field package. The standalone legacy `Game` does
+not run 2027; no 2026 rules are silently reused. The [2027 rules reference](rules-2027.md) records the new manuals;
 [gameplay coverage](gameplay.md) describes the existing engine.
 
 ## Cargo features
@@ -21,8 +21,8 @@ features: they stay reusable and receive explicit state from their callers.
 | Selection | Build status | Sessions available today |
 |---|---|---|
 | Default or `season-2026` | Supported | Existing RMUC 2026 subset |
-| `season-2027` without defaults | Isolated control component | No full matches; creation returns an error |
-| Both | Supported | Existing RMUC 2026 subset; RM2027 creation returns an error |
+| `season-2027` without defaults | Supported | Bound RMUC 2027 control/structure subset |
+| Both | Supported | Both documented subsets, selected by the field package |
 | Neither | Infrastructure only | None; creation returns an error |
 
 Build a binary with the desired feature set:
@@ -30,16 +30,17 @@ Build a binary with the desired feature set:
 ```sh
 # RM2026, also the normal default build.
 cargo build --locked -p rm-simulator-app --no-default-features --features season-2026
-# RM2027 infrastructure; this cannot start or join a match yet.
+# RM2027 control/structure subset; requires a bound 2027 field package.
 cargo build --locked -p rm-simulator-app --no-default-features --features season-2027
-# Both identities in one binary; existing RM2026 play stays available.
+# Both subsets in one binary; existing RM2026 play stays available.
 cargo build --locked -p rm-simulator-app --no-default-features --features season-2026,season-2027
 ```
 
 Replace `rm-simulator-app` with `rm-simulator-server` for the headless binary.
 Features select availability, not optimization or removal of every legacy
 algorithm: the existing modules still compile in the infrastructure build.
-There is no `--season` switch yet because there is only one playable season.
+The verified package and explicit ruleset binding select the world; there is
+no independent `--season` switch that could mislabel an incompatible map.
 The rendering benchmark has no match or season selection.
 
 Cargo unifies features across all selected workspace packages. To obtain a
@@ -51,9 +52,10 @@ intentionally enables both seasons. Optional features such as `steam` and
 ## RMUC 2027 map exploration
 
 A combined build can also load the [2027 runtime field](rmuc2027-field.md) as a
-rest-pose physics sandbox. Its manifest identifies the season and disables all
-legacy match targets, zones and the referee. This is separate from full 2027
-match admission; the existing host/session path still requires `season-2026`.
+rest-pose physics sandbox. Its manifest disables legacy targets and rules.
+Adding the pinned structure binding enables the separate 2027 authority, with
+its own source detector geometry and RFID contacts. A 2027-only build supports
+that bound package; the unbound legacy practice sandbox needs a combined build.
 
 ## Admission and compatibility
 
@@ -63,18 +65,22 @@ reports enabled identities. `require_playable()` separately checks feature
 availability and implemented gameplay, returning `Disabled` or `Unimplemented`.
 It never falls back to a different year's mechanics.
 
-`Game::new_for_season` and `Field::new_for_season` validate this before creating
-state. Existing `Game::new`, `Field::new` and `Field::restore` explicitly require
-RM2026. The dedicated host, CAD simulation builder and app session entry also
-check RM2026 before starting their existing session paths. A build without that
-feature reports an error instead of starting a 2026 match under a 2027 label.
+`Game::new_for_season` still rejects 2027: that API owns the legacy complete
+2026 engine. `Season::has_gameplay` and `require_playable` describe that engine.
+The world instead admits 2027 only with `FieldConfig::rmuc_2027`, an explicit
+source-bound RMUC V1.0.0 config, and the `season-2027` feature. An ordinary 2026
+config labelled 2027 is rejected. Default `Field::new` uses its explicit config;
+restore selects admission from the native authority carried in `FieldRestore`.
+Mixed-season geometry/referee state is rejected.
 
-This foundation does not change the protocol version, checkpoint schema,
-compression dictionary or field manifest. Existing checkpoints remain RM2026
-only; the serialized `Season` type is not yet included in them. Combined builds
-do not currently negotiate different seasons over the network.
+Protocol **53** carries the complete optional 2027 authority in confirmations,
+checkpoints and deltas. Types remain available in every build so the wire shape
+is independent of Cargo feature unification; live admission and restore still
+check the feature. The existing checkpoint ZSTD dictionary is retained unchanged.
+The 2027 sidecar pins competition format, manual revision, source identity and
+package hashes. Clients reject a different or unbound local 2027 package.
 
-## Adding playable RM2027
+## Extending RM2027 coverage
 
 The year alone is insufficient to identify a ruleset. The supplied 2027 manuals
 describe distinct RMUC, RMUL 3v3 and RMUL Infantry 1v1 formats, with different
@@ -83,12 +89,12 @@ RM2027 gameplay, add a ruleset identity containing competition format and manual
 revision, and route implementations through that identity. Do not treat the
 RMUL manual as an override of RMUC or copy a changed global constant over 2026.
 
-The remaining integration needs to select rules and field geometry together,
-carry the ruleset through authoritative configuration, checkpoints and restore,
-validate it during network admission, and expose the selection in the CLI and
-title screen. Protocol/checkpoint changes need their normal versioning and
-dictionary review. Keep the explicit 128 Hz world clock and crate boundaries;
-season-specific rule durations remain durations rather than tick-rate changes.
+The control/structure subset now carries ruleset, geometry, robot eligibility,
+RFID expiry, contested capture, progress, scores, HP, mutable ownership, result
+and permanent rotor stops through snapshots and restore. Remaining subsystems
+must extend that native authority rather than enabling the old referee. Keep the
+explicit 128 Hz world clock; season durations remain nanoseconds. New protocol
+fields need normal versioning and dictionary review.
 
 ## Verification
 
@@ -102,9 +108,10 @@ default/all-features suites continue exercising
 the complete existing RM2026 implementation. Running the legacy gameplay suite
 with 2026 disabled is not an RM2027 rules test: those scenarios require 2026.
 
-When 2027 is enabled, the matrix also runs the isolated control tests without
-requiring the 2026 engine.
+When 2027 is enabled, the matrix also runs control/match and live-world adapter
+tests, including a 2027-only build without the 2026 engine.
 
 The season matrix is included in `just verify` and Linux native validation.
-It complements the normal workspace checks; it does not claim app startup,
-network negotiation or implemented RM2027 rule coverage.
+It complements workspace tests for native restore, network checkpoint codecs,
+physics motion and client presentation. Coverage limitations are listed in the
+2027 field guide.

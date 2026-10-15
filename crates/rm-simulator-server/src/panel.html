@@ -225,7 +225,7 @@ function resultText(result) {
   const d = result.Decided;
   return `Result: ${d.winner ? d.winner + ' wins' : 'draw'} (${d.reason})`;
 }
-function loadOutpost() { const o=latest?.field.outposts[Number($('editOutpost').value)]; if(o) $('outpostHp').value=o.hp; }
+function loadOutpost() { const index=Number($('editOutpost').value), native=latest?.field.rmuc_2027?.game; const hp=native ? native.outpost_hp[index] : latest?.field.outposts[index]?.hp; if(hp != null) $('outpostHp').value=hp; }
 function options(id, entries) {
   const select=$(id), old=select.value, key=JSON.stringify(entries);
   if (select.dataset.key === key) return false;
@@ -274,12 +274,37 @@ function describe(ev) {
     default: return JSON.stringify(ev);
   }
 }
+function render2027(state,g) {
+  const c=g.control.state, teams=['Red','Blue'];
+  $('phase').textContent=`${g.phase} · RMUC 2027 V1.0.0 control/structures`;
+  $('clock').textContent=fmt(g.phase==='Countdown' ? g.countdown_ns : Math.max(0,420e9-c.elapsed_ns));
+  $('result').textContent=g.result ? `${g.result.winner || 'Draw'} · ${g.result.reason}` : '';
+  $('resources').textContent=teams.map((t,i)=>`${t}: ${c.points[i]} control`).join(' · ');
+  $('policyStatus').textContent='2027 control/structure subset: economy, heat, respawn and other robot systems are unavailable.';
+  $('runes').textContent='Power Rune rules are not enabled for this subset.';
+  $('robotDetail').textContent='Fixed practice HP presets; operator hit/revive remains available.';
+  $('baseHp').max=10000; $('baseShield').value=0; $('baseShield').disabled=true;
+  if(!settingsLoaded) { $('baseHp').value=10000;settingsLoaded=true; }
+  $('outpostHp').max=1000;
+  options('editOutpost',teams.map((t,i)=>[i,`${t} location — owner ${c.outposts[i].owner}`]));
+  $('bots').innerHTML=(state.bots || []).map(id=>`Bot #${id} <button onclick="command({RemoveBot:{chassis:${id}}})">Remove</button>`).join(' · ');
+  $('robots').innerHTML='<tr><th>id</th><th>team</th><th>kind</th><th>HP</th><th></th></tr>'+g.robots.map(r=>
+    `<tr><td>${r.id}</td><td>${r.team}</td><td>${r.role}</td><td>${r.hp}/${r.max_hp}</td><td><button onclick="referee({DamageRobot:{robot:${r.id},amount:Number($('dmg').value)}})">hit</button><button onclick="referee({ReviveRobot:{robot:${r.id}}})">revive</button></td></tr>`).join('');
+  $('mechanismState').textContent=teams.map((t,i)=>`${t} base ${g.base_open[i]?'open':'closed'}`).join('; ');
+  $('bases').innerHTML='<tr><th>Team</th><th>HP</th><th>Protection</th></tr>'+teams.map((t,i)=>
+    `<tr><td>${t}</td><td>${g.base_hp[i]}/10000</td><td>${c.territories[i].control.Full===t?'100% defense':'none'}</td></tr>`).join('');
+  $('outposts').innerHTML='<tr><th>Location</th><th>Owner</th><th>HP</th><th>Rotor</th></tr>'+teams.map((t,i)=>
+    `<tr><td>${t}</td><td>${c.outposts[i].owner}</td><td>${g.outpost_hp[i]}</td><td>${g.rotor_stopped_ns[i]==null?'available':'stopped'}</td></tr>`).join('');
+  $('events').textContent=c.territories.map((t,i)=>`${['Red outpost','Blue outpost','Red base','Blue base'][i]}: ${JSON.stringify(t.control)}, ${(t.progress_ns/1e9).toFixed(2)}/5 s`).join('\n');
+}
 function render(state) {
   latest = state;
   const s = state.field, r = s.referee;
   paused = state.paused;
   $('pause').textContent = paused ? 'Resume' : 'Pause';
   $('conn').textContent = `tick ${s.tick}${paused ? ' (paused)' : ''}`;
+  const native=s.rmuc_2027?.game;
+  if (native) { render2027(state,native); return; }
   if (!r) { $('phase').textContent = 'no referee on this field'; return; }
   const g = r.game, now = g.round_elapsed_ticks;
   $('policyStatus').textContent = `Current: ammo limits ${g.policy.enforce_allowance ? 'on' : 'off'}, exchange ${g.policy.exchange_requires_zone ? 'in zones only' : 'anywhere'}.`;

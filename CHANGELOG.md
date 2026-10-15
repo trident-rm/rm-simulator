@@ -4,6 +4,15 @@
 
 ## Unreleased
 
+- Connect bound RMUC 2027 V1.0.0 fields to a native control/structure match:
+  height-aware RFID, per-robot expiry and eligibility, contested capture,
+  temporary-control scoring, Fortress opening and the live control HUD.
+  Add source-body armor/joint bindings, 2027 structure HP/damage/protection,
+  mutable outpost ownership, 500 HP rebuilds, permanent rotor stops and results.
+  Protocol 53 preserves the complete new authority through snapshots/restore.
+  Detector masks, shared tower-frame motion and base travel remain explicitly
+  approximate; other 2027 subsystems stay disabled.
+
 - Show complete seasonal RMUC equipment rosters, including unsupported Heavy,
   aerial, dart and radar equipment, and restrict 2027 deployment to available
   Infantry/Sentry practice prototypes. Add F3/CLI/console zone and RFID overlays

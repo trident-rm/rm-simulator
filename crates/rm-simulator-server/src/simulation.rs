@@ -196,7 +196,11 @@ impl Simulation {
         paused: bool,
         mut progress: impl FnMut(BuildProgress),
     ) -> anyhow::Result<Self> {
-        rm_simulator_world::season::Season::Rm2026.require_playable()?;
+        if !cad.season.is_enabled() {
+            return Err(
+                rm_simulator_world::season::SeasonError::Disabled(cad.season.year()).into(),
+            );
+        }
         let terrain = if options.terrain {
             progress(BuildProgress::ReadingTerrain);
             Some(load_terrain(cad)?)
@@ -204,7 +208,14 @@ impl Simulation {
             None
         };
         progress(BuildProgress::BuildingPhysics);
+        anyhow::ensure!(
+            cad.rmuc_2027.is_none() || !options.referee || options.terrain,
+            "live RMUC 2027 contacts require the verified terrain; use --no-referee for bare practice"
+        );
         let mut config = field_config(cad, options);
+        if let (Some(native), Some(terrain)) = (&mut config.rmuc_2027, &terrain) {
+            crate::rmuc_2027::fit_zone_heights(native, &terrain.ground);
+        }
         config.bases = crate::base_layout::load(cad)?;
         let mut field = Field::new(&config)?;
         if let Some(terrain) = &terrain {
@@ -1133,6 +1144,16 @@ impl Simulation {
                 .map(|_| ())
                 .map_err(|e| e.to_string()),
             Command::Referee(command) => {
+                if matches!(command, rm_simulator_world::RefereeCommand::StartMatch)
+                    && self.field.rmuc_2027().is_some()
+                {
+                    use std::hash::{BuildHasher, Hasher};
+                    let random = std::collections::hash_map::RandomState::new()
+                        .build_hasher()
+                        .finish();
+                    self.field
+                        .set_rmuc_2027_rotor_direction(if random & 1 == 0 { -1 } else { 1 });
+                }
                 self.field
                     .referee_command(*command)
                     .map_err(|e| e.to_string())?;
@@ -1171,6 +1192,7 @@ mod tests {
             source_tessellated_collision: false,
         };
         CadAssets {
+            rmuc_2027: None,
             season: rm_simulator_world::season::Season::Rm2026,
             rest_pose_only: false,
             root: std::path::PathBuf::from("missing-builder-test-package"),

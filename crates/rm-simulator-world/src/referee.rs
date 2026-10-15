@@ -501,6 +501,7 @@ impl RefereeSnapshot {
 /// Resolve match decisions before physics reads mechanism motion.
 pub fn mechanism_state(referee: Option<&Referee>, time_ns: u64) -> MechanismState {
     MechanismState {
+        outpost_angle_rad: [0.; 2],
         base_open_fraction: referee.map_or([0.0; 2], |r| {
             std::array::from_fn(|i| {
                 rm_simulator_physics::motion::base_open_fraction(
@@ -520,6 +521,7 @@ pub fn mechanism_state(referee: Option<&Referee>, time_ns: u64) -> MechanismStat
 /// Resolve public match state for presentation clearance queries.
 pub fn mechanism_view(referee: Option<&RefereeSnapshot>, time_ns: u64) -> MechanismState {
     MechanismState {
+        outpost_angle_rad: [0.; 2],
         base_open_fraction: referee.map_or([0.0; 2], |r| {
             std::array::from_fn(|i| r.base_open_fraction(i, time_ns))
         }),
@@ -1969,6 +1971,9 @@ impl Referee {
         }
     }
 }
+
+/// Typed source motion frame shared by collision and presentation.
+pub use rm_simulator_physics::motion::MotionFrame;
 
 #[cfg(test)]
 mod tests {
