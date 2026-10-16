@@ -13,6 +13,49 @@ structure binding enables the **RMUC 2027 V1.0.0 control/structure match subset*
 described below. The bundled 2026 field remains unchanged; no 2026 referee,
 armor damage table or rune is enabled on the 2027 field.
 
+## Current optimization direction
+
+The post-export mesh-simplification experiments below are historical. Further
+work now starts from the **original STEP CAD**, using read-only discovery before
+any representation changes. The initial infrastructure lives in
+`../rm-map-tools/python/audit_cad_passes.py`; its design and reproduction command
+are in `../rm-map-tools/docs/cad-optimization-passes.md`. It inventories existing
+assembly reuse and exact body-graph duplicates, retains source identities and
+placements, and verifies source/index hashes remain unchanged. Appearance and
+semantic equivalence are separate requirements before applying sharing.
+
+The shared `../rm-map-tools/python/cad_document.py` now accepts STEP directly
+into an in-memory source/assembly model, with lazy native OCCT XCAF import for
+geometry passes. Original metadata remains available by source entity ID; no
+serialized intermediate catalog is required. Pass logic stays in Python over
+native OCCT, with Rust retained for parsing/indexing infrastructure. The source
+exporter can reuse that document; exporting edited native working models and
+binding original faces to tessellated triangles remain separate adapter work.
+
+The first applied source passes live in `../rm-map-tools/python/cad_passes.py`.
+They share exact B-rep definitions (426 → 424) and exact presentation-assignment
+definitions (178,874 → 103) in a derived in-memory scene. Validation preserved
+all 644 placed body occurrences and 178,874 style bindings, with source IDs,
+placements, appearances and source bytes unchanged. Twelve original STEP face
+correspondences are retained, scoped by body. These are representation changes;
+no native CAD or runtime GLB has been replaced and no triangle saving is claimed.
+The report is `local-assets/cad-audit/rmuc2027-sharing-final.json`.
+
+The initial RMUC audit found 18 repeated products and two exact duplicate body
+pairs across 426 body definitions. These are opportunities to investigate
+storage and tessellation reuse, not claimed placed-triangle savings. The local
+report is `local-assets/cad-audit/rmuc2027-pass-report.json`.
+
+The uncommitted floor-art conversion was discarded. Cleanup removed 38 old
+candidate/report directories totaling about 3.3 GB, plus that temporary installed
+floor-art package. The approved wall/plinth runtime remains at
+`local-assets/field-2027-live`; the original bound pre-simplification checkpoint
+remains at `local-assets/field-2027-live.before-20261016-geometry`. Original STEP,
+split CAD, upstream exports and tracked RM2026 assets were retained. Older
+`local-assets/` candidate, rollback and screenshot paths later in this document
+are historical and were removed; their measured results remain design history.
+`local-assets/cad-audit/cleanup.json` records the removed directories.
+
 ## Build from rm-map-tools
 
 Use the optimized `rmuc2027` component package produced by rm-map-tools' 2027

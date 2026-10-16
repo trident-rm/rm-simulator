@@ -8,6 +8,7 @@ Run with its CAD Python environment (numpy). No CAD import, simplification,
 2026 geometry, reconstructed optics or inferred moving joints are used.
 """
 import argparse
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -113,7 +114,7 @@ def main():
                     raise ValueError('textured input requires a texture-preserving compositor')
                 if any('extensions' in mat for mat in document.get('materials', [])):
                     raise ValueError('extended source materials need explicit preservation support')
-                for node, points, triangles, colors, local in read_glb_local_nodes(path):
+                for node, points, triangles, colors, local, node_extras in read_glb_local_nodes(path, include_extras=True):
                     product = source_product(node)
                     selected = partitions.get(product) if asset_name == recipe['central_asset'] else None
                     target = selected or ('base' if asset_name == 'base' else
@@ -126,12 +127,15 @@ def main():
                             raise ValueError('source placement must be a finite rigid transform')
                         producer_records.setdefault(target, {}).setdefault(kind, {})[asset_name] = entry['mesh_simplification'][kind]
                         key = f'{asset_name}/{occurrence}/{node}'
-                        coverage.setdefault(key, {})[kind] = {'runtime_asset': target, 'triangles': len(triangles)}
+                        coverage.setdefault(key, {})[kind] = {'runtime_asset': target, 'triangles': len(triangles),
+                            'source_node_extras': copy.deepcopy(node_extras)}
                         counts[kind] += len(triangles)
                         world = points @ matrix[:3, :3].T + matrix[:3, 3]
                         bounds.setdefault(target, []).append([world.min(0).tolist(), world.max(0).tolist()])
                         if target in ('floor', 'arena-static'):
-                            writer(target).add_node(key, world, triangles, colors)
+                            writer(target).add_node(key, world, triangles, colors,
+                                extras={'upstream_source': {'asset': asset_name, 'node': node,
+                                    'placement_index': occurrence, 'node_extras': node_extras}})
                             if target == 'floor' and kind == 'visual':
                                 floor_top = max(floor_top if floor_top is not None else -float('inf'), float(world[:, 2].max()))
                         else:
@@ -142,11 +146,15 @@ def main():
                                 raise ValueError(f'{target}: source instances do not share canonical geometry/materials')
                             canonical[target] = signature
                             if target not in placements:
-                                writer(target).add_node('static', points, triangles, colors)
+                                writer(target).add_node('static', points, triangles, colors,
+                                    extras={'upstream_source': {'asset': asset_name, 'node': node,
+                                        'node_extras': node_extras}})
                                 placements[target] = []
                             placements[target].append({
                                 'translation_m': matrix[:3, 3].tolist(),
                                 'rotation_xyzw': quaternion_xyzw(matrix[:3, :3]),
+                                'upstream_source': {'asset': asset_name, 'node': node,
+                                    'placement_index': occurrence, 'placement': copy.deepcopy(place)},
                             })
             for name, count in [('base', 2), *[(n, s['placements']) for n, s in recipe['selections'].items()]]:
                 if len(placements.get(name, [])) != count:

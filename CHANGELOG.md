@@ -4,6 +4,18 @@
 
 ## Unreleased
 
+- Add exact source-CAD geometry and presentation sharing passes in rm-map-tools,
+  with inspectable plans, atomic in-memory application and checks preserving
+  source face identities, all placed bodies and original style bindings.
+
+- Add shared in-memory STEP context infrastructure in rm-map-tools for source
+  metadata, occurrence identities and lazy native CAD working models, keeping
+  pass inputs independent of intermediate storage formats.
+
+- Stop the RMUC 2027 post-export simplification experiments and remove generated
+  intermediate packages. Move investigation to source-CAD, read-only assembly
+  reuse and exact body-graph duplicate audits in rm-map-tools.
+
 - Close the small floor-level gaps beside the central platform’s former large
   vents with two sloped wall plinths, adding only 24 visual/collision triangles
   while preserving the larger passages and existing floor.
