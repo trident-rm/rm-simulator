@@ -1,0 +1,48 @@
+{
+  "_license": "SPDX-License-Identifier: MIT OR Apache-2.0",
+  "_copyright": "Copyright (c) 2026 hxyulin <hxyulin@proton.me>",
+  "schema_version": 1,
+  "input_manifests": {
+    "manifest.json": "262525a5a4b46f71c0368c0236a9e37acbb78ac1a3a5582ce30af8259838d208",
+    "equipment/manifest.json": "0288910ec7b62e6352ad81e3e6bb40ddb8e06aa923a7ee16961ff8e8c83b4bf2"
+  },
+  "wall_material": "colour_0.7843,0.7843,0.7059",
+  "panels": {
+    "centre-platform/0/source_2615748_13": [
+      -0.8191520442889947,
+      0.5733798860316963,
+      0.015014480724949902
+    ],
+    "centre-platform/0/source_2615748_14": [
+      0.8191520442889947,
+      -0.5733798860316963,
+      0.015014480724949902
+    ],
+    "centre-platform/0/source_2624828_15": [
+      -0.8191520442889944,
+      0.573379886031696,
+      -0.015014480724979896
+    ],
+    "centre-platform/0/source_2624828_16": [
+      0.8191520442889944,
+      -0.573379886031696,
+      -0.015014480724979896
+    ]
+  },
+  "budgets": {
+    "visual": 734063,
+    "collision": 499280
+  },
+  "panel_thickness_m": 0.003,
+  "outward_offset_m": 5e-05,
+  "foot_plinths": {
+    "min_gap_m": 0.01,
+    "max_gap_m": 0.08,
+    "min_span_m": 0.1
+  },
+  "foot_plinth_panels": [
+    "centre-platform/0/source_2615748_13",
+    "centre-platform/0/source_2615748_14"
+  ],
+  "expected_foot_plinth_count": 2
+}

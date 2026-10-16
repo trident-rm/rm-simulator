@@ -86,6 +86,13 @@ cost, provided ramps, clearance, traversable openings and scoring behavior are
 verified. Rune and outpost moving targets remain rule-driven bodies. CAD source
 materials and semantic joints remain intact.
 
+The explicit `opaque-panel-reconstruction-v1` collision contract selects a
+checksummed derivative containing intentionally solid panels in place of source
+openings. The RMUC 2027 center-platform wall builder uses it for the four
+user-approved vent closures; `solid-wall-build.json` records selected nodes,
+input provenance and matching visual/collision panel geometry. This is an
+intentional topology change, not a measured source-tessellation approximation.
+
 New exports may declare `collision_method: "source-tessellation-v1"` per asset.
 The simulator then uses that asset's checksummed collision GLB, tessellated from
 the same source faces with separate tolerances. Unmarked legacy proxies remain

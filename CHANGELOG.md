@@ -4,6 +4,17 @@
 
 ## Unreleased
 
+- Close the small floor-level gaps beside the central platform’s former large
+  vents with two sloped wall plinths, adding only 24 visual/collision triangles
+  while preserving the larger passages and existing floor.
+
+- Replace four RMUC 2027 center-platform side-wall vent grilles with approved
+  opaque wall-colored panels in a reproducible candidate, closing their visual
+  and projectile openings while removing 5,724 visual / 3,716 collision triangles.
+
+- Add a read-only source-CAD grate-prism probe that preserves sampled openings
+  and estimates simpler bar meshes while retaining the surrounding frames.
+
 - Separate RMUC 2027 groundwork costs from embedded equipment and add a
   read-only source-profile probe for more economical wavy-road tessellation.
   Compare sinusoidal and semicircular fits and generate uniform wave grids with

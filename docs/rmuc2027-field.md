@@ -738,6 +738,164 @@ the sampled residuals. The generator supplies upward-wound triangles in a local
 millimetre frame; runtime binding, boundaries and adjoining faces remain future
 exporter work.
 
+### Further simple-shape survey: grates, floor and decks
+
+The bar-preserving grate probe below is retained as an investigation. After
+confirming these are side-wall vents, the user chose opaque walls instead;
+the installed replacement is described in the next section.
+
+A source-CAD survey after the analytic-road probe found a second concrete
+representation opportunity in central grates **2615748** and **2624828**.
+Their source solids have 364 and 263 faces, respectively, all planar. Boolean
+fusion of the crossing bars creates perforated faces with up to 88 and 63 inner
+wires. Much of the tessellation represents bar intersections and hole boundaries,
+not curved shape. Keeping overlapping bar prisms avoids that Boolean mesh cost.
+
+The read-only `scripts/probe-grate-prisms.py` extracts a planar source frame,
+builds a cell grid from source vertex coordinates and covers only a reviewed
+interior region with rectangular prisms. The surrounding CAD frame remains.
+The large interior uses fourteen 3 mm-thick bars (six 537 mm-long crossbars and
+eight 180 mm-long bars); the small interior uses eleven (six 357 mm crossbars
+and five 180 mm bars). Their raw prism costs are 168 and 132 triangles.
+
+| One runtime grate | Current visual | Estimated visual | Current collision | Estimated collision |
+|---|---:|---:|---:|---:|
+| Large, `source_2615748_13` | 1,726 | 901 | 1,100 | 713 |
+| Small, `source_2624828_15` | 1,176 | 719 | 798 | 597 |
+
+Extrapolating the same templates to the two occurrences of each size suggests
+**5,804 → 3,240 visual** and **3,796 → 2,620 collision triangles**: savings of
+2,564 visual (44%) and 1,176 collision (31%). The second occurrences' rigid
+placements still need explicit source-bound adaptation. Counts include retained
+frame triangles and all internal/overlapping box faces; they are not estimates
+that omit hidden prism faces.
+
+Repeat the large-grate probe:
+
+```sh
+../rm-map-tools/ocpenv/bin/python scripts/probe-grate-prisms.py \
+  --source-part ../rm-map-tools/out/rm2027/RMUC2027_V1.0.0/split/parts/0006-2615748.stp \
+  --source-sha256 5121b5c17355f2fc9e8fda6ce1b72b7caa1f74c38ad984e2f5f0c1579352591d \
+  --region-mm 148.78 685.79 85.69 265.70 \
+  --map-tools ../rm-map-tools --cad-assets local-assets/field-2027-live \
+  --runtime-node centre-platform/0/source_2615748_13 \
+  --output local-assets/groundwork-review/large-grate-review.json
+```
+
+For the small grate use `parts/0007-2624828.stp`, SHA-256
+`f05565e19052e8b08138c0cf620975eafb62d722c6583550b41edbeff617a140`,
+region `127.85 484.87 79.95 259.97`, and node
+`centre-platform/0/source_2624828_15`. Face index 2 is the default; it is
+qualified by the required source-part hash. Region coordinates use that face's
+local U/V millimetres, not arena coordinates.
+
+The probe tests both cell corners **and centers** against the original solid:
+all hole corners can lie on bars while the cell interior is empty. Its prism
+cover preserves every false cell in that sampled occupancy grid. Runtime removal
+estimates require vertices, edge midpoints and triangle centroids to lie within
+0.01 mm of the prism union. Accepted samples are within 0.00030 mm in these runs;
+this is distance to prism **volume**, not a bidirectional exterior-surface bound.
+The source-to-occurrence translation is fitted from bounds and reported.
+Continuous face coverage, exact placement, exterior/junction and normal checks,
+and native collision tests remain before adopting a derivative. No GLB is
+written and no installed model changes.
+
+Other inspected terrain has smaller or different opportunities:
+
+- **Floor:** 3,236 triangles, including 1,036 in the white marking primitive.
+  Its two main planes slope in opposite directions by 1.5 degrees; replacing
+  them with a horizontal box would change the ground. A source-plane slab and
+  separate marking layer is promising, but real openings must be distinguished
+  from paint inlays before merging their cutouts. Savings are not yet measured.
+- **Central deck sides:** source products 1791071 and 1800061 are mostly planes,
+  with only eight cylindrical faces each. Their runtime visuals are already
+  721 and 826 triangles. Polygonal extrusion templates can preserve those
+  planes and ramps, but there is no measured road-sized reduction here.
+- **Base foundations:** the two low platforms cost 1,570 visual / 670 collision
+  triangles total. Source product 4069592 has 78 extrusion faces, many associated
+  with detailed outlines. Keep the fitted slopes and openings; investigate
+  structural profile/paint separation before increasing a mesh error limit.
+
+Equipment, fans, dart mechanisms and resource objects remain outside this pass.
+
+### Approved center-platform opaque side walls
+
+The four grates are small vents in the **side walls of the central raised
+platform**, not driving surfaces. Their approximate world FLU centers are
+(3.79, -2.34), (-3.79, 2.34), (3.75, 4.48), (-3.75, -4.48) metres. The user
+explicitly chose to discard their openings and use solid wall surfaces.
+
+`scripts/build-rmuc2027-solid-walls.py` and the source-pinned
+`scripts/rmuc2027-solid-walls.json` recipe replace all four full grate meshes,
+including their frames. Each becomes a closed chamfered panel with six outline
+vertices and **20 triangles**, identically in the visual and collision GLBs.
+The panels use the adjacent beige wall material. Their 3 mm skin sits at the
+source backing/wall plane, removing the old 12 mm frame protrusion; a 0.05 mm
+outward offset avoids coplanar overlap artifacts. No other primitive's expanded
+attributes, indices, materials, hierarchy or transforms change. Equipment and
+scoring/motion sidecars remain byte-identical.
+
+| Geometry | Before | After |
+|---|---:|---:|
+| Four vents, visual | 5,804 | 80 |
+| Four vents, collision | 3,796 | 80 |
+| Complete placed field, visual | 734,063 | 728,339 |
+| Complete packaged collision | 499,280 | 495,564 |
+
+This intentionally blocks projectiles through the former vent openings.
+`opaque-panel-reconstruction-v1` names that explicit collision contract; inherited
+meshopt records describe the other retained geometry. The builder does not claim
+small source-surface deviation for the filled holes. Ground sampling against the
+approved predecessor remains a separate check.
+
+Rebuild from the saved predecessor, never from the already modified live package:
+
+```sh
+../rm-map-tools/ocpenv/bin/python scripts/build-rmuc2027-solid-walls.py \
+  --input local-assets/field-2027-live.before-solid-walls-20261016 \
+  --output local-assets/field-2027-solid-walls-rebuilt --map-tools ../rm-map-tools
+nix develop -c cargo run -q -p rm-simulator-server --features season-2027 \
+  --example inspect_assets -- local-assets/field-2027-solid-walls-rebuilt
+```
+
+The local installed candidate is `local-assets/field-2027-solid-wall-flush`;
+`local-assets/field-2027-live.before-solid-walls-20261016` is its rollback copy.
+The tracked `field/` release remains unchanged. Native inspection verifies the
+new collision contract. All 111,980 ground probes pass with zero height change;
+screenshot comparisons cover both vent sizes. `just verify` and all 147 CAD Python
+tests passed before local installation.
+
+### Small gaps beside the former vents
+
+The user also approved closing the small openings beneath the long side-wall
+section beside the large vent. These are approximately **60 mm-high clearances
+above the floor**, interrupted by support feet. They are not the larger passages.
+The same builder now adds a continuous opaque plinth on this side and its point
+mirror. Each spans about **2.720 m** and uses twelve triangles, shared identically
+between visual and collision files. The recipe selects only the two large-vent
+wall planes and requires exactly two fitted plinths.
+
+`rmuc2027_skirts.py` finds the existing wall's lower edge and intersects the
+existing floor triangles in the wall frame. It accepts only 10–80 mm gaps at
+least 100 mm long, retains the floor's slope, and refuses non-linear floor/edge
+intervals instead of flattening them. Tests cover floor following, closed-solid
+winding, larger-passage exclusion and missing-floor rejection. The short strips
+share the wall panels' material and 3 mm thickness, with a 0.01 mm vertical
+overlap at their boundaries to avoid cracks. Source support geometry remains
+behind the new opaque surface.
+
+The installed package is now `local-assets/field-2027-wall-plinths-reviewed`,
+with its predecessor saved at
+`local-assets/field-2027-live.before-plinths-20261016`. Rebuild using the same
+command above against the original `before-solid-walls` checkpoint: the recipe
+applies both vent panels and the plinths reproducibly. All non-selected primitive
+attributes and equipment remain unchanged.
+
+Compared with the vent-only package, this adds **24 visual / 24 collision
+triangles**. Complete-field totals are **728,363 visual / 495,588 packaged
+collision triangles**. All 111,980 native ground probes against the vent-only
+package pass with zero height change. The larger clearances remain untouched.
+
 ## Combat lifecycle and adaptive-armor infrastructure
 
 Native 2027 tables supply Infantry HP, power reporting, heat limit and cooling

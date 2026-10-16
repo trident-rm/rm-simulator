@@ -17,7 +17,7 @@ def main():
     parser.add_argument('--destination', required=True, type=Path)
     parser.add_argument('--backup', required=True, type=Path)
     parser.add_argument('--inspector', required=True, type=Path)
-    parser.add_argument('--build-report', choices=['field-detail-build.json', 'source-detail-build.json', 'interior-build.json'],
+    parser.add_argument('--build-report', choices=['field-detail-build.json', 'source-detail-build.json', 'interior-build.json', 'solid-wall-build.json'],
                         default='field-detail-build.json')
     parser.add_argument('--allow-collision-budget-overrun', action='store_true')
     args = parser.parse_args()

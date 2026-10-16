@@ -136,7 +136,7 @@ struct ManifestAsset {
     #[serde(default)]
     collision_sha256: Option<String>,
     /// Declared collision contract: `source-tessellation-v1` or a meshopt
-    /// simplification method.
+    /// simplification method, or an explicitly reconstructed opaque panel derivative.
     #[serde(default)]
     collision_method: Option<String>,
     /// Producer error records for a simplified pair, keyed `visual` and
@@ -178,7 +178,9 @@ struct MeshSimplification {
 /// Whether the manifest proves a collision file is usable, and why not when
 /// the metadata is malformed.
 ///
-/// A declared `source-tessellation-v1` contract is accepted. A meshopt
+/// Declared `source-tessellation-v1` and `opaque-panel-reconstruction-v1`
+/// contracts are accepted. The latter intentionally closes source openings and
+/// records its selected panels in the package producer report. A meshopt
 /// simplification is accepted only when both the visual and collision records
 /// pair their method with the matching border lock, stay inside their error
 /// limits and use exact position welding, and the collision record carries the
@@ -187,7 +189,7 @@ struct MeshSimplification {
 /// usable.
 fn verified_collision(entry: &ManifestAsset) -> anyhow::Result<bool> {
     match entry.collision_method.as_deref() {
-        Some("source-tessellation-v1") => Ok(true),
+        Some("source-tessellation-v1" | "opaque-panel-reconstruction-v1") => Ok(true),
         Some(method @ ("meshopt-simplification-v1" | "meshopt-boundary-simplification-v1")) => {
             let records = entry
                 .mesh_simplification
@@ -736,6 +738,19 @@ mod tests {
             .is_err()
         );
     }
+    #[test]
+    fn opaque_panel_derivatives_use_the_explicit_collision_contract() {
+        let mut value = serde_json::json!({
+            "visual": "a.glb", "visual_sha256": "unused",
+            "collision_method": "opaque-panel-reconstruction-v1"
+        });
+        let entry = serde_json::from_value::<ManifestAsset>(value.clone()).unwrap();
+        assert!(verified_collision(&entry).unwrap());
+        value["collision_method"] = "unreviewed-panels".into();
+        let entry = serde_json::from_value::<ManifestAsset>(value).unwrap();
+        assert!(!verified_collision(&entry).unwrap());
+    }
+
     #[test]
     fn simplified_colliders_require_valid_error_and_border_metadata() {
         let record = serde_json::json!({
