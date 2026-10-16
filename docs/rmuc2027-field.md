@@ -567,6 +567,177 @@ ordinary field defense/terrain buffs, rune, aerial, dart and Radar equipment
 remain unavailable. 42 mm launches remain refused until Heavy suppression
 observations are implemented. Adaptive armor remains in its default damage state.
 
+## Remaining geometry opportunities (2026-10-16)
+
+The approved interior-cleanup package still contains **734,063 placed visual**
+and **499,280 packaged collision triangles**. The app confirms the visual total
+across 462 CAD mesh entities sharing 324 mesh assets (563,265 unique triangles).
+These are full-scene counts before culling and render passes. Sharing meshes
+reduces storage; it does not remove triangles from each visible instance.
+
+The read-only complexity inventory verifies manifest checksums and ranks source
+nodes, material primitives and connected fragments, including placement counts:
+
+```sh
+../rm-map-tools/ocpenv/bin/python scripts/analyze-field-complexity.py \
+  --cad-assets local-assets/field-2027-live \
+  --map-tools ../rm-map-tools \
+  --output local-assets/geometry-opportunities/complexity-review.json \
+  --probe outpost visual source_body_2200540 4 \
+  --probe outpost visual source_body_2302471 4 \
+  --probe outpost visual source_body_2404428 4
+```
+
+The output must be new and outside the package. No GLB or manifest is written.
+A probe measures a possible derivative; it does not install or approve one.
+Selectors refer to this checkpoint's source nodes and primitive order.
+
+| Source selection, all placed copies | Visual triangles | Collision triangles | Next investigation |
+|---|---:|---:|---|
+| Two dart-station `source_3749800_7` nodes | 136,182 | 163,144 | Reconstruct panels/extrusions selectively; inspect internal assemblies and fasteners. Preserve openings and the precision-pinned ground-contact components. |
+| Ten `source_2717102_*` fan-housing nodes | 93,686 | 63,816 | Author simple housing panels, retain functional openings; inspect grille/blade and internal hardware detail separately. |
+| Six outpost detector bodies (`2200540`, `2302471`, `2404428`, two outposts) | 92,556 | 2,236 | Narrow exact visual preservation to optical surfaces and required boundaries; simplify mechanical backing independently. |
+
+These three non-overlapping selections account for 43.9% of visual triangles.
+The first two account for 45.5% of packaged collision triangles. Their counts
+are costs, **not predicted savings**. The first two include assemblies whose
+visible form is much simpler than their detailed CAD construction.
+
+The outpost visual preservation policy currently retains entire detector bodies,
+including their default-material mechanical parts. Primitive 4 alone accounts
+for 77,172 placed triangles across the six bodies. Component-retaining dry runs
+on that primitive leave all other primitives, including the source optical
+materials, untouched:
+
+| Requested meshoptimizer error | Placed triangles after | Reduction | Worst sampled surface deviation |
+|---|---:|---:|---:|
+| 0.10 mm | 38,820 | 38,352 | 0.434 mm |
+| 0.25 mm | 21,034 | 56,138 | 0.779 mm |
+| 0.50 mm | 10,394 | 66,778 | 1.409 mm |
+
+Distances use 2,048 sampled triangles per component in each direction against
+this runtime mesh, not the original STEP. They are not certified maximum errors
+or visual approval: normal/shading changes, thin walls and all detector poses
+still require checks. The 0.25 mm probe alone suggests a 7.6% whole-field visual
+reduction without changing the optical primitives, pending that review.
+
+A near-zero-error probe of the red dart-frame dark primitive reduced only
+62,229 to 62,155 triangles, yet sampled deviation reached 7.29 mm; its collision
+probe reduced 81,769 to 81,721 with 8.29 mm sampled deviation. A small simplifier
+metric does not establish lossless geometry or justify another broad tolerance
+increase. Targeted source-part cleanup is the stronger approach there.
+
+The inventory also found 8,240 placed coincident collision-face candidates
+(5,066 arena, 1,980 rune, 862 outpost, 332 tech core). These match exact vertex
+positions within each primitive irrespective of winding; contact behavior and
+source semantics must be checked before removal. They represent only 1.65% of
+collision geometry and cannot solve the larger cost alone.
+
+Connected material fragments no wider than 10 cm carry 192,564 visual triangles,
+but this is not a count of disposable small objects: material boundaries split
+otherwise connected solids, optical parts are included, and these fragments
+overlap the node selections above. Hidden-geometry sampling and STEP topology
+should guide further selection rather than deleting by size.
+
+### Groundwork-only investigation
+
+`arena-static` mixes terrain with mechanisms and resource objects. Counting the
+whole file as groundwork overstates the terrain cost. The current floor,
+road/deck/ramp surfaces, central terrain/grates, Fortress pads and base foundations
+contain **46,536 visual / 26,630 collision triangles**:
+
+| Groundwork selection | Visual | Collision |
+|---|---:|---:|
+| Floor slab and its markings | 3,236 | 3,236 |
+| Two road assemblies, excluding fans | 23,159 | 11,228 |
+| Central terrain and grates | 12,612 | 8,244 |
+| Side ramps/platforms, excluding dart mechanisms, fans and detector panels | 5,735 | 3,124 |
+| Fortress pads | 224 | 128 |
+| Base foundations | 1,570 | 670 |
+
+This excludes resource machinery/objects (45,723 visual / 33,402 collision),
+dart mechanisms/panels and fans/supports. It also excludes the already separated
+240-triangle arena paint node, whose patches span several source selections.
+Equipment and resource-object geometry remain unchanged.
+
+The strongest measured groundwork opportunity is the pair of wavy-road faces.
+Source products **3797438** and **3813260** each have an imported face **289**
+whose surface is a BSpline profile swept along a constant extrusion direction.
+At 2 mm linear / 0.5 rad angular settings, general OCCT tessellation produces
+34,128 and 34,052 triangles on these single faces. A profile strip needs just
+**506 triangles per face** at a 0.25 mm point-to-segment selection tolerance.
+An independent 32,770-point, same-parameter interpolation check measures about
+**0.327 mm** maximum deviation from each source profile, preserving its waves
+and cross-slope. This is sampled source-CAD evidence, not a certified error bound.
+
+Repeat the read-only source probe (the blue source part has SHA-256
+`211703e82bfaa9423d6f664bed65f029c8fa265730945fd17d0efe94a5cb81a2`):
+
+```sh
+../rm-map-tools/ocpenv/bin/python scripts/probe-groundwork-extrusion.py \
+  --source-part ../rm-map-tools/out/rm2027/RMUC2027_V1.0.0/split/parts/0011-3797438.stp \
+  --source-sha256 89efb6f0aee8c4518739c112798426b155b28a495892f07d8919476189a2991d \
+  --face-index 289 --map-tools ../rm-map-tools \
+  --output local-assets/groundwork-review/source-profile-review.json
+```
+
+The tool validates the source hash, face type, four-edge trim and sampled trim
+interior. It emits measurements, never a replacement mesh. Rectangular trimming,
+edge stitching, adjacent walls, caps, winding and material boundaries still need
+exporter validation before adopting a strip.
+
+A provisional runtime-face attribution (source parameter range, centroid distance
+within 5 mm and matching normal direction) finds 18,736 visual / 8,917 collision
+triangles near those two surfaces. Replacing that region with two 506-triangle
+strips suggests **about 17,700 visual / 7,900 collision triangles saved**. That
+would bring groundwork to **roughly 29,000 visual / 19,000 collision triangles**,
+about 38% / 30% lower. Attribution is not an approved deletion mask, and stitching
+may add triangles. Ground-height, wheel traversal, clearance and visual checks
+remain required. The installed field has not been modified.
+
+Because groundwork is only 6.3% of the field's visual geometry, this initial
+terrain-only reduction would lower the whole-field visual count by about 2.4%.
+Further opportunities include floor artwork conversion, source-guided removal
+of sealed undersides, and more economical grate bars while retaining the actual
+openings. Their additional savings are not yet measured. The broader equipment
+costs above remain a separate future pass.
+
+### Analytic bump fitting and uniform fidelity controls
+
+The supplied CAD does **not** match seated semicircular cylinders at the
+measured pitch. In a local plane perpendicular to the extrusion, its ten bumps
+fit `h(x) = H * (1 - cos(2*pi*x/P)) / 2` with **H = 69.99959 mm** and
+**P = 240.64227 mm**. The fit includes baseline, phase and slope terms;
+maximum sampled residual is about **0.00021 mm**. A repeated semicircle fit
+with the same measured pitch and baseline has radius **71.34 mm** and maximum
+sampled residual **24.92 mm** (8.43 mm RMS). These measurements describe this
+CAD release, not a ruling on the intended physical road profile. Changing to
+semicylinders would change the obstacle, rather than faithfully remeshing it.
+
+The source probe now compares both models and generates a uniform local sine
+surface in memory, without exporting or installing a field. Its tolerance is
+an analytic interpolation bound: for height H and n equally spaced cells per
+period, height error is at most `H*pi^2/(4*n^2)`. Cells are rounded up to a
+multiple of four to retain the exact peaks, valleys and quarter-period points.
+The source-fit residual remains a separate sampled error.
+
+| Analytic error limit | Cells per bump | Triangles per ten-bump surface, one width strip |
+|---|---:|---:|
+| 0.10 mm | 44 | 880 |
+| 0.25 mm | 28 | 560 |
+| 0.50 mm | 20 | 400 |
+| 1.00 mm | 16 | 320 |
+
+At 0.25 mm the analytic bound is 0.221 mm. Across-width subdivision is a separate
+quality/aspect-ratio control: `--max-strip-width-mm 500` uses five uniform strips
+across the 2,084.5 mm width, increasing the surface to 2,800 triangles. The
+extrusion is linear across this axis, so these subdivisions do not reduce shape
+error; their cost must be chosen independently from profile accuracy. Omitting
+the option uses one strip. Both roads have the same fitted parameters within
+the sampled residuals. The generator supplies upward-wound triangles in a local
+millimetre frame; runtime binding, boundaries and adjoining faces remain future
+exporter work.
+
 ## Combat lifecycle and adaptive-armor infrastructure
 
 Native 2027 tables supply Infantry HP, power reporting, heat limit and cooling

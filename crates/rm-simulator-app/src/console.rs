@@ -45,6 +45,8 @@ pub enum ConsoleCommand {
     Ready {},
     /// Reports tick, clock, role, chassis, camera, UI and network state; accepted during loading.
     State {},
+    /// Counts loaded mesh geometry and instances before view culling or render passes.
+    Geometry {},
     /// Sets the free-camera pose, or the local pilot's aim yaw and pitch.
     Camera {
         /// New eye position in world FLU metres; refused while a local pilot is driven.
@@ -191,6 +193,8 @@ impl Connection {
 pub(crate) enum Wait {
     /// Completes when scenery, pipelines and confirmed commands are ready.
     Ready,
+    /// Reports the currently loaded scene mesh instances.
+    Geometry,
     /// Completion passes left before the reply; the last pass confirms the session inputs.
     Applied(u32),
     /// Completes when the pending `ScreenshotRequest` reports a saved or failed capture.
@@ -389,6 +393,9 @@ fn receive(world: &mut World) {
 pub(crate) fn execute(world: &mut World, command: ConsoleCommand) -> Result<Wait, String> {
     if matches!(command, ConsoleCommand::Ready { .. }) {
         return Ok(Wait::Ready);
+    }
+    if matches!(command, ConsoleCommand::Geometry { .. }) {
+        return Ok(Wait::Geometry);
     }
     if matches!(command, ConsoleCommand::Quit { .. }) {
         return Ok(Wait::Quit);
@@ -604,6 +611,7 @@ pub(crate) fn execute(world: &mut World, command: ConsoleCommand) -> Result<Wait
         ConsoleCommand::Help { .. }
         | ConsoleCommand::Ready { .. }
         | ConsoleCommand::State { .. }
+        | ConsoleCommand::Geometry { .. }
         | ConsoleCommand::Quit { .. } => unreachable!(),
     }
     Ok(Wait::Applied(2))
@@ -639,6 +647,7 @@ fn complete(world: &mut World) {
             Some(Err("console command timed out after 120 seconds".into()))
         } else {
             match &mut pending.wait {
+                Wait::Geometry => Some(Ok(geometry(world))),
                 Wait::Quit => {
                     // Queue the reply first; exit only after the next pump flushed it.
                     if console
@@ -750,8 +759,66 @@ fn state(world: &mut World) -> Value {
         })),
         "ui": world.get_resource::<crate::hud::HudState>().map(|ui| json!({"debug_panel":ui.debug, "settings":ui.settings, "blocks_input":ui.blocks_input(), "unfocused":ui.unfocused, "consumed":ui.consumed})),
         "referee_link": referee_link_status(world),
-        "commands":["help","ready","state","camera","spawn","pause","step","screenshot","key",
+        "commands":["help","ready","state","geometry","camera","spawn","pause","step","screenshot","key",
             "mouse_button","mouse_motion","cursor","capture","release_inputs","inspect","world","quit"],
+    })
+}
+
+/// Counts main-world geometry on demand, including hidden and off-camera entities.
+/// A shared mesh contributes once to storage and once per entity to placed geometry.
+fn geometry(world: &mut World) -> Value {
+    use bevy::mesh::PrimitiveTopology;
+    use rm_simulator_render::cad::{CadMesh, CadSceneStatus};
+
+    let instances: Vec<_> = world
+        .query::<(&Mesh3d, Has<CadMesh>)>()
+        .iter(world)
+        .map(|(mesh, cad)| (mesh.id(), cad))
+        .collect();
+    let meshes = world.get_resource::<Assets<Mesh>>();
+    let count = |cad_filter: Option<bool>| {
+        let mut unique = HashSet::new();
+        let mut entities = 0usize;
+        let mut unique_triangles = 0usize;
+        let mut instanced_triangles = 0usize;
+        let mut missing = 0usize;
+        for &(id, cad) in &instances {
+            if cad_filter.is_some_and(|filter| filter != cad) {
+                continue;
+            }
+            entities += 1;
+            let first = unique.insert(id);
+            let Some(mesh) = meshes.and_then(|meshes| meshes.get(id)) else {
+                missing += 1;
+                continue;
+            };
+            let elements = mesh
+                .indices()
+                .map_or_else(|| mesh.count_vertices(), |i| i.len());
+            let triangles = match mesh.primitive_topology() {
+                PrimitiveTopology::TriangleList => elements / 3,
+                PrimitiveTopology::TriangleStrip => elements.saturating_sub(2),
+                _ => 0,
+            };
+            instanced_triangles += triangles;
+            if first {
+                unique_triangles += triangles;
+            }
+        }
+        json!({
+            "mesh_entities": entities,
+            "unique_meshes": unique.len(),
+            "unique_triangles": unique_triangles,
+            "instanced_triangles": instanced_triangles,
+            "missing_mesh_entities": missing,
+        })
+    };
+    json!({
+        "scope": "loaded Mesh3d entities, including hidden; before view culling and render passes; not GPU draw calls or frame triangle submissions",
+        "cad_ready": world.get_resource::<CadSceneStatus>().is_some_and(|s| s.ready()),
+        "cad": count(Some(true)),
+        "other": count(Some(false)),
+        "all": count(None),
     })
 }
 
@@ -891,6 +958,42 @@ fn pointer_button(world: &mut World, button: MouseButton, pressed: bool) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn geometry_counts_shared_instances_and_excludes_line_primitives() {
+        use bevy::{
+            asset::RenderAssetUsages,
+            mesh::{Indices, PrimitiveTopology},
+        };
+        use rm_simulator_render::cad::CadMesh;
+        let mut world = World::new();
+        let mut meshes = Assets::<Mesh>::default();
+        let mut triangle = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        );
+        triangle.insert_indices(Indices::U16(vec![0, 1, 2]));
+        let triangle = meshes.add(triangle);
+        let mut line = Mesh::new(PrimitiveTopology::LineList, RenderAssetUsages::default());
+        line.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]; 6]);
+        let line = meshes.add(line);
+        world.insert_resource(meshes);
+        world.spawn((Mesh3d(triangle.clone()), CadMesh));
+        world.spawn((Mesh3d(triangle.clone()), CadMesh, Visibility::Hidden));
+        world.spawn(Mesh3d(triangle));
+        world.spawn(Mesh3d(line));
+        let report = geometry(&mut world);
+        assert_eq!(report["cad"]["unique_triangles"], 1);
+        assert_eq!(report["cad"]["instanced_triangles"], 2);
+        assert_eq!(report["other"]["instanced_triangles"], 1);
+        assert_eq!(report["all"]["unique_meshes"], 2);
+        assert_eq!(report["all"]["instanced_triangles"], 3);
+        assert_eq!(report["all"]["missing_mesh_entities"], 0);
+        assert!(matches!(
+            execute(&mut world, ConsoleCommand::Geometry {}).unwrap(),
+            Wait::Geometry
+        ));
+    }
 
     fn harness() -> (App, TcpStream) {
         let console = Console::bind("127.0.0.1:0".parse().unwrap()).unwrap();

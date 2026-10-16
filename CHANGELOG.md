@@ -4,6 +4,17 @@
 
 ## Unreleased
 
+- Separate RMUC 2027 groundwork costs from embedded equipment and add a
+  read-only source-profile probe for more economical wavy-road tessellation.
+  Compare sinusoidal and semicircular fits and generate uniform wave grids with
+  explicit profile-error and across-width controls.
+
+- Add a read-only field complexity inventory and measured RMUC 2027 geometry
+  opportunities, including separate mechanical-backing simplification probes.
+
+- Add an on-demand console `geometry` query to distinguish shared mesh storage
+  from instantiated CAD and procedural scene geometry before rendering.
+
 - Fix RMUC 2027 armor lighting: drive the CAD optical surfaces instead of
   drawing filled scoring-envelope panels that protruded across armor edges.
   Preserve independent team colors, hit flashes and disabled state without

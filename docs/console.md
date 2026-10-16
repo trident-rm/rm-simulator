@@ -109,6 +109,7 @@ positive pitch looks up. Camera pitch follows the existing gameplay limits.
 |---|---|---|
 | `help` | None | State and supported command names; available during loading |
 | `ready` | None | Wait for loaded scenery, compiled pipelines and confirmed commands |
+| `geometry` | None | Loaded `Mesh3d` entity counts, unique mesh handles/triangles and instanced triangles, split into CAD and other scene meshes. Includes hidden entities; excludes culling and render-pass multipliers. Available during loading; wait for `ready` for complete counts |
 | `state` | None | Current readiness, tick, estimated `presentation_time_ns`, pause, role, own/predicted chassis, camera, UI, connection toast and network diagnostics |
 | `camera` | Optional `position_m: [x,y,z]`, `yaw_deg`, `pitch_deg`, `third_person` | Set free-camera position or pilot aim; third person requires a pilot |
 | `spawn` | `position_m: [x,y,z]`, optional `yaw_deg` default 0 | Place the existing local pilot using the ground below z, or move a free camera. Resets pitch, body velocity and wheel contacts; preserves ID, HP and defeat state. Remote pilot placement is rejected |
