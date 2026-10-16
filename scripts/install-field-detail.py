@@ -17,6 +17,8 @@ def main():
     parser.add_argument('--destination', required=True, type=Path)
     parser.add_argument('--backup', required=True, type=Path)
     parser.add_argument('--inspector', required=True, type=Path)
+    parser.add_argument('--build-report', choices=['field-detail-build.json', 'source-detail-build.json'],
+                        default='field-detail-build.json')
     parser.add_argument('--allow-collision-budget-overrun', action='store_true')
     args = parser.parse_args()
     candidate, destination, backup = (p.resolve() for p in (args.candidate, args.destination, args.backup))
@@ -24,8 +26,9 @@ def main():
         parser.error('destination must exist; backup must be new and beside it')
     if candidate == destination or candidate.is_relative_to(destination):
         parser.error('candidate must be external to destination')
-    build = json.loads((candidate / 'field-detail-build.json').read_text())
-    if build['after']['visual'] >= build['settings']['budgets']['visual']:
+    build = json.loads((candidate / args.build_report).read_text())
+    settings = build['settings'] if 'settings' in build else build['recipe']
+    if build['after']['visual'] >= settings['budgets']['visual']:
         parser.error('visual triangle budget failed')
     if not build['budget_passed'] and not args.allow_collision_budget_overrun:
         parser.error('collision budget failed; explicit overrun acceptance required')

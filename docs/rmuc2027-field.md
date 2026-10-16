@@ -257,6 +257,158 @@ have 405,623 triangles per outpost and 487,164 per base before instancing;
 `structure-binding-build.json` records the new counts separately from the
 original sandbox adapter's report.
 
+### Simplified bound field
+
+Use the existing rm-map-tools meshoptimizer pipeline after source-body binding:
+
+```sh
+../rm-map-tools/ocpenv/bin/python scripts/optimize-field.py \
+  --map-tools ../rm-map-tools \
+  --input local-assets/field-2027-live \
+  --output local-assets/field-2027-optimized \
+  --settings scripts/field-detail-rmuc2027.json
+
+nix develop -c cargo run --locked -p rm-simulator-server \
+  --features season-2027 --example inspect_assets -- local-assets/field-2027-optimized
+nix develop -c cargo run --locked -p rm-simulator-server \
+  --features season-2027 --example compare_asset_ground -- \
+  local-assets/field-2027-live local-assets/field-2027-optimized
+```
+
+The input must be the unsimplified bound checkpoint; after installing a
+derivative, use the retained backup as input to reproduce it. Output must be a
+new directory. The settings enable only base, outpost and arena-static. Floor,
+rune and tech cores remain byte-identical. All moving bodies and detector
+modules are protected in both visual and collision GLBs. The builder validates
+binding checksums and complete source-body coverage, checks retained primitives'
+positions, normals and indices exactly, and preserves node hierarchy, materials,
+joint metadata, detector poses and placements. The custom 2027 sidecar remains
+byte-identical; it does not use 2026 articulation-role protection.
+
+Fixed geometry uses 3 mm visual / 5 mm collision error settings and 4 mm / 7 mm
+sampled-deviation limits against the input checkpoint. Borders may collapse,
+using the existing connected-component retention/refinement policy and 1,024
+triangle samples per direction per primitive. These sampled checks are not
+certified maximum errors against CAD. Upstream approximation records remain in
+`field-detail-build.json`, alongside input manifests, settings, helper hashes,
+protected selectors and per-primitive results. No surfaces are classified as
+decoration and removed. The minimap is regenerated from the derivative.
+
+Measured results for the bound V1.0.0 checkpoint (triangles per copy):
+
+| Asset | Copies | Visual before → after | Collision before → after |
+|---|---:|---:|---:|
+| Base | 2 | 487,164 → 133,960 | 487,164 → 116,932 |
+| Outpost | 2 | 405,623 → 87,522 | 405,623 → 76,971 |
+| Arena-static | 1 | 758,706 → 264,522 | 596,498 → 195,165 |
+
+The complete placed package falls from **3,207,229 to 1,370,435 visual**
+triangles (57% reduction) and **3,045,021 to 1,245,920 collision** triangles
+(59% reduction). These inventories include moving bodies. The native loader's
+static geometry falls from 2,769,093 to 969,992 triangles, including its perimeter.
+Its resulting ground/fixture/equipment counts are 198,401 / 529,957 / 241,634.
+The ground comparison probes both directions on a 0.2 m grid at five height
+bands, retaining lower tunnel floors and upper decks as separate queries. All
+111,980 comparisons pass a 10 mm tolerance; the maximum observed height change
+is 5.05 mm. This checks sampled ground continuity, not every possible clearance.
+Review base/outpost silhouettes, corner dart-station detail and ramp/tunnel
+clearances before promoting a derivative into a shared runtime release.
+
+### Source-aware geometry and paint pipeline
+
+The broader pass separates visual precision, collision geometry and artwork.
+It starts from the original bound checkpoint, not from the derivative above:
+
+```sh
+../rm-map-tools/ocpenv/bin/python scripts/build-rmuc2027-detail.py \
+  --map-tools ../rm-map-tools \
+  --input local-assets/field-2027-live.before-20261016-geometry \
+  --output local-assets/field-2027-detail-ready \
+  --recipe scripts/rmuc2027-detail.json
+```
+
+Choose a new output directory when repeating the build. The recipe pins both
+input manifests and source-painted regions, and fails on a different checkpoint
+instead of guessing equivalent selections. The builder retains input manifests,
+upstream approximation records, dependency versions and script/helper hashes in
+`source-detail-build.json`. These local packages are not the bundled LFS release.
+
+- **Exact representation:** byte-identical complete vertex records are indexed
+  together, preserving expanded positions, normals, UVs, normalized attributes,
+  triangle order and winding. Hard normal and UV seams are retained. This saves
+  storage and vertex work; it is not a claim of lossless triangle decimation.
+  A zero-error decimation trial produced negligible triangle savings.
+- **Independent parts:** each disconnected component is simplified and sampled
+  independently, then reassembled into its original material primitive. Small
+  fittings no longer force their entire assembly to use the finest tolerance,
+  and component splitting does not multiply render primitives. Every component
+  survives; small parts are not removed by a size threshold.
+- **Collision surfaces:** source-body nodes and motion hierarchies remain
+  separate, but their material partitions are merged before simplification.
+  Physics has no paint boundaries. Both fixed and moving housing geometry can
+  simplify; detector modules remain exact in the visual mesh, and the complete
+  rule/detector/motion sidecar stays byte-identical. Collision housings are
+  approximate, independently of those scoring definitions.
+- **Shape fitting:** connected components at most 50 mm across may become
+  oriented boxes only after bidirectional surface checks stay within 0.5 mm.
+  Source sampling covers every triangle; candidate box faces also use a 2 mm
+  sampling grid. Open frames and large housings do not qualify. Accepted fits
+  and their measurements are individually recorded; they currently provide
+  much less reduction than component-wise mesh processing.
+- **Paint:** the recipe identifies planar white lettering/logos and red/blue
+  pad/boundary regions by source node and material, rather than interpreting
+  arbitrary white or colored mechanical surfaces as decoration. Original caps
+  remain as solid structural backing with the reviewed background material.
+  Detailed text/logos are baked with rm-map-tools at 1,024 pixels/m into embedded
+  transparent atlases. Sparse colored lines retain their original few polygons,
+  avoiding large transparent texture allocations and retaining their exact
+  shape. Oversized atlas regions are clipped into tiles without filling holes;
+  source plane thickness may be up to 1.5 mm. Fixed artwork is batched by material
+  under a separate `rmuc2027.decoration` node, offset
+  0.5 mm, and never added to collision GLBs. Unselected curved artwork and
+  mechanical colors remain source geometry. The tactical minimap is baked from
+  source-painted geometry before conversion, with its input hashes and shared
+  coordinate frame retained, so transparent atlas conversion cannot erase map
+  markings.
+
+Structural error settings are 2 mm visual / 3 mm collision, with 3 mm / 4.5 mm
+sampled limits per component. Box fitting precedes collision simplification;
+its separate 0.5 mm allowance must also be considered. These are sampled checks
+against the bound input, not certified maximum deviations from the original CAD.
+Two source-pinned thin-frame components in the opposite dart stations remain
+exact: their steep faces amplified small remeshing errors in vertical ground
+queries. Missing or changed precision components fail the build.
+
+The reviewed recipe covers 24 painted source regions: 14 atlas selections and
+10 geometry selections. It produces three 2,048² atlas pages and five batched
+decoration primitives in total, rather than one draw primitive per patch.
+The complete placed package contains **755,677 visual / 501,398 collision
+triangles**: 76% / 84% below the original bound source, and 45% / 60% below
+the first derivative above. Its static loader counts are 287,488 ground,
+118,924 fixture and 82,134 equipment triangles. All 111,980 ground probes pass
+the unchanged 10 mm threshold; maximum observed height difference is 6.72 mm.
+The tighter per-component limits can retain more scenery triangles than the
+first pass: arena-static has 319,691 visual / 284,252 collision triangles.
+Most additional savings come from the bases, moving housings, rune and cores,
+with a finer structural error policy than the first pass. Vertex packing saves
+additional bytes without claiming further triangle reductions.
+
+Validate and install with a rollback copy:
+
+```sh
+nix develop -c cargo run --locked -p rm-simulator-server \
+  --features season-2027 --example inspect_assets -- local-assets/field-2027-detail-ready
+nix develop -c cargo run --locked -p rm-simulator-server \
+  --features season-2027 --example compare_asset_ground -- \
+  local-assets/field-2027-live.before-20261016-geometry local-assets/field-2027-detail-ready
+python3 scripts/install-field-detail.py \
+  --candidate local-assets/field-2027-detail-ready \
+  --destination local-assets/field-2027-live \
+  --backup local-assets/field-2027-live.before-source-detail-20261016 \
+  --build-report source-detail-build.json \
+  --inspector target/nix/debug/examples/inspect_assets
+```
+
 This is a playable, single-round RMUC combat/control subset. Heavy, assembly,
 ordinary field defense/terrain buffs, rune, aerial, dart and Radar equipment
 remain unavailable. 42 mm launches remain refused until Heavy suppression

@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "input_manifests": {
+    "": "e864d484fdc3b57948def00be6bdc132fd0e6be65dd9ef7aca26c29e70090f2b",
+    "equipment": "47224740e10868833a199061cc04585b771147a6c4697c5b1ee6b3c18cfde6ae"
+  },
+  "visual_error_mm": 2,
+  "visual_sampled_limit_mm": 3,
+  "collision_error_mm": 3,
+  "collision_sampled_limit_mm": 4.5,
+  "budgets": {
+    "visual": 1000000,
+    "collision": 600000
+  },
+  "paint": [
+    {
+      "node": "centre-platform/0/source_1754789_4",
+      "material": "colour_1.0000,1.0000,1.0000",
+      "backing_material": "colour_0.2000,0.2000,0.2000",
+      "encoding": "atlas"
+    },
+    {
+      "node": "centre-platform/0/source_1754789_5",
+      "material": "colour_1.0000,1.0000,1.0000",
+      "backing_material": "colour_0.2000,0.2000,0.2000",
+      "encoding": "atlas"
+    },
+    {
+      "node": "centre-platform/0/source_1791071_7",
+      "material": "colour_1.0000,1.0000,1.0000",
+      "backing_material": "colour_0.7843,0.7843,0.7059",
+      "encoding": "atlas"
+    },
+    {
+      "node": "centre-platform/0/source_1800061_8",
+      "material": "colour_1.0000,1.0000,1.0000",
+      "backing_material": "colour_0.7843,0.7843,0.7059",
+      "encoding": "atlas"
+    },
+    {
+      "node": "red-ramp-dart-station/0/source_2643652_0",
+      "material": "colour_1.0000,1.0000,1.0000",
+      "backing_material": "colour_0.2549,0.2549,0.2549",
+      "encoding": "atlas"
+    },
+    {
+      "node": "red-ramp-dart-station/0/source_2649727_2",
+      "material": "colour_1.0000,1.0000,1.0000",
+      "backing_material": "colour_0.2549,0.2549,0.2549",
+      "encoding": "atlas"
+    },
+    {
+      "node": "red-ramp-dart-station/0/source_2721188_6",
+      "material": "colour_1.0000,1.0000,1.0000",
+      "backing_material": "colour_0.0000,0.0000,0.0000",
+      "encoding": "atlas"
+    },
+    {
+      "node": "blue-ramp-dart-station/0/source_3776088_0",
+      "material": "colour_1.0000,1.0000,1.0000",
+      "backing_material": "colour_0.2549,0.2549,0.2549",
+      "encoding": "atlas"
+    },
+    {
+      "node": "blue-ramp-dart-station/0/source_3781945_2",
+      "material": "colour_1.0000,1.0000,1.0000",
+      "backing_material": "colour_0.2549,0.2549,0.2549",
+      "encoding": "atlas"
+    },
+    {
+      "node": "blue-ramp-dart-station/0/source_2721188_6",
+      "material": "colour_1.0000,1.0000,1.0000",
+      "backing_material": "colour_0.0000,0.0000,0.0000",
+      "encoding": "atlas"
+    },
+    {
+      "node": "red-resource-zone/0/source_3998852_0",
+      "material": "colour_1.0000,1.0000,1.0000",
+      "backing_material": "colour_0.7843,0.7843,0.7059",
+      "encoding": "atlas"
+    },
+    {
+      "node": "blue-resource-zone/0/source_3998852_0",
+      "material": "colour_1.0000,1.0000,1.0000",
+      "backing_material": "colour_0.7843,0.7843,0.7059",
+      "encoding": "atlas"
+    },
+    {
+      "node": "base-footing/0/source_4069592_0",
+      "material": "colour_1.0000,1.0000,1.0000",
+      "backing_material": "colour_0.7843,0.7843,0.7059",
+      "encoding": "atlas"
+    },
+    {
+      "node": "base-footing/1/source_4069592_0",
+      "material": "colour_1.0000,1.0000,1.0000",
+      "backing_material": "colour_0.7843,0.7843,0.7059",
+      "encoding": "atlas"
+    },
+    {
+      "node": "centre-platform/0/source_1754789_4",
+      "material": "colour_1.0000,0.0271,0.0271",
+      "backing_material": "colour_0.2000,0.2000,0.2000",
+      "encoding": "geometry"
+    },
+    {
+      "node": "centre-platform/0/source_1754789_5",
+      "material": "colour_1.0000,0.0271,0.0271",
+      "backing_material": "colour_0.2000,0.2000,0.2000",
+      "encoding": "geometry"
+    },
+    {
+      "node": "red-ramp-dart-station/0/source_2643652_0",
+      "material": "colour_1.0000,0.0271,0.0271",
+      "backing_material": "colour_0.2549,0.2549,0.2549",
+      "encoding": "geometry"
+    },
+    {
+      "node": "red-ramp-dart-station/0/source_2649727_2",
+      "material": "colour_1.0000,0.0271,0.0271",
+      "backing_material": "colour_0.2549,0.2549,0.2549",
+      "encoding": "geometry"
+    },
+    {
+      "node": "blue-ramp-dart-station/0/source_3776088_0",
+      "material": "colour_0.0660,0.0040,0.5930",
+      "backing_material": "colour_0.2549,0.2549,0.2549",
+      "encoding": "geometry"
+    },
+    {
+      "node": "blue-ramp-dart-station/0/source_3781945_2",
+      "material": "colour_0.0660,0.0040,0.5930",
+      "backing_material": "colour_0.2549,0.2549,0.2549",
+      "encoding": "geometry"
+    },
+    {
+      "node": "red-resource-zone/0/source_3998852_0",
+      "material": "colour_1.0000,0.0271,0.0271",
+      "backing_material": "colour_0.7843,0.7843,0.7059",
+      "encoding": "geometry"
+    },
+    {
+      "node": "blue-resource-zone/0/source_3998852_0",
+      "material": "colour_1.0000,0.0271,0.0271",
+      "backing_material": "colour_0.7843,0.7843,0.7059",
+      "encoding": "geometry"
+    },
+    {
+      "node": "red-fortress/0/source_4059143_0",
+      "material": "colour_1.0000,0.0271,0.0271",
+      "backing_material": "colour_0.2549,0.2549,0.2549",
+      "encoding": "geometry"
+    },
+    {
+      "node": "blue-fortress/0/source_4059143_0",
+      "material": "colour_1.0000,0.0271,0.0271",
+      "backing_material": "colour_0.2549,0.2549,0.2549",
+      "encoding": "geometry"
+    }
+  ],
+  "precision_components": {
+    "arena-static-collision.glb": [
+      {
+        "node": "blue-ramp-dart-station/0/source_3749800_7",
+        "positions_sha256": "c1c00e09c705ed24987d22adac973c442b4be2a22e42a8612eac43e64659dc6c"
+      },
+      {
+        "node": "red-ramp-dart-station/0/source_3749800_7",
+        "positions_sha256": "12e905c8988bb0ce7bfec5c82fbcee465abe005748bbfb3cbe459fa4be1e7a4b"
+      }
+    ]
+  },
+  "precision_component_reason": "Retain both source thin-frame components exactly: vertical ground probes amplify remeshing error near a steep dart-station edge.",
+  "paint_scope": "Pinned planar floor/pad boundaries, text and logos; other colored mechanical surfaces remain source geometry."
+}

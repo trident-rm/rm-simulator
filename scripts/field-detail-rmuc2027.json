@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "budgets": { "visual": 1600000, "collision": 1500000 },
+  "defaults": {
+    "enabled": false,
+    "visual_error_mm": 3,
+    "collision_error_mm": 5,
+    "visual_sampled_limit_mm": 4,
+    "collision_sampled_limit_mm": 7,
+    "deviation_samples": 1024
+  },
+  "assets": {
+    "base": { "enabled": true },
+    "outpost": { "enabled": true },
+    "arena-static": { "enabled": true }
+  }
+}

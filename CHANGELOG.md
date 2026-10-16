@@ -4,6 +4,17 @@
 
 ## Unreleased
 
+- Add a source-aware RMUC 2027 geometry pipeline: refine disconnected parts
+  independently, merge collision material boundaries, fit checked small box
+  proxies and pack vertices without changing their expanded attributes. Bake
+  selected field paint into a separate batched atlas layer with solid backing,
+  preserve detector/motion authority and retain precision-critical source parts.
+
+- Simplify bound RMUC 2027 base, outpost and scenery meshes with the existing
+  rm-map-tools pipeline, reducing complete-field visual/collision triangles by
+  57%/59%. Preserve moving bodies and detector geometry exactly, retain source
+  provenance and add a native ground-surface comparison tool.
+
 - Add native RMUC 2027 combat: enforced 17 mm allowance, 10 Hz heat/cooling,
   independent launcher locks, supply/outpost healing, basic income and delayed
   purchases, normal/paid respawn, weakness/invincibility, combat XP and Infantry
