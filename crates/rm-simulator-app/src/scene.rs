@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use rm_simulator_render::{
     PoseFlu, RenderingConfig, TeamColor,
     armor::{ArmorAtlas, ArmorPattern, DiffuserProfile},
-    cad::{CadInstance, CadJoint, CadRole, CadRuneFace, JointDriver},
+    cad::{CadInstance, CadJoint, CadRole, CadRuneFace, CadTargetLight, JointDriver},
     camera_appearance,
     chassis::ArmorOptics,
     lighting, outpost, rune,
@@ -105,8 +105,33 @@ pub fn cad_instances(cad: &CadAssets, rune_faces: bool, base_plates: bool) -> Ve
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
+                let target_lights = cad
+                    .rmuc_2027
+                    .as_ref()
+                    .and_then(|b| {
+                        let (name, offset, source_color) = if asset.file == cad.base.file {
+                            ("base", 0, Color::srgb(1., 0., 0.))
+                        } else if asset.file == cad.outpost.file {
+                            ("outpost", 128, Color::srgb(0., 1., 1.))
+                        } else {
+                            return None;
+                        };
+                        b.report.get(name).map(|report| {
+                            report
+                                .detector_bodies
+                                .iter()
+                                .enumerate()
+                                .map(|(index, body)| CadTargetLight {
+                                    node: format!("source_body_{body}"),
+                                    target: offset + (side * 32 + index) as u64,
+                                    source_color,
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                    .unwrap_or_default();
                 CadInstance {
-                    team: None,
+                    team: (!target_lights.is_empty()).then(|| team_color(Team::BOTH[side])),
                     file: asset.file.clone(),
                     transform,
                     role: if joints.is_empty() {
@@ -117,6 +142,7 @@ pub fn cad_instances(cad: &CadAssets, rune_faces: bool, base_plates: bool) -> Ve
                             joints,
                             hidden_ids: vec![],
                             rune_faces: vec![],
+                            target_lights,
                         }
                     },
                 }
@@ -287,6 +313,7 @@ pub fn cad_instances(cad: &CadAssets, rune_faces: bool, base_plates: bool) -> Ve
                 joints,
                 hidden_ids,
                 rune_faces,
+                target_lights: vec![],
             };
         }
     }

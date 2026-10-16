@@ -27,6 +27,19 @@ pub struct Motion {
     /// Prismatic travel in metres, or `None` for the outpost's continuous rotation.
     pub limits: Option<[f64; 2]>,
 }
+/// Ordered source bodies used to fit one structure's optical detectors.
+///
+/// ```
+/// use rm_simulator_server::rmuc_2027::SourceReport;
+/// let report: SourceReport = serde_json::from_str(r#"{"detector_bodies":[17,23,31]}"#)?;
+/// assert_eq!(report.detector_bodies, [17, 23, 31]);
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct SourceReport {
+    /// STEP body identifiers, in the same order as the fitted detector faces.
+    pub detector_bodies: Vec<u64>,
+}
 /// Source-pinned 2027 target geometry and motion partitions.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Bindings {
@@ -42,6 +55,8 @@ pub struct Bindings {
     pub outpost_motion: Vec<Motion>,
     /// Three base protective-armor source bodies.
     pub base_motion: Vec<Motion>,
+    /// Source partitions retained by the binder, keyed by structure name.
+    pub report: std::collections::BTreeMap<String, SourceReport>,
 }
 impl Bindings {
     /// Validate identity, geometry and supported motion contracts before admission.
@@ -54,6 +69,17 @@ impl Bindings {
             "unknown 2027 source/ruleset binding"
         );
         self.world.validate().map_err(anyhow::Error::msg)?;
+        for (name, count) in [("base", self.world.bases[0].len()), ("outpost", 3)] {
+            let report = self
+                .report
+                .get(name)
+                .context("missing detector source report")?;
+            let unique: std::collections::BTreeSet<_> = report.detector_bodies.iter().collect();
+            ensure!(
+                report.detector_bodies.len() == count && unique.len() == count,
+                "incomplete/duplicate detector source bodies"
+            );
+        }
         ensure!(
             self.outpost_motion.len() == 1 && self.base_motion.len() == 3,
             "incomplete 2027 joints"

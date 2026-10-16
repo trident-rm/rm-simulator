@@ -24,6 +24,26 @@ pub struct CadRuneFace {
     /// Owning team, supplied by the application.
     pub color: crate::TeamColor,
 }
+/// A source optical material driven by a caller-owned detector appearance.
+///
+/// ```
+/// use bevy::prelude::Color;
+/// use rm_simulator_render::cad::CadTargetLight;
+/// let light = CadTargetLight {
+///     node: "source-detector".into(), target: 7,
+///     source_color: Color::srgb(1., 0., 0.),
+/// };
+/// assert_eq!(light.target, 7);
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+pub struct CadTargetLight {
+    /// Exact glTF source-body node; only descendants of this node are eligible.
+    pub node: String,
+    /// Identity in [`crate::targets::TargetInput`].
+    pub target: u64,
+    /// Original optical tint; other materials on the same body remain unchanged.
+    pub source_color: Color,
+}
 /// What one imported glTF scene contributes, and how its nodes are treated.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CadRole {
@@ -37,6 +57,8 @@ pub enum CadRole {
         hidden_ids: Vec<String>,
         /// Preserve rune optics when joint binding replaces the legacy motion path.
         rune_faces: Vec<CadRuneFace>,
+        /// Exact source optical surfaces, replacing filled detector overlays.
+        target_lights: Vec<CadTargetLight>,
     },
     /// Rigid scenery. An override recolours the materials the CAD left
     /// unpainted (the converter's near-white cream, see [`is_unpainted`])
@@ -306,6 +328,7 @@ fn loaded(
         joints,
         hidden_ids,
         rune_faces,
+        target_lights,
         ..
     } = &instance.role
     {
@@ -337,6 +360,50 @@ fn loaded(
         if bound.len() != joints.len() {
             status.failed = Some(format!("{}: missing exported joint nodes", instance.file));
             return;
+        }
+        for light in target_lights {
+            let mut found = 0;
+            for node in children.iter_descendants(event.entity) {
+                if !names
+                    .get(node)
+                    .is_ok_and(|(name, _)| name.as_str() == light.node)
+                {
+                    continue;
+                }
+                for primitive in children.iter_descendants(node) {
+                    let Ok(handle) = handles.get(primitive) else {
+                        continue;
+                    };
+                    let Some(original) = materials.get(handle.id()) else {
+                        continue;
+                    };
+                    let actual = original.base_color.to_srgba();
+                    let expected = light.source_color.to_srgba();
+                    if (actual.red - expected.red).abs() > 0.01
+                        || (actual.green - expected.green).abs() > 0.01
+                        || (actual.blue - expected.blue).abs() > 0.01
+                    {
+                        continue;
+                    }
+                    // Material assets are shared by glTF instances. Clone only
+                    // this optical primitive so opposing teams remain independent.
+                    let mut material = original.clone();
+                    material.base_color = instance.team.unwrap_or(crate::TeamColor::Red).light().0;
+                    let replacement = materials.add(material);
+                    commands.entity(primitive).insert((
+                        MeshMaterial3d(replacement),
+                        crate::targets::CadLight::new(light.target),
+                    ));
+                    found += 1;
+                }
+            }
+            if found == 0 {
+                status.failed = Some(format!(
+                    "{}: missing source optical material on {}",
+                    instance.file, light.node
+                ));
+                return;
+            }
         }
         if rune_faces.is_empty() {
             status.loaded += 1;

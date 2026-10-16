@@ -409,6 +409,159 @@ python3 scripts/install-field-detail.py \
   --inspector target/nix/debug/examples/inspect_assets
 ```
 
+
+### Read-only base visibility audit
+
+Before deleting internal geometry, audit the approved high-fidelity base rather
+than increasing its simplification tolerance. This command reads the package
+and writes measurements and triangle masks to a new directory; it never changes
+runtime assets:
+
+```sh
+../rm-map-tools/ocpenv/bin/python scripts/analyze-structure-visibility.py \
+  --cad-assets local-assets/field-2027-live \
+  --map-tools ../rm-map-tools \
+  --output local-assets/rmuc2027-base-visibility
+```
+
+The audit treats surfaces as opaque and two-sided. It starts with triangle
+centroids, both face-normal directions and 32 spherical directions. Candidates
+are retested at four barycentric points with 128 spherical directions. Fixed
+bodies are tested with all moving shields omitted as occluders; moving bodies
+use self-occlusion only. Thus closed shields cannot authorize deleting fixed
+detail behind them, and untested combinations of shield positions are not
+assumed safe. The floor, arena and other equipment are omitted, deliberately
+retaining even underside surfaces that an in-game camera normally cannot see.
+
+For the restored source-aware package, the sampled counts **per base** are:
+
+| Region | Hidden visual / total | Hidden collision / total |
+|---|---:|---:|
+| Three detector bodies (`4099408`, `4121375`, `4143351`) | 15,011 / 21,420 | 1,043 / 1,608 |
+| Top cover (`4268930`) | 5,134 / 11,410 | 2,783 / 5,888 |
+| Surface-detail assembly (`4774151`) | 5,210 / 9,820 | 3,723 / 6,631 |
+| Main lower housing (`4527988`) | 430 / 15,611 | 1,123 / 6,814 |
+| Moving shields (`4314593`, `4353403`, `4392221`) | 508 / 10,270 | 488 / 4,814 |
+| Other fittings | 472 / 2,544 | 379 / 2,334 |
+| **Total** | **26,765 / 71,075 (37.7%)** | **9,539 / 28,089 (34.0%)** |
+
+These are candidates for inspection, **not validated deletion counts**. The
+coarse centroid test alone classified 34,818 visual / 12,925 collision triangles
+as hidden; denser sampling exposed many of them. Tiny openings, triangle edges,
+curved projectile paths and internal bounce contacts still require validation.
+A hidden visual surface is not automatically a removable collider. The hidden
+triangles represent about 7.2% of surface area in either mesh, consistent with
+many small internal details rather than most of the visible outer envelope.
+
+At the assembled rest pose, the hidden counts increase to 28,698 visual / 10,190
+collision triangles. The extra 1,933 / 651 are excluded from the conservative
+candidate totals because their occlusion may depend on neighboring moving parts.
+The detector candidates include hidden metallic and colored internal faces as
+well as dark housings; material color alone is not a valid removal selector.
+Scoring definitions and exposed detector optics must remain intact.
+
+A separate source-CAD topology check found ten closed inner shells in body
+`4268930` (124 CAD faces). Their bounds match ten closed components in the
+current meshes within 0.63 mm: 250 visual / 200 collision triangles, all hidden
+in the ray audit. These sealed-cavity components are a stronger initial target
+than the broader sampled set, but account for only a small part of it. Another
+859 collision triangles are exact coincident duplicates within their source
+bodies, ignoring winding because contacts are two-sided. Of those, 715 already
+belong to the hidden set; the counts must not be added without accounting for
+overlap. These findings were measured against the approved checkpoint; the
+interior-removal trial below applies a reviewed subset to a separate derivative.
+
+The output `report.json` records input checksums, source-body counts, areas and
+sampling settings. `visual-triangles.npz` and `collision-triangles.npz` retain
+triangle positions, body names and masks for diagnostic views. Future removal
+should start with source-confirmed enclosed surfaces and exact collision
+duplicates, then validate occluded detail in the top cover and surface assembly.
+Keep exterior vertices and silhouettes at the approved precision.
+
+
+### Source armor lighting
+
+The fitted detector rectangles are scoring envelopes, not visible optical masks.
+Drawing them as solid emissive panels produced broad red wedges where the
+rectangles intersected the source housings, including on the unsimplified CAD.
+The renderer now binds the exact detector-body nodes from the source report and
+animates only their optical material: source-red for base optics and source-cyan
+for outpost optics. Materials are cloned per primitive/instance so team ownership,
+strike flashes and disabled state remain independent. Other materials and all
+source vertex positions stay unchanged; imported joints carry the lights with
+their modules. A source binding suppresses the procedural rectangular panel,
+including when the CAD arrives after that fallback was drawn. Rectangular scoring
+envelopes and physics are unchanged. Plain panels remain available for targets
+without bound CAD surfaces.
+
+### Interior-removal trial
+
+The interior builder starts from the approved source-aware checkpoint, keeps its
+exterior precision, and deletes selected triangles without fitting or moving
+any retained vertex. It requires the exact reviewed visibility report and masks;
+the recipe pins their checksums and both input manifests. Sealed-cavity component
+signatures retain their source-CAD matching measurements and source-part hash.
+
+```sh
+../rm-map-tools/ocpenv/bin/python scripts/build-rmuc2027-interior.py \
+  --input local-assets/field-2027-detail-ready \
+  --output local-assets/field-2027-interior-ready \
+  --audit local-assets/visibility-review/base \
+  --map-tools ../rm-map-tools
+```
+
+Use new output/backup names for another build or installation. The reviewed
+masks are build inputs from the audit above; a different report, mask or approved
+checkpoint fails rather than silently reusing different surface selections.
+
+Visual pruning is restricted to the top cover, surface-detail assembly and dark
+detector housings. The main lower housing and moving shields are untouched;
+silver/colored detector primitives remain complete. One vertex-adjacent guard
+ring protects retained boundaries. A further exterior guard traces 96 spherical
+views at 192 × 192 samples, omitting movable occluders. It restored ten triangles
+that the earlier audit had missed. Every original first-hit triangle is retained
+for these 3,538,944 test rays. This is a sampled safeguard, not a mathematical
+visibility proof; before/after camera inspection is still required.
+
+Collision pruning does **not** use the broad visual hidden mask. It removes the
+200 triangles in the ten pinned source cavities and 859 exact two-sided duplicate
+triangles. These sets do not overlap in this checkpoint. Other hidden collision
+surfaces remain until projectile access and contact behavior can be established.
+All retained expanded vertex attributes, triangle winding, materials, source-body
+names, primitive slots, joint hierarchy and scoring authority stay unchanged.
+Unused vertex records are dropped and index widths remain compact. No further
+simplification tolerance is introduced.
+
+| Geometry | Approved checkpoint | Interior trial | Reduction |
+|---|---:|---:|---:|
+| Visual, per base | 71,075 | 60,268 | 15.2% |
+| Collision, per base | 28,089 | 27,030 | 3.8% |
+| Complete placed visual | 755,677 | 734,063 | 2.9% |
+| Complete placed collision | 501,398 | 499,280 | 0.4% |
+
+`interior-build.json` retains input identities, guard-ray counts, restored and
+removed triangles, per-primitive results and inherited build provenance. The
+asset's `mesh_cleanup` record describes the subset operation separately from
+its inherited `mesh_simplification` records, which describe how the retained
+source surfaces were tessellated/decimated. Removed inaccessible surfaces are
+not claimed to satisfy a full-source bidirectional distance bound.
+
+Native loading succeeds and all 111,980 ground probes against the approved
+checkpoint have exactly zero height difference. Validate and install with a
+rollback copy:
+
+```sh
+target/nix/debug/examples/inspect_assets local-assets/field-2027-interior-ready
+target/nix/debug/examples/compare_asset_ground \
+  local-assets/field-2027-detail-ready local-assets/field-2027-interior-ready
+python3 scripts/install-field-detail.py \
+  --candidate local-assets/field-2027-interior-ready \
+  --destination local-assets/field-2027-live \
+  --backup local-assets/field-2027-live.before-interior-20261016 \
+  --build-report interior-build.json \
+  --inspector target/nix/debug/examples/inspect_assets
+```
+
 This is a playable, single-round RMUC combat/control subset. Heavy, assembly,
 ordinary field defense/terrain buffs, rune, aerial, dart and Radar equipment
 remain unavailable. 42 mm launches remain refused until Heavy suppression

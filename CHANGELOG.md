@@ -4,6 +4,21 @@
 
 ## Unreleased
 
+- Fix RMUC 2027 armor lighting: drive the CAD optical surfaces instead of
+  drawing filled scoring-envelope panels that protruded across armor edges.
+  Preserve independent team colors, hit flashes and disabled state without
+  changing detector scoring or collision geometry.
+
+- Add a guarded RMUC 2027 base interior-removal candidate: retain exterior
+  coordinates, materials, detector faces and moving geometry while removing
+  15.2% of base visual triangles. Restrict collision cleanup to source-pinned
+  sealed cavities and exact duplicate faces (3.8% of base collision triangles),
+  with an independent exterior ray guard and a reproducible build report.
+
+- Add a read-only RMUC 2027 base visibility audit with per-body triangle and
+  area counts, refined surface sampling and conservative moving-shield handling.
+  The audit does not alter its input assets.
+
 - Add a source-aware RMUC 2027 geometry pipeline: refine disconnected parts
   independently, merge collision material boundaries, fit checked small box
   proxies and pack vertices without changing their expanded attributes. Bake
