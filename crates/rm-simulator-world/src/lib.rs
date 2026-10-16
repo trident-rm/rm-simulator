@@ -681,22 +681,15 @@ impl Field {
                     "2027 Heavy launcher suppression is not implemented",
                 ));
             }
-            if state.game.phase == rmuc_2027::match_rules::Phase::Countdown
-                || state.game.phase == rmuc_2027::match_rules::Phase::Finished
-            {
+            if let Some(id) = shooter {
+                state.game.check_launch(id).map_err(FieldError::Referee)?;
+            } else if !matches!(
+                state.game.phase,
+                rmuc_2027::match_rules::Phase::Idle | rmuc_2027::match_rules::Phase::Running
+            ) {
                 return Err(FieldError::Referee(
                     "2027 launcher unavailable in this phase",
                 ));
-            }
-            if shooter.is_some_and(|id| {
-                state
-                    .game
-                    .robots
-                    .iter()
-                    .find(|r| r.id == id)
-                    .is_none_or(|r| r.hp == 0 || !r.online)
-            }) {
-                return Err(FieldError::Referee("2027 robot is defeated or offline"));
             }
         }
         if let Some(referee) = &self.referee {
@@ -711,11 +704,29 @@ impl Field {
         if let Some(referee) = &mut self.referee {
             referee.record_launch(shooter, shot.caliber);
         }
+        if let (Some(state), Some(id)) = (&mut self.rmuc_2027, shooter) {
+            state.game.record_launch(id, shot.speed_m_s);
+        }
         Ok(id)
     }
-    /// Immediate pilot resupply with team gold during a running round: one
-    /// Table 5-6 exchange unit, ten 17 mm rounds or one 42 mm round.
+    /// Buy one pilot ammunition unit during a round. Legacy 2026 uses ten
+    /// 17 mm rounds or one 42 mm round; native 2027 chooses ten zone rounds or
+    /// 100 remote rounds with six-second delivery (Tables 5-7–5-9).
     pub fn buy_ammo(&mut self, chassis: u32, caliber: Caliber) -> Result<(), FieldError> {
+        if let Some(state) = &mut self.rmuc_2027 {
+            if caliber != Caliber::Mm17 {
+                return Err(FieldError::Referee("2027 Heavy is unavailable"));
+            }
+            let amount = if state.game.zone_exchange_available(chassis) {
+                10
+            } else {
+                100
+            };
+            return state
+                .game
+                .buy_ammo(chassis, amount)
+                .map_err(FieldError::Referee);
+        }
         self.referee_command(RefereeCommand::BuyAmmo {
             robot: chassis,
             caliber,
@@ -761,6 +772,18 @@ impl Field {
         {
             return Err(FieldError::Referee("unsupported 2027 ground role"));
         }
+        if self.rmuc_2027.is_some()
+            && placement.performance.is_some_and(|p| {
+                !matches!(
+                    (placement.kind, p),
+                    (RobotKind::Infantry, gameplay::Performance::Infantry { .. })
+                )
+            })
+        {
+            return Err(FieldError::Referee(
+                "native 2027 deployment accepts only Infantry performance choices",
+            ));
+        }
         let id = self
             .physics
             .add_chassis(placement.team, placement.config.clone(), placement.spawn)
@@ -774,6 +797,15 @@ impl Field {
             state
                 .game
                 .add_robot(id, referee::game_team(placement.team), role);
+            if let Some(gameplay::Performance::Infantry { chassis, launcher }) =
+                placement.performance
+            {
+                let r = state.game.robots.iter_mut().find(|r| r.id == id).unwrap();
+                r.combat.chassis = chassis;
+                r.combat.launcher = launcher;
+                r.max_hp = r.stats(state.game.control.snapshot().elapsed_ns).max_hp;
+                r.hp = r.max_hp;
+            }
         }
         if let Some(referee) = &mut self.referee {
             referee
@@ -1056,40 +1088,61 @@ impl Field {
                 RefereeCommand::SetBaseOpen { team, open } => {
                     state.game.base_open[team.index()] = open
                 }
-                RefereeCommand::SetRobotHp { robot, hp } => {
-                    let r = state
-                        .game
-                        .robots
-                        .iter_mut()
-                        .find(|r| r.id == robot)
-                        .ok_or(FieldError::Referee("unknown 2027 robot"))?;
-                    r.hp = hp.min(r.max_hp);
-                    if r.hp == 0 {
-                        r.expires_ns = [None; 8];
-                    }
-                }
-                RefereeCommand::ReviveRobot { robot } => {
-                    let r = state
-                        .game
-                        .robots
-                        .iter_mut()
-                        .find(|r| r.id == robot)
-                        .ok_or(FieldError::Referee("unknown 2027 robot"))?;
-                    r.hp = r.max_hp;
-                    r.expires_ns = [None; 8];
-                }
+                RefereeCommand::SetRobotHp { robot, hp } => state
+                    .game
+                    .set_robot_hp(robot, hp)
+                    .map_err(FieldError::Referee)?,
+                RefereeCommand::ReviveRobot { robot } => state
+                    .game
+                    .set_robot_hp(robot, u32::MAX)
+                    .map_err(FieldError::Referee)?,
                 RefereeCommand::DamageRobot { robot, amount } => {
-                    let r = state
+                    if !state.game.robots.iter().any(|r| r.id == robot) {
+                        return Err(FieldError::Referee("unknown 2027 robot"));
+                    }
+                    state.game.damage_robot(robot, amount, true);
+                }
+                RefereeCommand::SetGold { team, gold } => state.game.gold[team.index()] = gold,
+                RefereeCommand::SetAllowance { robot, allowance } => {
+                    if allowance[1] != 0 {
+                        return Err(FieldError::Referee("2027 Heavy is unavailable"));
+                    }
+                    state
                         .game
                         .robots
                         .iter_mut()
                         .find(|r| r.id == robot)
-                        .ok_or(FieldError::Referee("unknown 2027 robot"))?;
-                    r.hp = r.hp.saturating_sub(amount);
-                    if r.hp == 0 {
-                        r.expires_ns = [None; 8];
-                    }
+                        .ok_or(FieldError::Referee("unknown 2027 robot"))?
+                        .combat
+                        .allowance = allowance[0];
                 }
+                RefereeCommand::SetPerformance {
+                    robot,
+                    performance: gameplay::Performance::Infantry { chassis, launcher },
+                } => state
+                    .game
+                    .set_performance(robot, chassis, launcher)
+                    .map_err(FieldError::Referee)?,
+                RefereeCommand::BuyAmmo {
+                    robot,
+                    caliber,
+                    amount,
+                } => {
+                    if caliber != Caliber::Mm17 {
+                        return Err(FieldError::Referee("2027 Heavy is unavailable"));
+                    }
+                    state
+                        .game
+                        .buy_ammo(robot, amount)
+                        .map_err(FieldError::Referee)?;
+                }
+                RefereeCommand::BuyHp { robot } => {
+                    state.game.buy_hp(robot).map_err(FieldError::Referee)?
+                }
+                RefereeCommand::InstantRespawn { robot } => state
+                    .game
+                    .instant_respawn(robot)
+                    .map_err(FieldError::Referee)?,
                 _ => {
                     return Err(FieldError::Referee(
                         "command is outside the 2027 control/structure subset",
@@ -1287,6 +1340,25 @@ impl Field {
     /// detection interval.
     fn apply_collisions(&mut self, time_ns: u64) {
         let collisions = self.physics.take_armor_collisions();
+        if let Some(state) = &mut self.rmuc_2027 {
+            if state.game.phase != rmuc_2027::match_rules::Phase::Running {
+                return;
+            }
+            for collision in collisions {
+                let target = ArmorTarget::Chassis {
+                    chassis: collision.chassis,
+                    plate: collision.plate,
+                };
+                if self.last_detection_ns.get(&target).is_some_and(|last| {
+                    time_ns.saturating_sub(*last) < Caliber::Mm17.detection_interval_ns()
+                }) {
+                    continue;
+                }
+                self.last_detection_ns.insert(target, time_ns);
+                state.game.collision(collision.chassis);
+            }
+            return;
+        }
         let Some(referee) = &mut self.referee else {
             return;
         };

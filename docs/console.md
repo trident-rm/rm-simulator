@@ -199,3 +199,17 @@ use explicit camera poses or the `world` command for those cases.
 For a bound 2027 match, `state.rmuc_2027` exposes the native ruleset, phase,
 control, per-robot RFID expiries, structure HP/owners, rotor stops and result.
 The object is read-only; changes still use authorized `world` commands.
+
+For a bound RMUC 2027 match, `world` accepts pilot `BuyHp { chassis }` and
+`InstantRespawn { chassis }` commands through the same owner checks as `BuyAmmo`.
+The `state.rmuc_2027` game includes `robots[].combat`, `gold`, `purchased_rounds`,
+`level_caps` and `adaptive` observations. Referee `BuyHp { robot }`, `SetGold`,
+`SetAllowance` and `InstantRespawn` are also available. Practice recovery cannot
+bypass a running 2027 match. The mouse-release combat toolbar sends pilot commands.
+
+Known confirmation limitation: the console fence currently counts any rejection
+received in its window. Late `PilotInput` packets from a previous robot life can
+therefore make a respawn command report an error even though its authoritative
+HP/gold transition succeeded. Inspect `state` before retrying; the host still
+rejects those stale inputs and enforces ownership. This pre-existing fence issue
+also affects placement/recovery automation and is separate from the native rules.

@@ -304,6 +304,9 @@ fn marker_glyph(kind: MapMarkerKind) -> String {
 /// Root node of the whole HUD overlay; every HUD widget is spawned under it.
 #[derive(Component)]
 pub(crate) struct HudRoot;
+/// Opaque scene cover below the HUD during a native first-person heat video cut.
+#[derive(Component)]
+pub(crate) struct VideoBlackout;
 
 fn register_styles(app: &mut App) {
     heat_ring::register(app);
@@ -368,6 +371,19 @@ fn bar(commands: &mut Commands, parent: Entity, marker: impl Bundle, color: Colo
 
 /// Spawn the HUD root, its embedded stylesheet and every node the HUD systems update.
 pub fn spawn_hud(commands: &mut Commands) {
+    commands.spawn((
+        VideoBlackout,
+        Node {
+            position_type: PositionType::Absolute,
+            width: percent(100),
+            height: percent(100),
+            display: Display::None,
+            ..default()
+        },
+        BackgroundColor(Color::BLACK),
+        GlobalZIndex(0),
+        Pickable::IGNORE,
+    ));
     let root = commands
         .spawn((
             HudRoot,
@@ -786,9 +802,7 @@ fn control_2027_text(session: &Session) -> String {
     };
     use rm_simulator_world::gameplay::rmuc_2027::{ControlState, Territory};
     let g = &state.game;
-    let mut lines = vec![
-        "RMUC 2027 control/structure subset | other economy/respawn/rune rules disabled".into(),
-    ];
+    let mut lines = vec!["RMUC 2027 | Heavy, rune and terrain buffs not enabled".into()];
     for territory in Territory::ALL {
         let t = &g.control.snapshot().territories[territory.index()];
         let team = if t.control.team().index() == 0 {
@@ -857,7 +871,7 @@ fn team_text(session: &Session, team: Team) -> String {
             .map(|(_, hp)| hp)
             .sum();
         return format!(
-            "{text}  CTRL {}  BASE {}{}{}  OUTPOST {outpost}",
+            "{text}  CTRL {}  BASE {}{}{}  OUTPOST {outpost}  GOLD {}",
             g.control.snapshot().points[i],
             g.base_hp[i],
             if g.control.base_protected(owner) {
@@ -865,7 +879,8 @@ fn team_text(session: &Session, team: Team) -> String {
             } else {
                 ""
             },
-            if g.base_open[i] { " OPEN" } else { "" }
+            if g.base_open[i] { " OPEN" } else { "" },
+            g.gold[i]
         );
     }
     if let Some(base) = session
@@ -1087,6 +1102,7 @@ pub fn update_hud(
     mut texts: Query<(&Hud, &mut Text, &mut Node)>,
     mut health: Query<(&mut Node, &mut BackgroundColor), (With<HealthBar>, Without<Hud>)>,
     mut reticle: Query<&mut Visibility, With<Reticle>>,
+    mut blackout: Query<&mut Node, (With<VideoBlackout>, Without<Hud>, Without<HealthBar>)>,
     heat_ring: Query<&MaterialNode<heat_ring::HeatRingMaterial>, With<HeatRing>>,
     mut materials: Option<ResMut<Assets<heat_ring::HeatRingMaterial>>>,
     assist: Option<Res<crate::auto_aim::AutoAim>>,
@@ -1101,6 +1117,23 @@ pub fn update_hud(
             .find(|r| Some(r.config.id) == session.chassis_id)
     });
     let round_ticks = session.referee().map_or(0, |r| r.game.round_elapsed_ticks);
+    let native = session.rmuc_2027();
+    let native_robot = native.and_then(|s| {
+        s.game
+            .robots
+            .iter()
+            .find(|r| Some(r.id) == session.chassis_id)
+    });
+    let video_cut = drive.as_ref().is_some_and(|d| !d.third_person)
+        && native_robot.is_some_and(|r| r.combat.video_cut());
+    for mut node in &mut blackout {
+        node.display = if video_cut {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+
     for (kind, mut text, mut node) in &mut texts {
         let value = match kind {
             Hud::AutoAim => assist.as_ref().map_or_else(String::new, |a| {
@@ -1138,7 +1171,49 @@ pub fn update_hud(
                         .iter()
                         .find(|r| Some(r.id) == session.chassis_id)
                 }) {
-                    value = format!("#{} {:?}\n{} / {} HP", r.id, r.role, r.hp, r.max_hp);
+                    let now = native.unwrap().game.elapsed_ns();
+                    value = format!(
+                        "#{} {:?} L{}  {} / {} HP\nHEAT {:.1}/{}  XP {:.1}",
+                        r.id,
+                        r.role,
+                        r.combat.level,
+                        r.hp,
+                        r.max_hp,
+                        r.combat.heat_tenths as f64 / 10.,
+                        r.stats(now).heat_limit,
+                        r.combat.experience_tenths as f64 / 10.
+                    );
+                    if r.combat.launcher_locked(now) {
+                        value.push_str("  LOCKED");
+                    }
+                    if r.combat.weakened {
+                        value.push_str("  WEAK");
+                    }
+                    if now < r.combat.invincible_until_ns {
+                        value.push_str("  INVINCIBLE");
+                    }
+                    if r.combat.video_cut() {
+                        value.push_str("\nVIDEO OFF — COOL TO ZERO");
+                    }
+                    if r.combat.respawn.is_some() {
+                        let status = native.unwrap().game.respawn_remaining_ns(r.id).map_or_else(
+                            || "PAUSED".into(),
+                            |ns| format!("{:.1}s", ns as f64 * 1e-9),
+                        );
+                        value.push_str(&format!("\nRESPAWN {status}"));
+                    }
+                    if let Some(due) = r.combat.deliveries.iter().map(|d| d.due_ns).min() {
+                        value.push_str(&format!(
+                            "\nDELIVERY IN {:.1}s",
+                            due.saturating_sub(now) as f64 * 1e-9
+                        ));
+                    }
+                    value.push_str(&format!(
+                        "\nGOLD {}\nBUY HP {} | PAID RESPAWN {}",
+                        native.unwrap().game.gold[r.team.index()],
+                        50 + (now * 20).div_ceil(60_000_000_000),
+                        now.div_ceil(60_000_000_000) * 80 + u64::from(r.combat.level) * 20
+                    ));
                 }
                 if let Some(drive) = &drive {
                     let tether = session
@@ -1186,14 +1261,24 @@ pub fn update_hud(
                 } else {
                     1
                 };
-                let allowance = ammo.map_or("--".into(), |a| {
-                    a.allowance[index]
-                        .saturating_sub(session.reserved_ammo(gun.shot.caliber))
-                        .to_string()
-                });
+                let allowance = native_robot
+                    .map(|r| {
+                        r.combat
+                            .allowance
+                            .saturating_sub(session.reserved_ammo(gun.shot.caliber))
+                            .to_string()
+                    })
+                    .unwrap_or_else(|| {
+                        ammo.map_or("--".into(), |a| {
+                            a.allowance[index]
+                                .saturating_sub(session.reserved_ammo(gun.shot.caliber))
+                                .to_string()
+                        })
+                    });
                 let mode = if session
                     .referee()
                     .is_some_and(|r| r.game.policy.enforce_allowance)
+                    || native.is_some()
                 {
                     "LEFT"
                 } else {

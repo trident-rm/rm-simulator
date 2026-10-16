@@ -355,6 +355,23 @@ impl Session {
     /// a referee record for the local chassis.
     pub fn predicted_heat(&self) -> Option<(u64, u32)> {
         use rm_simulator_world::{Caliber, MatchPhase, referee::game_caliber};
+        if let Some(s) = self.rmuc_2027() {
+            let r = s
+                .game
+                .robots
+                .iter()
+                .find(|r| Some(r.id) == self.chassis_id)?;
+            let pending =
+                if s.game.phase == rm_simulator_world::rmuc_2027::match_rules::Phase::Running {
+                    u64::from(self.reserved_ammo(Caliber::Mm17)) * 100
+                } else {
+                    0
+                };
+            return Some((
+                r.combat.heat_tenths + pending,
+                r.stats(s.game.elapsed_ns()).heat_limit,
+            ));
+        }
         let state = self.own_game_robot()?;
         let pending: u64 = if self.referee()?.phase == MatchPhase::Running {
             [Caliber::Mm17, Caliber::Mm42]
@@ -380,6 +397,18 @@ impl Session {
             .is_some_and(|c| matches!(c.robot, rm_simulator_server::protocol::Robot::Engineer))
         {
             return true;
+        }
+        if let Some(s) = self.rmuc_2027() {
+            let Some(r) = s.game.robots.iter().find(|r| Some(r.id) == self.chassis_id) else {
+                return true;
+            };
+            return s.game.check_launch(r.id).is_err()
+                || (s.game.phase == rm_simulator_world::rmuc_2027::match_rules::Phase::Running
+                    && (r.combat.allowance
+                        <= self.reserved_ammo(rm_simulator_world::Caliber::Mm17)
+                        || self
+                            .predicted_heat()
+                            .is_some_and(|(heat, limit)| heat > u64::from(limit) * 10)));
         }
         self.own_game_robot()
             .is_some_and(|r| r.overheated || r.heat_locked_for_round)

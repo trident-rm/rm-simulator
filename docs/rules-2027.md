@@ -195,7 +195,7 @@ UC §5.1.3: each 17 mm launch adds 10 heat and each 42 mm launch 100; cooling
 settles at 10 Hz. Exceeding the normal heat limit locks the launcher **and cuts
 first-person video until heat reaches zero**. The permanent threshold is the
 normal limit +100 (17 mm) or +200 (42 mm). The text uses `>` whereas Figure 5-1
-uses `>=` at the permanent threshold: preserve this as an unresolved boundary.
+uses `>=` at the permanent threshold: the simulator adopts Figure 5-1's inclusive `>=` boundary by user instruction.
 Minimap and custom UI remain available during the heat-related video cut.
 
 UC §5.1.4, Figure 5-2: at 10 Hz update the 60 J buffer by
@@ -750,13 +750,13 @@ not interchangeable with the drivetrain's assumed shared power budget.
 | Aerial-impact detection | UC Table 5-1 explicitly pending | Await force/time/area-impulse thresholds; do not approximate as a projectile rule |
 | Armor statistics singularities | UC §5.2 divides by σ and opposing accuracy | Decide zero-spread/no-hit/no-launch cases from official clarification |
 | Reinforcement clipping and updates | UC §5.2 specifies circle and area but not edge treatment, exact boundary or update cadence | Clarify center constraints, effective clipped area and whether area changes continuously |
-| Permanent heat-lock equality | UC §5.1.3 text `>` vs Figure 5-1 `>=`; same UL conflict | Record a deliberate boundary policy or official correction |
-| Control scoring and contested timing | UC Table 5-21 and p.97 | Adopted: temporary control scores; capture before coincident whole-second scoring; fresh progress after transitions. Caller resolves 2 s expiry. Simultaneous destruction ordering remains the caller's responsibility |
+| Permanent heat-lock equality | UC §5.1.3 text `>` vs Figure 5-1 `>=`; same UL conflict | Adopted by user instruction: Figure 5-1 inclusive `>=`; not an official clarification |
+| Control scoring and contested timing | UC Table 5-21 and p.97 | Adopted: temporary control scores; capture before coincident whole-second scoring; fresh progress after transitions. The native adapter resolves per-robot 2 s expiry. Physical destruction follows stable contact order |
 | Heavy unlock and upgrades | UC §5.7.1, Table 5-16 | Resolve negative unlock times, HP adjustment on Heavy upgrades, confirmation-shot allowance accounting and removal/reinstallation |
 | Assembly splitting | ROB S59 generally forbids splitting, UC §5.7.1 and UL §3.3.6 permit it at workbench | Apply/document the specific exception without broadly permitting disassembly |
 | UL launcher installation phase | ROB Table 2-5 says seven-minute phase, UL has five-minute rounds | Treat as a cross-manual wording conflict; obtain clarification before enforcement |
 | Fortress example conflict | UC p.105 example says 75% vulnerability; §5.6.4.9 says 100% | Prefer no silent inherited constant; record the selected clause if implementing |
-| Healing and logistics | UC §§5.3.1, 5.6.1 | Specify coefficient application to derived outpost healing and progress rounding |
+| Healing and logistics | UC §§5.3.1, 5.6.1 | Adopted in the native lifecycle: apply logistics once to outpost healing, fixed-point 10 Hz healing, continuous respawn progress. Other buff stacking remains pending |
 | Time and event ordering | UC Table 2-1, countdown-based income tables | Specify tick boundary, settlement order, capture/death/purchase ties; keep 128 Hz world time |
 | Radar information-wave details | UC §5.7.4 explicitly defers signal parameters | Obtain later release and 2027 communication protocol; clarify difficulty ceiling/key failures |
 | UL full-HP tiebreak | UL §4.4 includes first damage and full-HP launch comparisons | Clarify precedence after both heal back to full |

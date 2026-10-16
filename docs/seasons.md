@@ -115,3 +115,9 @@ The season matrix is included in `just verify` and Linux native validation.
 It complements workspace tests for native restore, network checkpoint codecs,
 physics motion and client presentation. Coverage limitations are listed in the
 2027 field guide.
+
+Native 2027 combat now includes heat/launch locks, allowance, purchases/healing,
+normal/paid respawn and combat XP/performance with the initial level cap of five.
+Adaptive launch/hit statistics and opportunities are carried in protocol 54;
+reinforcement selection/effects and assembly progression remain unavailable.
+See [the lifecycle boundary](rmuc2027-field.md#combat-lifecycle-and-adaptive-armor-infrastructure).

@@ -4,6 +4,16 @@
 
 ## Unreleased
 
+- Add native RMUC 2027 combat: enforced 17 mm allowance, 10 Hz heat/cooling,
+  independent launcher locks, supply/outpost healing, basic income and delayed
+  purchases, normal/paid respawn, weakness/invincibility, combat XP and Infantry
+  performance with the initial level cap of five. Follow Figure 5-1's inclusive
+  permanent heat-lock boundary. Add pilot purchase controls and first-person
+  heat blackout while preserving HUD/minimap. Prevent practice recovery bypass.
+- Carry adaptive-armor launch/hit statistics, per-plate bottom-left coordinates,
+  medians and minute opportunities through protocol 54 checkpoints. Undefined
+  accuracy cases remain explicit; reinforcement selection/effects stay inactive.
+
 - Remove vulnerable `ruzstd` texture decoding (RUSTSEC-2026-0344) by selecting
   Bevy's native Zstd backend while retaining the existing 3D rendering features.
   Refresh compatible Cargo dependencies.

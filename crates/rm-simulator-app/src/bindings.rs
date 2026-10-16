@@ -45,7 +45,8 @@ pub enum InputAction {
     /// Switch the auto-aim target class between armor and rune while
     /// [`ControlsSettings::manual_aim_mode`] is on; does nothing otherwise.
     AimMode,
-    /// Buy one 17 mm round for the pilot's chassis from team gold. A client with
+    /// Buy a 17 mm exchange unit from team gold (native 2027 chooses zone/remote).
+    /// A client with
     /// no chassis, such as a spectator or the referee, sends nothing.
     Buy17,
     /// Buy one 42 mm round for the pilot's chassis from team gold. A client with

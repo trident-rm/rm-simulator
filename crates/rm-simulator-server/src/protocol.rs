@@ -95,7 +95,8 @@ use serde::{Deserialize, Serialize};
 /// and the `MapMarker` command.
 /// Version 52 adds connected deployment and the reliable ownership receipt.
 /// Version 53 carries the RMUC 2027 V1.0.0 control/structure authority.
-pub const PROTOCOL_VERSION: u32 = 53;
+/// Version 54 carries native 2027 combat/adaptive state and pilot logistics.
+pub const PROTOCOL_VERSION: u32 = 54;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///
@@ -855,16 +856,27 @@ pub enum Command {
         /// defeat.
         chassis: u32,
     },
-    /// Buy one Table 5-6 exchange unit for this pilot from team gold: ten
-    /// 17 mm rounds or one 42 mm round.
+    /// Buy one ammunition unit for this pilot from team gold. 2026 buys ten
+    /// 17 mm rounds or one 42 mm round; native 2027 chooses ten zone rounds or
+    /// 100 delayed remote rounds according to the robot's service detection.
     BuyAmmo {
         /// The sender's own chassis.
         chassis: u32,
         /// Projectile class to buy.
         caliber: rm_simulator_world::Caliber,
     },
-    /// Choose this pilot's section 5.4.2 performance type. The rules refuse a
-    /// type for another robot class and any change once a round is running.
+    /// Purchase delayed HP recovery for this native 2027 pilot.
+    BuyHp {
+        /// Sender's own chassis identity.
+        chassis: u32,
+    },
+    /// Pay for immediate native 2027 respawn; normal respawn is automatic.
+    InstantRespawn {
+        /// Sender's own defeated chassis identity.
+        chassis: u32,
+    },
+    /// Choose performance for this pilot's own robot class. 2026 §5.4.2 locks
+    /// choices while running; native 2027 §5.5.2 locks each selected component.
     SetPerformance {
         /// The sender's own chassis.
         chassis: u32,

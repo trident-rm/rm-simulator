@@ -134,7 +134,11 @@ The RMUC 2027 sandbox displays the complete equipment roster through
 packages use its control-point subset as approximate antenna polygons; terrain,
 supply and other unsupported areas remain inspection-only. Never feed these
 into the 2026 referee. `gameplay::rmuc_2027::match_rules` owns the live 2027
-control/structure subset; `world::rmuc_2027` adapts contacts and source detector
+combat/control subset, including native heat, allowance, healing, respawn and
+combat XP. Assembly progression, full field buffs and reinforcement effects
+remain unavailable. Adaptive observations/statistics live in `gameplay::rmuc_2027::adaptive`;
+Figure 5-1's inclusive permanent heat-lock boundary is the adopted user policy.
+`world::rmuc_2027` adapts contacts and source detector
 geometry and preserves the entire authority in `FieldRestore`. Source-body
 bindings are built by `scripts/bind-rmuc2027-structures.py`; the shared tower
 frame stays fixed, detector masks are source-envelope approximations and base

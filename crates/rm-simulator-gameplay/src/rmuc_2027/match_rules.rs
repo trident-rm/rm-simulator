@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! RMUC 2027 V1.0.0 live control/structure subset (§§5.6.1–5.6.4, 5.8).
+//! RMUC 2027 V1.0.0 combat/control subset (§§5.1–5.6, 5.8).
 //! Contacts are external observations; no geometry, physics or wall clock lives here.
 use super::*;
+mod lifecycle;
 
 /// UC §5.6.1 base HP; no virtual shield in this season.
 pub const BASE_HP: u32 = 10_000;
@@ -22,7 +23,7 @@ pub const COUNTDOWN_NS: u64 = 5_000_000_000;
 /// Precise competition and manual identity carried in checkpoints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Ruleset {
-    /// RMUC 2027 rule manual V1.0.0 (2026-10-15), control/structure subset.
+    /// RMUC 2027 rule manual V1.0.0 (2026-10-15), native combat/control subset.
     Rmuc2027V1,
 }
 /// Live phase; countdown duration is kept separately in [`Match`].
@@ -42,7 +43,7 @@ pub enum Phase {
 pub enum GroundRole {
     /// Heavy; model support is supplied by the caller.
     Heavy,
-    /// Infantry, using a fixed level-one HP preset in this subset.
+    /// Infantry, using native 2027 experience and performance tables.
     Infantry,
     /// Semi-automatic Sentry (UC Table 3-6).
     Sentry,
@@ -58,8 +59,10 @@ pub struct Robot {
     pub role: GroundRole,
     /// Remaining HP; zero removes all RFID eligibility immediately.
     pub hp: u32,
-    /// Fixed practice HP preset, not a simulated experience progression.
+    /// Current maximum HP from native 2027 role, level and chassis choice.
     pub max_hp: u32,
+    /// Native 2027 heat, allowance, experience, healing and respawn state.
+    pub combat: super::combat::Combat,
     /// Referee connectivity; an offline robot cannot activate RFID.
     pub online: bool,
     /// RFID expiry by side, then Outpost/CentralHighland/Base/Fortress.
@@ -114,6 +117,14 @@ pub struct Match {
     pub rotor_direction: i8,
     /// Damage credited to each attacking team, excluding overkill and friendly damage.
     pub attack_damage: [u64; 2],
+    /// Combat economy balances, UC Table 5-6; assembly income is not enabled.
+    pub gold: [u32; 2],
+    /// Rounds bought for gold by team, capped at 1,000 (Table 5-7).
+    pub purchased_rounds: [u32; 2],
+    /// Assembly-controlled Infantry level caps; initially five (Table 5-12).
+    pub level_caps: [u8; 2],
+    /// Adaptive-armor launch/hit observations; all damage still uses default armor.
+    pub adaptive: super::adaptive::Adaptive,
     /// Robots in ascending id order, excluding departed players.
     pub robots: Vec<Robot>,
     /// Central-highland mutual exclusion latch by original field side.
@@ -152,6 +163,10 @@ impl Match {
             rotor_stopped_ns: [None; 2],
             rotor_direction: if direction < 0 { -1 } else { 1 },
             attack_damage: [0; 2],
+            gold: [0; 2],
+            purchased_rounds: [0; 2],
+            level_caps: [5; 2],
+            adaptive: super::adaptive::Adaptive::default(),
             robots: vec![],
             highland_team: [None; 2],
             fortress_robot: [None; 2],
@@ -163,7 +178,7 @@ impl Match {
         self.control.snapshot().elapsed_ns
     }
     /// Register a prototype. Infantry uses HP-priority level one (200 HP,
-    /// UC Table 5-13); semi-automatic Sentry uses 200 HP (UC Table 3-6).
+    /// UC Table 5-17); semi-automatic Sentry uses 200 HP (UC Table 3-6).
     pub fn add_robot(&mut self, id: u32, team: Team, role: GroundRole) {
         self.robots.retain(|r| r.id != id);
         self.robots.push(Robot {
@@ -172,6 +187,10 @@ impl Match {
             role,
             hp: if role == GroundRole::Heavy { 400 } else { 200 },
             max_hp: if role == GroundRole::Heavy { 400 } else { 200 },
+            combat: super::combat::Combat {
+                allowance: if role == GroundRole::Sentry { 300 } else { 0 },
+                ..Default::default()
+            },
             online: true,
             expires_ns: [None; 8],
             fortress_ns: [0; 2],
@@ -184,11 +203,16 @@ impl Match {
         let robots = self
             .robots
             .iter()
-            .map(|r| (r.id, r.team, r.role))
+            .map(|r| (r.id, r.team, r.role, r.combat.chassis, r.combat.launcher))
             .collect::<Vec<_>>();
         *self = Self::new(direction);
-        for (id, team, role) in robots {
+        for (id, team, role, chassis, launcher) in robots {
             self.add_robot(id, team, role);
+            let robot = self.robots.iter_mut().find(|r| r.id == id).unwrap();
+            robot.combat.chassis = chassis;
+            robot.combat.launcher = launcher;
+            robot.max_hp = robot.stats(0).max_hp;
+            robot.hp = robot.max_hp;
         }
         self.phase = Phase::Countdown;
         self.countdown_ns = COUNTDOWN_NS;
@@ -197,7 +221,16 @@ impl Match {
     pub fn validate(&self) -> std::result::Result<(), &'static str> {
         Control::restore(self.control.snapshot().clone())
             .map_err(|_| "invalid 2027 control state")?;
-        if self.base_hp.iter().any(|&v| v > BASE_HP)
+        if (self.phase == Phase::Running && self.elapsed_ns() >= ROUND_NS)
+            || !self.adaptive.validate(self.elapsed_ns())
+            || self.purchased_rounds.iter().any(|&v| v > 1000)
+            || self.level_caps.iter().any(|v| ![5, 7, 10].contains(v))
+            || self.robots.iter().any(|r| {
+                !r.combat.validate(self.elapsed_ns())
+                    || r.combat.level > self.level_caps[r.team.index()]
+                    || r.max_hp != r.stats(self.elapsed_ns()).max_hp
+            })
+            || self.base_hp.iter().any(|&v| v > BASE_HP)
             || self.outpost_hp.iter().any(|&v| v > OUTPOST_HP)
             || ![-1, 1].contains(&self.rotor_direction)
             || self.countdown_ns > COUNTDOWN_NS
@@ -205,6 +238,27 @@ impl Match {
             || self.robots.iter().any(|r| {
                 r.hp > r.max_hp
                     || r.max_hp == 0
+                    || (r.combat.heat_tenths
+                        > u64::from(r.stats(self.elapsed_ns()).heat_limit) * 10
+                        && !r.combat.overheated)
+                    || (r.combat.heat_tenths
+                        >= u64::from(r.stats(self.elapsed_ns()).heat_limit + 100) * 10
+                        && !r.combat.heat_locked_for_round)
+                    || (r.hp > 0 && r.combat.respawn.is_some())
+                    || r.combat
+                        .respawn
+                        .as_ref()
+                        .is_some_and(|p| p.original_ns == 0)
+                    || (r.role == GroundRole::Infantry
+                        && (r.combat.experience_tenths
+                            > super::combat::EXPERIENCE_TENTHS
+                                [usize::from(self.level_caps[r.team.index()] - 1)]
+                            || usize::from(r.combat.level)
+                                != super::combat::EXPERIENCE_TENTHS
+                                    .iter()
+                                    .take(usize::from(self.level_caps[r.team.index()]))
+                                    .filter(|&&t| t <= r.combat.experience_tenths)
+                                    .count()))
                     || r.fortress_ns.iter().any(|&p| p > FORTRESS_NS)
                     || r.expires_ns
                         .iter()
@@ -251,6 +305,7 @@ impl Match {
     fn eligible(&self, r: &Robot, side: Team, point: Point) -> bool {
         if r.hp == 0
             || !r.online
+            || r.combat.weakened
             || !r.expires_ns[point_index(side, point)].is_some_and(|t| t > self.elapsed_ns())
         {
             return false;
@@ -271,7 +326,11 @@ impl Match {
             _ => true,
         }
     }
-    fn resolve(&mut self) -> Vec<[bool; 8]> {
+    pub(super) fn resolve(&mut self) -> Vec<[bool; 8]> {
+        if self.phase != Phase::Running || self.elapsed_ns() >= ROUND_NS {
+            return vec![[false; 8]; self.robots.len()];
+        }
+
         let active = self
             .robots
             .iter()
@@ -347,14 +406,17 @@ impl Match {
             duration -= used;
             if self.countdown_ns == 0 {
                 self.phase = Phase::Running;
+                self.gold = [800; 2];
             }
         }
         while duration > 0 && self.phase == Phase::Running {
             let now = self.elapsed_ns();
+            self.resolve_service_recovery();
             let active = self.resolve();
             let mut dt = duration
                 .min(ROUND_NS - now)
                 .min(SCORE_PERIOD_NS - now % SCORE_PERIOD_NS);
+            dt = dt.min(self.combat_boundary_ns());
             if now < THREE_MIN_NS {
                 dt = dt.min(THREE_MIN_NS - now);
             }
@@ -395,6 +457,7 @@ impl Match {
             }
             let events = self.control.advance_ns(dt);
             self.apply_events(events);
+            self.advance_combat(dt);
             duration -= dt;
             for side in Team::BOTH {
                 let i = side.index();
@@ -439,15 +502,7 @@ impl Match {
         if self.phase != Phase::Running || caliber != crate::Caliber::Mm17 {
             return 0;
         }
-        let attack = shooter.and_then(|id| {
-            self.robots
-                .iter()
-                .find(|r| r.id == id && r.hp > 0 && r.online)
-                .map(|r| r.team)
-        });
-        if shooter.is_some() && attack.is_none() {
-            return 0;
-        }
+        let attack = shooter.and_then(|id| self.robots.iter().find(|r| r.id == id).map(|r| r.team));
         let (team, applied) = match target {
             crate::Target::Base(team) => {
                 if self.control.base_protected(team) {
@@ -472,15 +527,12 @@ impl Match {
                 (team, d)
             }
             crate::Target::Robot(id) => {
-                let Some(r) = self.robots.iter_mut().find(|r| r.id == id) else {
+                let Some(r) = self.robots.iter().find(|r| r.id == id) else {
                     return 0;
                 };
-                let d = r.hp.min(20);
-                r.hp -= d;
-                if r.hp == 0 {
-                    r.expires_ns = [None; 8];
-                }
-                (r.team, d)
+                let team = r.team;
+                let d = self.damage_robot(id, 20, false);
+                (team, d)
             }
         };
         if let Some(attacker) = attack
@@ -488,6 +540,7 @@ impl Match {
         {
             self.attack_damage[attacker.index()] += u64::from(applied);
         }
+        self.reward_attack(target, shooter, team, applied);
         // A lethal contact revokes activation in this same event, even when
         // a caller publishes or pauses before the next simulation advance.
         self.resolve();

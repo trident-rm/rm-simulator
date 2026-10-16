@@ -86,6 +86,9 @@ pub(crate) struct Sensitivity;
 pub(crate) struct BalanceControl;
 #[derive(Clone, Copy)]
 enum Action {
+    BuyAmmo2027,
+    BuyHp2027,
+    Respawn2027,
     Settings,
     Debug,
     Map,
@@ -105,6 +108,9 @@ enum Action {
 /// `menu_input`.
 #[derive(Resource, Default)]
 pub(crate) struct MenuActions(Vec<Action>);
+
+#[derive(Component)]
+pub(crate) struct CombatToolbar;
 
 fn clear_consumed(mut ui: ResMut<HudState>) {
     ui.consumed = false;
@@ -160,6 +166,31 @@ fn spawn_menus(
         ("Leave match", Action::Leave),
     ] {
         button(&mut commands, toolbar, title, action);
+    }
+    let combat = commands
+        .spawn((
+            Toolbar,
+            CombatToolbar,
+            GlobalZIndex(20),
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(350),
+                bottom: px(60),
+                width: percent(46),
+                flex_wrap: FlexWrap::Wrap,
+                row_gap: px(6),
+                column_gap: px(6),
+                display: Display::None,
+                ..default()
+            },
+        ))
+        .id();
+    for (title, action) in [
+        ("Ammo (10 zone / 100 remote)", Action::BuyAmmo2027),
+        ("Remote HP", Action::BuyHp2027),
+        ("Paid respawn", Action::Respawn2027),
+    ] {
+        button(&mut commands, combat, title, action);
     }
     spawn_dialog(&mut commands, false);
     spawn_dialog(&mut commands, true);
@@ -369,6 +400,25 @@ pub fn menu_input(
 ) {
     for action in actions.0.drain(..) {
         match action {
+            Action::BuyAmmo2027 | Action::BuyHp2027 | Action::Respawn2027 => {
+                commands.queue(move |world: &mut World| {
+                    if let Some(mut session) = world.get_resource_mut::<crate::session::Session>()
+                        && session.rmuc_2027().is_some()
+                        && let Some(chassis) = session.chassis_id
+                    {
+                        use rm_simulator_server::protocol::Command;
+                        let command = match action {
+                            Action::BuyAmmo2027 => Command::BuyAmmo {
+                                chassis,
+                                caliber: rm_simulator_world::Caliber::Mm17,
+                            },
+                            Action::BuyHp2027 => Command::BuyHp { chassis },
+                            _ => Command::InstantRespawn { chassis },
+                        };
+                        session.apply(command);
+                    }
+                });
+            }
             Action::Reset => {
                 commands.queue(|world: &mut World| {
                     let Some(mut session) = world.get_resource_mut::<crate::session::Session>()
@@ -479,7 +529,8 @@ pub fn sync_menus(
     ui: Res<HudState>,
     player: Option<Res<crate::controls::Player>>,
     mut panels: Query<&mut Node, (With<Settings>, Without<Toolbar>)>,
-    mut toolbar: Query<&mut Node, (With<Toolbar>, Without<Settings>)>,
+    mut toolbar: Query<(&mut Node, Has<CombatToolbar>), (With<Toolbar>, Without<Settings>)>,
+    session: Option<Res<crate::session::Session>>,
     screen: Option<Res<State<crate::loading::Screen>>>,
     checks: Query<
         (Entity, Has<Checked>, Has<ReticleSetting>),
@@ -495,8 +546,12 @@ pub fn sync_menus(
             Display::None
         };
     }
-    for mut node in &mut toolbar {
-        node.display = if ui.pause_menu
+    for (mut node, combat) in &mut toolbar {
+        node.display = if (combat
+            && !session
+                .as_ref()
+                .is_some_and(|s| s.rmuc_2027().is_some() && s.chassis_id.is_some()))
+            || ui.pause_menu
             || ui.quit_confirm
             || !screen
                 .as_deref()

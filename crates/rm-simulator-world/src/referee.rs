@@ -590,8 +590,8 @@ pub enum RefereeCommand {
     /// Replace the rule switches; the live default leaves allowance
     /// unenforced and lets pilots buy ammunition anywhere.
     SetPolicy(gp::Policy),
-    /// Select a robot's performance type (section 5.4.2); refused while a
-    /// round is running.
+    /// Select performance: 2026 §5.4.2 refuses changes while running;
+    /// native 2027 §5.5.2 instead locks each selected component for the round.
     SetPerformance {
         /// Chassis id of the robot.
         robot: u32,
@@ -605,8 +605,13 @@ pub enum RefereeCommand {
         robot: u32,
         /// Caliber bought.
         caliber: crate::Caliber,
-        /// Rounds to buy; a multiple of 10 for 17 mm.
+        /// Rounds to buy; 17 mm zone units are ten, native 2027 remote units 100.
         amount: u32,
+    },
+    /// Buy delayed HP recovery in the native RMUC 2027 ruleset (§5.3.1).
+    BuyHp {
+        /// Chassis id of the purchasing robot.
+        robot: u32,
     },
     /// Set a team's unspent rune opportunities.
     SetRuneOpportunities {
@@ -1607,6 +1612,7 @@ impl Referee {
             RefereeCommand::SetPerformance { robot, performance } => self
                 .game
                 .command(gp::Command::SetPerformance { robot, performance }),
+            RefereeCommand::BuyHp { .. } => Err(gp::Error::Invalid),
             RefereeCommand::BuyAmmo {
                 robot,
                 caliber,

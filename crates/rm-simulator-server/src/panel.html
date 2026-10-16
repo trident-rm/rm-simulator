@@ -279,17 +279,17 @@ function render2027(state,g) {
   $('phase').textContent=`${g.phase} · RMUC 2027 V1.0.0 control/structures`;
   $('clock').textContent=fmt(g.phase==='Countdown' ? g.countdown_ns : Math.max(0,420e9-c.elapsed_ns));
   $('result').textContent=g.result ? `${g.result.winner || 'Draw'} · ${g.result.reason}` : '';
-  $('resources').textContent=teams.map((t,i)=>`${t}: ${c.points[i]} control`).join(' · ');
-  $('policyStatus').textContent='2027 control/structure subset: economy, heat, respawn and other robot systems are unavailable.';
+  $('resources').textContent=teams.map((t,i)=>`${t}: ${c.points[i]} control, ${g.gold[i]} gold, ${g.adaptive.launches[i]} launches`).join(' · ');
+  $('policyStatus').textContent='2027 combat/control: heat, allowance, healing, respawn and combat XP enabled. Heavy, assembly income, field buffs and reinforcement effects remain unavailable.';
   $('runes').textContent='Power Rune rules are not enabled for this subset.';
-  $('robotDetail').textContent='Fixed practice HP presets; operator hit/revive remains available.';
+  $('robotDetail').textContent='Infantry uses native 2027 performance tables and the initial level cap of five.';
   $('baseHp').max=10000; $('baseShield').value=0; $('baseShield').disabled=true;
   if(!settingsLoaded) { $('baseHp').value=10000;settingsLoaded=true; }
   $('outpostHp').max=1000;
   options('editOutpost',teams.map((t,i)=>[i,`${t} location — owner ${c.outposts[i].owner}`]));
   $('bots').innerHTML=(state.bots || []).map(id=>`Bot #${id} <button onclick="command({RemoveBot:{chassis:${id}}})">Remove</button>`).join(' · ');
   $('robots').innerHTML='<tr><th>id</th><th>team</th><th>kind</th><th>HP</th><th></th></tr>'+g.robots.map(r=>
-    `<tr><td>${r.id}</td><td>${r.team}</td><td>${r.role}</td><td>${r.hp}/${r.max_hp}</td><td><button onclick="referee({DamageRobot:{robot:${r.id},amount:Number($('dmg').value)}})">hit</button><button onclick="referee({ReviveRobot:{robot:${r.id}}})">revive</button></td></tr>`).join('');
+    `<tr><td>${r.id}</td><td>${r.team}</td><td>${r.role} L${r.combat.level}</td><td>${r.hp}/${r.max_hp}; heat ${r.combat.heat_tenths/10}, ammo ${r.combat.allowance}${r.combat.weakened?' WEAK':''}</td><td><button onclick="referee({DamageRobot:{robot:${r.id},amount:Number($('dmg').value)}})">hit</button><button onclick="referee({ReviveRobot:{robot:${r.id}}})">revive</button></td></tr>`).join('');
   $('mechanismState').textContent=teams.map((t,i)=>`${t} base ${g.base_open[i]?'open':'closed'}`).join('; ');
   $('bases').innerHTML='<tr><th>Team</th><th>HP</th><th>Protection</th></tr>'+teams.map((t,i)=>
     `<tr><td>${t}</td><td>${g.base_hp[i]}/10000</td><td>${c.territories[i].control.Full===t?'100% defense':'none'}</td></tr>`).join('');

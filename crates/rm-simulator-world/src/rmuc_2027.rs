@@ -67,6 +67,12 @@ pub struct Config {
     pub outposts: [Tower; 2],
     /// Control-point footprints; never terrain-only traversal cards.
     pub zones: Vec<Zone>,
+    /// Own supply footprints, separately calibrated; point is ignored.
+    #[serde(default)]
+    pub supply_zones: Vec<Zone>,
+    /// Own vantage footprints for zone exchanges; point is ignored.
+    #[serde(default)]
+    pub vantage_zones: Vec<Zone>,
     /// Shared seeded direction for both rotors, either -1 or 1.
     pub rotor_direction: i8,
 }
@@ -103,12 +109,18 @@ impl Config {
                 return Err("invalid 2027 detector");
             }
         }
-        if self.zones.iter().any(|z| {
-            z.polygon_m.len() < 3
-                || !z.floor_m.is_finite()
-                || !(0.01..=0.5).contains(&z.height_m)
-                || z.polygon_m.iter().flatten().any(|v| !v.is_finite())
-        }) {
+        if self
+            .zones
+            .iter()
+            .chain(&self.supply_zones)
+            .chain(&self.vantage_zones)
+            .any(|z| {
+                z.polygon_m.len() < 3
+                    || !z.floor_m.is_finite()
+                    || !(0.01..=0.5).contains(&z.height_m)
+                    || z.polygon_m.iter().flatten().any(|v| !v.is_finite())
+            })
+        {
             return Err("invalid 2027 RFID zone");
         }
         Ok(())
@@ -261,6 +273,18 @@ impl crate::Field {
                 .game
                 .observe(id, crate::referee::game_team(side), point, present);
         }
+        for r in &state.game.robots.clone() {
+            let p = self.physics.chassis_position_m(r.id);
+            for (supply, zones) in [
+                (true, &state.config.supply_zones),
+                (false, &state.config.vantage_zones),
+            ] {
+                let present = zones.iter().any(|z| {
+                    crate::referee::game_team(z.side) == r.team && p.is_some_and(|p| z.contains(p))
+                });
+                state.game.observe_service(r.id, supply, present);
+            }
+        }
         state.game.advance_ns(duration_ns);
         for r in &state.game.robots {
             self.physics.set_chassis_defeated(r.id, r.hp == 0);
@@ -313,6 +337,8 @@ mod tests {
                     detectors: (0..3).map(|i| detector(-3., i as f64)).collect(),
                 },
             ],
+            supply_zones: vec![],
+            vantage_zones: vec![],
             zones: vec![Zone {
                 side: Team::Blue,
                 point: Point::CentralHighland,
@@ -396,6 +422,12 @@ mod tests {
         assert_eq!(f.rmuc_2027().unwrap().game.outpost_hp[0], 980);
         let hit = f.snapshot().hits.into_iter().find(|h| h.detected).unwrap();
         assert_eq!(hit.damage, 20);
+        let observations = &f.rmuc_2027().unwrap().game.adaptive.impacts;
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].attacker, None);
+        assert_eq!(observations[0].victim, crate::gameplay::Team::Red);
+        assert_eq!(observations[0].size_um, [90000, 88000]);
+        assert!(observations[0].position_um.iter().all(|&v| v > 0));
         // A hit outside the source detector, but inside the old 2026 area,
         // must not score on the new fitted face.
         f.fire(shot(0.049), Shot::at_limit(Caliber::Mm17), None)
@@ -403,6 +435,60 @@ mod tests {
         f.step(12).unwrap();
         assert_eq!(f.rmuc_2027().unwrap().game.outpost_hp[0], 980);
     }
+    #[test]
+    fn live_combat_enforces_allowance_and_restores_pending_respawn() {
+        let mut f = field();
+        let id = f
+            .add_chassis(&ChassisPlacement {
+                config: ChassisConfig::default(),
+                spawn: Pose::at([0., 0., 0.16]),
+                team: Team::Blue,
+                kind: RobotKind::Infantry,
+                performance: None,
+            })
+            .unwrap();
+        f.referee_command(RefereeCommand::StartMatch).unwrap();
+        f.step(5_000_000_000 / tick_ns()).unwrap();
+        assert!(
+            f.fire(
+                Pose::at([0., 0., 2.]),
+                Shot::at_limit(Caliber::Mm17),
+                Some(id)
+            )
+            .is_err()
+        );
+        f.buy_ammo(id, Caliber::Mm17).unwrap();
+        f.step(6_000_000_000 / tick_ns()).unwrap();
+        f.fire(
+            Pose::at([0., 0., 2.]),
+            Shot::at_limit(Caliber::Mm17),
+            Some(id),
+        )
+        .unwrap();
+        let r = &f.rmuc_2027().unwrap().game.robots[0];
+        assert_eq!(r.combat.allowance, 99);
+        assert_eq!(r.combat.heat_tenths, 100);
+        assert_eq!(f.rmuc_2027().unwrap().game.adaptive.launches, [0, 1]);
+        f.referee_command(RefereeCommand::DamageRobot {
+            robot: id,
+            amount: 1000,
+        })
+        .unwrap();
+        f.step(256).unwrap();
+        let snapshot = f.snapshot();
+        let geometry = f.static_geometry_snapshot();
+        let mut restored = Field::restore(&snapshot, &geometry, 0.).unwrap();
+        f.step(12_000_000_000 / tick_ns()).unwrap();
+        for _ in 0..12 {
+            restored.step(1_000_000_000 / tick_ns()).unwrap();
+        }
+        assert_eq!(f.rmuc_2027(), restored.rmuc_2027());
+        let r = &f.rmuc_2027().unwrap().game.robots[0];
+        assert!(r.hp > 0);
+        assert!(r.combat.weakened);
+        assert!(!r.combat.overheated);
+    }
+
     #[test]
     fn idle_world_still_advances_live_rule_countdown_and_rejects_mixed_checkpoints() {
         let mut f = field();

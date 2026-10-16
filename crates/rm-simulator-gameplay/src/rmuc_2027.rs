@@ -16,6 +16,8 @@
 //! of §5.6.2. Base protection still requires full control (§5.6.1).
 
 /// Live RMUC 2027 control/structure match subset.
+pub mod adaptive;
+pub mod combat;
 pub mod match_rules;
 
 use crate::Team;

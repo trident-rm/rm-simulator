@@ -177,8 +177,8 @@ nix develop -c cargo run --locked -p rm-simulator-app --features season-2027 -- 
 F5 starts the simulator's five-second countdown, followed by the seven-minute
 running phase. F6 pauses, F7 steps. Remote match controls retain the normal
 referee permission checks. Start again after Finish resets the round. Operator
-`ReviveRobot`/`SetRobotHp` remain available; automatic respawn is not part of
-this subset. Use `--fly` for a referee camera or omit it to drive Infantry 3/4
+`ReviveRobot`/`SetRobotHp` remain available; normal respawn now runs automatically.
+Practice recovery/reset commands cannot bypass a running round's respawn rules. Use `--fly` for a referee camera or omit it to drive Infantry 3/4
 or the manual Sentry. Both hosts and clients must use the same bound package.
 A 2027-only build uses `--no-default-features --features season-2027` before
 Cargo's `--` separator.
@@ -257,10 +257,84 @@ have 405,623 triangles per outpost and 487,164 per base before instancing;
 `structure-binding-build.json` records the new counts separately from the
 original sandbox adapter's report.
 
-This is a playable, single-round control/structure subset. Fixed practice HP
-uses level-one HP-priority Infantry (200 HP, UC Table 5-13) and semi-automatic
-Sentry (200 HP, UC Table 3-6). It does not add experience, heat, ammunition
-logistics, automatic respawn, field buffs/traversal rewards, rune/dart/aerial/radar
-mechanics or Heavy. 42 mm hits are refused until Heavy launch observations can
-implement the mandatory damage-suppression rules. Those omissions are shown in
-the HUD; they never fall back to the 2026 engine.
+This is a playable, single-round RMUC combat/control subset. Heavy, assembly,
+ordinary field defense/terrain buffs, rune, aerial, dart and Radar equipment
+remain unavailable. 42 mm launches remain refused until Heavy suppression
+observations are implemented. Adaptive armor remains in its default damage state.
+
+## Combat lifecycle and adaptive-armor infrastructure
+
+Native 2027 tables supply Infantry HP, power reporting, heat limit and cooling
+for levels 1–10; the active cap starts at **five**. Assembly-driven cap increases
+remain separate. Defaults are HP chassis and cooling launcher. Existing performance
+selection commands use the shared choice names with the 2027 tables; selecting
+one changed component during Running locks that component, leaving the other
+available. Confirming both unchanged choices locks both. Combat launches,
+actual damage and kills grant XP, with Table 5-14 distribution for unidentified,
+friendly or ineligible sources. Level-up adds the maximum-HP increase immediately;
+a capped Infantry stops collecting XP. Terrain/rune/dart XP awaits those systems.
+Semi-automatic Sentry retains its Table 3-6 preset; full Sentry posture rules
+are not enabled. Chassis referee power limits and the 60 J buffer remain outside
+this change; reported performance does not alter the separate drivetrain budget.
+
+The native host advertises a 25 m/s 17 mm default/cap (Tables 3-5–3-6),
+including random speed variation, instead of the legacy 30 m/s configurable
+cap. Each accepted launch consumes allowance and adds heat. Cooling settles at 10 Hz.
+Exceeding the ordinary heat limit locks the launcher and blacks out the
+first-person scene until heat reaches zero; HUD, minimap and inspection camera
+remain available. **Permanent heat lock follows Figure 5-1's inclusive `>=`
+threshold**, as requested by the user, rather than the conflicting prose `>`.
+Heat, temporary/permanent overspeed and speed-module connectivity locks remain
+independent. Death resets heat, but never removes a round-long lock. Host cadence,
+weapon configuration and ownership checks still precede these rules.
+
+Infantry starts with zero ammunition allowance; Sentry starts with 300 and can
+collect accumulated 100-round grants for each completed minute at own supply.
+**O / Buy ammo** buys ten rounds immediately at an eligible own service/vantage
+point, or buys 100 rounds remotely for 150 gold while out of combat, delivered
+after six seconds. Both use the team's 1,000-round gold-purchase cap. Zone units
+cost ten gold. While the mouse is released, the combat toolbar also provides
+**Remote HP** and **Paid respawn**; current gold and costs appear in the HP panel.
+These submit ordinary pilot commands, with the host checking chassis ownership.
+Remote HP delivers 60% of the contemporary maximum HP after six seconds;
+death cancels that HP purchase without refund. Pending ammunition survives death.
+Operator allowance/gold overrides remain explicit referee commands.
+
+The initial 800 gold is credited **on entering Running**; subsequent 100-gold
+awards occur at elapsed 60, 120, 180, 240 and 300 seconds, and 300 gold at 360
+seconds. This is an explicit simulator interpretation of Table 5-6's displayed
+countdown labels, not a silently inherited 2026 schedule. Assembly income is absent.
+Out of combat requires six live seconds without launch or actual HP loss; round
+start defaults to out of combat (Table 2-1).
+
+Own supply and vantage footprints now use the same reviewed, height-calibrated
+antenna approximation as control cards. Supply healing is 10% maximum HP/s,
+or 25% after four minutes while out of combat. Fully controlled outpost healing
+is half that contemporary rate. The base logistics coefficient applies **once**
+to both paths and to remote HP recovery. Healing settles at 10 Hz with integer
+fractional carry and cumulative nearest-HP rounding. Visual-tag supply activation,
+RF propagation, other buff stacking and logistics-induced image degradation are
+not implemented. Normal respawn retains XP/allowance, restores 10% HP and gives
+weakness plus 30-second invincibility. Service-card recovery clears weakness
+but preserves at least ten seconds of that invincibility. Paid respawn restores
+full HP, gives three seconds of weakness/invincibility, and reports the four-second
+power bonus. Supply or base HP below 4,000 accelerates progress; base damage also
+increases its requirement. Offline state suspends progress. A penalty override
+can still damage an invincible robot; ordinary hits and collisions cannot.
+
+`gameplay::rmuc_2027::adaptive` retains accepted launch totals and detected armor
+contacts, including contacts dealing zero damage. Observations identify the
+attacker when known, victim ownership at the event, target/plate, and detector
+bottom-left/right/up coordinates and dimensions quantized to **1 µm**. This uses
+fitted source detector envelopes for structures and the current Infantry/Sentry
+prototype rectangle; final 2027 detector masks remain pending. Friendly and
+unattributed contacts stay in history but do not invent enemy-hit attribution.
+Snapshots/checkpoints preserve these records, cooling state, choices, XP,
+respawn progress, delivery deadlines and per-robot service expiry (**protocol 54**).
+
+Adaptive statistics expose reproducible coordinate medians, median spread,
+accuracy and formula-defined area share when both sides are non-singular. Each
+minute grants one accumulating reinforcement opportunity; the ten-hit prerequisite
+is observable. No Radar selection or reinforced/unreinforced damage is enabled.
+No-launch, no-hit and zero-spread cases return an explicit undefined result;
+clipping, circle-boundary and area-update policies await a later implementation.

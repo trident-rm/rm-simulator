@@ -1168,6 +1168,8 @@ mod tests {
                     },
                 ],
                 zones: vec![],
+                supply_zones: vec![],
+                vantage_zones: vec![],
                 rotor_direction: -1,
             }),
             runes: vec![],
@@ -1175,9 +1177,47 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
+        let robot = field
+            .add_chassis(&rm_simulator_world::ChassisPlacement {
+                config: Default::default(),
+                spawn: Pose::at([0., 0., 0.16]),
+                team: rm_simulator_world::Team::Blue,
+                kind: rm_simulator_world::RobotKind::Infantry,
+                performance: None,
+            })
+            .unwrap();
         field.referee_command(RefereeCommand::StartMatch).unwrap();
         field
             .step(6_000_000_000 / rm_simulator_world::tick_ns())
+            .unwrap();
+        field
+            .buy_ammo(robot, rm_simulator_world::Caliber::Mm17)
+            .unwrap();
+        field
+            .referee_command(RefereeCommand::SetAllowance {
+                robot,
+                allowance: [20, 0],
+            })
+            .unwrap();
+        field
+            .fire(
+                Pose::yawed([3.15, 0., 1.], std::f64::consts::PI),
+                rm_simulator_world::Shot::at_limit(rm_simulator_world::Caliber::Mm17),
+                Some(robot),
+            )
+            .unwrap();
+        // Retire the structure-contact flight before replay, whose solver and
+        // f32 trajectory need not reproduce micrometre hit positions. Keep
+        // pending logistics, and a new unobstructed flight to carry live heat.
+        field
+            .step(4_000_000_000 / rm_simulator_world::tick_ns())
+            .unwrap();
+        field
+            .fire(
+                Pose::at([0., 0., 2.]),
+                rm_simulator_world::Shot::at_limit(rm_simulator_world::Caliber::Mm17),
+                Some(robot),
+            )
             .unwrap();
         field
             .referee_command(RefereeCommand::SetOutpostHp { outpost: 0, hp: 0 })
@@ -1194,6 +1234,9 @@ mod tests {
         assert!(checkpoint_node(&state).is_ok());
         state.field.rmuc_2027 = None;
         assert!(checkpoint_node(&state).is_err());
+        let simulation = crate::simulation::Simulation::new(field, true);
+        assert_eq!(simulation.weapon_for(robot).shot.speed_m_s, 25.);
+        assert_eq!(simulation.weapon_limits_for(robot).max_speed_m_s, 25.);
     }
     #[test]
     fn outpost_rule_state_round_trips_json_and_bitpack() {
@@ -1282,10 +1325,20 @@ mod tests {
                 "a field's own snapshot must travel as its restore alone"
             );
             let message = ServerMessage::Snapshot(Box::new(state.clone()));
-            assert_eq!(
-                decode_player_message(&encode_player_message(&message)).unwrap(),
-                message
-            );
+            let decoded = decode_player_message(&encode_player_message(&message)).unwrap();
+            if state.field.rmuc_2027.is_some()
+                && let ServerMessage::Snapshot(decoded) = &decoded
+            {
+                // Hot body/projectile/hit views deliberately use f32 on this
+                // lane (covered by the precision tests below). Rules, including
+                // all µm adaptive coordinates, must still be bit-exact.
+                assert_eq!(decoded.field.restore, state.field.restore);
+                assert_eq!(decoded.field.rmuc_2027, state.field.rmuc_2027);
+                state.field.chassis = decoded.field.chassis.clone();
+                state.field.projectiles = decoded.field.projectiles.clone();
+                state.field.hits = decoded.field.hits.clone();
+            }
+            assert_eq!(decoded, ServerMessage::Snapshot(Box::new(state.clone())));
             let bytes = encoder.snapshot(0, &state).unwrap();
             let wire = parse(&crate::compression::decompress(&bytes, 4 << 20).unwrap())
                 .unwrap()
@@ -1294,7 +1347,15 @@ mod tests {
             let Some(ServerMessage::Snapshot(received)) = received else {
                 panic!("every frame must deliver a snapshot");
             };
-            assert_eq!(received.field, state.field);
+            if state.field.rmuc_2027.is_some() {
+                let expected: PlayerSnapshot =
+                    bitpack::from_node(&checkpoint_node(&state).unwrap()).unwrap();
+                assert_eq!(received.field, expected.into_state(true).unwrap().field);
+                assert_eq!(received.field.restore, state.field.restore);
+                assert_eq!(received.field.rmuc_2027, state.field.rmuc_2027);
+            } else {
+                assert_eq!(received.field, state.field);
+            }
             if let Some(feedback) = feedback
                 && let Some(retire) = encoder.feedback(feedback)
                 && let (_, Some(retired)) = decoder.receive(retire).unwrap()

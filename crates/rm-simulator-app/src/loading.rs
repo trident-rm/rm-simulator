@@ -550,6 +550,7 @@ fn teardown(world: &mut World) {
     despawn_all::<rm_simulator_render::outpost::OutpostArmor>(world);
     despawn_all::<rm_simulator_render::outpost::BaseArmor>(world);
     despawn_all::<crate::hud::HudRoot>(world);
+    despawn_all::<crate::hud::VideoBlackout>(world);
     despawn_all::<crate::hud::Toolbar>(world);
     despawn_all::<crate::hud::Settings>(world);
     despawn_all::<crate::debug_panel::DebugPanel>(world);

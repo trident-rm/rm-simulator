@@ -944,6 +944,8 @@ impl Owner {
                     | Command::Respawn { chassis }
                     | Command::ResetRobot { chassis }
                     | Command::BuyAmmo { chassis, .. }
+                    | Command::BuyHp { chassis }
+                    | Command::InstantRespawn { chassis }
                     | Command::SetPerformance { chassis, .. }
                     | Command::ConfigureWeapon { chassis, .. }
                     | Command::Chassis { chassis, .. }
@@ -1298,6 +1300,12 @@ mod tests {
         }
         let chassis = welcome.chassis.unwrap().id;
         for command in [
+            Command::BuyHp {
+                chassis: chassis + 1,
+            },
+            Command::InstantRespawn {
+                chassis: chassis + 1,
+            },
             Command::Respawn {
                 chassis: chassis + 1,
             },

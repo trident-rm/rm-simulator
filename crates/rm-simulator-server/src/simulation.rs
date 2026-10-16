@@ -371,10 +371,15 @@ impl Simulation {
         &self,
         caliber: rm_simulator_world::Caliber,
     ) -> crate::protocol::WeaponLimits {
-        match caliber {
+        let mut limits = match caliber {
             rm_simulator_world::Caliber::Mm17 => self.weapon_limits,
             rm_simulator_world::Caliber::Mm42 => self.hero_weapon_limits,
+        };
+        if self.field.rmuc_2027().is_some() && caliber == rm_simulator_world::Caliber::Mm17 {
+            // UC 2027 Tables 3-5/3-6; do not inherit the legacy 30 m/s configurable cap.
+            limits.max_speed_m_s = limits.max_speed_m_s.min(25.);
         }
+        limits
     }
     /// The caps a chassis' pilot may configure within, by its caliber.
     pub fn weapon_limits_for(&self, chassis: u32) -> crate::protocol::WeaponLimits {
@@ -387,7 +392,12 @@ impl Simulation {
     }
     /// Host starting weapon settings.
     pub fn weapon(&self) -> WeaponConfig {
-        self.weapon
+        let mut weapon = self.weapon;
+        weapon.shot.speed_m_s = weapon
+            .shot
+            .speed_m_s
+            .min(self.limits_for_caliber(weapon.shot.caliber).max_speed_m_s);
+        weapon
     }
     /// The live field.
     pub fn field(&self) -> &Field {
@@ -630,6 +640,10 @@ impl Simulation {
                 rm_simulator_world::Caliber::Mm42 => self.hero_weapon,
             });
         weapon.shot.caliber = caliber;
+        weapon.shot.speed_m_s = weapon
+            .shot
+            .speed_m_s
+            .min(self.limits_for_caliber(caliber).max_speed_m_s);
         weapon
     }
 
@@ -737,6 +751,18 @@ impl Simulation {
         if !reset && self.field.chassis_defeated(id) != Some(true) {
             return Err("robot is not defeated".into());
         }
+        if self.field.rmuc_2027().is_some_and(|s| {
+            matches!(
+                s.game.phase,
+                rm_simulator_world::rmuc_2027::match_rules::Phase::Countdown
+                    | rm_simulator_world::rmuc_2027::match_rules::Phase::Running
+            )
+        }) {
+            return Err(
+                "robots recover on the 2027 match's respawn timer; use a paid respawn request"
+                    .into(),
+            );
+        }
         // Section 5.2.2: a match respawns defeated robots on its own timer, so
         // pilots recover themselves only in practice.
         if self.field.referee().is_some_and(|referee| {
@@ -748,7 +774,7 @@ impl Simulation {
             return Err("robots recover on the match's respawn timer".into());
         }
         // A no-referee practice robot can still be repositioned through debug.
-        if self.field.referee().is_some() {
+        if self.field.referee().is_some() || self.field.rmuc_2027().is_some() {
             self.field
                 .referee_command(rm_simulator_world::RefereeCommand::ReviveRobot { robot: id })
                 .map_err(|e| e.to_string())?;
@@ -1119,6 +1145,16 @@ impl Simulation {
             Command::BuyAmmo { chassis, caliber } => self
                 .field
                 .buy_ammo(*chassis, *caliber)
+                .map_err(|e| e.to_string()),
+            Command::BuyHp { chassis } => self
+                .field
+                .referee_command(rm_simulator_world::RefereeCommand::BuyHp { robot: *chassis })
+                .map_err(|e| e.to_string()),
+            Command::InstantRespawn { chassis } => self
+                .field
+                .referee_command(rm_simulator_world::RefereeCommand::InstantRespawn {
+                    robot: *chassis,
+                })
                 .map_err(|e| e.to_string()),
             Command::SetPerformance {
                 performance: rm_simulator_world::gameplay::Performance::Fixed(_),

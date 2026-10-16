@@ -280,3 +280,10 @@ an NVIDIA laptop GPU; Mac performance still needs separate measurements.
 | F12 (hold) | Show controls |
 | Toolbar | Mouse-driven Settings, Map, Team, Help, Close and Leave match; appears with the cursor released |
 | Escape | Close the current panel or open Pause; in staging, go back a step or leave; in Multiplayer, return to the main menu; otherwise open or cancel quit confirmation |
+
+On a bound RMUC 2027 match, O buys a zone unit of ten 17 mm rounds, or a remote
+unit of 100 while out of combat (six-second delivery). Release the mouse to use
+the combat toolbar's ammunition, remote HP and paid-respawn controls. Gold and
+purchase costs appear with HP; heat, XP, level, weakness, invincibility and
+respawn progress reflect native rules. A heat video cut covers only the
+first-person scene, preserving HUD and minimap. See [the lifecycle guide](rmuc2027-field.md#combat-lifecycle-and-adaptive-armor-infrastructure).

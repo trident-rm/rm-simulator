@@ -88,6 +88,24 @@ impl Bindings {
                 })
             })
             .collect();
+        for a in crate::zone_catalog::areas(rm_simulator_world::season::Season::Rm2027) {
+            let supply = a.id.ends_with("supply");
+            if !supply && !a.id.ends_with("vantage") {
+                continue;
+            }
+            let zone = Zone {
+                side: a.side,
+                point: rm_simulator_world::rmuc_2027::Point::Base,
+                floor_m: a.floor_m,
+                height_m: 0.45,
+                polygon_m: a.polygon_m,
+            };
+            if supply {
+                config.supply_zones.push(zone);
+            } else {
+                config.vantage_zones.push(zone);
+            }
+        }
         config
     }
     /// Source motion records for this runtime asset.
@@ -106,7 +124,12 @@ impl Bindings {
 /// level avoids selecting a lower tunnel instead of its upper deck. The 10 mm
 /// tolerance is a simulator antenna setting, not a rulebook detection range.
 pub fn fit_zone_heights(config: &mut Config, ground: &crate::collision_mesh::GroundMesh) {
-    for zone in &mut config.zones {
+    for zone in config
+        .zones
+        .iter_mut()
+        .chain(&mut config.supply_zones)
+        .chain(&mut config.vantage_zones)
+    {
         let n = zone.polygon_m.len() as f64;
         let center = [
             zone.polygon_m.iter().map(|p| p[0]).sum::<f64>() / n,
@@ -214,6 +237,8 @@ mod tests {
                 detectors: vec![d.clone(); 3],
             }),
             rotor_direction: 1,
+            supply_zones: vec![],
+            vantage_zones: vec![],
             zones: vec![
                 Zone {
                     side: Team::Red,

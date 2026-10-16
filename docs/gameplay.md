@@ -306,7 +306,13 @@ These choices are documented and tested where they affect observable state.
 `rmuc_2027::match_rules::Match` owns the explicit RMUC 2027 V1.0.0 subset:
 countdown/round clock, per-robot RFID expiry, eligibility and mutual exclusion,
 Fortress timers, control, base/outpost HP, physical ownership and rebuilds,
-permanent rotor stops, attack totals and single-round results. It receives
+permanent rotor stops, attack totals and single-round results. Native combat
+adds 10 Hz heat/cooling, launch locks and allowance, delayed logistics, healing,
+respawn/weakness/invincibility, combat XP and Infantry performance. The initial
+level cap is five; assembly and field buff systems remain separate. Adaptive
+observations and statistics are carried but reinforcement effects are inactive.
+The user-selected permanent heat-lock boundary is Figure 5-1's `>=`.
+It receives
 physical contact observations and explicit nanosecond durations only.
 `rm-simulator-world::rmuc_2027::State` supplies source detector geometry and
 height-aware polygon contacts, with the whole state in `FieldRestore`.
