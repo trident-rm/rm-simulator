@@ -164,6 +164,9 @@ top-level fields:
 | `role` | Client role |
 | `chassis_id` | Own chassis id |
 | `chassis` | Own confirmed chassis state |
+| `chassis_all` | All confirmed chassis poses, teams and ids, including training bots |
+| `rmuc_2027_config` | Bound native detector and zone geometry, or null |
+| `control_diagnostics` | Each native robot's point eligibility/blocking reason, RFID time remaining and effective field benefits |
 | `presented_chassis` | Presentation-only chassis state |
 | `pending_shots` | Pending launch count |
 | `auto_aim` | Selected target/status, execution time, observation age and fire permission |
@@ -240,6 +243,41 @@ requires local referee authority; do not run it against a match to preserve.
 This smoke test uses real host commands, snapshots and console replies. Physical
 contact, contest, departure grace and restore are tested without rendering by
 `just control-test`; the scenario does not inject RFID observations.
+
+For a full-field **two-robot** scenario, use the same paused referee launch and run:
+
+~~~sh
+python3 scripts/control-field-scenarios.py --port 7790
+# Optional saved views of each scenario:
+python3 scripts/control-field-scenarios.py --screenshots local-assets/control-views
+~~~
+
+This runner resets the match and clears training bots, discovers new chassis ids
+from confirmed state, and samples separated positions inside the host's actual
+zone polygons. It uses `world` **`PlaceBot`** commands (the same ground lookup as
+pilot placement), real physics ticks and real RFID observations. Both field sides
+are checked for Base contest, two-second departure grace, capture and recovery;
+Central Highland checks the opposing-team latch, handover and physical Outpost
+transfer. Fortress checks historical-loss defense/cooling/reserve after Base
+repair, the three-minute enemy unlock, vulnerability and ten-second armor opening.
+Fortress samples favor its flat center so parked chassis do not slide off ramps.
+No control flags, progress or RFID expiries are injected. Success clears
+the bots and returns to paused Idle; failure leaves the scene available to inspect.
+It requires the bound, hydrated 2027 package and a working renderer.
+
+`PlaceBot { chassis, position_m, yaw_deg }` requires referee or embedded-owner
+authority and refuses pilot chassis. Spawn/clear/remove retain their existing
+authority checks. These training commands do not grant control of another pilot.
+The reusable Python `console.ConsoleClient.call()` keeps one connection and
+monotonic request ids for state-driven runners. Its result is the confirmed reply
+object, so scripts can discover ids and geometry without assuming an initial id.
+
+Enable `inspect` with `zones` and `zone_labels` to see live point captions. They
+show the territory's capture/recovery/rollback state, each detected robot's id,
+team, RFID time remaining, eligibility or blocking reason, defense/vulnerability,
+effective cooling, reserve and enemy-Fortress armor-opening progress. Occupied
+control zones take precedence when labels overlap. Console diagnostics include
+all eight points, even when a robot has no contact or a label is off-screen.
 
 For a bound 2027 match, `state.rmuc_2027` exposes the native ruleset, phase,
 control, per-robot RFID expiries, structure HP/owners, rotor stops and result.

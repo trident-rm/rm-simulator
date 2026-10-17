@@ -119,6 +119,10 @@ physics motion and client presentation. Coverage limitations are listed in the
 
 Native 2027 combat now includes heat/launch locks, allowance, purchases/healing,
 normal/paid respawn and combat XP/performance with the initial level cap of five.
-Adaptive launch/hit statistics and opportunities are carried in protocol 54;
+Adaptive launch/hit statistics and opportunities are carried in protocol 55;
 reinforcement selection/effects and assembly progression remain unavailable.
 See [the lifecycle boundary](rmuc2027-field.md#combat-lifecycle-and-adaptive-armor-infrastructure).
+
+Protocol 55 also carries historical Base HP minima and per-side Fortress reserve
+spending. Continuous Base/Vantage/Highland/Fortress field effects are native 2027;
+terrain traversal sequences and rune/reinforcement effects remain unavailable.

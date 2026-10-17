@@ -25,7 +25,7 @@ impl Match {
         if self.phase == Phase::Running
             && (r.role == GroundRole::Heavy
                 || r.combat.launcher_locked(self.elapsed_ns())
-                || r.combat.allowance == 0)
+                || (r.combat.allowance == 0 && self.field_effects(id).fortress_reserve == 0))
         {
             return Err("2027 launcher locked or allowance exhausted");
         }
@@ -38,11 +38,17 @@ impl Match {
             return;
         }
         let now = self.elapsed_ns();
+        self.resolve();
+        let reserve = self.field_effects(id).fortress_reserve > 0;
         let Some(r) = self.robots.iter_mut().find(|r| r.id == id) else {
             return;
         };
         let stats = r.stats(now);
-        r.combat.allowance = r.combat.allowance.saturating_sub(1);
+        if reserve {
+            self.fortress_reserve_used[r.team.index()] += 1;
+        } else {
+            r.combat.allowance = r.combat.allowance.saturating_sub(1);
+        }
         r.combat.last_combat_ns = Some(now);
         r.combat.heat_tenths += 100;
         r.combat.overheated |= r.combat.heat_tenths > u64::from(stats.heat_limit) * 10;
@@ -278,9 +284,21 @@ impl Match {
         Ok(())
     }
     /// Apply actual robot HP loss. Operator penalties bypass invincibility;
-    /// ordinary projectile/collision damage respects it and connectivity.
+    /// ordinary projectile/collision damage respects it, field defense and connectivity.
     pub fn damage_robot(&mut self, id: u32, amount: u32, penalty: bool) -> u32 {
         let now = self.elapsed_ns();
+        self.resolve();
+        let effects = self.field_effects(id);
+        let amount = if penalty {
+            amount
+        } else {
+            // UC §5.6.4.1: subtract strongest defense from vulnerability,
+            // then round the final HP loss to the nearest integer.
+            ((u64::from(amount) * u64::from(100 + effects.vulnerability_pct - effects.defense_pct)
+                + 50)
+                / 100)
+                .min(u64::from(u32::MAX)) as u32
+        };
         let Some(r) = self.robots.iter_mut().find(|r| r.id == id) else {
             return 0;
         };
@@ -562,14 +580,19 @@ impl Match {
             r.combat.deliveries = pending;
         }
         self.resolve_service_recovery();
+        self.resolve();
         if now.is_multiple_of(SETTLEMENT_NS) {
             let outpost = self
                 .robots
                 .iter()
-                .map(|r| self.outpost_service(r))
+                .map(|r| {
+                    (
+                        self.outpost_service(r),
+                        self.field_effects(r.id).cooling_per_s,
+                    )
+                })
                 .collect::<Vec<_>>();
-            for (r, outpost) in self.robots.iter_mut().zip(outpost) {
-                let cooling = r.stats(now).cooling_per_s;
+            for (r, (outpost, cooling)) in self.robots.iter_mut().zip(outpost) {
                 r.combat.heat_tenths = r.combat.heat_tenths.saturating_sub(u64::from(cooling));
                 if r.combat.heat_tenths == 0 {
                     r.combat.overheated = false;

@@ -530,6 +530,14 @@ base armor opening ends the vulnerability. UC examples on pp.104–105 use an
 older 75% Fortress vulnerability value in one example, inconsistent with the
 100% mechanism on p.107; retain this conflict rather than importing 75%.
 
+The native continuous-field implementation follows §5.6.4.9's **100%** enemy
+Fortress vulnerability, combined additively with the strongest defense under
+§5.6.4.1. Fortress reserve is a persistent **per-side, per-round pool**: its
+capacity grows with historical Base HP loss; consumption survives handover,
+leaving, death and Base repairs. Re-entry does not refill it. This reserve
+lifetime is an explicit simulator policy because the manual specifies capacity
+and spending priority but no replenishment schedule. Only a new round resets it.
+
 ## UC Sentry, aerial, dart and Radar systems
 
 ### Sentry

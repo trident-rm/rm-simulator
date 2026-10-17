@@ -139,7 +139,8 @@ packages use its control-point subset as approximate antenna polygons; terrain,
 supply and other unsupported areas remain inspection-only. Never feed these
 into the 2026 referee. `gameplay::rmuc_2027::match_rules` owns the live 2027
 combat/control subset, including native heat, allowance, healing, respawn and
-combat XP. Assembly progression, full field buffs and reinforcement effects
+combat XP and continuous Base/Vantage/Highland/Fortress field benefits. Assembly
+progression, terrain traversal buffs and reinforcement effects
 remain unavailable. Adaptive observations/statistics live in `gameplay::rmuc_2027::adaptive`;
 Figure 5-1's inclusive permanent heat-lock boundary is the adopted user policy.
 `world::rmuc_2027` adapts contacts and source detector

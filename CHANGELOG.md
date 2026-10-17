@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Apply native 2027 Base/Vantage/Highland defense and Fortress defense, cooling,
+  reserve ammunition and enemy vulnerability. Preserve historical Base HP loss
+  and reserve spending through checkpoints (protocol 55). Add referee-only
+  training-bot placement, full-field multi-robot console scenarios and live zone
+  labels explaining occupants, RFID expiry, arbitration and effective buffs.
+
 - Add comprehensive RMUC 2027 control transition, RFID, Fortress and restore
   scenarios with `just control-test`. Fix eligibility at fractional capture
   boundaries and clear Fortress retention at its exact three-second expiry.

@@ -1105,7 +1105,15 @@ impl Simulation {
                 chassis,
                 position_m,
                 yaw_deg,
+            }
+            | Command::PlaceBot {
+                chassis,
+                position_m,
+                yaw_deg,
             } => {
+                if matches!(command, Command::PlaceBot { .. }) && !self.bots.contains(chassis) {
+                    return Err("not a training bot".into());
+                }
                 if !position_m.iter().all(|v| v.is_finite()) || !yaw_deg.is_finite() {
                     return Err("placement must be finite".into());
                 }
@@ -1760,6 +1768,49 @@ mod tests {
         })
         .unwrap();
         assert!(sim.state().bots[0] > bot);
+    }
+
+    #[test]
+    fn training_placement_rejects_pilots_and_invalid_poses_without_mutation() {
+        let (mut sim, pilot) = pilot_simulation();
+        let placement = |chassis, x| Command::PlaceBot {
+            chassis,
+            position_m: [x, 0., 2.],
+            yaw_deg: 90.,
+        };
+        let before = sim.snapshot();
+        assert_eq!(
+            sim.apply(&placement(pilot, 1.)),
+            Err("not a training bot".into())
+        );
+        assert_eq!(sim.snapshot(), before);
+        sim.apply(&Command::SpawnBot {
+            team: Team::Blue,
+            spin_rad_s: 0.,
+        })
+        .unwrap();
+        let bot = sim.state().bots[0];
+        let before = sim.snapshot();
+        assert!(sim.apply(&placement(bot, f64::NAN)).is_err());
+        assert_eq!(sim.snapshot(), before);
+        sim.apply(&placement(bot, 2.)).unwrap();
+        let after = sim.snapshot();
+        let robot = after.chassis.iter().find(|c| c.id == bot).unwrap();
+        assert!((robot.pose.translation_m[0] - 2.).abs() < 1e-9);
+        assert!(
+            robot.placement_revision
+                > before
+                    .chassis
+                    .iter()
+                    .find(|c| c.id == bot)
+                    .unwrap()
+                    .placement_revision
+        );
+        assert_eq!(
+            after.chassis.iter().find(|c| c.id == pilot),
+            before.chassis.iter().find(|c| c.id == pilot)
+        );
+        assert_eq!(after.referee, before.referee);
     }
 
     #[test]

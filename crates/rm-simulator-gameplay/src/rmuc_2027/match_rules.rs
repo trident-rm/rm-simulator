@@ -3,6 +3,8 @@
 //! RMUC 2027 V1.0.0 combat/control subset (§§5.1–5.6, 5.8).
 //! Contacts are external observations; no geometry, physics or wall clock lives here.
 use super::*;
+/// Native continuous field effects and read-only control diagnostics.
+pub mod buffs;
 mod lifecycle;
 
 /// UC §5.6.1 base HP; no virtual shield in this season.
@@ -107,6 +109,11 @@ pub struct Match {
     pub control: Control,
     /// Bases in Red/Blue order.
     pub base_hp: [u32; 2],
+    /// Lowest Base HP reached this round, UC §5.6.4.9; repairs never erase it.
+    pub base_lowest_hp: [u32; 2],
+    /// Fortress reserve units spent this round, by defending side (§5.6.4.9).
+    /// Simulator policy: one persistent pool per side; re-entry does not refill it.
+    pub fortress_reserve_used: [u32; 2],
     /// Outposts by original side, not current owner.
     pub outpost_hp: [u32; 2],
     /// Open base protective armor, Red/Blue.
@@ -158,6 +165,8 @@ impl Match {
             countdown_ns: 0,
             control: Control::new(),
             base_hp: [BASE_HP; 2],
+            base_lowest_hp: [BASE_HP; 2],
+            fortress_reserve_used: [0; 2],
             outpost_hp: [OUTPOST_HP; 2],
             base_open: [false; 2],
             rotor_stopped_ns: [None; 2],
@@ -231,6 +240,14 @@ impl Match {
                     || r.max_hp != r.stats(self.elapsed_ns()).max_hp
             })
             || self.base_hp.iter().any(|&v| v > BASE_HP)
+            || self
+                .base_lowest_hp
+                .iter()
+                .zip(self.base_hp)
+                .any(|(&low, hp)| low > hp)
+            || Team::BOTH
+                .into_iter()
+                .any(|side| self.fortress_reserve_used[side.index()] > self.fortress_capacity(side))
             || self.outpost_hp.iter().any(|&v| v > OUTPOST_HP)
             || ![-1, 1].contains(&self.rotor_direction)
             || self.countdown_ns > COUNTDOWN_NS
@@ -509,7 +526,7 @@ impl Match {
             .map(|(r, a)| (r.id, a))
             .collect()
     }
-    /// Apply unmodified Table 5-2 structure/robot projectile damage. The caller
+    /// Apply Table 5-2 structure and field-adjusted robot projectile damage. The caller
     /// supplies the calibrated armor contact and caliber. 42 mm remains disabled
     /// in this subset until a Heavy launcher can report its suppression state.
     pub fn hit(
@@ -530,6 +547,7 @@ impl Match {
                 let hp = &mut self.base_hp[team.index()];
                 let d = (*hp).min(20);
                 *hp -= d;
+                self.base_lowest_hp[team.index()] = self.base_lowest_hp[team.index()].min(*hp);
                 (team, d)
             }
             crate::Target::Outpost(side) => {
@@ -588,6 +606,7 @@ impl Match {
     /// Set a base's HP directly; zero ends a running round, without attack credit.
     pub fn set_base_hp(&mut self, team: Team, hp: u32) {
         self.base_hp[team.index()] = hp.min(BASE_HP);
+        self.base_lowest_hp[team.index()] = self.base_lowest_hp[team.index()].min(hp.min(BASE_HP));
         if self.phase == Phase::Running && hp == 0 {
             self.finish();
         }

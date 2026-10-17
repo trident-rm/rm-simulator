@@ -90,27 +90,42 @@ def json_equal(left, right):
     return left == right
 
 
-def run_script(stream, steps, emit=print):
-    """Execute sequentially on one connection; assertions issue fresh state queries."""
-    for request_id, step in enumerate(steps, 1):
-        command = {"type": "state"} if "assert" in step else step
-        request = {"id": request_id, "command": command}
-        stream.write((json.dumps(request, allow_nan=False) + "\n").encode())
-        stream.flush()
-        line = stream.readline(MAX_REPLY_BYTES + 1)
+class ConsoleClient:
+    """One ordered console connection, reusable by state-driven scenario runners."""
+    def __init__(self, stream, emit=print):
+        self.stream = stream
+        self.emit = emit
+        self.request_id = 0
+
+    def call(self, command):
+        """Send one command through its completion barrier and return its result."""
+        self.request_id += 1
+        request = {"id": self.request_id, "command": command}
+        self.stream.write((json.dumps(request, allow_nan=False) + "\n").encode())
+        self.stream.flush()
+        line = self.stream.readline(MAX_REPLY_BYTES + 1)
         if not line or len(line) > MAX_REPLY_BYTES or not line.endswith(b"\n"):
             raise RuntimeError("console disconnected or sent an incomplete/oversized response")
         reply = json.loads(line)
-        emit(json.dumps(reply))
-        if not isinstance(reply, dict) or type(reply.get("id")) is not int or reply["id"] != request_id:
+        self.emit(json.dumps(reply))
+        if not isinstance(reply, dict) or type(reply.get("id")) is not int or reply["id"] != self.request_id:
             raise RuntimeError("console response ID does not match the request")
         if reply.get("ok") is not True:
-            raise RuntimeError(f"step {request_id}: {reply.get('error', 'console command failed')}")
+            raise RuntimeError(f"step {self.request_id}: {reply.get('error', 'console command failed')}")
+        return reply.get("result")
+
+
+def run_script(stream, steps, emit=print):
+    """Execute sequentially on one connection; assertions issue fresh state queries."""
+    client = ConsoleClient(stream, emit)
+    for step in steps:
+        command = {"type": "state"} if "assert" in step else step
+        result = client.call(command)
         if "assert" in step:
             try:
-                assert_state(reply.get("result"), step["assert"])
+                assert_state(result, step["assert"])
             except RuntimeError as error:
-                raise RuntimeError(f"step {request_id}: {error}") from None
+                raise RuntimeError(f"step {client.request_id}: {error}") from None
 
 
 def main():

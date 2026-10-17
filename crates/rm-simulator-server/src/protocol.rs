@@ -96,7 +96,8 @@ use serde::{Deserialize, Serialize};
 /// Version 52 adds connected deployment and the reliable ownership receipt.
 /// Version 53 carries the RMUC 2027 V1.0.0 control/structure authority.
 /// Version 54 carries native 2027 combat/adaptive state and pilot logistics.
-pub const PROTOCOL_VERSION: u32 = 54;
+/// Version 55 adds historical Base deficit, Fortress reserve and training-bot placement.
+pub const PROTOCOL_VERSION: u32 = 55;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///
@@ -815,6 +816,15 @@ pub enum Command {
     },
     /// Remove every training bot.
     ClearBots,
+    /// Referee/owner training placement; refuses every chassis that is not a bot.
+    PlaceBot {
+        /// Existing training-bot chassis id.
+        chassis: u32,
+        /// Ground-lookup query in world FLU metres; finite values required.
+        position_m: [f64; 3],
+        /// Body yaw counter-clockwise from world +x, in degrees.
+        yaw_deg: f64,
+    },
 
     /// Refreshable pilot control state. Only the owning pilot may submit it.
     PilotInput {
@@ -1001,6 +1011,7 @@ impl Command {
                 | Command::SpawnBot { .. }
                 | Command::RemoveBot { .. }
                 | Command::ClearBots
+                | Command::PlaceBot { .. }
         )
     }
 }

@@ -404,7 +404,10 @@ impl Session {
             };
             return s.game.check_launch(r.id).is_err()
                 || (s.game.phase == rm_simulator_world::rmuc_2027::match_rules::Phase::Running
-                    && (r.combat.allowance
+                    && (r
+                        .combat
+                        .allowance
+                        .saturating_add(s.game.field_effects(r.id).fortress_reserve)
                         <= self.reserved_ammo(rm_simulator_world::Caliber::Mm17)
                         || self
                             .predicted_heat()
@@ -455,6 +458,58 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fortress_reserve_unblocks_zero_personal_ammo_and_pending_shots_reserve_it() {
+        use rm_simulator_world::gameplay::Team;
+        use rm_simulator_world::{
+            Pose,
+            rmuc_2027::{
+                Config, Detector, Point, State, Tower,
+                match_rules::{COUNTDOWN_NS, GroundRole, Match},
+            },
+        };
+        let mut session = crate::session::test_session(false);
+        let shooter = session.chassis_id.unwrap();
+        let mut game = Match::new(1);
+        game.add_robot(shooter, Team::Red, GroundRole::Infantry);
+        game.start(1);
+        game.advance_ns(COUNTDOWN_NS);
+        game.set_outpost_hp(Team::Red, 0);
+        game.advance_ns(5_000_000_000);
+        game.observe(shooter, Team::Red, Point::Fortress, true);
+        game.advance_ns(0);
+        game.fortress_reserve_used[0] = 99;
+        assert_eq!(game.robots[0].combat.allowance, 0);
+        let detector = Detector {
+            pose: Pose::at([3., 0., 1.]),
+            half_m: [0.045, 0.044],
+        };
+        session.snapshot.referee = None;
+        session.snapshot.rmuc_2027 = Some(State {
+            game,
+            config: Config {
+                bases: [vec![detector.clone()], vec![detector.clone()]],
+                outposts: std::array::from_fn(|_| Tower {
+                    pivot_m: [3., 0., 1.],
+                    axis: [0., 0., 1.],
+                    detectors: vec![detector.clone(); 3],
+                }),
+                zones: vec![],
+                supply_zones: vec![],
+                vantage_zones: vec![],
+                rotor_direction: 1,
+            },
+        });
+        assert!(!session.barrel_blocked());
+        session.number_input(Command::Chassis {
+            chassis: shooter,
+            command: Default::default(),
+        });
+        session.begin_local_shot(shooter).unwrap();
+        assert_eq!(session.reserved_ammo(rm_simulator_world::Caliber::Mm17), 1);
+        assert!(session.barrel_blocked());
+    }
 
     #[test]
     fn weapon_update_waits_for_confirmation_and_old_predictions_keep_their_spread() {

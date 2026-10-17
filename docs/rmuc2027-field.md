@@ -727,7 +727,7 @@ python3 scripts/install-field-detail.py \
 ```
 
 This is a playable, single-round RMUC combat/control subset. Heavy, assembly,
-ordinary field defense/terrain buffs, rune, aerial, dart and Radar equipment
+terrain traversal buffs, rune, aerial, dart and Radar equipment
 remain unavailable. 42 mm launches remain refused until Heavy suppression
 observations are implemented. Adaptive armor remains in its default damage state.
 
@@ -1128,7 +1128,17 @@ fitted source detector envelopes for structures and the current Infantry/Sentry
 prototype rectangle; final 2027 detector masks remain pending. Friendly and
 unattributed contacts stay in history but do not invent enemy-hit attribution.
 Snapshots/checkpoints preserve these records, cooling state, choices, XP,
-respawn progress, delivery deadlines and per-robot service expiry (**protocol 54**).
+respawn progress, delivery deadlines and per-robot service expiry (**protocol 55**).
+
+Continuous own Base/Vantage and exclusive Central Highland defense now apply to
+native damage. Fortress adds defense, cooling and reserve for the first eligible
+defender and 100% vulnerability for enemy activators until armor opens. Cooling
+and reserve use the **historical** maximum Base HP loss, including after repairs.
+The reserve is one persistent pool per side per round, with no refill on handover
+or re-entry; this is a documented simulator policy in [the rules reference](rules-2027.md).
+Snapshots retain both Base HP minima and reserve spending. The checkpoint
+dictionary is unchanged: it is compression history, not the schema; protocol 55
+rejects old peers rather than defaulting missing authority.
 
 Adaptive statistics expose reproducible coordinate medians, median spread,
 accuracy and formula-defined area share when both sides are non-singular. Each

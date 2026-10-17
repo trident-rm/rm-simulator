@@ -62,7 +62,7 @@ def main():
             subprocess.run([
                 "cargo", "test", "--locked", "-p", "rm-simulator-gameplay",
                 "--no-default-features", "--features", features,
-                "--test", "control_2027",
+                "--test", "control_2027", "--test", "field_buffs_2027",
             ], cwd=root, check=True)
 
 

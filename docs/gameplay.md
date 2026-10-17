@@ -110,8 +110,24 @@ leaving a zone and the same expiry tick after restore. They do not certify the
 diagram-derived antenna polygons against hardware. The optional
 [console smoke scenario](console.md#deterministic-tick-scripts) checks actual
 host commands and authoritative replies with the bound field. These checks
-cover the implemented control subset; other field buffs, assembly and
+cover the implemented control subset; terrain traversal buffs, assembly and
 reinforcement remain outside its scope.
+
+Continuous native field benefits now include own Base/Vantage 50% defense,
+exclusive Central Highland 25% defense, own Fortress 50% defense plus historical
+Base-deficit cooling/reserve, and enemy Fortress 100% vulnerability until armor
+opens. Same-type defense uses the strongest value; defense and vulnerability
+combine before nearest-integer damage rounding (§5.6.4.1). Ordinary projectile
+and armor-collision HP loss use these effects; operator penalties bypass them.
+Weak, defeated and offline robots receive no continuous benefits. Native launch
+checks, client pending-ammunition accounting and the ammo HUD include the reserve.
+
+`Match::control_diagnostics()` explains all eight point states without modifying
+authority. `Match::field_effects()` reports defense, vulnerability, cooling and
+usable reserve after the latest activation resolution. Historical Base HP minima
+and reserve spending are checkpoint authority, not recomputed from current HP.
+See [the Fortress reserve policy](rules-2027.md#uc-territory-logistics-and-victory)
+for its explicit per-side/per-round lifetime.
 
 ## Live integration and ownership
 

@@ -69,6 +69,7 @@ fn prepare(
                     .find(|z| z.side == area.side && z.point == point)
             {
                 area.floor_m = zone.floor_m;
+                area.polygon_m = zone.polygon_m.clone();
             }
         }
     }
@@ -94,7 +95,7 @@ fn prepare(
     }
     commands.spawn((ZoneLegend, Node { position_type: PositionType::Absolute, left:px(18.), bottom:px(125.), display:Display::None, padding:UiRect::all(px(7.)), ..default() },
         GlobalZIndex(15), Text::new(if session.rmuc_2027().is_some() {
-            "2027 LIVE CONTROL | Red/blue: active | Amber: contested\nDiagram RFID (~10 cm); terrain/supply overlays inspection only\nBoxes show antenna height; hidden tunnel pads inferred"
+            "2027 LIVE CONTROL | Red/blue: active | Amber: contested\nLabels: occupants, expiry, blocking reasons and field benefits\nDiagram RFID (~10 cm); traversal overlays remain inspection only"
         } else if session.season == rm_simulator_world::season::Season::Rm2027 {
             "2027 ZONE INSPECTION | Green: RFID | Boxes: height band\nFigure 5-23 estimates (~10 cm); tunnel interiors inferred\nX-ray outlines; no 2027 buff/control enforcement"
         } else { "2026 ZONE INSPECTION | Green: referee RFID footprints\nBoxes: height band | X-ray outlines" }),
@@ -114,13 +115,33 @@ fn draw(
     catalog: Option<Res<Catalog>>,
     camera: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     mut gizmos: Gizmos<ZoneGizmos>,
-    mut labels: Query<(&ZoneLabel, &mut Node), Without<ZoneLegend>>,
+    mut labels: Query<(&ZoneLabel, &mut Node, &mut Text), Without<ZoneLegend>>,
     mut legend: Query<&mut Node, (With<ZoneLegend>, Without<ZoneLabel>)>,
 ) {
     let Some(catalog) = catalog else {
         return;
     };
     let camera = camera.single().ok();
+    let diagnostics = session
+        .rmuc_2027()
+        .filter(|_| options.zone_labels)
+        .map(|s| s.game.control_diagnostics())
+        .unwrap_or_default();
+    let captions = catalog
+        .areas
+        .iter()
+        .map(|area| {
+            let mut caption = format!("{}\n{}", area.id, area.label);
+            if options.zone_labels
+                && let Some(state) = session.rmuc_2027()
+                && let Some(point) = area.control_point()
+            {
+                caption.push('\n');
+                caption.push_str(&point_details(&state.game, area.side, point, &diagnostics));
+            }
+            caption
+        })
+        .collect::<Vec<_>>();
     for mut node in &mut legend {
         node.display = if options.zones || options.rfid_zones {
             Display::Flex
@@ -210,30 +231,194 @@ fn draw(
                     index,
                     point,
                     center.distance_squared(transform.translation()),
+                    area.control_point().is_some_and(|point| {
+                        diagnostics.iter().any(|r| {
+                            r.points.iter().any(|p| {
+                                p.point == point
+                                    && p.side.index() == area.side.index()
+                                    && p.remaining_ns > 0
+                            })
+                        })
+                    }),
                 ));
             }
         }
     }
-    projected.sort_by(|a, b| a.2.total_cmp(&b.2));
+    // Occupied control cards take precedence over nearby empty inspection areas.
+    projected.sort_by(|a, b| b.3.cmp(&a.3).then_with(|| a.2.total_cmp(&b.2)));
     let mut occupied: Vec<Rect> = Vec::new();
     let mut accepted = std::collections::HashMap::new();
-    for (index, point, _) in projected {
-        let area = &catalog.areas[index];
-        let width = area.id.len().max(area.label.len()) as f32 * 7. + 8.;
-        let bounds = Rect::from_corners(point, point + Vec2::new(width, 38.));
+    for (index, mut point, _, _) in projected {
+        let lines = captions[index].lines().collect::<Vec<_>>();
+        let width = lines.iter().map(|s| s.len()).max().unwrap_or(0) as f32 * 7. + 8.;
+        let extent = Vec2::new(width, lines.len() as f32 * 16. + 8.);
+        if let Some((camera, _)) = camera
+            && let Some(size) = camera.logical_viewport_size()
+        {
+            point = point.min((size - extent).max(Vec2::ZERO));
+        }
+        let bounds = Rect::from_corners(point, point + extent);
         if occupied.iter().any(|r| !r.intersect(bounds).is_empty()) {
             continue;
         }
         occupied.push(bounds);
         accepted.insert(index, point);
     }
-    for (label, mut node) in &mut labels {
+    for (label, mut node, mut text) in &mut labels {
         if let Some(position) = accepted.get(&label.0) {
+            if text.0 != captions[label.0] {
+                text.0.clone_from(&captions[label.0]);
+            }
             node.display = Display::Flex;
             node.left = px(position.x);
             node.top = px(position.y);
         } else {
             node.display = Display::None;
         }
+    }
+}
+
+fn point_details(
+    game: &rm_simulator_world::rmuc_2027::match_rules::Match,
+    side: Team,
+    point: rm_simulator_world::rmuc_2027::Point,
+    robots: &[rm_simulator_world::rmuc_2027::match_rules::buffs::RobotDiagnostic],
+) -> String {
+    use rm_simulator_world::gameplay::{
+        Team as RuleTeam,
+        rmuc_2027::{ControlState, Point},
+    };
+    use rm_simulator_world::rmuc_2027::match_rules::buffs::Activation;
+    let side = if side == Team::Red {
+        RuleTeam::Red
+    } else {
+        RuleTeam::Blue
+    };
+    let territory = &game.control.snapshot().territories[side.index()
+        + if matches!(point, Point::Base | Point::Fortress) {
+            2
+        } else {
+            0
+        }];
+    let presence = territory
+        .activations
+        .iter()
+        .fold([false; 2], |a, b| [a[0] || b[0], a[1] || b[1]]);
+    let controller = territory.control.team();
+    let motion = if presence == [true; 2] {
+        "CONTESTED / PAUSED"
+    } else {
+        match territory.control {
+            ControlState::Full(_) if presence[controller.other().index()] => "CAPTURING",
+            ControlState::Temporary(_) if !presence[controller.index()] => "RECOVERING",
+            _ if territory.progress_ns > 0 => "ROLLING BACK",
+            _ => "HOLDING",
+        }
+    };
+    let mut lines = vec![format!(
+        "{:?} | {motion} {:.2}/5s",
+        territory.control,
+        territory.progress_ns as f64 * 1e-9
+    )];
+    for robot in robots {
+        let Some(p) = robot
+            .points
+            .iter()
+            .find(|p| p.side == side && p.point == point && p.remaining_ns > 0)
+        else {
+            continue;
+        };
+        let reason = match p.status {
+            Activation::Active => "ACTIVE",
+            Activation::NotRunning => "round not running",
+            Activation::Defeated => "defeated",
+            Activation::Offline => "offline",
+            Activation::Weakened => "weakened",
+            Activation::NoContact => "no RFID contact",
+            Activation::OutpostNotFull => "needs own FULL outpost control",
+            Activation::FortressDisabled => "own side still controls outpost",
+            Activation::FortressTooEarly => "enemy Fortress unlocks at 3:00",
+            Activation::HighlandHeld => "other team holds highland",
+            Activation::FortressHeld => "another defender holds Fortress",
+        };
+        lines.push(format!(
+            "#{} {:?}: {reason} | RFID {:.2}s",
+            robot.id,
+            robot.team,
+            p.remaining_ns as f64 * 1e-9
+        ));
+        if p.status == Activation::Active {
+            let e = &robot.effects;
+            lines.push(format!(
+                "  DEF {}% / VUL {}% / COOL {}/s / RES {}",
+                e.defense_pct, e.vulnerability_pct, e.cooling_per_s, e.fortress_reserve
+            ));
+            if point == Point::Fortress
+                && robot.team != side
+                && let Some(r) = game.robots.iter().find(|r| r.id == robot.id)
+            {
+                lines.push(format!(
+                    "  ARMOR {} | {:.2}/10s",
+                    if game.base_open[side.index()] {
+                        "OPEN"
+                    } else {
+                        "CLOSED"
+                    },
+                    r.fortress_ns[side.index()] as f64 * 1e-9
+                ));
+            }
+        }
+    }
+    if lines.len() == 1 {
+        lines.push("No unexpired robot detections".into());
+    }
+    lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rm_simulator_world::gameplay::{
+        Team as RuleTeam,
+        rmuc_2027::match_rules::{COUNTDOWN_NS, GroundRole, Match},
+    };
+    #[test]
+    fn labels_explain_contest_expiry_and_eligibility() {
+        let mut game = Match::new(1);
+        game.add_robot(1, RuleTeam::Red, GroundRole::Infantry);
+        game.add_robot(2, RuleTeam::Blue, GroundRole::Infantry);
+        game.start(1);
+        game.advance_ns(COUNTDOWN_NS);
+        for id in [1, 2] {
+            game.observe(
+                id,
+                RuleTeam::Blue,
+                rm_simulator_world::rmuc_2027::Point::Base,
+                true,
+            );
+        }
+        game.advance_ns(0);
+        let text = point_details(
+            &game,
+            Team::Blue,
+            rm_simulator_world::rmuc_2027::Point::Base,
+            &game.control_diagnostics(),
+        );
+        assert!(text.contains("CONTESTED / PAUSED"));
+        assert!(text.contains("#1 Red: ACTIVE | RFID 2.00s"));
+        assert!(text.contains("DEF 50%"));
+        game.observe(
+            1,
+            RuleTeam::Blue,
+            rm_simulator_world::rmuc_2027::Point::Outpost,
+            true,
+        );
+        let text = point_details(
+            &game,
+            Team::Blue,
+            rm_simulator_world::rmuc_2027::Point::Outpost,
+            &game.control_diagnostics(),
+        );
+        assert!(text.contains("needs own FULL outpost control"));
     }
 }

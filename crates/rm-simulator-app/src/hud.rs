@@ -802,7 +802,8 @@ fn control_2027_text(session: &Session) -> String {
     };
     use rm_simulator_world::gameplay::rmuc_2027::{ControlState, Territory};
     let g = &state.game;
-    let mut lines = vec!["RMUC 2027 | Heavy, rune and terrain buffs not enabled".into()];
+    let mut lines =
+        vec!["RMUC 2027 | Control + continuous field buffs | Traversal/rune unavailable".into()];
     for territory in Territory::ALL {
         let t = &g.control.snapshot().territories[territory.index()];
         let team = if t.control.team().index() == 0 {
@@ -1265,6 +1266,9 @@ pub fn update_hud(
                     .map(|r| {
                         r.combat
                             .allowance
+                            .saturating_add(
+                                native.map_or(0, |s| s.game.field_effects(r.id).fortress_reserve),
+                            )
                             .saturating_sub(session.reserved_ammo(gun.shot.caliber))
                             .to_string()
                     })

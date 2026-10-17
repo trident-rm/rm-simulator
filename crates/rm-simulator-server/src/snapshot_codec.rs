@@ -1188,6 +1188,20 @@ mod tests {
             .unwrap();
         field.referee_command(RefereeCommand::StartMatch).unwrap();
         field
+            .referee_command(RefereeCommand::SetBaseHp {
+                team: rm_simulator_world::Team::Blue,
+                hp: 4000,
+                shield_hp: 0,
+            })
+            .unwrap();
+        field
+            .referee_command(RefereeCommand::SetBaseHp {
+                team: rm_simulator_world::Team::Blue,
+                hp: 10000,
+                shield_hp: 0,
+            })
+            .unwrap();
+        field
             .step(6_000_000_000 / rm_simulator_world::tick_ns())
             .unwrap();
         field

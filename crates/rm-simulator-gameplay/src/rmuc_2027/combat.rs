@@ -62,7 +62,7 @@ pub struct Combat {
     pub last_combat_ns: Option<u64>,
     /// Own supply RFID expiry, including detection while defeated.
     pub supply_expires_ns: Option<u64>,
-    /// Own vantage RFID expiry; currently used only for ammunition exchange.
+    /// Own vantage RFID expiry; grants defense and ammunition exchange (§5.6.4.3).
     pub vantage_expires_ns: Option<u64>,
     /// Normal respawn progress while defeated.
     pub respawn: Option<Respawn>,

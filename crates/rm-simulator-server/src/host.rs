@@ -1238,6 +1238,11 @@ mod tests {
             },
             Command::RemoveBot { chassis: 0 },
             Command::ClearBots,
+            Command::PlaceBot {
+                chassis: 0,
+                position_m: [0.; 3],
+                yaw_deg: 0.,
+            },
         ] {
             handle
                 .message(welcome.client_id, ClientMessage::Command(command))
