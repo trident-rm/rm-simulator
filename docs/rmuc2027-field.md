@@ -15,6 +15,33 @@ armor damage table or rune is enabled on the 2027 field.
 
 ## Current optimization direction
 
+### Camera-independent surface coverage repair
+
+The installed package now contains **355,542 placed visual triangles** and
+**545,599 packaged collision triangles**. In-game inspection found a real
+triangular gap beside the Fortress marking, plus missing floor and other surface
+coverage in the preceding 195,470-triangle Low export. The earlier finite-view
+repair and aggregate count checks did not establish complete surface coverage.
+
+`rm-map-tools/python/guard_repaired_game.py` now precedes runtime export. It checks
+all 3,027 material primitives and 6,293 source connected pieces without a camera,
+restoring source pieces in 280 primitives. Seven samples per source triangle use
+an 8 mm distance threshold and 100 square mm flagged-triangle area threshold.
+Bridge removal rechecks newly exposed pieces until retention closes. This remains
+sampled coverage, not a continuous error or watertightness certificate.
+
+The Fortress hole was reproduced and repaired in matching actual game captures.
+All six collision GLBs and the native binding sidecar retain exact checksums;
+Base/Outpost part identities, motion and detector geometry are unchanged. The
+visual count remains 59.6% below the preceding approved 880,181-triangle source.
+See `../rm-map-tools/benchmarks/2026-10-18-game-coverage/README.md` for the full
+policy and reproduction. Generate the guarded visual before the unbound export:
+
+```sh
+cd ../rm-map-tools
+ocpenv/bin/python python/guard_repaired_game.py
+```
+
 ### Default bound repaired Low package
 
 The approved export is committed separately from the following integration.

@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Repair missing RMUC 2027 visual surfaces, including Fortress, floor, Base
+  footings and road/high-ground panels. Check source-piece coverage before
+  export and retain failed surfaces without changing collision or motion.
+
 - Use the reviewed Low RMUC 2027 field by default in combined-season app/server
   builds. Bind Base shields, Outpost module rotation and detector lights without
   remeshing; retain 2026 selection and ship both LFS packages. Expose stable part
