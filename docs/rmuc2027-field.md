@@ -15,6 +15,56 @@ armor damage table or rune is enabled on the 2027 field.
 
 ## Current optimization direction
 
+### Reviewed repaired Low export (2026-10-18)
+
+The source-hierarchy pipeline now exports the user-reviewed repaired Low models
+to `local-assets/field-2027-low`. This package has **195,470 placed visual
+triangles** and **545,599 packaged collision triangles**, with shared Base,
+Outpost and Tech Core geometry and the embedded Base artwork intact. Its
+`runtime-build.json` records input hashes, exact component coverage and written
+geometry checks. `inspect_assets` reports 187,661 ground, 187,296 fixture
+(including 48 boundary triangles), and 170,690 equipment triangles.
+
+This is an explicit **rest-pose package**. The new hierarchical source IDs are
+not the former split-export body's IDs; no old combat/detector/joint bindings
+are attached by assumption. The prior collision ledger is exported independently
+under `reviewed-cad-proxy-v1`; Low visual triangles never substitute for physics.
+Visual-only marking definitions contribute no collision. The 2026 default and
+tracked release inventory remain separate.
+
+The local portable archive is `local-assets/field-2027-low.tar.zst`: 9,730,802
+bytes from 38,099,507 source bytes, using Zstandard level 22. The adjacent
+`.sha256` and archive report record the checksum and full member verification.
+
+Reproduce into a new directory:
+
+```sh
+cd ../rm-map-tools
+ocpenv/bin/python python/export_repaired_game.py \
+  --out ../rm-simulator/local-assets/field-2027-low
+```
+
+The exporter requires the repaired Low outputs, preceding equipment-shell
+collision ledger and hierarchy audit. It refuses existing output directories,
+stages atomically, keeps source PBR/UV/image data and actual mesh sharing, and
+verifies all written triangle positions and placement coverage. Canonical
+equipment instances must have identical mesh references and relative poses.
+The package uses original CAD numeric Z-up coordinates; the inspection-only
+camera's Y-up/rebasing transform is removed exactly once.
+
+Inspect or explore with a combined-season build (rest-pose hosting retains its
+existing practice admission):
+
+```sh
+nix develop -c cargo run --locked -p rm-simulator-server \
+  --features season-2027 --example inspect_assets -- local-assets/field-2027-low
+nix develop -c cargo run --locked -p rm-simulator-app --features season-2027 -- \
+  --cad-assets local-assets/field-2027-low --fly --start-paused
+```
+
+The sections below retain the earlier adapter/optimization history and its
+historical counts; they do not describe this new package's geometry.
+
 The post-export mesh-simplification experiments below are historical. Further
 work now starts from the **original STEP CAD**, using read-only discovery before
 any representation changes. The initial infrastructure lives in

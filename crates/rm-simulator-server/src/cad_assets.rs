@@ -136,7 +136,8 @@ struct ManifestAsset {
     #[serde(default)]
     collision_sha256: Option<String>,
     /// Declared collision contract: `source-tessellation-v1` or a meshopt
-    /// simplification method, or an explicitly reconstructed opaque panel derivative.
+    /// simplification method, an explicitly reconstructed opaque panel derivative,
+    /// or an independently reviewed `reviewed-cad-proxy-v1` approximation.
     #[serde(default)]
     collision_method: Option<String>,
     /// Producer error records for a simplified pair, keyed `visual` and
@@ -179,7 +180,9 @@ struct MeshSimplification {
 /// the metadata is malformed.
 ///
 /// Declared `source-tessellation-v1` and `opaque-panel-reconstruction-v1`
-/// contracts are accepted. The latter intentionally closes source openings and
+/// contracts are accepted, as is `reviewed-cad-proxy-v1` for explicitly reviewed
+/// approximate CAD collisions independent of visual LOD. The opaque-panel
+/// contract intentionally closes source openings and
 /// records its selected panels in the package producer report. A meshopt
 /// simplification is accepted only when both the visual and collision records
 /// pair their method with the matching border lock, stay inside their error
@@ -189,7 +192,9 @@ struct MeshSimplification {
 /// usable.
 fn verified_collision(entry: &ManifestAsset) -> anyhow::Result<bool> {
     match entry.collision_method.as_deref() {
-        Some("source-tessellation-v1" | "opaque-panel-reconstruction-v1") => Ok(true),
+        Some(
+            "source-tessellation-v1" | "opaque-panel-reconstruction-v1" | "reviewed-cad-proxy-v1",
+        ) => Ok(true),
         Some(method @ ("meshopt-simplification-v1" | "meshopt-boundary-simplification-v1")) => {
             let records = entry
                 .mesh_simplification
@@ -749,6 +754,17 @@ mod tests {
         value["collision_method"] = "unreviewed-panels".into();
         let entry = serde_json::from_value::<ManifestAsset>(value).unwrap();
         assert!(!verified_collision(&entry).unwrap());
+    }
+
+    #[test]
+    fn reviewed_cad_colliders_are_independent_of_visual_lod() {
+        let entry = serde_json::from_value::<ManifestAsset>(serde_json::json!({
+            "visual": "low.glb", "visual_sha256": "checked-on-load",
+            "collision": "prior-collision.glb", "collision_sha256": "checked-on-load",
+            "collision_method": "reviewed-cad-proxy-v1"
+        }))
+        .unwrap();
+        assert!(verified_collision(&entry).unwrap());
     }
 
     #[test]

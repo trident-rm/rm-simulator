@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Support independently reviewed CAD collision proxies for the RMUC 2027 repaired
+  Low field export, preserving separate physics geometry and explicit rest-pose
+  admission while reducing visuals to 195,470 placed triangles.
+
 - Add exact source-CAD geometry and presentation sharing passes in rm-map-tools,
   with inspectable plans, atomic in-memory application and checks preserving
   source face identities, all placed bodies and original style bindings.

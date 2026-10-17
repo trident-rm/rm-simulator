@@ -79,6 +79,14 @@ re-tessellation is needed. Restart the app and server after deployment.
 
 ## Collision contracts
 
+`reviewed-cad-proxy-v1` selects independently reviewed, checksummed approximate
+CAD collision geometry. It allows a low-detail visual export to retain the
+preceding collision meshes without claiming that either is an exact source
+tessellation or inventing simplifier error metadata. The package's
+`runtime-build.json` records source/input hashes, component coverage and placed
+counts. The RMUC 2027 repaired Low export uses this contract; visual-only marking
+definitions remain excluded from collision.
+
 Static collision loads each asset's declared, checksummed collision geometry,
 falling back to visual triangles for packages without a supported collision
 contract. Reproducible approximate meshes are permitted to reduce CPU and memory
