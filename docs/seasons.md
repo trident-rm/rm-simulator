@@ -13,22 +13,23 @@ not run 2027; no 2026 rules are silently reused. The [2027 rules reference](rule
 
 `rm-simulator-gameplay`, `rm-simulator-world`, `rm-simulator-server` and
 `rm-simulator-app` expose additive `season-2026` and `season-2027` features.
-`season-2026` is the default. Each layer forwards its enabled seasons and disables
+The app and server default to both seasons; the standalone gameplay/world
+libraries retain their 2026 default. Each layer forwards its enabled seasons and disables
 dependency defaults, so a 2027-only app build does not silently re-enable 2026
 through its server or world dependency. Physics and rendering have no season
 features: they stay reusable and receive explicit state from their callers.
 
 | Selection | Build status | Sessions available today |
 |---|---|---|
-| Default or `season-2026` | Supported | Existing RMUC 2026 subset |
+| `season-2026` without defaults | Supported | Existing RMUC 2026 subset |
 | `season-2027` without defaults | Supported | Bound RMUC 2027 control/structure subset |
-| Both | Supported | Both documented subsets, selected by the field package |
+| Both (normal app/server default) | Supported | Both subsets; bound `field-2027/` selected by default |
 | Neither | Infrastructure only | None; creation returns an error |
 
 Build a binary with the desired feature set:
 
 ```sh
-# RM2026, also the normal default build.
+# Explicit RM2026-only build.
 cargo build --locked -p rm-simulator-app --no-default-features --features season-2026
 # RM2027 control/structure subset; requires a bound 2027 field package.
 cargo build --locked -p rm-simulator-app --no-default-features --features season-2027

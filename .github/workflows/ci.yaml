@@ -61,7 +61,7 @@ jobs:
           python3 scripts/check-mpl-compliance.py
           cargo deny check advisories bans licenses sources
       - name: Verify field LFS pointers against the pinned inventory
-        run: python3 scripts/stage-release-field.py --verify-only --allow-lfs-pointers
+        run: python3 scripts/stage-release-field.py --all --verify-only --allow-lfs-pointers
       - name: Python regression tests
         run: |
           python3 -m unittest discover -s scripts/tests

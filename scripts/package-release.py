@@ -134,6 +134,8 @@ def main():
             shutil.copy2(ROOT / artifact, stage / artifact)
         shutil.copytree(dist / "field", stage / "field")
         shutil.copy2(ROOT / "scripts/release-field.json", stage / "field-source.json")
+        shutil.copytree(dist / "field-2027", stage / "field-2027")
+        shutil.copy2(ROOT / "scripts/release-field-2027.json", stage / "field-2027-source.json")
         # Include the exact dependency lockfile used to compile the release.
         shutil.copy2(ROOT / "Cargo.lock", stage / "Cargo.lock")
         if system == "Darwin":
@@ -151,7 +153,7 @@ def main():
             f"rm-simulator {args.version} ({args.target})\n\n"
             "Extract the entire ZIP. Run bin/rm-simulator (Windows: bin/rm-simulator.exe).\n"
             "Run bin/rm-simulator-server for a headless host.\n"
-            "The field/ directory is included. Use --cad-assets PATH to select another map.\n"
+            "The default is field-2027/. Use --cad-assets field for the retained 2026 map.\n"
             "This is the standalone build; Steam integration is disabled.\n"
             "Linux requires glibc 2.39+ and graphics/display drivers.\n"
             "macOS binaries are ad-hoc signed, not notarized.\n"

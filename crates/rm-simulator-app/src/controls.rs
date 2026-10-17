@@ -815,13 +815,13 @@ mod tests {
         let wrapped = drive_command(0.0, 0.0, false, false, -3.1, 0.0, 3.1);
         assert!(wrapped.yaw_rate_rad_s > 0.0 && wrapped.yaw_rate_rad_s < 1.0);
     }
-    /// The field packages installed on this machine: the default one (the
+    /// The 2026 field packages installed on this machine: the versioned one (the
     /// V1.2.0 arena with its flat slab) and the earlier V2.0.0 extraction
     /// with its crowned slab. Whichever are missing are skipped.
     fn installed_cad_packages() -> Vec<(String, CadAssets)> {
         let home = std::env::var_os("HOME").unwrap_or_default();
         [
-            rm_simulator_server::cad_assets::default_cad_assets(),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../field"),
             std::path::PathBuf::from(home).join("dev/RM/assets/rm2026-extracted"),
         ]
         .into_iter()

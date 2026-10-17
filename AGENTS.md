@@ -36,7 +36,9 @@ two disagree, this file wins.
 ## Context
 
 - **Season scope.** Existing gameplay and checkpoints implement the documented
-  RMUC 2026 subset. `season-2026` is the default; additive `season-2027` enables
+  RMUC 2026 subset. App/server defaults enable both seasons and prefer the bound
+  repaired Low `field-2027/`; standalone gameplay/world defaults retain 2026.
+  Additive `season-2027` enables
   infrastructure and isolated gameplay components, including RMUC territory
   control, but must not admit a match using 2026 mechanics. The
   supplied 2027 V1.0.0 manuals (2026-10-15) are interpreted separately in
@@ -114,9 +116,11 @@ loader and the licensing rules depend on the split.
 | `local-assets/` | no | Gitignored development scratch: extracted `field` package, dated `field.before-*` backups, coarse/preview exports, harness reports. Never source; not referenced from committed code. |
 | `~/dev/RM/assets/` | outside the repo | Home-directory field install and the legacy V2.0.0 extraction the loader falls back to. Not this repository's `assets/`. |
 
-The exported runtime field package is versioned in `field/` through Git LFS with
+The exported runtime field packages are versioned in `field-2027/` (current
+default when enabled) and `field/` (2026) through Git LFS with
 its upstream ownership notice retained. It is selected by `--cad-assets` when
-supplied; otherwise the loader prefers `field/` beside an installed `bin/`
+supplied; otherwise a 2027-enabled build prefers `field-2027/` beside `bin/` or
+in the checkout. Legacy discovery prefers `field/` beside an installed `bin/`
 directory, then the build checkout's `local-assets/field`, then the checkout's
 LFS `field/`, then `~/dev/RM/assets/rm2026-field`. The earlier V2.0.0 package at
 `~/dev/RM/assets/rm2026-extracted` still loads. Files are verified against the

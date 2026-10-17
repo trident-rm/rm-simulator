@@ -15,7 +15,7 @@ name = "rm-simulator"
 path = "src/main.rs"
 
 [features]
-default = ["season-2026"]
+default = ["season-2026", "season-2027"]
 season-2026 = ["rm-simulator-world/season-2026", "rm-simulator-server/season-2026"]
 season-2027 = ["rm-simulator-world/season-2027", "rm-simulator-server/season-2027"]
 steam = ["dep:steamworks"]

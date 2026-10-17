@@ -18,7 +18,7 @@ use serde::Deserialize;
 pub struct Motion {
     /// Exported `extras.rm.id` of the moving node.
     pub id: String,
-    /// Exact mesh-node names, each naming one source BREP body.
+    /// Exact mesh-node names, naming source BREP bodies or surface-model shells.
     pub bodies: Vec<String>,
     /// Unit axis in the source asset frame.
     pub axis: [f64; 3],
@@ -40,10 +40,40 @@ pub struct SourceReport {
     /// STEP body identifiers, in the same order as the fitted detector faces.
     pub detector_bodies: Vec<u64>,
 }
-/// Source-pinned 2027 target geometry and motion partitions.
+/// One source-owned runtime part, preserving distinct drawing/collision membership.
+///
+/// ```
+/// use rm_simulator_server::rmuc_2027::Part;
+/// let part: Part = serde_json::from_str(
+///     r#"{"id":"outpost/source_body_2200540","asset":"outpost","source_kind":"body"}"#,
+/// )?;
+/// assert_eq!(part.asset, "outpost");
+/// assert!(part.motion_id.is_none());
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Part {
+    /// Stable identity scoped by runtime asset; never a reconstructed face ID.
+    pub id: String,
+    /// Runtime asset containing this part (`base` or `outpost`).
+    pub asset: String,
+    /// Source-owned unit classification, including explicitly derived units.
+    pub source_kind: String,
+    /// Original source entity or locally scoped native-unit ordinal, when known.
+    pub source_id: Option<u64>,
+    /// Hierarchical work-part identity retained by the source exporter.
+    pub component_id: Option<String>,
+    /// Unique visual mesh-node name, when the visual retains this part.
+    pub visual_node: Option<String>,
+    /// Unique collision mesh-node name, when collision retains this part.
+    pub collision_node: Option<String>,
+    /// Owning joint identity; absent for stationary geometry.
+    pub motion_id: Option<String>,
+}
+/// Source-pinned 2027 target geometry, motion partitions and part catalogue.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Bindings {
-    /// Binding schema; currently one.
+    /// Binding schema: one for legacy bodies, two for structured parts and shells.
     pub schema_version: u32,
     /// Competition and manual revision, never just a year.
     pub ruleset: String,
@@ -57,12 +87,15 @@ pub struct Bindings {
     pub base_motion: Vec<Motion>,
     /// Source partitions retained by the binder, keyed by structure name.
     pub report: std::collections::BTreeMap<String, SourceReport>,
+    /// Structured source parts, required by schema two; legacy schema one has none.
+    #[serde(default)]
+    pub parts: Vec<Part>,
 }
 impl Bindings {
     /// Validate identity, geometry and supported motion contracts before admission.
     pub fn validate(&self) -> anyhow::Result<()> {
         ensure!(
-            self.schema_version == 1
+            matches!(self.schema_version, 1 | 2)
                 && self.ruleset == "rmuc2027-v1.0.0"
                 && self.source_sha256
                     == "a5ad3ede3b7674fc98f2e73b71717216383cb2b4b5dcdbe900c2038918bea8e0",
@@ -87,13 +120,49 @@ impl Bindings {
         for m in self.outpost_motion.iter().chain(&self.base_motion) {
             ensure!(
                 !m.bodies.is_empty()
-                    && m.bodies.iter().all(|b| b.starts_with("source_body_"))
+                    && m.bodies.iter().all(|b| {
+                        b.strip_prefix("source_body_")
+                            .or_else(|| {
+                                (self.schema_version == 2)
+                                    .then(|| b.strip_prefix("source_shell_"))
+                                    .flatten()
+                            })
+                            .is_some_and(|id| id.parse::<u64>().is_ok_and(|id| id > 0))
+                    })
                     && m.pivot_m.iter().chain(&m.axis).all(|v| v.is_finite())
                     && (m.axis.iter().map(|v| v * v).sum::<f64>() - 1.).abs() < 1e-6,
                 "invalid source motion binding"
             );
             if let Some(limits) = m.limits {
                 ensure!(limits == [0., 0.25], "unknown base armor travel");
+            }
+        }
+        if self.schema_version == 2 {
+            let unique: std::collections::BTreeSet<_> = self.parts.iter().map(|p| &p.id).collect();
+            ensure!(
+                !self.parts.is_empty() && unique.len() == self.parts.len(),
+                "missing/duplicate source parts"
+            );
+            for (asset, motions) in [
+                ("base", &self.base_motion),
+                ("outpost", &self.outpost_motion),
+            ] {
+                for motion in motions {
+                    let names: std::collections::BTreeSet<_> = motion.bodies.iter().collect();
+                    ensure!(
+                        names.len() == motion.bodies.len(),
+                        "duplicate moving source part"
+                    );
+                    for name in &motion.bodies {
+                        ensure!(
+                            self.parts.iter().any(|p| p.asset == asset
+                                && p.visual_node.as_ref() == Some(name)
+                                && p.collision_node.as_ref() == Some(name)
+                                && p.motion_id.as_ref() == Some(&motion.id)),
+                            "motion has no paired source part"
+                        );
+                    }
+                }
             }
         }
         Ok(())

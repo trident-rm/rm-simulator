@@ -18,6 +18,12 @@ pub fn default_cad_assets() -> PathBuf {
     {
         return local;
     }
+    if cfg!(feature = "season-2027") {
+        let field = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../field-2027");
+        if field.join("manifest.json").is_file() {
+            return field;
+        }
+    }
     let local = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../local-assets/field");
     if local.join("manifest.json").is_file() {
         return local;
@@ -30,14 +36,20 @@ pub fn default_cad_assets() -> PathBuf {
     PathBuf::from(home).join("dev/RM/assets/rm2026-field")
 }
 
-/// The `field` package beside an installed binary: `Some(../field)` when the
-/// executable sits in a directory named `bin` and that package has a manifest.
+/// A package beside an installed binary, preferring `field-2027` when its
+/// season is enabled, then `field`, when the executable is inside `bin`.
 /// Returns `None` otherwise, so a build-tree binary falls through to the other
 /// search paths.
 fn bundled_cad_assets(executable: &Path) -> Option<PathBuf> {
     let bin = executable.parent()?;
     if bin.file_name()? != "bin" {
         return None;
+    }
+    if cfg!(feature = "season-2027") {
+        let field = bin.parent()?.join("field-2027");
+        if field.join("manifest.json").is_file() {
+            return Some(field);
+        }
     }
     let field = bin.parent()?.join("field");
     field.join("manifest.json").is_file().then_some(field)
@@ -181,7 +193,7 @@ struct MeshSimplification {
 ///
 /// Declared `source-tessellation-v1` and `opaque-panel-reconstruction-v1`
 /// contracts are accepted, as is `reviewed-cad-proxy-v1` for explicitly reviewed
-/// approximate CAD collisions independent of visual LOD. The opaque-panel
+/// approximate CAD collisions independent of visual detail. The opaque-panel
 /// contract intentionally closes source openings and
 /// records its selected panels in the package producer report. A meshopt
 /// simplification is accepted only when both the visual and collision records
@@ -657,6 +669,17 @@ mod tests {
                 Some(root.join("field"))
             );
         }
+        std::fs::create_dir_all(root.join("field-2027")).unwrap();
+        std::fs::write(root.join("field-2027/manifest.json"), "{}").unwrap();
+        let preferred = if cfg!(feature = "season-2027") {
+            "field-2027"
+        } else {
+            "field"
+        };
+        assert_eq!(
+            bundled_cad_assets(&root.join("bin/rm-simulator")),
+            Some(root.join(preferred))
+        );
         assert_eq!(bundled_cad_assets(&root.join("debug/rm-simulator")), None);
         std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(bundled_cad_assets(&root.join("bin/rm-simulator")), None);
@@ -757,7 +780,7 @@ mod tests {
     }
 
     #[test]
-    fn reviewed_cad_colliders_are_independent_of_visual_lod() {
+    fn reviewed_cad_colliders_are_independent_of_visual_detail() {
         let entry = serde_json::from_value::<ManifestAsset>(serde_json::json!({
             "visual": "low.glb", "visual_sha256": "checked-on-load",
             "collision": "prior-collision.glb", "collision_sha256": "checked-on-load",

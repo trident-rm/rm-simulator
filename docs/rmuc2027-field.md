@@ -5,7 +5,7 @@
 The RMUC 2027 V1.0.0 CAD can be loaded using the simulator's existing runtime
 package layout: `manifest.json`, floor and arena GLBs, rune and outpost GLBs,
 and `equipment/manifest.json` with base and tech-core GLBs. The 2026 package
-remains separate and stays the default.
+remains separate; normal app/server builds now default to the bound 2027 package.
 
 The initial package is a **CAD rest-pose sandbox** with source-colored scenery,
 static collision and chassis exploration. A separately generated, checksummed
@@ -14,6 +14,51 @@ described below. The bundled 2026 field remains unchanged; no 2026 referee,
 armor damage table or rune is enabled on the 2027 field.
 
 ## Current optimization direction
+
+### Default bound repaired Low package
+
+The approved export is committed separately from the following integration.
+Normal app/server builds enable both seasons and select the LFS `field-2027/`
+package by default. `--cad-assets field` selects the retained 2026 package;
+`--no-default-features --features season-2026` also retains 2026-only discovery.
+Installed binaries prefer a sibling `field-2027/` when 2027 is enabled. Release
+staging and archives now include both field packages and their inventories.
+
+This package enables the existing native 2027 match subset, not just exploration.
+Binding schema two exposes 386 source-owned Base/Outpost part records with
+stable visual/collision names, component identities, source-unit classifications
+and joint ownership. GLBs retain the source hierarchy and add explicit
+`extras.rm.id` pivot/joint nodes. Three shields per Base move through the
+existing illustrative 0.25 m travel; the three Outpost armor-module assemblies
+rotate together, including attached surface-model LED shells. The shared tower
+frame remains stationary. Eight placed moving colliders are excluded from the
+fixed soups, preventing duplicate stationary collision around moving parts.
+
+Detectors use the preceding higher-fidelity geometry, not the Low mesh. Base
+screens retain their original source-unit IDs. Outpost solids are qualified by
+unique native/source bounding correspondence (within 1 mm, with an ambiguity
+guard), plus complete five-solid/one-shell module membership. Source input
+hashes and the fit policy are recorded in `structure-binding-build.json`.
+Visual materials, vertex attributes and triangle counts remain unchanged;
+joint insertion verifies every rest-pose world matrix. Source-envelope detector
+rectangles and illustrative shield travel retain their documented limitations.
+
+Rebuild after the unbound export, then install the newly verified package:
+
+```sh
+cd ../rm-map-tools
+ocpenv/bin/python python/bind_repaired_game.py \
+  --package ../rm-simulator/local-assets/field-2027-low \
+  --out ../rm-simulator/local-assets/field-2027-bound
+```
+
+Both output directories must be new when reproducing. The tracked runtime
+package and its 18-file inventory are the installed result, with CAD ownership
+notice intact. The original unbound export and its archive remain separate.
+Rune, Dart and Tech Core keep their source hierarchy as scenery; unsupported
+2027 gameplay is not replaced by 2026 mechanics. Native match, motion and
+restore checks exercise the hydrated package in
+`crates/rm-simulator-server/tests/rmuc2027_package.rs`.
 
 ### Reviewed repaired Low export (2026-10-18)
 
@@ -29,8 +74,7 @@ This is an explicit **rest-pose package**. The new hierarchical source IDs are
 not the former split-export body's IDs; no old combat/detector/joint bindings
 are attached by assumption. The prior collision ledger is exported independently
 under `reviewed-cad-proxy-v1`; Low visual triangles never substitute for physics.
-Visual-only marking definitions contribute no collision. The 2026 default and
-tracked release inventory remain separate.
+Visual-only marking definitions contribute no collision. The 2026 package and its tracked release inventory remain separate.
 
 The local portable archive is `local-assets/field-2027-low.tar.zst`: 9,730,802
 bytes from 38,099,507 source bytes, using Zstandard level 22. The adjacent

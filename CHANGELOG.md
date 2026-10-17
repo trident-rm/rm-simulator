@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Use the reviewed Low RMUC 2027 field by default in combined-season app/server
+  builds. Bind Base shields, Outpost module rotation and detector lights without
+  remeshing; retain 2026 selection and ship both LFS packages. Expose stable part
+  identities and pair moving visual/collision geometry in binding schema two.
+
 - Support independently reviewed CAD collision proxies for the RMUC 2027 repaired
   Low field export, preserving separate physics geometry and explicit rest-pose
   admission while reducing visuals to 195,470 placed triangles.

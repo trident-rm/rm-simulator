@@ -3,7 +3,8 @@
 # rm-simulator
 
 A first-person RoboMaster field simulator written in Rust with Bevy. It loads
-the RMUC 2026 field from the extracted competition CAD, with both faces of the
+the reviewed RMUC 2027 field by default; the RMUC 2026 field remains available
+with `--cad-assets field`. The retained 2026 field has both faces of the
 rune, both rotating outposts, the bases and the tech cores placed where the CAD
 puts them, and steps the rune and outpost rules on an explicit clock — 7.8125 ms
 per tick (128 Hz) — and drives the CAD rune faces and outpost rotors. You drive a
@@ -23,7 +24,9 @@ The [2027 rules reference](docs/rules-2027.md) interprets the new season manuals
 [Season build features](docs/seasons.md) support separate and combined builds;
 RM2027 has an isolated [control component](docs/gameplay.md#rmuc-2027-control-component);
 a bound map also enables the [2027 control/structure match subset](docs/rmuc2027-field.md#enable-the-live-controlstructure-subset).
-RM2026 remains the default; other 2027 systems are still unsupported.
+Normal app/server builds enable both seasons and select the bound, repaired Low
+2027 map. Its Base shields, Outpost modules and detector lights follow native
+2027 state. Rune, Dart and other unsupported 2027 systems remain static scenery.
 
 ## Contents
 
@@ -215,17 +218,18 @@ Crate ownership, tick order, restore and ECS boundaries are documented in
 ## Field assets
 
 [RMUC 2027 map support](docs/rmuc2027-field.md) adapts the new source export
-to the existing runtime layout for scenery and physics exploration. Enable
-`season-2027` alongside the default feature and select its package with
-`--cad-assets`; the bundled 2026 package remains the default. A checksummed
+to the existing runtime layout. Normal builds enable both seasons and use
+`field-2027/`; select `--cad-assets field` for 2026. A checksummed
 structure binding enables live RFID capture, scoring, base/outpost HP and
 ownership transfers. See the guide for coverage and geometry approximations.
 
 
-The exported RMUC map is versioned in `field/` through Git LFS. After cloning, run
-`git lfs install` and `git lfs pull --include='field/**'` to download it.
+The exported maps are versioned in `field-2027/` and `field/` through Git LFS.
+After cloning, run `git lfs install` and
+`git lfs pull --include='field/**,field-2027/**'` to download them.
 It is read at start-up from a field package directory. `--cad-assets` overrides discovery; otherwise the loader
-tries `field/` beside an installed `bin/` directory, the build checkout's
+prefers `field-2027/` beside an installed `bin/` directory or in the checkout
+when the 2027 feature is enabled, then tries `field/` beside `bin/`, the checkout's
 `local-assets/field`, the checkout's LFS `field/`, then
 `~/dev/RM/assets/rm2026-field`. The selected directory
 must contain `manifest.json`, the `*.glb`
@@ -233,7 +237,7 @@ visuals and `*-collision.glb` proxies it lists, and `equipment/manifest.json`
 with `base.glb` and `tech-core.glb`. Every file is checked against the
 SHA-256 recorded in its manifest during loading.
 
-The default package is built by the sibling `rm-map-tools` project from DJI's
+The retained 2026 package is built by the sibling `rm-map-tools` project from DJI's
 RMUC 2026 V1.2.0 STEP and keeps that release's arena face colours; its manifest
 records the slab top as `floor_top_source_z_m` so the simulator puts it at
 height zero. The rune and the outposts come from the earlier V2.0.0 extraction,

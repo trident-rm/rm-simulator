@@ -19,3 +19,5 @@
 # Versioned exported field data; keep the upstream ownership notice readable.
 /field/** filter=lfs diff=lfs merge=lfs -text
 /field/CAD-NOTICE.md -filter -diff -merge text eol=lf
+/field-2027/** filter=lfs diff=lfs merge=lfs -text
+/field-2027/CAD-NOTICE.md -filter -diff -merge text eol=lf

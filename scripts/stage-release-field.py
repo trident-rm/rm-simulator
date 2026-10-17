@@ -71,12 +71,25 @@ def main():
     parser.add_argument("--verify-only", action="store_true")
     parser.add_argument("--allow-lfs-pointers", action="store_true", help="only with --verify-only")
     parser.add_argument("--update-checksums", action="store_true", help="record an intentional field update")
+    parser.add_argument("--inventory", type=Path, default=ROOT / "scripts/release-field.json")
+    parser.add_argument("--all", action="store_true", help="verify/stage both supported field packages")
     args = parser.parse_args()
     if args.allow_lfs_pointers and not args.verify_only:
         parser.error("--allow-lfs-pointers requires --verify-only")
     if args.update_checksums and (args.verify_only or args.allow_lfs_pointers):
         parser.error("--update-checksums cannot be combined with verification flags")
-    contract_path = ROOT / "scripts/release-field.json"
+    if args.all:
+        import subprocess
+        import sys
+        for inventory in [ROOT / 'scripts/release-field.json', ROOT / 'scripts/release-field-2027.json']:
+            contract = json.loads(inventory.read_text())
+            command = [sys.executable, str(Path(__file__)), '--inventory', str(inventory),
+                       '--destination', str(args.destination.parent / contract['directory'])]
+            for key in ['verify_only', 'allow_lfs_pointers', 'update_checksums']:
+                if getattr(args, key): command.append('--' + key.replace('_', '-'))
+            subprocess.run(command, check=True)
+        return
+    contract_path = args.inventory
     contract = json.loads(contract_path.read_text())
     source = ROOT / contract["directory"]
     if args.update_checksums:

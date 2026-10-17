@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 minimum_prek_version = "0.4.14"
-exclude = '^(target|field)/'
+exclude = '^(target|field|field-2027)/'
 
 [[repos]]
 repo = "builtin"

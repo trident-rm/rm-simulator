@@ -1,0 +1,27 @@
+{
+  "_license": "SPDX-License-Identifier: MIT OR Apache-2.0",
+  "_copyright": "Copyright (c) 2026 hxyulin <hxyulin@proton.me>",
+  "storage": "git-lfs",
+  "directory": "field-2027",
+  "source": "rm-map-tools reviewed repaired Low plus bind_repaired_game.py",
+  "files": {
+    "CAD-NOTICE.md": "844b63428ffac42931603e056a8431bb4cca423a8e366c19df1d54436a214143",
+    "arena-static-collision.glb": "e5fd7e282d1834a286fb9fd0e8b8d9744ee14cd42d40adfd590c75b274bf95f2",
+    "arena-static.glb": "5f9d008937f5f1b709ec93ccabf597f2db1e2431667ad02ca34dc904e2fbbe7f",
+    "equipment/base-collision.glb": "12df7b8d23af649d515823467279325da2f0fd083bbc8b7792df39f3505716b4",
+    "equipment/base.glb": "b86389fbfeb7671ead22147bec8a970afd614aa5673cf4b6bc9dd36680669372",
+    "equipment/manifest.json": "4d8f302a33419732cc4925f9ad65e11b6358edbb5d7b538c5216db0d85aa5ed1",
+    "equipment/tech-core-collision.glb": "4bdec99f4d4c7f0c0fc3a335b5fa55309c3288d476da279ac5dcd3fa445a9e54",
+    "equipment/tech-core.glb": "cd7d6ab14445dff446693cf11e7fc439589d5f682ff6a8c46357e01b1add796c",
+    "floor-collision.glb": "d9a66ea6a780ddb6e1d41027ea371cdf0ba641aa052f8502940b0fee5d0a3654",
+    "floor.glb": "571e25385d1f5d4b79cc6eeca1e6a3df330674482b9b47dd66eddc84da4a6c27",
+    "manifest.json": "e11e247bd1f2130744cbf3cf4da4ff79ce790e35ea3a183504c10e67bd886a86",
+    "outpost-collision.glb": "3fb58f703526eea28337f70b23b299b4fae4b90273b2c570384371ff2616c068",
+    "outpost.glb": "927c06f6c1f9ae0a6f6d097164e8b6d38ea840a3d33d9618d5bf39674d7aafe3",
+    "rmuc2027-bindings.json": "2ada9864a07005d076b852fa60c1757e074c5e7c387a1614d2a6736299ca0841",
+    "rune-collision.glb": "afc3b357d1bdb3f52d761f567ebef00a9bb8691c28f4ca77ee3f9b0c34d98413",
+    "rune.glb": "842d8c87ff9cc87c1b81eb6038ebaa0440d34cbb62b0f948e6ee79e690ec5968",
+    "runtime-build.json": "40a4987b72a60709f3da9836427838516d82a272ebf4887c276042e513676b9f",
+    "structure-binding-build.json": "320ffb9092ab8427f7e1217075de6a94f6a549ebe1b9632ad7f11c2b7e3bc737"
+  }
+}

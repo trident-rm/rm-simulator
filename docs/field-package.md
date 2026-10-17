@@ -2,6 +2,12 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Field package
 
+Normal app/server builds now use the reviewed, bound `field-2027/` package.
+The `field/` package below remains the 2026 option (`--cad-assets field`). Both
+are shipped through Git LFS and staged by `scripts/stage-release-field.py --all`.
+Their inventories are `scripts/release-field-2027.json` and
+`scripts/release-field.json`. See [2027 integration](rmuc2027-field.md#default-bound-repaired-low-package).
+
 Composition, deployment, collision contracts and loading of the RMUC 2026 field
 package. The [project README](../README.md) carries the user-facing summary;
 the [documentation index](README.md) lists every guide.

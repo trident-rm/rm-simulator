@@ -120,7 +120,7 @@ jobs:
       - uses: ./.github/actions/native-cache
       - name: Stage verified LFS field package
         if: inputs.package
-        run: python scripts/stage-release-field.py
+        run: python scripts/stage-release-field.py --all
       # Cache eviction is allowed; Cargo rebuilds missing artifacts if necessary.
       - name: Restore standalone binaries
         if: inputs.package
@@ -134,6 +134,9 @@ jobs:
       - name: Verify field with the real loader
         if: inputs.package
         run: cargo run --release --locked -p rm-simulator-server --example inspect_assets -- dist/field
+      - name: Verify RMUC 2027 field with the real loader
+        if: inputs.package
+        run: cargo run --release --locked -p rm-simulator-server --example inspect_assets -- dist/field-2027
       - name: Bundle and smoke-test binaries
         if: inputs.package
         env:
