@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Add comprehensive RMUC 2027 control transition, RFID, Fortress and restore
+  scenarios with `just control-test`. Fix eligibility at fractional capture
+  boundaries and clear Fortress retention at its exact three-second expiry.
+  Console scripts now support state assertions and bounded repetition.
+
 - Repair missing RMUC 2027 visual surfaces, including Fortress, floor, Base
   footings and road/high-ground panels. Check source-piece coverage before
   export and retain failed surfaces without changing collision or motion.

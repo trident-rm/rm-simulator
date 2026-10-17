@@ -417,6 +417,13 @@ impl Match {
                 .min(ROUND_NS - now)
                 .min(SCORE_PERIOD_NS - now % SCORE_PERIOD_NS);
             dt = dt.min(self.combat_boundary_ns());
+            // A capture changes Outpost/Fortress eligibility immediately, even
+            // between score or combat settlements (UC Table 5-21, §5.6.4.9).
+            for territory in &self.control.snapshot().territories {
+                if territory.direction() == 1 {
+                    dt = dt.min(CAPTURE_NS - territory.progress_ns);
+                }
+            }
             if now < THREE_MIN_NS {
                 dt = dt.min(THREE_MIN_NS - now);
             }
@@ -458,6 +465,18 @@ impl Match {
             let events = self.control.advance_ns(dt);
             self.apply_events(events);
             self.advance_combat(dt);
+            // Publish expiry at the endpoint itself, including when the caller
+            // pauses or checkpoints without making another advance.
+            let now = self.elapsed_ns();
+            for robot in &mut self.robots {
+                for side in Team::BOTH {
+                    let i = side.index();
+                    if robot.fortress_last_ns[i].is_some_and(|last| now >= last + RETAIN_NS) {
+                        robot.fortress_ns[i] = 0;
+                        robot.fortress_last_ns[i] = None;
+                    }
+                }
+            }
             duration -= dt;
             for side in Team::BOTH {
                 let i = side.index();

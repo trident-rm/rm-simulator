@@ -396,6 +396,89 @@ mod tests {
         );
     }
     #[test]
+    fn leaving_a_physical_zone_expires_on_the_same_tick_after_restore() {
+        let mut f = field();
+        let id = f
+            .add_chassis(&ChassisPlacement {
+                config: ChassisConfig::default(),
+                spawn: Pose::at([0., 0., 0.15]),
+                team: Team::Red,
+                kind: RobotKind::Infantry,
+                performance: None,
+            })
+            .unwrap();
+        f.referee_command(RefereeCommand::StartMatch).unwrap();
+        f.step(6_000_000_000 / tick_ns()).unwrap();
+        let game = &f.rmuc_2027().unwrap().game;
+        let expiry = game.robots[0].expires_ns[5].unwrap();
+        let until_expiry = (expiry - game.elapsed_ns()) / tick_ns();
+        f.place_chassis(id, Pose::at([4., 4., 0.15])).unwrap();
+        f.step(until_expiry - 1).unwrap();
+        assert_eq!(
+            f.rmuc_2027().unwrap().game.control.snapshot().territories[1].activations[1],
+            [true, false]
+        );
+        let snapshot = f.snapshot();
+        let geometry = f.static_geometry_snapshot();
+        let mut restored = Field::restore(&snapshot, &geometry, 0.).unwrap();
+        for field in [&mut f, &mut restored] {
+            field.step(1).unwrap();
+            let game = &field.rmuc_2027().unwrap().game;
+            assert_eq!(game.elapsed_ns(), expiry);
+            assert_eq!(
+                game.control.snapshot().territories[1].activations,
+                [[false; 2]; 2]
+            );
+        }
+        f.step(128).unwrap();
+        for _ in 0..128 {
+            restored.step(1).unwrap();
+        }
+        assert_eq!(f.rmuc_2027(), restored.rmuc_2027());
+    }
+
+    #[test]
+    fn two_physical_chassis_contest_base_until_departure_grace_expires() {
+        let mut config = config();
+        config.zones[0].point = Point::Base;
+        let mut f = Field::new(&FieldConfig {
+            rmuc_2027: Some(config),
+            runes: vec![],
+            outposts: vec![],
+            ..Default::default()
+        })
+        .unwrap();
+        let mut ids = vec![];
+        for (team, x) in [(Team::Red, -0.5), (Team::Blue, 0.5)] {
+            ids.push(
+                f.add_chassis(&ChassisPlacement {
+                    config: ChassisConfig::default(),
+                    spawn: Pose::at([x, 0., 0.15]),
+                    team,
+                    kind: RobotKind::Infantry,
+                    performance: None,
+                })
+                .unwrap(),
+            );
+        }
+        f.referee_command(RefereeCommand::StartMatch).unwrap();
+        f.step(8_000_000_000 / tick_ns()).unwrap();
+        let territory = &f.rmuc_2027().unwrap().game.control.snapshot().territories[3];
+        assert_eq!(territory.activations[0], [true, true]);
+        assert_eq!(territory.progress_ns, 0);
+        f.place_chassis(ids[1], Pose::at([4., 4., 0.15])).unwrap();
+        f.step(6_000_000_000 / tick_ns()).unwrap();
+        assert_eq!(
+            f.rmuc_2027().unwrap().game.control.snapshot().territories[3].control,
+            crate::gameplay::rmuc_2027::ControlState::Full(crate::gameplay::Team::Blue)
+        );
+        f.step(1_000_000_000 / tick_ns()).unwrap();
+        assert_eq!(
+            f.rmuc_2027().unwrap().game.control.snapshot().territories[3].control,
+            crate::gameplay::rmuc_2027::ControlState::Temporary(crate::gameplay::Team::Red)
+        );
+    }
+    #[test]
     fn presentation_survives_dropping_restore_and_rejects_mismatched_authority() {
         let mut f = field();
         f.referee_command(RefereeCommand::StartMatch).unwrap();

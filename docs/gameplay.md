@@ -94,6 +94,25 @@ cargo test --locked -p rm-simulator-gameplay --no-default-features --features se
 cargo test --locked -p rm-simulator-gameplay --no-default-features --features season-2027 --doc rmuc_2027
 ```
 
+`just control-test` runs the native 2027 unit suite, the additional
+`tests/control_2027.rs` scenarios, physical world-adapter tests and Python console
+tests without a GPU. The additional scenarios enumerate all 16 two-point/team
+presence combinations for all 12 valid territory/control-state pairs (192
+cases), exercise both sides and every ground role, and compare explicit time
+partitions across JSON restore. Exact-boundary regressions cover two-second
+RFID expiry, five-second capture, the three-minute Fortress unlock, ten-second
+armor opening and three-second retained progress. Captures split the enclosing
+match advance immediately so new eligibility applies at fractional timestamps;
+retention expires at its endpoint without requiring another call.
+
+Physical tests use small synthetic zones and real chassis to check contention,
+leaving a zone and the same expiry tick after restore. They do not certify the
+diagram-derived antenna polygons against hardware. The optional
+[console smoke scenario](console.md#deterministic-tick-scripts) checks actual
+host commands and authoritative replies with the bound field. These checks
+cover the implemented control subset; other field buffs, assembly and
+reinforcement remain outside its scope.
+
 ## Live integration and ownership
 
 The world referee runs one `Game` as the live match authority for both the app

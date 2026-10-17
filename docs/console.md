@@ -197,6 +197,50 @@ ticks, release the controls, then capture. Each tick is 7.8125 ms at the fixed
 movement and held firing use app frames and are not deterministic tick scripts;
 use explicit camera poses or the `world` command for those cases.
 
+The Python client also accepts `--script FILE`, a JSON array containing ordinary
+commands and two client-side directives:
+
+~~~json
+[
+  {"type":"pause","paused":true},
+  {"repeat":5,"steps":[{"type":"step","ticks":128}]},
+  {"assert":{"/paused":true,"/rmuc_2027/phase":"Running"}}
+]
+~~~
+
+`assert` sends a fresh `state` request and compares each JSON pointer against
+its expected value. Array indexes use `/0`, `/1`, etc.; `~1` escapes a slash and
+`~0` a tilde in an object key. Values compare exactly, without tolerances or
+implicit waiting; missing paths fail even when expecting null. Booleans differ
+from numbers. Failures identify the expanded step, path, expected and actual
+value, stop the script and exit nonzero. Every reply remains JSON on stdout;
+failure messages go to stderr. Assertion and repeat directives are interpreted
+by the Python client and are not TCP console commands.
+
+`repeat` preserves one connection and expands its `steps` in order. Scripts are
+limited to 10,000 expanded steps and eight nested repeat levels. The client
+validates their structure before connecting. Ordinary commands still use the
+app's normal validation and authority checks. Each assertion queries confirmed
+state after the preceding command's existing completion barrier.
+
+For an end-to-end 2027 control smoke test, launch a **local referee** with the
+bound package and no pilot (so no RFID contacts affect the scenario):
+
+~~~sh
+just run --console --window-mode headless --referee --start-paused --cad-assets field-2027
+# In another terminal:
+python3 scripts/console.py --script scripts/scenarios/control-2027.json
+~~~
+
+The scenario starts a countdown, destroys Blue's outpost, verifies the five-second
+transfer and 500 HP rebuild, checks temporary/full scoring, transfers it back,
+checks the rotor never restarts, and starts a fresh countdown to verify reset.
+It leaves the app paused in that new countdown. It changes match state and
+requires local referee authority; do not run it against a match to preserve.
+This smoke test uses real host commands, snapshots and console replies. Physical
+contact, contest, departure grace and restore are tested without rendering by
+`just control-test`; the scenario does not inject RFID observations.
+
 For a bound 2027 match, `state.rmuc_2027` exposes the native ruleset, phase,
 control, per-robot RFID expiries, structure HP/owners, rotor stops and result.
 The object is read-only; changes still use authorized `world` commands.

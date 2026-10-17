@@ -1,0 +1,159 @@
+[
+  {
+    "type": "pause",
+    "paused": true
+  },
+  {
+    "type": "world",
+    "command": {
+      "Referee": "ResetMatch"
+    }
+  },
+  {
+    "type": "world",
+    "command": {
+      "Referee": "StartMatch"
+    }
+  },
+  {
+    "assert": {
+      "/rmuc_2027/phase": "Countdown",
+      "/rmuc_2027/control/state/points": [
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "type": "step",
+    "ticks": 640
+  },
+  {
+    "assert": {
+      "/rmuc_2027/phase": "Running",
+      "/rmuc_2027/control/state/elapsed_ns": 0
+    }
+  },
+  {
+    "type": "world",
+    "command": {
+      "Referee": {
+        "SetOutpostHp": {
+          "outpost": 1,
+          "hp": 0
+        }
+      }
+    }
+  },
+  {
+    "assert": {
+      "/rmuc_2027/control/state/territories/1/control": {
+        "Temporary": "Blue"
+      },
+      "/rmuc_2027/outpost_hp/1": 0
+    }
+  },
+  {
+    "repeat": 5,
+    "steps": [
+      {
+        "type": "step",
+        "ticks": 128
+      }
+    ]
+  },
+  {
+    "assert": {
+      "/rmuc_2027/control/state/territories/1/control": {
+        "Full": "Red"
+      },
+      "/rmuc_2027/outpost_hp/1": 500,
+      "/rmuc_2027/control/state/points": [
+        1,
+        0
+      ],
+      "/rmuc_2027/rotor_stopped_ns/1": 0
+    }
+  },
+  {
+    "type": "step",
+    "ticks": 128
+  },
+  {
+    "assert": {
+      "/rmuc_2027/control/state/points": [
+        2,
+        0
+      ]
+    }
+  },
+  {
+    "type": "world",
+    "command": {
+      "Referee": {
+        "SetOutpostHp": {
+          "outpost": 1,
+          "hp": 0
+        }
+      }
+    }
+  },
+  {
+    "assert": {
+      "/rmuc_2027/control/state/territories/1/control": {
+        "Temporary": "Red"
+      }
+    }
+  },
+  {
+    "repeat": 5,
+    "steps": [
+      {
+        "type": "step",
+        "ticks": 128
+      }
+    ]
+  },
+  {
+    "assert": {
+      "/rmuc_2027/control/state/territories/1/control": {
+        "Full": "Blue"
+      },
+      "/rmuc_2027/outpost_hp/1": 500,
+      "/rmuc_2027/control/state/points": [
+        6,
+        0
+      ],
+      "/rmuc_2027/rotor_stopped_ns/1": 0
+    }
+  },
+  {
+    "type": "world",
+    "command": {
+      "Referee": "ResetMatch"
+    }
+  },
+  {
+    "type": "world",
+    "command": {
+      "Referee": "StartMatch"
+    }
+  },
+  {
+    "assert": {
+      "/rmuc_2027/phase": "Countdown",
+      "/rmuc_2027/control/state/points": [
+        0,
+        0
+      ],
+      "/rmuc_2027/outpost_hp": [
+        1000,
+        1000
+      ],
+      "/rmuc_2027/rotor_stopped_ns": [
+        null,
+        null
+      ]
+    }
+  }
+]

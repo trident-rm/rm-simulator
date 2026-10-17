@@ -58,6 +58,12 @@ def main():
                 command.extend(["--features", features])
             print(f"Season rules/admission: {package}: {features or '(none)'}", flush=True)
             subprocess.run(command, cwd=root, check=True)
+        if "season-2027" in features.split(","):
+            subprocess.run([
+                "cargo", "test", "--locked", "-p", "rm-simulator-gameplay",
+                "--no-default-features", "--features", features,
+                "--test", "control_2027",
+            ], cwd=root, check=True)
 
 
 if __name__ == "__main__":

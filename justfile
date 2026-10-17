@@ -66,6 +66,13 @@ network-trial SCENARIO *ARGS:
 gameplay-test:
     cargo test -p rm-simulator-gameplay --locked
 
+# Native 2027 control rules, physical RFID and console scenario tooling, without a GPU.
+control-test:
+    cargo test -p rm-simulator-gameplay --locked --no-default-features --features season-2027 --lib rmuc_2027::
+    cargo test -p rm-simulator-gameplay --locked --no-default-features --features season-2027 --test control_2027
+    cargo test -p rm-simulator-world --locked --no-default-features --features season-2027 --lib rmuc_2027::tests
+    python3 -m unittest discover -s scripts/tests -p test_console.py -v
+
 # A complete headless gameplay scenario.
 gameplay-demo:
     cargo run -p rm-simulator-gameplay --example match --locked

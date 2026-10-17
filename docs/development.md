@@ -42,6 +42,7 @@ The shell sets `CARGO_TARGET_DIR="$PWD/target/nix"`, so Nix builds land in
 | `just world-test` | Renderer-independent world tests |
 | `just season-test` | Season admission and isolated rules with neither, each and both features |
 | `just gameplay-test` / `just gameplay-demo` | Gameplay tests / headless `match` example |
+| `just control-test` | Native 2027 control, physical RFID and console automation tests, without rendering |
 | `just network-test` / `just network-trial <scenario>` | Harness tests with real UDP / one scenario against built binaries |
 | `just bench-build` / `just bench-render <config>` | Build the benchmark / run a sweep without recompiling |
 
