@@ -1142,6 +1142,10 @@ impl Simulation {
                 }
                 self.remove_chassis(*chassis)
             }
+            Command::ActivateRune { team } => self
+                .field
+                .referee_command(rm_simulator_world::RefereeCommand::ActivateRune { team: *team })
+                .map_err(|e| e.to_string()),
             Command::ClearBots => {
                 for id in self.bots.clone() {
                     self.remove_chassis(id)?;
@@ -1195,6 +1199,7 @@ impl Simulation {
                     let random = std::collections::hash_map::RandomState::new()
                         .build_hasher()
                         .finish();
+                    self.field.set_rmuc_2027_rune_seed(random);
                     self.field
                         .set_rmuc_2027_rotor_direction(if random & 1 == 0 { -1 } else { 1 });
                 }

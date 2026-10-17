@@ -19,6 +19,8 @@ pub enum Mechanism {
     DartTarget,
     /// Rotation around the caller-supplied outpost pivot and unit axis.
     Outpost,
+    /// Rotation around a caller-supplied native Rune shaft.
+    Rune,
 }
 
 /// Resolved positions supplied by the caller; physics never consults a referee.
@@ -31,6 +33,7 @@ pub enum Mechanism {
 ///
 /// let state = MechanismState {
 ///     outpost_angle_rad: [0.; 2],
+///     rune_angle_rad: [0.;2],
 ///     base_open_fraction: [1.0, 0.0],
 ///     dart_door_open: [true, true],
 ///     dart_target_fraction: 0.25,
@@ -48,6 +51,8 @@ pub enum Mechanism {
 pub struct MechanismState {
     /// Outpost angles in radians by original field side, Red then Blue.
     pub outpost_angle_rad: [f64; 2],
+    /// Native Rune shaft angles in radians, Red/Blue face order.
+    pub rune_angle_rad: [f64; 2],
     /// Base shield plates, red then blue: 0 shut, 1 open (the far end of the
     /// captured travel), in between while moving ([`base_open_fraction`]).
     pub base_open_fraction: [f64; 2],
@@ -63,6 +68,7 @@ impl MechanismState {
     pub fn fraction(&self, mechanism: Mechanism, team: Team) -> f64 {
         match mechanism {
             Mechanism::Outpost => self.outpost_angle_rad[team.index()],
+            Mechanism::Rune => self.rune_angle_rad[team.index()],
             Mechanism::Base => self.base_open_fraction[team.index()],
             Mechanism::DartDoor => f64::from(self.dart_door_open[team.index()]),
             Mechanism::DartTarget => self.dart_target_fraction,
@@ -73,6 +79,7 @@ impl Default for MechanismState {
     fn default() -> Self {
         Self {
             outpost_angle_rad: [0.; 2],
+            rune_angle_rad: [0.; 2],
             base_open_fraction: [0.0; 2],
             dart_door_open: [true; 2],
             dart_target_fraction: 0.0,

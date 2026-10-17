@@ -110,8 +110,11 @@ leaving a zone and the same expiry tick after restore. They do not certify the
 diagram-derived antenna polygons against hardware. The optional
 [console smoke scenario](console.md#deterministic-tick-scripts) checks actual
 host commands and authoritative replies with the bound field. These checks
-cover the implemented control subset; terrain traversal buffs, assembly and
-reinforcement remain outside its scope.
+cover native control, continuous field benefits, terrain traversal and Rune.
+Assembly and reinforcement remain outside its scope. `just control-test` also
+runs `terrain_2027` and `rune_2027`; the latter enumerates both teams, all six
+Big arm counts and each ring-table tier, including exact target deadlines and
+restore across pending bonus hits.
 
 Continuous native field benefits now include own Base/Vantage 50% defense,
 exclusive Central Highland 25% defense, own Fortress 50% defense plus historical

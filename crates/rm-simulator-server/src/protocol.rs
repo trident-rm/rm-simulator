@@ -97,7 +97,8 @@ use serde::{Deserialize, Serialize};
 /// Version 53 carries the RMUC 2027 V1.0.0 control/structure authority.
 /// Version 54 carries native 2027 combat/adaptive state and pilot logistics.
 /// Version 55 adds historical Base deficit, Fortress reserve and training-bot placement.
-pub const PROTOCOL_VERSION: u32 = 55;
+/// Version 56 carries native terrain sequences and Rune authority/motion.
+pub const PROTOCOL_VERSION: u32 = 56;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///
@@ -816,6 +817,11 @@ pub enum Command {
     },
     /// Remove every training bot.
     ClearBots,
+    /// Request an own-team native Rune opportunity; host requires a live Infantry/Sentry pilot.
+    ActivateRune {
+        /// Must equal the requesting pilot's assigned team.
+        team: Team,
+    },
     /// Referee/owner training placement; refuses every chassis that is not a bot.
     PlaceBot {
         /// Existing training-bot chassis id.

@@ -87,12 +87,18 @@ pub fn cad_instances(cad: &CadAssets, rune_faces: bool, base_plates: bool) -> Ve
                     .map(|b| {
                         b.motions(cad, asset)
                             .iter()
-                            .map(|m| rm_simulator_render::cad::CadJoint {
+                            .enumerate()
+                            .map(|(mi, m)| rm_simulator_render::cad::CadJoint {
                                 id: m.id.clone(),
                                 axis: Vec3::from_array(m.axis.map(|v| v as f32)),
                                 prismatic: m.limits.is_some(),
                                 limits: m.limits.map(|v| v.map(|v| v as f32)),
-                                driver: Some(if m.limits.is_some() {
+                                driver: Some(if asset.file == cad.rune.file {
+                                    JointDriver::Rune {
+                                        index: mi as u32,
+                                        sign: 1.,
+                                    }
+                                } else if m.limits.is_some() {
                                     rm_simulator_render::cad::JointDriver::BaseOpening {
                                         team: side,
                                     }
@@ -109,6 +115,27 @@ pub fn cad_instances(cad: &CadAssets, rune_faces: bool, base_plates: bool) -> Ve
                     .rmuc_2027
                     .as_ref()
                     .and_then(|b| {
+                        if asset.file == cad.rune.file {
+                            return Some(
+                                b.rune_arms
+                                    .iter()
+                                    .enumerate()
+                                    .flat_map(|(i, arms)| {
+                                        arms.iter().enumerate().map(move |(blade, node)| {
+                                            CadTargetLight {
+                                                node: node.clone(),
+                                                target: (512 + i * 5 + blade) as u64,
+                                                source_color: if i == 0 {
+                                                    Color::srgb(1., 0., 0.)
+                                                } else {
+                                                    Color::srgb(0., 0., 1.)
+                                                },
+                                            }
+                                        })
+                                    })
+                                    .collect::<Vec<_>>(),
+                            );
+                        }
                         let (name, offset, source_color) = if asset.file == cad.base.file {
                             ("base", 0, Color::srgb(1., 0., 0.))
                         } else if asset.file == cad.outpost.file {
@@ -259,6 +286,12 @@ pub fn cad_instances(cad: &CadAssets, rune_faces: bool, base_plates: bool) -> Ve
                             .index();
                             rm_simulator_server::layout::mechanism_joint(joint).map(|kind| {
                                 match kind {
+                                    rm_simulator_world::referee::Mechanism::Rune => {
+                                        JointDriver::Rune {
+                                            index: team as u32,
+                                            sign: 1.,
+                                        }
+                                    }
                                     rm_simulator_world::referee::Mechanism::Outpost => {
                                         JointDriver::Outpost { index: team as u32 }
                                     }
@@ -681,8 +714,56 @@ pub fn publish_scene(
                 }
             })
             .to_vec();
+        scene.runes = state
+            .config
+            .runes
+            .iter()
+            .enumerate()
+            .map(|(i, geometry)| {
+                let r = &state.game.runes[i];
+                RuneAppearance {
+                    hub_pose: pose_flu(rm_simulator_world::Pose::at(geometry.pivot_m)),
+                    angle_rad: r.angle_at(round_ns),
+                    active_blades: r.targets,
+                    activated_blades: r.completed_blades,
+                    progress_stages: std::array::from_fn(|n| n < usize::from(r.groups)),
+                    fully_activated: r.phase
+                        == rm_simulator_world::gameplay::rmuc_2027::rune::Phase::Activated,
+                    hit_flash: std::array::from_fn(|blade| {
+                        hits.iter().any(|h| {
+                            h.target
+                                == ArmorTarget::Rune {
+                                    rune: i as u32,
+                                    blade: blade as u32,
+                                }
+                        })
+                    }),
+                }
+            })
+            .collect();
         for side in Team::BOTH {
             let i = side.index();
+            if let Some(geometry) = state.config.runes.get(i) {
+                let r = &state.game.runes[i];
+                for (blade, rest) in geometry.targets.iter().enumerate() {
+                    targets
+                        .0
+                        .push(rm_simulator_render::targets::TargetAppearance {
+                            id: (512 + i * 5 + blade) as u64,
+                            pose: pose_flu(state.rune_pose_at(side, *rest, round_ns)),
+                            size_m: [0.3; 2],
+                            team: team_color(side),
+                            disabled: !r.targets[blade] && !r.completed_blades[blade],
+                            flash: hits.iter().any(|h| {
+                                h.target
+                                    == ArmorTarget::Rune {
+                                        rune: i as u32,
+                                        blade: blade as u32,
+                                    }
+                            }),
+                        });
+                }
+            }
             let owner = match state.game.control.snapshot().outposts[i].owner {
                 rm_simulator_world::gameplay::Team::Red => Team::Red,
                 rm_simulator_world::gameplay::Team::Blue => Team::Blue,

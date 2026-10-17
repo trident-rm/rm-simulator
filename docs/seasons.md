@@ -74,7 +74,7 @@ config labelled 2027 is rejected. Default `Field::new` uses its explicit config;
 restore selects admission from the native authority carried in `FieldRestore`.
 Mixed-season geometry/referee state is rejected.
 
-Protocol **53** carries the complete optional 2027 authority in confirmations,
+Protocol **56** carries the complete optional 2027 authority in confirmations,
 checkpoints and deltas. Types remain available in every build so the wire shape
 is independent of Cargo feature unification; live admission and restore still
 check the feature. The existing checkpoint ZSTD dictionary is retained unchanged.
@@ -125,4 +125,8 @@ See [the lifecycle boundary](rmuc2027-field.md#combat-lifecycle-and-adaptive-arm
 
 Protocol 55 also carries historical Base HP minima and per-side Fortress reserve
 spending. Continuous Base/Vantage/Highland/Fortress field effects are native 2027;
-terrain traversal sequences and rune/reinforcement effects remain unavailable.
+Protocol 56 adds native Road/Highland/Tunnel sequences, timed benefits,
+first-kind traversal/Vantage XP and Small/Big Rune opportunities, ring scoring,
+team benefits and source-CAD motion. Assembly and reinforcement effects remain
+unavailable. The season matrix runs the terrain/Rune integration suites with
+2027 alone and with both features.

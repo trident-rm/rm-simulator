@@ -58,7 +58,7 @@ and joint ownership. GLBs retain the source hierarchy and add explicit
 `extras.rm.id` pivot/joint nodes. Three shields per Base move through the
 existing illustrative 0.25 m travel; the three Outpost armor-module assemblies
 rotate together, including attached surface-model LED shells. The shared tower
-frame remains stationary. Eight placed moving colliders are excluded from the
+frame remains stationary. Ten placed moving colliders are excluded from the
 fixed soups, preventing duplicate stationary collision around moving parts.
 
 Detectors use the preceding higher-fidelity geometry, not the Low mesh. Base
@@ -82,7 +82,8 @@ ocpenv/bin/python python/bind_repaired_game.py \
 Both output directories must be new when reproducing. The tracked runtime
 package and its 18-file inventory are the installed result, with CAD ownership
 notice intact. The original unbound export and its archive remain separate.
-Rune, Dart and Tech Core keep their source hierarchy as scenery; unsupported
+Rune arms now have native joints (see below); Dart and Tech Core retain their
+source hierarchy as scenery. Unsupported
 2027 gameplay is not replaced by 2026 mechanics. Native match, motion and
 restore checks exercise the hydrated package in
 `crates/rm-simulator-server/tests/rmuc2027_package.rs`.
@@ -727,8 +728,8 @@ python3 scripts/install-field-detail.py \
 ```
 
 This is a playable, single-round RMUC combat/control subset. Heavy, assembly,
-terrain traversal buffs, rune, aerial, dart and Radar equipment
-remain unavailable. 42 mm launches remain refused until Heavy suppression
+aerial, dart and Radar equipment remain unavailable. Terrain and Rune support
+was added after this dated geometry experiment; see the native integration below. 42 mm launches remain refused until Heavy suppression
 observations are implemented. Adaptive armor remains in its default damage state.
 
 ## Remaining geometry opportunities (2026-10-16)
@@ -1146,3 +1147,63 @@ minute grants one accumulating reinforcement opportunity; the ten-hit prerequisi
 is observable. No Radar selection or reinforced/unreinforced damage is enabled.
 No-launch, no-hit and zero-spread cases return an explicit undefined result;
 clipping, circle-boundary and area-update policies await a later implementation.
+
+## Native terrain traversal and Rune (2026-10-18)
+
+Protocol **56** carries raw terrain-card contacts, pending sequences, obtained
+benefits, first-kind XP flags, exact half-unit cooling carry and both native Rune
+authorities. Restore keeps target selection, random seed, opportunities, motion
+epochs, rings, optional-hit deadlines and team XP budget. No 2026 referee is used.
+
+Road low→high takes at most 3 s (25% defense, 5 s, 15 s repeat cooldown);
+Highland low→high takes at most 5 s (25%, 30 s). Each of three Tunnels has two
+ends and an interior card: end→end within 3 s gives 25% defense for 30 s;
+end→interior→end gives 1.5× cooling for 120 s. Both travel directions work.
+Other cards interrupt the sequence; continuously holding a card cannot restart
+it. Different obtained terrain kinds combine to 50% defense with the specified
+maximum duration. Death clears obtained benefits and pending evidence, preserving
+first-kind XP and the Road repeat timer. First Road/Highland/Tunnel/Vantage
+benefits each grant 300 XP, once per robot per round.
+
+Thirty traversal footprints are derived from the native inspection catalogue.
+Highland routes split the connected Highland at its two approaches; these are
+approximate antenna regions, not a source survey of hardware cards. Road source
+cards `3791032` and `3791514` identify low/high surfaces near −0.13/+0.05 m;
+the old inspection labels were reversed. All footprints receive the normal
+loaded-field height calibration. Sequence observations use raw entries, without
+the two-second grace used for continuous field benefits.
+
+The native Rune implements §5.6.3, Figure 5-17 and Tables 5-22–24: accumulated
+0/90 s Small and 180/255/330 s Big opportunities, 20 s attempts, five Small hits
+or five Big pairs, 2.5 s first-hit and optional 1 s bonus windows, ring-dependent
+attack/defense/cooling, 5–10-arm durations, detection shrinking and Rune XP.
+A same-team live Infantry/Sentry pilot activates with the normal Rune action;
+the referee can activate either side. Source arm LEDs, aim assistance, physical
+colliders and scoring targets follow the native authority. The two banks share
+a shaft direction while each follows its own activation-dependent speed.
+
+Source binding adds `rune.red.spin`/`rune.blue.spin`, five source arm IDs each,
+and two detector banks to the existing schema-two sidecar. Fit aperture circles
+from source planar panels, check the 0.7 m orbit, insert pivot wrappers, and
+verify every mesh-node rest matrix within 1e−12. Binary geometry buffers and
+materials are unchanged, as are **355,542 visual / 545,599 collision triangles**.
+There are ten placed articulated colliders (six Base, two Outpost, two Rune).
+The physical aperture is 308 mm; scoring uses the manual's 300 mm disk, exposed
+4 mm from the fitted panel as a documented detector approximation. The report
+in `rmuc2027-bindings.json.rune_fit` pins inputs and the producer script.
+
+Reproduce from the preceding structure-bound package (before Rune joint insertion):
+
+```sh
+../rm-map-tools/ocpenv/bin/python scripts/bind-rmuc2027-rune.py \
+  --package PATH_TO_STRUCTURE_BOUND_PACKAGE --out local-assets/field-2027-native-rune
+```
+
+The binder refuses existing output and unexpected unbaked input transforms.
+The source package's hashes are retained in the sidecar and its original files
+remain available in Git LFS history. Detector masks and LED presentation are
+approximations: ring detection is enforced, but detailed flowing-arrow artwork,
+five-stage Big target graphics and visual disabled-ring masks are not reproduced.
+Run `scripts/terrain-rune-scenarios.py` against a paused embedded referee for
+actual RFID entry and physical-projectile Small/Big activation checks; see
+[console scenarios](console.md#native-terrain-and-rune-scenarios).

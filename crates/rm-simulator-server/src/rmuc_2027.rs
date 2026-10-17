@@ -85,6 +85,12 @@ pub struct Bindings {
     pub outpost_motion: Vec<Motion>,
     /// Three base protective-armor source bodies.
     pub base_motion: Vec<Motion>,
+    /// Optional exact native Rune arm-subtree partitions, Red/Blue order.
+    #[serde(default)]
+    pub rune_motion: Vec<Motion>,
+    /// Source arm node names used by passive CAD light bindings, Red/Blue order.
+    #[serde(default)]
+    pub rune_arms: Vec<[String; 5]>,
     /// Source partitions retained by the binder, keyed by structure name.
     pub report: std::collections::BTreeMap<String, SourceReport>,
     /// Structured source parts, required by schema two; legacy schema one has none.
@@ -102,6 +108,42 @@ impl Bindings {
             "unknown 2027 source/ruleset binding"
         );
         self.world.validate().map_err(anyhow::Error::msg)?;
+        ensure!(
+            (self.rune_motion.is_empty()
+                && self.rune_arms.is_empty()
+                && self.world.runes.is_empty())
+                || (self.rune_motion.len() == 2
+                    && self.rune_arms.len() == 2
+                    && self.world.runes.len() == 2
+                    && self.rune_motion.iter().all(|m| m.limits.is_none()
+                        && !m.bodies.is_empty()
+                        && m.axis.iter().chain(&m.pivot_m).all(|v| v.is_finite())
+                        && (m.axis.iter().map(|v| v * v).sum::<f64>() - 1.).abs() < 1e-6)),
+            "incomplete native Rune binding"
+        );
+        let mut rune_bodies = std::collections::BTreeSet::new();
+        for (index, (motion, arms)) in self.rune_motion.iter().zip(&self.rune_arms).enumerate() {
+            let expected = if index == 0 {
+                "rune.red.spin"
+            } else {
+                "rune.blue.spin"
+            };
+            let unique_arms: std::collections::BTreeSet<_> = arms.iter().collect();
+            ensure!(
+                motion.id == expected
+                    && unique_arms.len() == 5
+                    && arms.iter().all(|arm| !arm.is_empty()
+                        && motion
+                            .bodies
+                            .iter()
+                            .any(|body| body.starts_with(&format!("{arm}/mesh-"))))
+                    && motion.bodies.iter().all(|body| rune_bodies.insert(body)
+                        && arms
+                            .iter()
+                            .any(|arm| body.starts_with(&format!("{arm}/mesh-")))),
+                "duplicate or unowned native Rune source geometry"
+            );
+        }
         for (name, count) in [("base", self.world.bases[0].len()), ("outpost", 3)] {
             let report = self
                 .report
@@ -183,6 +225,19 @@ impl Bindings {
                 })
             })
             .collect();
+        config.terrain_zones = crate::zone_catalog::terrain_areas()
+            .into_iter()
+            .map(|a| rm_simulator_world::rmuc_2027::TerrainZone {
+                card: a.terrain_card().expect("native terrain card"),
+                zone: Zone {
+                    side: a.side,
+                    point: rm_simulator_world::rmuc_2027::Point::Base,
+                    floor_m: a.floor_m,
+                    height_m: 0.45,
+                    polygon_m: a.polygon_m,
+                },
+            })
+            .collect();
         for a in crate::zone_catalog::areas(rm_simulator_world::season::Season::Rm2027) {
             let supply = a.id.ends_with("supply");
             if !supply && !a.id.ends_with("vantage") {
@@ -207,6 +262,8 @@ impl Bindings {
     pub fn motions<'a>(&'a self, cad: &CadAssets, asset: &CadAsset) -> &'a [Motion] {
         if asset.file == cad.outpost.file {
             &self.outpost_motion
+        } else if asset.file == cad.rune.file {
+            &self.rune_motion
         } else if asset.file == cad.base.file {
             &self.base_motion
         } else {
@@ -224,6 +281,7 @@ pub fn fit_zone_heights(config: &mut Config, ground: &crate::collision_mesh::Gro
         .iter_mut()
         .chain(&mut config.supply_zones)
         .chain(&mut config.vantage_zones)
+        .chain(config.terrain_zones.iter_mut().map(|z| &mut z.zone))
     {
         let n = zone.polygon_m.len() as f64;
         let center = [
@@ -274,7 +332,7 @@ pub fn mechanisms(
         return Ok(());
     };
     let parts = collision_mesh::load_glb_parts(&asset.physics_file(&cad.root))?;
-    for motion in bindings.motions(cad, asset) {
+    for (mi, motion) in bindings.motions(cad, asset).iter().enumerate() {
         let mut mesh = CollisionMesh::default();
         for name in &motion.bodies {
             let part = parts
@@ -284,7 +342,9 @@ pub fn mechanisms(
             mesh.append(part.mesh.clone());
         }
         for placement in &asset.placements {
-            let mechanism = if motion.limits.is_none() {
+            let mechanism = if asset.file == cad.rune.file {
+                Mechanism::Rune
+            } else if motion.limits.is_none() {
                 Mechanism::Outpost
             } else {
                 Mechanism::Base
@@ -303,7 +363,11 @@ pub fn mechanisms(
             output.push(crate::layout::MechanismMesh {
                 mesh: mesh.placed(placement),
                 mechanism,
-                team: crate::layout::side_team(placement.translation_m[0]),
+                team: if asset.file == cad.rune.file {
+                    rm_simulator_world::Team::BOTH[mi]
+                } else {
+                    crate::layout::side_team(placement.translation_m[0])
+                },
                 motion: frame,
             });
         }
@@ -334,6 +398,8 @@ mod tests {
             rotor_direction: 1,
             supply_zones: vec![],
             vantage_zones: vec![],
+            terrain_zones: vec![],
+            runes: vec![],
             zones: vec![
                 Zone {
                     side: Team::Red,

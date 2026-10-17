@@ -257,6 +257,10 @@ impl MovingMeshPose {
     fn transform(&self, scene: &rm_simulator_render::sync::SceneState) -> Transform {
         use rm_simulator_world::referee::Mechanism;
         let fraction = match self.kind {
+            Mechanism::Rune => scene
+                .runes
+                .get(self.team.index())
+                .map_or(0., |r| r.angle_rad),
             Mechanism::Outpost => scene
                 .outposts
                 .get(self.team.index())

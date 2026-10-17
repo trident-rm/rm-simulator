@@ -125,12 +125,18 @@ impl Match {
             return;
         }
         let expiry = self.elapsed_ns() + RFID_GRACE_NS;
+        let mut first_vantage = false;
         if let Some(r) = self.robots.iter_mut().find(|r| r.id == id && r.online) {
             if supply {
                 r.combat.supply_expires_ns = Some(expiry);
             } else {
                 r.combat.vantage_expires_ns = Some(expiry);
+                first_vantage = r.hp > 0 && !r.combat.weakened && !r.terrain.experience_awarded[3];
+                r.terrain.experience_awarded[3] |= first_vantage;
             }
+        }
+        if first_vantage {
+            self.grant_experience(id, 3000);
         }
     }
     fn outpost_service(&self, r: &Robot) -> bool {
@@ -320,6 +326,8 @@ impl Match {
             r.combat.double_power_until_ns = 0;
             r.combat.deliveries.retain(|d| d.rounds > 0);
             r.combat.healing_carry = 0;
+            r.combat.cooling_half_carry = 0;
+            r.terrain.clear_on_death();
             let progress_s =
                 10 + (now + 5 * SECOND) / (10 * SECOND) + 20 * u64::from(r.combat.paid_respawns);
             r.combat.respawn = Some(Respawn {
@@ -376,10 +384,25 @@ impl Match {
         if r.combat.level >= cap {
             return;
         }
+        let available = super::super::combat::EXPERIENCE_TENTHS[usize::from(cap - 1)]
+            .saturating_sub(r.combat.experience_tenths);
+        let base = amount_tenths.min(available);
+        let bonus = self.runes[r.team.index()]
+            .buff
+            .as_ref()
+            .filter(|b| b.source == super::super::rune::Stage::Small && b.until_ns > now)
+            .map_or(0, |b| {
+                amount_tenths
+                    .min(u64::from(12000 - b.extra_xp_tenths))
+                    .min(available - base)
+            });
+        if let Some(buff) = &mut self.runes[r.team.index()].buff {
+            buff.extra_xp_tenths += bonus as u32;
+        }
         r.combat.experience_tenths = r
             .combat
             .experience_tenths
-            .saturating_add(amount_tenths)
+            .saturating_add(base + bonus)
             .min(EXPERIENCE_TENTHS[usize::from(cap - 1)]);
         r.combat.level = (EXPERIENCE_TENTHS
             .iter()
@@ -588,13 +611,16 @@ impl Match {
                 .map(|r| {
                     (
                         self.outpost_service(r),
-                        self.field_effects(r.id).cooling_per_s,
+                        self.field_effects(r.id).cooling_half_per_s,
                     )
                 })
                 .collect::<Vec<_>>();
             for (r, (outpost, cooling)) in self.robots.iter_mut().zip(outpost) {
-                r.combat.heat_tenths = r.combat.heat_tenths.saturating_sub(u64::from(cooling));
+                let cooling = cooling + u32::from(r.combat.cooling_half_carry);
+                r.combat.cooling_half_carry = (cooling % 2) as u8;
+                r.combat.heat_tenths = r.combat.heat_tenths.saturating_sub(u64::from(cooling / 2));
                 if r.combat.heat_tenths == 0 {
+                    r.combat.cooling_half_carry = 0;
                     r.combat.overheated = false;
                 }
                 if r.hp > 0 && r.online && !r.combat.weakened && (r.in_supply(now) || outpost) {

@@ -296,3 +296,23 @@ therefore make a respawn command report an error even though its authoritative
 HP/gold transition succeeded. Inspect `state` before retrying; the host still
 rejects those stale inputs and enforces ownership. This pre-existing fence issue
 also affects placement/recovery automation and is separate from the native rules.
+
+## Native terrain and Rune scenarios
+
+```sh
+just run --referee --start-paused --console --window-mode headless
+python3 scripts/terrain-rune-scenarios.py
+# Optional isolation:
+python3 scripts/terrain-rune-scenarios.py --only terrain
+python3 scripts/terrain-rune-scenarios.py --only rune
+```
+
+The installed native Rune-bound 2027 package is required. The runner resets the
+match, places a training bot through physical Road/Highland/Tunnel cards, checks
+benefits/cooldown/interruption/death, then shoots actual projectiles into both
+Small faces and the ten-hit Big Rune. It injects no RFID flags or Rune progress.
+It leaves paused Idle on success and inspectable paused state on failure.
+`state` includes `rmuc_2027_config`, raw `terrain` diagnostics, `armor_hits` and
+`projectiles` for reproducing detector and motion failures. Running the full
+scenario requires a GPU even in headless window mode; `just control-test` runs
+engine/adapter/console tests without a GPU.

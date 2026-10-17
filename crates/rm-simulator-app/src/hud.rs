@@ -802,8 +802,7 @@ fn control_2027_text(session: &Session) -> String {
     };
     use rm_simulator_world::gameplay::rmuc_2027::{ControlState, Territory};
     let g = &state.game;
-    let mut lines =
-        vec!["RMUC 2027 | Control + continuous field buffs | Traversal/rune unavailable".into()];
+    let mut lines = vec!["RMUC 2027 | Control + terrain + native Rune".into()];
     for territory in Territory::ALL {
         let t = &g.control.snapshot().territories[territory.index()];
         let team = if t.control.team().index() == 0 {
@@ -851,6 +850,29 @@ fn control_2027_text(session: &Session) -> String {
                     r.fortress_ns[side] as f64 * 1e-9
                 ));
             }
+        }
+    }
+    for (i, rune) in g.runes.iter().enumerate() {
+        lines.push(format!(
+            "{} RUNE {:?} {:?} | OPP {}/{} | {}/5 | RING {}+",
+            if i == 0 { "RED" } else { "BLUE" },
+            rune.stage,
+            rune.phase,
+            rune.opportunities[0],
+            rune.opportunities[1],
+            rune.groups,
+            rune.minimum_ring()
+        ));
+    }
+    for r in &g.robots {
+        if let Some(p) = &r.terrain.progress {
+            lines.push(format!(
+                "#{} {:?} {:?} {:.2}s",
+                r.id,
+                p.start.course,
+                p.start.side,
+                p.deadline_ns().saturating_sub(g.elapsed_ns()) as f64 * 1e-9
+            ));
         }
     }
     lines.join("\n")

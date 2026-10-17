@@ -59,8 +59,22 @@ fn prepare(
         commands.entity(entity).despawn();
     }
     let mut areas = areas(session.season);
+    if session.rmuc_2027().is_some() {
+        areas.retain(|a| !a.id.ends_with("highland-low"));
+        areas.extend(
+            rm_simulator_server::zone_catalog::terrain_areas()
+                .into_iter()
+                .filter(|a| a.id.contains("highland-card-")),
+        );
+    }
     if let Some(native) = session.rmuc_2027() {
         for area in &mut areas {
+            if let Some(card) = area.terrain_card()
+                && let Some(z) = native.config.terrain_zones.iter().find(|z| z.card == card)
+            {
+                area.floor_m = z.zone.floor_m;
+                area.polygon_m = z.zone.polygon_m.clone();
+            }
             if let Some(point) = area.control_point()
                 && let Some(zone) = native
                     .config
@@ -95,7 +109,7 @@ fn prepare(
     }
     commands.spawn((ZoneLegend, Node { position_type: PositionType::Absolute, left:px(18.), bottom:px(125.), display:Display::None, padding:UiRect::all(px(7.)), ..default() },
         GlobalZIndex(15), Text::new(if session.rmuc_2027().is_some() {
-            "2027 LIVE CONTROL | Red/blue: active | Amber: contested\nLabels: occupants, expiry, blocking reasons and field benefits\nDiagram RFID (~10 cm); traversal overlays remain inspection only"
+            "2027 LIVE CONTROL | Red/blue: active | Amber: contested\nLabels: occupants, expiry, blocking reasons and field benefits\nDiagram RFID (~10 cm); terrain cards show raw entries (no grace)"
         } else if session.season == rm_simulator_world::season::Season::Rm2027 {
             "2027 ZONE INSPECTION | Green: RFID | Boxes: height band\nFigure 5-23 estimates (~10 cm); tunnel interiors inferred\nX-ray outlines; no 2027 buff/control enforcement"
         } else { "2026 ZONE INSPECTION | Green: referee RFID footprints\nBoxes: height band | X-ray outlines" }),
@@ -139,6 +153,13 @@ fn draw(
                 caption.push('\n');
                 caption.push_str(&point_details(&state.game, area.side, point, &diagnostics));
             }
+            if options.zone_labels
+                && let Some(state) = session.rmuc_2027()
+                && let Some(card) = area.terrain_card()
+            {
+                caption.push('\n');
+                caption.push_str(&terrain_details(&state.game, card));
+            }
             caption
         })
         .collect::<Vec<_>>();
@@ -154,6 +175,17 @@ fn draw(
             continue;
         }
         let active = session.rmuc_2027().and_then(|r| {
+            if let Some(card) = area.terrain_card() {
+                return Some(std::array::from_fn(|i| {
+                    r.game.robots.iter().any(|bot| {
+                        bot.team.index() == i
+                            && bot.hp > 0
+                            && bot.online
+                            && !bot.combat.weakened
+                            && bot.terrain.contacts.contains(&card)
+                    })
+                }));
+            }
             area.control_point().map(|point| {
                 let (territory, index) = match point {
                     rm_simulator_world::rmuc_2027::Point::Outpost => (area.side.index(), 0),
@@ -350,8 +382,11 @@ fn point_details(
         if p.status == Activation::Active {
             let e = &robot.effects;
             lines.push(format!(
-                "  DEF {}% / VUL {}% / COOL {}/s / RES {}",
-                e.defense_pct, e.vulnerability_pct, e.cooling_per_s, e.fortress_reserve
+                "  DEF {}% / VUL {}% / COOL {:.1}/s / RES {}",
+                e.defense_pct,
+                e.vulnerability_pct,
+                f64::from(e.cooling_half_per_s) / 2.,
+                e.fortress_reserve
             ));
             if point == Point::Fortress
                 && robot.team != side
@@ -373,6 +408,52 @@ fn point_details(
         lines.push("No unexpired robot detections".into());
     }
     lines.join("\n")
+}
+
+fn terrain_details(
+    game: &rm_simulator_world::rmuc_2027::match_rules::Match,
+    card: rm_simulator_world::gameplay::rmuc_2027::terrain::Card,
+) -> String {
+    let now = game.elapsed_ns();
+    let mut lines = vec![];
+    for robot in &game.robots {
+        let t = &robot.terrain;
+        if !t.contacts.contains(&card)
+            && !t.progress.as_ref().is_some_and(|p| {
+                p.start.course == card.course
+                    && p.start.index == card.index
+                    && p.start.side == card.side
+            })
+        {
+            continue;
+        }
+        lines.push(format!(
+            "#{} {:?} | {} raw card(s)",
+            robot.id,
+            robot.team,
+            t.contacts.len()
+        ));
+        if let Some(p) = &t.progress {
+            lines.push(format!(
+                "  {:?} {}{} | {:.2}s left",
+                p.start.course,
+                p.start.pad,
+                if p.interior { " -> interior" } else { "" },
+                p.deadline_ns().saturating_sub(now) as f64 * 1e-9
+            ));
+        }
+        lines.push(format!(
+            "  DEF {}% {:.1}s | ROAD ready {:.1}s",
+            t.defense_pct,
+            t.defense_until_ns.saturating_sub(now) as f64 * 1e-9,
+            t.road_ready_ns.saturating_sub(now) as f64 * 1e-9
+        ));
+    }
+    if lines.is_empty() {
+        "No raw traversal contact / sequence".into()
+    } else {
+        lines.join("\n")
+    }
 }
 
 #[cfg(test)]

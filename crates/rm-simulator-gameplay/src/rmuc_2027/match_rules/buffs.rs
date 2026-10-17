@@ -12,6 +12,8 @@ pub struct Effects {
     pub vulnerability_pct: u32,
     /// Effective heat units cooled per second, including additive Fortress cooling.
     pub cooling_per_s: u32,
+    /// Exact cooling in half heat-units per second, including fractional multipliers.
+    pub cooling_half_per_s: u32,
     /// Reserve rounds currently available to this defending Fortress holder.
     pub fortress_reserve: u32,
 }
@@ -67,6 +69,8 @@ pub struct RobotDiagnostic {
     pub points: Vec<PointDiagnostic>,
     /// Resolved defense, vulnerability, cooling and available Fortress reserve.
     pub effects: Effects,
+    /// Raw card sequence and terrain-benefit authority, including cooldown/deadlines.
+    pub terrain: super::super::terrain::Terrain,
 }
 
 impl Match {
@@ -150,18 +154,32 @@ impl Match {
         let base = r.stats(self.elapsed_ns()).cooling_per_s;
         let mut effects = Effects {
             cooling_per_s: base,
+            cooling_half_per_s: base * 2,
             ..Effects::default()
         };
-        if self.phase != Phase::Running || r.hp == 0 || !r.online || r.combat.weakened {
+        if self.phase != Phase::Running || r.hp == 0 {
             return effects;
         }
         let active = |side, point| self.activation_status(r, side, point) == Activation::Active;
+        if let Some(buff) = &self.runes[r.team.index()].buff {
+            effects.defense_pct = buff.defense_pct;
+            effects.cooling_half_per_s = base * 2 * buff.cooling;
+            effects.cooling_per_s = effects.cooling_half_per_s / 2;
+        }
+        // Weakness prevents RFID-point benefits (§5.3.2), not non-field Rune
+        // benefits, which survive death and apply while their source exists (Table 5-26).
+        if !r.online || r.combat.weakened {
+            return effects;
+        }
+        if r.terrain.defense_until_ns > self.elapsed_ns() {
+            effects.defense_pct = effects.defense_pct.max(r.terrain.defense_pct);
+        }
         if active(r.team, Point::Base)
             || r.combat
                 .vantage_expires_ns
                 .is_some_and(|t| t > self.elapsed_ns())
         {
-            effects.defense_pct = 50;
+            effects.defense_pct = effects.defense_pct.max(50);
         }
         if Team::BOTH
             .into_iter()
@@ -178,6 +196,14 @@ impl Match {
         if active(r.team.other(), Point::Fortress) && !self.base_open[r.team.other().index()] {
             effects.vulnerability_pct = 100;
         }
+        effects.cooling_half_per_s = effects.cooling_per_s * 2;
+        if r.terrain.until_ns[3] > self.elapsed_ns() {
+            effects.cooling_half_per_s = effects.cooling_half_per_s.max(base * 3);
+        }
+        if let Some(buff) = &self.runes[r.team.index()].buff {
+            effects.cooling_half_per_s = effects.cooling_half_per_s.max(base * 2 * buff.cooling);
+        }
+        effects.cooling_per_s = effects.cooling_half_per_s / 2;
         effects
     }
 
@@ -193,6 +219,7 @@ impl Match {
                 id: r.id,
                 team: r.team,
                 effects: resolved.field_effects(r.id),
+                terrain: r.terrain.clone(),
                 points: Team::BOTH
                     .into_iter()
                     .flat_map(|side| {

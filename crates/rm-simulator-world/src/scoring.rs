@@ -31,6 +31,12 @@ impl Field {
         if is_rune && contact.caliber != Caliber::Mm17 {
             return DetectionOutcome::Rejected(Rejection::Caliber);
         }
+        if let (ArmorTarget::Rune { rune, .. }, Some(native)) = (contact.target, &self.rmuc_2027) {
+            let ring = gameplay::rmuc_2027::rune::Rune::ring(offset[0].hypot(offset[1]));
+            if ring.is_none_or(|r| r < native.game.runes[rune as usize].minimum_ring()) {
+                return DetectionOutcome::Rejected(Rejection::DisabledRing);
+            }
+        }
         if contact.normal_speed_m_s <= contact.caliber.armor_detection_speed_m_s() {
             return DetectionOutcome::Rejected(Rejection::NormalSpeed);
         }
@@ -74,6 +80,38 @@ impl Field {
         hit.detected = true;
         self.hits_detected += 1;
         if let Some(state) = &mut self.rmuc_2027 {
+            if let ArmorTarget::Rune { rune, blade } = contact.target {
+                let ring =
+                    gameplay::rmuc_2027::rune::Rune::ring(offset[0].hypot(offset[1])).unwrap_or(1);
+                let previous = &state.game.runes[rune as usize];
+                let expected = previous.targets.iter().position(|&v| v).unwrap_or(0) as u32;
+                let group = u32::from(previous.groups);
+                let bonus = previous.bonus;
+                let big = previous.stage == gameplay::rmuc_2027::rune::Stage::Big;
+                let outcome =
+                    state
+                        .game
+                        .hit_rune(gameplay::Team::BOTH[rune as usize], blade as u8, ring);
+                use gameplay::rmuc_2027::rune::Hit;
+                hit.rune_outcome = Some(match outcome {
+                    Hit::Ignored => HitOutcome::Inactive,
+                    Hit::Reset => HitOutcome::WrongBlade { blade, expected },
+                    Hit::Completed => HitOutcome::Activated { blade },
+                    Hit::Accepted if big => HitOutcome::GroupHit {
+                        blade,
+                        group,
+                        bonus,
+                    },
+                    Hit::Accepted => HitOutcome::Accepted {
+                        blade,
+                        next_blade: state.game.runes[rune as usize]
+                            .targets
+                            .iter()
+                            .position(|&v| v)
+                            .unwrap_or(0) as u32,
+                    },
+                });
+            }
             let target = match contact.target {
                 ArmorTarget::Base { base, .. } => {
                     Some(gameplay::Target::Base(gameplay::Team::BOTH[base as usize]))

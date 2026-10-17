@@ -1273,9 +1273,17 @@ pub fn advance_world(
         .just_pressed(InputAction::Rune, &keys, buttons.as_deref())
     {
         let team = session.team;
-        match session.referee() {
-            Some(_) => session.apply(Command::Referee(RefereeCommand::ActivateRune { team })),
-            None => session.notice("no referee on this field".into()),
+        if session.rmuc_2027().is_some() {
+            if session.role.referees() {
+                session.apply(Command::Referee(RefereeCommand::ActivateRune { team }));
+            } else {
+                session.apply(Command::ActivateRune { team });
+            }
+        } else {
+            match session.referee() {
+                Some(_) => session.apply(Command::Referee(RefereeCommand::ActivateRune { team })),
+                None => session.notice("no referee on this field".into()),
+            }
         }
     }
     poll_session(&mut session, &mut commands);

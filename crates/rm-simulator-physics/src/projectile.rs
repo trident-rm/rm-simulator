@@ -764,7 +764,10 @@ impl WorldPhysics {
         if !offsets_m.iter().all(|v| finite(*v)) {
             return Err("nonfinite mechanism offset");
         }
-        if mechanism == crate::motion::Mechanism::Outpost {
+        if matches!(
+            mechanism,
+            crate::motion::Mechanism::Outpost | crate::motion::Mechanism::Rune
+        ) {
             return Err("use add_rotor_mesh for rotational geometry");
         }
         let handle = self.add_static_mesh(vertices, triangles)?;
@@ -786,6 +789,32 @@ impl WorldPhysics {
         pivot_m: [f64; 3],
         axis: [f64; 3],
     ) -> Result<(), &'static str> {
+        self.add_rotating_mesh(
+            vertices,
+            triangles,
+            crate::motion::Mechanism::Outpost,
+            team,
+            pivot_m,
+            axis,
+        )
+    }
+    /// Add an Outpost or Rune rotor with an explicit driver, source pivot in
+    /// metres and dimensionless unit axis. Translation drivers are rejected.
+    pub fn add_rotating_mesh(
+        &mut self,
+        vertices: Vec<[f64; 3]>,
+        triangles: Vec<[u32; 3]>,
+        mechanism: crate::motion::Mechanism,
+        team: crate::Team,
+        pivot_m: [f64; 3],
+        axis: [f64; 3],
+    ) -> Result<(), &'static str> {
+        if !matches!(
+            mechanism,
+            crate::motion::Mechanism::Outpost | crate::motion::Mechanism::Rune
+        ) {
+            return Err("rotating geometry requires an Outpost or Rune driver");
+        }
         if !pivot_m.iter().chain(&axis).all(|v| v.is_finite())
             || (axis.iter().map(|v| v * v).sum::<f64>() - 1.).abs() > 1e-6
         {
@@ -794,7 +823,7 @@ impl WorldPhysics {
         let handle = self.add_static_mesh(vertices, triangles)?;
         self.mechanisms.push((
             handle,
-            crate::motion::Mechanism::Outpost,
+            mechanism,
             team,
             crate::motion::MotionFrame::Rotation { pivot_m, axis },
         ));

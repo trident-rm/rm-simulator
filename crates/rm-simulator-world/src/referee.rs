@@ -501,6 +501,7 @@ impl RefereeSnapshot {
 /// Resolve match decisions before physics reads mechanism motion.
 pub fn mechanism_state(referee: Option<&Referee>, time_ns: u64) -> MechanismState {
     MechanismState {
+        rune_angle_rad: [0.; 2],
         outpost_angle_rad: [0.; 2],
         base_open_fraction: referee.map_or([0.0; 2], |r| {
             std::array::from_fn(|i| {
@@ -521,6 +522,7 @@ pub fn mechanism_state(referee: Option<&Referee>, time_ns: u64) -> MechanismStat
 /// Resolve public match state for presentation clearance queries.
 pub fn mechanism_view(referee: Option<&RefereeSnapshot>, time_ns: u64) -> MechanismState {
     MechanismState {
+        rune_angle_rad: [0.; 2],
         outpost_angle_rad: [0.; 2],
         base_open_fraction: referee.map_or([0.0; 2], |r| {
             std::array::from_fn(|i| r.base_open_fraction(i, time_ns))

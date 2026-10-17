@@ -3,7 +3,7 @@
   "_copyright": "Copyright (c) 2026 hxyulin <hxyulin@proton.me>",
   "storage": "git-lfs",
   "directory": "field-2027",
-  "source": "rm-map-tools reviewed repaired Low plus bind_repaired_game.py",
+  "source": "rm-map-tools reviewed repaired Low plus bind_repaired_game.py and scripts/bind-rmuc2027-rune.py",
   "files": {
     "CAD-NOTICE.md": "844b63428ffac42931603e056a8431bb4cca423a8e366c19df1d54436a214143",
     "arena-static-collision.glb": "e5fd7e282d1834a286fb9fd0e8b8d9744ee14cd42d40adfd590c75b274bf95f2",
@@ -15,12 +15,12 @@
     "equipment/tech-core.glb": "c11559f0f4cc8e963aa99e1b5aa3ff1c6ba607271ebce9246529f91f46141f84",
     "floor-collision.glb": "d9a66ea6a780ddb6e1d41027ea371cdf0ba641aa052f8502940b0fee5d0a3654",
     "floor.glb": "8bdd3ed9cc6ba15de1afd99a1eb6cc305b99ad9ab58956be34f4dd0d1913c137",
-    "manifest.json": "2927713ce3a949573e1ff549ff4308f544446e843714ac6ddbd7f7e36a8c3f14",
+    "manifest.json": "8a92e1d6721be2e214cd48251fb6d9b2730c16f0df7116407dbfe819f9972586",
     "outpost-collision.glb": "3fb58f703526eea28337f70b23b299b4fae4b90273b2c570384371ff2616c068",
     "outpost.glb": "b23ccfc7bd42c54a5e8515775ef9e821548e977fb05d720147ccd4f5decadcb7",
-    "rmuc2027-bindings.json": "2ada9864a07005d076b852fa60c1757e074c5e7c387a1614d2a6736299ca0841",
-    "rune-collision.glb": "afc3b357d1bdb3f52d761f567ebef00a9bb8691c28f4ca77ee3f9b0c34d98413",
-    "rune.glb": "3ebff72054fb2b9d235fbdda2f309810eedfe02ba24888301235e5282e228d82",
+    "rmuc2027-bindings.json": "a6b7e958cae2646aa8698bb0a1143948319992d326a6475c7099d2327cff54e4",
+    "rune-collision.glb": "cb16aa644f025f93eaafa63aa9d816281e5a1246c0db7c6ef440afd6efb1fb62",
+    "rune.glb": "ad46098035ad7340a7caa6edad4b616205a3e665a412cafbb1c88d1397acdd43",
     "runtime-build.json": "c9ed70fa15cecb27bdb795ddfbecc1a5c56fe1566e24fa21bc0f7bbb4bc470bb",
     "structure-binding-build.json": "3b63c55b004710bc2b999d46a261ec6809e9ab9ca810187cdd426245101626d1"
   }

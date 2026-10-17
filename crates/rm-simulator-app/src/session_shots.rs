@@ -498,6 +498,8 @@ mod tests {
                 zones: vec![],
                 supply_zones: vec![],
                 vantage_zones: vec![],
+                terrain_zones: vec![],
+                runes: vec![],
                 rotor_direction: 1,
             },
         });

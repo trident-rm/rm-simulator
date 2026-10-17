@@ -494,6 +494,16 @@ second, only rings 7–10. The manual names four states, including activation
 failure; do not assume the existing three-state representation expresses every
 2027 visual transition. It still does not define the simulator's hit-flash time.
 
+Native Rune implementation policy: first-hit and optional-hit deadlines are
+inclusive; the overall 20 s attempt endpoint is exclusive. If the fifth first
+hit has landed when the attempt ends, it finalizes a five-group success without
+waiting past that endpoint for its bonus. At 180 s, an unfinished Small attempt
+ends without refund; an already awarded Small benefit keeps its original expiry.
+Motion has zero motor lag; group transitions use zero blackout and failed
+progress uses a one-nanosecond state marker. Ring radius rounds to nearest
+millimetre before inward-inclusive 15 mm bands. These tie/rounding policies make
+unspecified boundaries deterministic and are separate from manual constants.
+
 UC §§5.6.4.1–5.6.4.9 define a 2 s activation expiry delay and distinguish
 continuous field, timed terrain and non-field benefits. Terrain benefits clear
 on death; non-field sources survive a recipient's death and apply to a newly

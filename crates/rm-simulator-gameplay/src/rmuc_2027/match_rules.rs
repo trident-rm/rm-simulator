@@ -73,6 +73,8 @@ pub struct Robot {
     pub fortress_ns: [u64; 2],
     /// Last time each Fortress timer was active; controls the three-second hold.
     pub fortress_last_ns: [Option<u64>; 2],
+    /// Raw traversal observations, pending sequences and timed terrain benefits.
+    pub terrain: super::terrain::Terrain,
 }
 /// Immutable winning comparison, UC §5.8.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,6 +134,8 @@ pub struct Match {
     pub level_caps: [u8; 2],
     /// Adaptive-armor launch/hit observations; all damage still uses default armor.
     pub adaptive: super::adaptive::Adaptive,
+    /// Native team Rune authority, Red then Blue, independent of the 2026 engine.
+    pub runes: [super::rune::Rune; 2],
     /// Robots in ascending id order, excluding departed players.
     pub robots: Vec<Robot>,
     /// Central-highland mutual exclusion latch by original field side.
@@ -176,6 +180,7 @@ impl Match {
             purchased_rounds: [0; 2],
             level_caps: [5; 2],
             adaptive: super::adaptive::Adaptive::default(),
+            runes: std::array::from_fn(|i| super::rune::Rune::new(direction, i as u64 + 1)),
             robots: vec![],
             highland_team: [None; 2],
             fortress_robot: [None; 2],
@@ -204,17 +209,22 @@ impl Match {
             expires_ns: [None; 8],
             fortress_ns: [0; 2],
             fortress_last_ns: [None; 2],
+            terrain: super::terrain::Terrain::default(),
         });
         self.robots.sort_by_key(|r| r.id);
     }
     /// Start a new countdown; clear stale RFID, progress, damage and results.
     pub fn start(&mut self, direction: i8) {
+        let rune_seeds = self.runes.each_ref().map(|r| r.seed);
         let robots = self
             .robots
             .iter()
             .map(|r| (r.id, r.team, r.role, r.combat.chassis, r.combat.launcher))
             .collect::<Vec<_>>();
         *self = Self::new(direction);
+        for (r, seed) in self.runes.iter_mut().zip(rune_seeds) {
+            r.seed = seed;
+        }
         for (id, team, role, chassis, launcher) in robots {
             self.add_robot(id, team, role);
             let robot = self.robots.iter_mut().find(|r| r.id == id).unwrap();
@@ -231,11 +241,13 @@ impl Match {
         Control::restore(self.control.snapshot().clone())
             .map_err(|_| "invalid 2027 control state")?;
         if (self.phase == Phase::Running && self.elapsed_ns() >= ROUND_NS)
+            || self.runes.iter().any(|r| !r.validate(self.elapsed_ns()))
             || !self.adaptive.validate(self.elapsed_ns())
             || self.purchased_rounds.iter().any(|&v| v > 1000)
             || self.level_caps.iter().any(|v| ![5, 7, 10].contains(v))
             || self.robots.iter().any(|r| {
                 !r.combat.validate(self.elapsed_ns())
+                    || !r.terrain.validate(self.elapsed_ns())
                     || r.combat.level > self.level_caps[r.team.index()]
                     || r.max_hp != r.stats(self.elapsed_ns()).max_hp
             })
@@ -424,6 +436,9 @@ impl Match {
             if self.countdown_ns == 0 {
                 self.phase = Phase::Running;
                 self.gold = [800; 2];
+                for rune in &mut self.runes {
+                    rune.settle(0);
+                }
             }
         }
         while duration > 0 && self.phase == Phase::Running {
@@ -434,6 +449,9 @@ impl Match {
                 .min(ROUND_NS - now)
                 .min(SCORE_PERIOD_NS - now % SCORE_PERIOD_NS);
             dt = dt.min(self.combat_boundary_ns());
+            for rune in &self.runes {
+                dt = dt.min(rune.boundary(now));
+            }
             // A capture changes Outpost/Fortress eligibility immediately, even
             // between score or combat settlements (UC Table 5-21, §5.6.4.9).
             for territory in &self.control.snapshot().territories {
@@ -481,7 +499,17 @@ impl Match {
             }
             let events = self.control.advance_ns(dt);
             self.apply_events(events);
+            let at = self.elapsed_ns();
+            for side in Team::BOTH {
+                if self.runes[side.index()].settle(at) {
+                    self.rune_big_experience(side);
+                }
+            }
             self.advance_combat(dt);
+            let now = self.elapsed_ns();
+            for robot in &mut self.robots {
+                robot.terrain.expire(now);
+            }
             // Publish expiry at the endpoint itself, including when the caller
             // pauses or checkpoints without making another advance.
             let now = self.elapsed_ns();
@@ -517,6 +545,40 @@ impl Match {
             }
         }
     }
+    /// Spend a native team Rune opportunity in a running round (§5.6.3).
+    pub fn activate_rune(&mut self, team: Team) -> std::result::Result<(), &'static str> {
+        if self.phase != Phase::Running {
+            return Err("Rune activation requires a running round");
+        }
+        self.runes[team.index()].activate(self.elapsed_ns())
+    }
+    /// Resolve an eligible physical Rune strike at current running time. Benefits belong
+    /// to the face's team regardless of which ground robot fired (§5.6.3).
+    pub fn hit_rune(&mut self, team: Team, blade: u8, ring: u8) -> super::rune::Hit {
+        if self.phase != Phase::Running {
+            return super::rune::Hit::Ignored;
+        }
+        let before = self.runes[team.index()].big_successes;
+        let result = self.runes[team.index()].hit(self.elapsed_ns(), blade, ring);
+        if self.runes[team.index()].big_successes > before {
+            self.rune_big_experience(team);
+        }
+        result
+    }
+    fn rune_big_experience(&mut self, team: Team) {
+        let ids = self
+            .robots
+            .iter()
+            .filter(|r| r.team == team && r.hp > 0 && r.role == GroundRole::Infantry)
+            .map(|r| r.id)
+            .collect::<Vec<_>>();
+        if !ids.is_empty() {
+            let xp = (7500 + ids.len() as u64 / 2) / ids.len() as u64;
+            for id in ids {
+                self.grant_experience(id, xp);
+            }
+        }
+    }
     /// Current activation flags after eligibility and central-highland arbitration.
     pub fn activations(&mut self) -> Vec<(u32, [bool; 8])> {
         let resolved = self.resolve();
@@ -539,21 +601,33 @@ impl Match {
             return 0;
         }
         let attack = shooter.and_then(|id| self.robots.iter().find(|r| r.id == id).map(|r| r.team));
+        let attack_pct = attack
+            .and_then(|t| self.runes[t.index()].buff.as_ref())
+            .map_or(100, |b| b.attack_pct);
+        let structure_damage = |team: Team| {
+            let defense = self.runes[team.index()]
+                .buff
+                .as_ref()
+                .map_or(0, |b| b.defense_pct);
+            (20 * attack_pct * (100 - defense) + 5000) / 10000
+        };
         let (team, applied) = match target {
             crate::Target::Base(team) => {
                 if self.control.base_protected(team) {
                     return 0;
                 }
+                let damage = structure_damage(team);
                 let hp = &mut self.base_hp[team.index()];
-                let d = (*hp).min(20);
+                let d = (*hp).min(damage);
                 *hp -= d;
                 self.base_lowest_hp[team.index()] = self.base_lowest_hp[team.index()].min(*hp);
                 (team, d)
             }
             crate::Target::Outpost(side) => {
                 let team = self.control.snapshot().outposts[side.index()].owner;
+                let damage = structure_damage(team);
                 let hp = &mut self.outpost_hp[side.index()];
-                let d = (*hp).min(20);
+                let d = (*hp).min(damage);
                 *hp -= d;
                 if *hp == 0 && d > 0 {
                     self.rotor_stopped_ns[side.index()].get_or_insert(self.elapsed_ns());
@@ -568,7 +642,7 @@ impl Match {
                     return 0;
                 };
                 let team = r.team;
-                let d = self.damage_robot(id, 20, false);
+                let d = self.damage_robot(id, (20 * attack_pct + 50) / 100, false);
                 (team, d)
             }
         };

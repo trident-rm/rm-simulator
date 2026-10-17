@@ -577,6 +577,24 @@ impl Field {
             .map_err(FieldError::Mesh)
     }
 
+    /// Register an explicitly driven Outpost/Rune rotor from world rest-frame
+    /// triangles, a pivot in metres and a dimensionless unit source axis.
+    pub fn add_rotating_mesh(
+        &mut self,
+        vertices_m: Vec<[f64; 3]>,
+        triangles: Vec<[u32; 3]>,
+        mechanism: referee::Mechanism,
+        team: Team,
+        pivot_m: [f64; 3],
+        axis: [f64; 3],
+    ) -> Result<(), FieldError> {
+        self.physics
+            .add_rotating_mesh(vertices_m, triangles, mechanism, team, pivot_m, axis)
+            .map_err(FieldError::Mesh)?;
+        self.sync_mechanisms();
+        Ok(())
+    }
+
     /// The fixed collision geometry the physics actually holds (meshes
     /// and boxes; not the catch floor), as one triangle soup in
     /// world FLU metres, for debugging views.
@@ -1009,6 +1027,15 @@ impl Field {
             state.config.rotor_direction = if direction < 0 { -1 } else { 1 };
         }
     }
+    /// Host-provided random target/motion seed for the next native Rune round.
+    /// The generator is persisted in checkpoints and never rerolled by restore.
+    pub fn set_rmuc_2027_rune_seed(&mut self, seed: u64) {
+        if let Some(state) = &mut self.rmuc_2027 {
+            for (i, rune) in state.game.runes.iter_mut().enumerate() {
+                rune.seed = seed.wrapping_add(i as u64);
+            }
+        }
+    }
     /// Forward an operator command to the referee, stamped with the field's
     /// own clock. Base and outpost HP overrides are applied to the physical
     /// objects here rather than inside the referee; `StartMatch` and
@@ -1055,6 +1082,17 @@ impl Field {
                     for r in robots {
                         state.game.add_robot(r.id, r.team, r.role);
                     }
+                }
+                RefereeCommand::ActivateRune { team } => {
+                    if state.config.runes.len() != 2 {
+                        return Err(FieldError::Referee(
+                            "2027 Rune source geometry is not bound",
+                        ));
+                    }
+                    state
+                        .game
+                        .activate_rune(referee::game_team(team))
+                        .map_err(FieldError::Referee)?;
                 }
                 RefereeCommand::FinishMatch => {
                     if !matches!(state.game.phase, Phase::Countdown | Phase::Running) {
@@ -1420,6 +1458,11 @@ impl Field {
             let mut state = referee::mechanism_state(self.referee.as_ref(), self.time_ns());
             if let Some(r) = &self.rmuc_2027 {
                 state.outpost_angle_rad = Team::BOTH.map(|t| r.angle_rad(t));
+                state.rune_angle_rad = r
+                    .game
+                    .runes
+                    .each_ref()
+                    .map(|rune| rune.angle_at(r.game.elapsed_ns()));
                 state.base_open_fraction = r.game.base_open.map(|v| if v { 1. } else { 0. });
             }
             self.physics.sync_mechanisms(&state);

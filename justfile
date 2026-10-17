@@ -71,9 +71,11 @@ control-test:
     cargo test -p rm-simulator-gameplay --locked --no-default-features --features season-2027 --lib rmuc_2027::
     cargo test -p rm-simulator-gameplay --locked --no-default-features --features season-2027 --test control_2027
     cargo test -p rm-simulator-gameplay --locked --no-default-features --features season-2027 --test field_buffs_2027
+    cargo test -p rm-simulator-gameplay --locked --no-default-features --features season-2027 --test terrain_2027 --test rune_2027
     cargo test -p rm-simulator-world --locked --no-default-features --features season-2027 --lib rmuc_2027::tests
     python3 -m unittest discover -s scripts/tests -p test_console.py -v
     python3 -m unittest discover -s scripts/tests -p test_control_field_scenarios.py -v
+    python3 -m unittest discover -s scripts/tests -p test_terrain_rune_scenarios.py -v
 
 # A complete headless gameplay scenario.
 gameplay-demo:

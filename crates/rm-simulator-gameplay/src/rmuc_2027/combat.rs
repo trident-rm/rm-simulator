@@ -84,6 +84,8 @@ pub struct Combat {
     pub sentry_collected_minutes: u32,
     /// Fractional healing carry, in 1/200,000,000 HP, rounded cumulatively.
     pub healing_carry: i64,
+    /// Half-tenth of a heat unit carried by fractional cooling; always 0 or 1.
+    pub cooling_half_carry: u8,
 }
 impl Default for Combat {
     fn default() -> Self {
@@ -114,6 +116,7 @@ impl Default for Combat {
             deliveries: vec![],
             sentry_collected_minutes: 0,
             healing_carry: 0,
+            cooling_half_carry: 0,
         }
     }
 }
@@ -140,6 +143,7 @@ impl Combat {
     /// Validate finite-range integer state before authoritative restore.
     pub fn validate(&self, now_ns: u64) -> bool {
         (1..=10).contains(&self.level)
+            && self.cooling_half_carry <= 1
             && u64::from(self.sentry_collected_minutes) <= now_ns / 60_000_000_000
             && self.deliveries.iter().all(|d| d.rounds <= 1000)
             && self.heat_tenths <= 1_000_000

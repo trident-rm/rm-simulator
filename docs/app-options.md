@@ -272,7 +272,7 @@ an NVIDIA laptop GPU; Mac performance still needs separate measurements.
 | F7 | Step the world one manual step (three 128 Hz ticks, 23.4375 ms) while paused (local world or referee) |
 | O / I | Buy one 17 mm / 42 mm round using team gold, at default prices of 1 / 10 gold during a running match |
 | F5 | Start the match (or reset a finished one) (local world or referee) |
-| F | Activate the rune for your team when it has an opportunity (local world or referee) |
+| F | Activate your team’s available Rune opportunity (2027 Infantry/Sentry pilot or referee; 2026 referee) |
 | Tab (hold) | Show team robot status |
 | P | Toggle settings; 1 toggles reticle, 2 toggles minimap, - / = adjusts mouse sensitivity |
 | M | Toggle the large team map; click it to place a marker, A / B / I pick attack / defend / alert and other letters a custom marker |

@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Add native RMUC 2027 Road, Highland and Tunnel traversal sequences, timed
+  defense/cooling, first-benefit XP, cooldowns and live RFID diagnostics.
+  Add the native Small/Big Rune authority, ring scoring, opportunities, motion
+  and team benefits. Bind source CAD arms and collision without remeshing;
+  add physical full-field console scenarios and checkpoint state (protocol 56).
+
 - Apply native 2027 Base/Vantage/Highland defense and Fortress defense, cooling,
   reserve ammunition and enemy vulnerability. Preserve historical Base HP loss
   and reserve spending through checkpoints (protocol 55). Add referee-only

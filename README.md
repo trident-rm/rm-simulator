@@ -210,6 +210,12 @@ The example advances 16 simulation milliseconds per rendered frame. Production
 applications supply their own pacing. See [physics reuse](docs/physics-reuse.md)
 and the [refactor contract](docs/architecture-refactor.md).
 
+The native RMUC 2027 subset includes terrain traversal buffs and Small/Big Rune
+activation, rings, motion and team benefits. Use `just control-test` for its
+headless rule tests or the [physical console scenarios](docs/console.md#native-terrain-and-rune-scenarios)
+for the loaded field. See [2027 coverage](docs/rmuc2027-field.md#native-terrain-traversal-and-rune-2026-10-18)
+for approximations and remaining equipment.
+
 Coordinates: the world uses metres in forward/left/up (FLU) with wxyz quaternions.
 The renderer converts to Bevy's right/up/back frame at the scene boundary.
 Crate ownership, tick order, restore and ECS boundaries are documented in

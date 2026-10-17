@@ -19,6 +19,10 @@
 pub mod adaptive;
 pub mod combat;
 pub mod match_rules;
+/// Native 2027 Rune activation, motion, rings and non-field benefits.
+pub mod rune;
+/// Native physical terrain-card sequences and timed benefits (§5.6.4.5).
+pub mod terrain;
 
 use crate::Team;
 use serde::{Deserialize, Serialize};

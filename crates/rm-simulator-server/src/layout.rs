@@ -448,9 +448,10 @@ pub fn add_terrain(field: &mut Field, terrain: &Terrain) -> anyhow::Result<()> {
                     offsets_m,
                 )?,
             rm_simulator_world::referee::MotionFrame::Rotation { pivot_m, axis } => field
-                .add_rotor_mesh(
+                .add_rotating_mesh(
                     part.mesh.vertices_m.clone(),
                     part.mesh.triangles.clone(),
+                    part.mechanism,
                     part.team,
                     pivot_m,
                     axis,

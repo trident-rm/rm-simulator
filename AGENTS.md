@@ -135,13 +135,15 @@ See `docs/field-package.md` for composition, collision contracts and deployment.
 The RMUC 2027 sandbox displays the complete equipment roster through
 `server::roster`; only Infantry 3/4 and the manual Sentry have practice models.
 `server::zone_catalog` contains diagram footprints. Bound RMUC 2027 V1.0.0
-packages use its control-point subset as approximate antenna polygons; terrain,
-supply and other unsupported areas remain inspection-only. Never feed these
+packages use approximate antenna polygons for control, supply, Vantage and
+terrain traversal; other unsupported areas remain inspection-only. Never feed these
 into the 2026 referee. `gameplay::rmuc_2027::match_rules` owns the live 2027
 combat/control subset, including native heat, allowance, healing, respawn and
 combat XP and continuous Base/Vantage/Highland/Fortress field benefits. Assembly
-progression, terrain traversal buffs and reinforcement effects
-remain unavailable. Adaptive observations/statistics live in `gameplay::rmuc_2027::adaptive`;
+progression and reinforcement effects remain unavailable. Native Road/Highland/
+Tunnel traversal and Small/Big Rune effects are supported. Source Rune arm
+subtrees and detector banks are bound by `scripts/bind-rmuc2027-rune.py` without
+remeshing. Adaptive observations/statistics live in `gameplay::rmuc_2027::adaptive`;
 Figure 5-1's inclusive permanent heat-lock boundary is the adopted user policy.
 `world::rmuc_2027` adapts contacts and source detector
 geometry and preserves the entire authority in `FieldRestore`. Source-body

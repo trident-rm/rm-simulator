@@ -937,6 +937,31 @@ impl Owner {
                     _ if !self.control.ready.load(Ordering::Acquire) => {
                         Some("host is still loading")
                     }
+                    Command::ActivateRune { team: requested }
+                        if Some(requested) != team
+                            || own_chassis.is_none()
+                            || !matches!(
+                                peer.info.robot,
+                                Some(
+                                    crate::protocol::Robot::Infantry3
+                                        | crate::protocol::Robot::Infantry4
+                                        | crate::protocol::Robot::Infantry5
+                                        | crate::protocol::Robot::Sentry
+                                )
+                            ) =>
+                    {
+                        Some("only an own-team Infantry or Sentry pilot activates its Rune")
+                    }
+                    Command::ActivateRune { .. }
+                        if !self.simulation.field().rmuc_2027().is_some_and(|s| {
+                            s.game
+                                .robots
+                                .iter()
+                                .any(|r| Some(r.id) == own_chassis && r.hp > 0 && r.online)
+                        }) =>
+                    {
+                        Some("only a live connected native pilot activates its Rune")
+                    }
                     Command::PlaceChassis { .. } if !peer.owner => {
                         Some("only the embedded owner places a chassis")
                     }
@@ -1107,6 +1132,112 @@ mod tests {
     }
     fn next(messages: &crate::net::outbox::Receiver) -> Arc<Outbound> {
         messages.recv().unwrap()
+    }
+
+    #[test]
+    #[cfg(feature = "season-2027")]
+    fn native_rune_activation_checks_team_seat_and_living_pilot() {
+        use rm_simulator_world::rmuc_2027::{Config, Detector, RuneGeometry, Tower};
+        use rm_simulator_world::{Pose, RefereeCommand};
+        let detector = Detector {
+            pose: Pose::at([30., 0., 2.]),
+            half_m: [0.04; 2],
+        };
+        let native = Config {
+            bases: [vec![detector.clone()], vec![detector.clone()]],
+            outposts: std::array::from_fn(|_| Tower {
+                pivot_m: [30., 0., 2.],
+                axis: [0., 0., 1.],
+                detectors: vec![detector.clone(); 3],
+            }),
+            zones: vec![],
+            supply_zones: vec![],
+            vantage_zones: vec![],
+            terrain_zones: vec![],
+            runes: vec![
+                RuneGeometry {
+                    pivot_m: [30., 0., 2.],
+                    axis: [0., 0., 1.],
+                    targets: [Pose::at([30., 0., 2.]); 5]
+                };
+                2
+            ],
+            rotor_direction: 1,
+        };
+        let field = Field::new(&FieldConfig {
+            rmuc_2027: Some(native),
+            runes: vec![],
+            outposts: vec![],
+            ..Default::default()
+        })
+        .unwrap();
+        let host = Host::new(
+            Simulation::new(field, true).with_spawner(ChassisSpawner {
+                config: ChassisConfig::default(),
+                terrain: None,
+            }),
+            true,
+        )
+        .unwrap();
+        let handle = host.handle();
+        let (pilot, messages) = peer(&handle, Role::Pilot);
+        for _ in 0..3 {
+            next(&messages);
+        }
+        let team = pilot.team.unwrap();
+        handle
+            .apply(&Command::Referee(RefereeCommand::StartMatch))
+            .unwrap();
+        handle.apply(&Command::Step { ticks: 640 }).unwrap();
+        handle
+            .message(
+                pilot.client_id,
+                ClientMessage::Command(Command::ActivateRune { team: team.other() }),
+            )
+            .unwrap();
+        assert!(
+            matches!(next(&messages).message(), ServerMessage::Rejected {reason} if reason.contains("own-team"))
+        );
+        handle
+            .message(
+                pilot.client_id,
+                ClientMessage::Command(Command::ActivateRune { team }),
+            )
+            .unwrap();
+        settle(&handle);
+        let state = handle.snapshot().unwrap();
+        assert_eq!(
+            state.rmuc_2027.as_ref().unwrap().game.runes[team.index()].opportunities,
+            [0, 0]
+        );
+        handle
+            .apply(&Command::Referee(RefereeCommand::SetRobotHp {
+                robot: pilot.chassis.unwrap().id,
+                hp: 0,
+            }))
+            .unwrap();
+        handle
+            .message(
+                pilot.client_id,
+                ClientMessage::Command(Command::ActivateRune { team }),
+            )
+            .unwrap();
+        assert!(
+            matches!(next(&messages).message(), ServerMessage::Rejected {reason} if reason.contains("live connected"))
+        );
+        let (spectator, spectator_messages) = peer(&handle, Role::Spectator);
+        for _ in 0..3 {
+            next(&spectator_messages);
+        }
+        handle
+            .message(
+                spectator.client_id,
+                ClientMessage::Command(Command::ActivateRune { team }),
+            )
+            .unwrap();
+        assert!(
+            matches!(next(&spectator_messages).message(), ServerMessage::Rejected {reason} if reason.contains("own-team"))
+        );
     }
 
     #[test]

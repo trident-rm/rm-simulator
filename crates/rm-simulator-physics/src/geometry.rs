@@ -93,7 +93,10 @@ impl StaticGeometry {
             .map(|(index, kind, team, offsets)| {
                 let (mut pose, shape) = self.shapes[*index].clone();
                 pose.translation = Vector::ZERO;
-                if *kind == crate::motion::Mechanism::Outpost {
+                if matches!(
+                    kind,
+                    crate::motion::Mechanism::Outpost | crate::motion::Mechanism::Rune
+                ) {
                     pose = Default::default();
                 }
                 MovingGeometry {

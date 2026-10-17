@@ -73,8 +73,32 @@ pub struct Config {
     /// Own vantage footprints for zone exchanges; point is ignored.
     #[serde(default)]
     pub vantage_zones: Vec<Zone>,
+    /// Physical traversal cards; their zone's point field is unused geometry metadata.
+    #[serde(default)]
+    pub terrain_zones: Vec<TerrainZone>,
+    /// Native Rune source geometry in Red/Blue order; empty for earlier unbound packages.
+    #[serde(default)]
+    pub runes: Vec<RuneGeometry>,
     /// Shared seeded direction for both rotors, either -1 or 1.
     pub rotor_direction: i8,
+}
+/// One native physical traversal card and its fitted antenna footprint.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TerrainZone {
+    /// Exact native side/course/pad identity, independent of control activations.
+    pub card: crate::gameplay::rmuc_2027::terrain::Card,
+    /// Reviewed polygon/height geometry; point does not identify the traversal.
+    pub zone: Zone,
+}
+/// Source-fitted Rune target disks and shared physical shaft frame, by face team.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RuneGeometry {
+    /// Shaft pivot in world FLU metres; any point along the common axis is equivalent.
+    pub pivot_m: [f64; 3],
+    /// Shared unit world axis, the same physical sign for both opposing faces.
+    pub axis: [f64; 3],
+    /// Five source-fitted detector disk poses at rest; +x is outward.
+    pub targets: [Pose; 5],
 }
 impl Config {
     /// Validate finite geometry, unit rotations, detector count and height bands.
@@ -114,6 +138,7 @@ impl Config {
             .iter()
             .chain(&self.supply_zones)
             .chain(&self.vantage_zones)
+            .chain(self.terrain_zones.iter().map(|z| &z.zone))
             .any(|z| {
                 z.polygon_m.len() < 3
                     || !z.floor_m.is_finite()
@@ -122,6 +147,30 @@ impl Config {
             })
         {
             return Err("invalid 2027 RFID zone");
+        }
+        if self.terrain_zones.iter().any(|z| {
+            !z.card.valid()
+                || z.card.course.is_none()
+                || z.card.side != crate::referee::game_team(z.zone.side)
+        }) {
+            return Err("invalid 2027 traversal identity");
+        }
+        if !self.runes.is_empty()
+            && (self.runes.len() != 2
+                || self.runes.iter().any(|r| {
+                    r.pivot_m.iter().chain(&r.axis).any(|v| !v.is_finite())
+                        || (r.axis.iter().map(|v| v * v).sum::<f64>() - 1.).abs() > 1e-6
+                        || r.targets.iter().any(|p| {
+                            p.translation_m
+                                .iter()
+                                .chain(&p.rotation_wxyz)
+                                .any(|v| !v.is_finite())
+                                || (p.rotation_wxyz.iter().map(|v| v * v).sum::<f64>() - 1.).abs()
+                                    > 1e-6
+                        })
+                }))
+        {
+            return Err("invalid native Rune geometry");
         }
         Ok(())
     }
@@ -139,6 +188,17 @@ impl State {
     pub(crate) fn faces(&self, faces: &mut Vec<TargetFace>) {
         for side in Team::BOTH {
             let s = side.index();
+            if let Some(rune) = self.config.runes.get(s) {
+                for (blade, pose) in rune.targets.iter().enumerate() {
+                    faces.push(TargetFace {
+                        target: ArmorTarget::Rune {
+                            rune: s as u32,
+                            blade: blade as u32,
+                        },
+                        pose: self.rune_pose_at(side, *pose, self.game.elapsed_ns()),
+                    });
+                }
+            }
             for (i, d) in self.config.bases[s].iter().enumerate() {
                 faces.push(TargetFace {
                     target: ArmorTarget::Base {
@@ -158,6 +218,14 @@ impl State {
                 });
             }
         }
+    }
+    /// Rotate one source Rune target at an explicit running-round timestamp.
+    pub fn rune_pose_at(&self, side: Team, pose: Pose, round_ns: u64) -> Pose {
+        let Some(r) = self.config.runes.get(side.index()) else {
+            return pose;
+        };
+        let angle = self.game.runes[side.index()].angle_at(round_ns);
+        Self::rotate_source(pose, r.pivot_m, r.axis, angle)
     }
     /// Rotor angle in radians, with five-second spin-up and a permanent first stop.
     pub fn angle_rad(&self, side: Team) -> f64 {
@@ -181,6 +249,9 @@ impl State {
         let angle = self.angle_at(side, round_ns);
         let pivot = self.config.outposts[side.index()].pivot_m;
         let axis = self.config.outposts[side.index()].axis;
+        Self::rotate_source(pose, pivot, axis, angle)
+    }
+    fn rotate_source(pose: Pose, pivot: [f64; 3], axis: [f64; 3], angle: f64) -> Pose {
         let half = angle / 2.;
         let q = [
             half.cos(),
@@ -220,6 +291,7 @@ impl State {
     }
     pub(crate) fn disabled(&self, target: ArmorTarget) -> bool {
         match target {
+            ArmorTarget::Rune { rune, .. } => self.config.runes.get(rune as usize).is_none(),
             ArmorTarget::Base { base, .. } => self
                 .game
                 .base_hp
@@ -236,7 +308,6 @@ impl State {
                 .iter()
                 .find(|r| r.id == chassis)
                 .is_none_or(|r| r.hp == 0),
-            _ => true,
         }
     }
 }
@@ -255,6 +326,57 @@ impl crate::Field {
         let Some(state) = &mut self.rmuc_2027 else {
             return;
         };
+        // Sequences consume physical entry edges, not delayed buff activations.
+        for r in state.game.robots.clone() {
+            use crate::gameplay::rmuc_2027::terrain::{Card, Course};
+            let p = self.physics.chassis_position_m(r.id);
+            let mut cards = state
+                .config
+                .terrain_zones
+                .iter()
+                .filter(|z| p.is_some_and(|p| z.zone.contains(p)))
+                .map(|z| z.card)
+                .collect::<Vec<_>>();
+            for z in &state.config.zones {
+                // Higher Highland cards also provide connected Highland/Outpost
+                // detection. Coalesce those semantic roles into one physical card.
+                let shared = matches!(z.point, Point::CentralHighland | Point::Outpost)
+                    && cards.iter().any(|c| {
+                        c.side == crate::referee::game_team(z.side)
+                            && c.course == Some(Course::Highland)
+                            && c.pad == 1
+                    });
+                if !shared && p.is_some_and(|p| z.contains(p)) {
+                    cards.push(Card {
+                        side: crate::referee::game_team(z.side),
+                        course: None,
+                        index: match z.point {
+                            Point::Base => 0,
+                            Point::Fortress => 1,
+                            Point::Outpost => 2,
+                            Point::CentralHighland => 3,
+                        },
+                        pad: 0,
+                    });
+                }
+            }
+            for (index, zones) in [
+                (4, &state.config.supply_zones),
+                (5, &state.config.vantage_zones),
+            ] {
+                for z in zones {
+                    if p.is_some_and(|p| z.contains(p)) {
+                        cards.push(Card {
+                            side: crate::referee::game_team(z.side),
+                            course: None,
+                            index,
+                            pad: 0,
+                        });
+                    }
+                }
+            }
+            state.game.observe_terrain(r.id, &cards);
+        }
         let observations = state
             .game
             .robots
@@ -305,6 +427,7 @@ impl crate::FieldSnapshot {
                     0
                 };
             state.outpost_angle_rad = Team::BOTH.map(|side| r.angle_at(side, round_ns));
+            state.rune_angle_rad = r.game.runes.each_ref().map(|rune| rune.angle_at(round_ns));
             state.base_open_fraction = r.game.base_open.map(|v| if v { 1. } else { 0. });
         }
         state
@@ -339,6 +462,8 @@ mod tests {
             ],
             supply_zones: vec![],
             vantage_zones: vec![],
+            terrain_zones: vec![],
+            runes: vec![],
             zones: vec![Zone {
                 side: Team::Blue,
                 point: Point::CentralHighland,
@@ -365,6 +490,111 @@ mod tests {
         assert!(!zone.contains([0., 0., -0.01]));
         assert!(!zone.contains([0., 0., 0.46]));
         assert!(!zone.contains([1.1, 0., 0.15]));
+    }
+    #[test]
+    fn native_rune_collision_uses_rune_driver_and_survives_restore() {
+        let mut f = field();
+        let vertices = vec![[21., 0., 2.], [21., 0.1, 2.], [21., 0., 2.1]];
+        let pivot = [20., 0., 2.];
+        f.add_rotating_mesh(
+            vertices.clone(),
+            vec![[0, 1, 2]],
+            crate::referee::Mechanism::Rune,
+            Team::Red,
+            pivot,
+            [0., 0., 1.],
+        )
+        .unwrap();
+        f.referee_command(RefereeCommand::StartMatch).unwrap();
+        f.step(640 + 128).unwrap();
+        let angle = f.rmuc_2027().unwrap().game.runes[0].angle_at(1_000_000_000);
+        let capture = |f: &Field| {
+            f.dynamic_geometry_snapshot()
+                .into_triangles()
+                .0
+                .into_iter()
+                .filter(|p| p[0] > 19.)
+                .collect::<Vec<_>>()
+        };
+        let actual = capture(&f);
+        for (original, moved) in vertices.iter().zip(&actual) {
+            let x = original[0] - pivot[0];
+            let y = original[1] - pivot[1];
+            let expected = [
+                pivot[0] + x * angle.cos() - y * angle.sin(),
+                pivot[1] + x * angle.sin() + y * angle.cos(),
+                original[2],
+            ];
+            for i in 0..3 {
+                assert!(
+                    (moved[i] - expected[i]).abs() < 1e-10,
+                    "actual={actual:?} expected={expected:?} angle={angle}"
+                );
+            }
+        }
+        let mut restored =
+            Field::restore(&f.snapshot(), &f.static_geometry_snapshot(), 0.).unwrap();
+        assert_eq!(actual, capture(&restored));
+        f.step(128).unwrap();
+        restored.step(128).unwrap();
+        assert_eq!(capture(&f), capture(&restored));
+    }
+
+    #[test]
+    fn native_rune_physical_disk_scores_and_restores_without_a_legacy_referee() {
+        let mut config = config();
+        config.runes = Team::BOTH
+            .map(|side| {
+                let x = if side == Team::Red { 5. } else { -5. };
+                RuneGeometry {
+                    pivot_m: [x, 0., 2.],
+                    axis: [1., 0., 0.],
+                    targets: std::array::from_fn(|blade| {
+                        let angle = blade as f64 * std::f64::consts::TAU / 5.;
+                        Pose::yawed(
+                            [x, 0.7 * angle.sin(), 2. + 0.7 * angle.cos()],
+                            if side == Team::Red {
+                                0.
+                            } else {
+                                std::f64::consts::PI
+                            },
+                        )
+                    }),
+                }
+            })
+            .to_vec();
+        let mut f = Field::new(&FieldConfig {
+            rmuc_2027: Some(config),
+            runes: vec![],
+            outposts: vec![],
+            ..Default::default()
+        })
+        .unwrap();
+        f.referee_command(RefereeCommand::StartMatch).unwrap();
+        f.step(640).unwrap();
+        f.referee_command(RefereeCommand::ActivateRune { team: Team::Red })
+            .unwrap();
+        let native = f.rmuc_2027().unwrap();
+        let blade = native.game.runes[0]
+            .targets
+            .iter()
+            .position(|&v| v)
+            .unwrap();
+        let p = native.config.runes[0].targets[blade].translation_m;
+        f.fire(
+            Pose::yawed([p[0] + 0.2, p[1], p[2]], std::f64::consts::PI),
+            Shot::at_limit(Caliber::Mm17),
+            None,
+        )
+        .unwrap();
+        f.step(8).unwrap();
+        assert_eq!(f.rmuc_2027().unwrap().game.runes[0].groups, 1);
+        let checkpoint = f.snapshot();
+        assert!(checkpoint.runes.is_empty() && checkpoint.referee.is_none());
+        let mut restored = Field::restore(&checkpoint, &f.static_geometry_snapshot(), 0.).unwrap();
+        f.step(512).unwrap();
+        restored.step(512).unwrap();
+        assert_eq!(f.rmuc_2027(), restored.rmuc_2027());
     }
     #[test]
     fn real_chassis_rfid_capture_and_restore_keep_hidden_timers() {

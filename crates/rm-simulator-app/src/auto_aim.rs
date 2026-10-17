@@ -158,14 +158,15 @@ impl AutoAim {
     }
 }
 fn rune_shot(target: &Target<'_>, solution: Solution) -> Option<RuneShot> {
-    let (TargetId::Rune(index), Motion::Rune(rune, _)) = (target.id, target.motion) else {
+    let TargetId::Rune(index) = target.id else {
         return None;
     };
+    let (epoch_ns, group, _) = rune_observation(target)?;
     Some(RuneShot {
         rune: index,
         blade: solution.face,
-        epoch_ns: rune.state_since_ns,
-        group: rune.completed_groups,
+        epoch_ns,
+        group,
         fired_ns: 0,
         flight_ns: (solution.flight_s * 1e9) as u64,
     })
@@ -182,7 +183,7 @@ fn heat_allows(heat: Option<(u64, u32)>, caliber: rm_simulator_world::Caliber) -
 }
 
 fn rune_fire_allowed(previous: Option<RuneShot>, target: &Target<'_>, now_ns: u64) -> bool {
-    let Motion::Rune(rune, _) = target.motion else {
+    let Some((epoch, group, active)) = rune_observation(target) else {
         return true;
     };
     let Some(previous) = previous else {
@@ -193,14 +194,21 @@ fn rune_fire_allowed(previous: Option<RuneShot>, target: &Target<'_>, now_ns: u6
         return false;
     }
     let still_waiting = target.id == TargetId::Rune(previous.rune)
-        && rune.state_since_ns == previous.epoch_ns
-        && rune.completed_groups == previous.group
-        && rune
-            .active_blades
-            .get(previous.blade)
-            .copied()
-            .unwrap_or(false);
+        && epoch == previous.epoch_ns
+        && group == previous.group
+        && active.get(previous.blade).copied().unwrap_or(false);
     !still_waiting || elapsed >= RUNE_MISS_RETRY_NS.max(previous.flight_ns + 350_000_000)
+}
+
+fn rune_observation(target: &Target<'_>) -> Option<(u64, u32, [bool; 5])> {
+    match target.motion {
+        Motion::Rune(r, _) => Some((r.state_since_ns, r.completed_groups, r.active_blades)),
+        Motion::NativeRune(state, index, _) => {
+            let r = &state.game.runes[index];
+            Some((r.state_since_ns, u32::from(r.groups), r.targets))
+        }
+        _ => None,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -209,6 +217,7 @@ enum Motion<'a> {
     Robot(&'a ChassisSnapshot, f64),
     Outpost(&'a OutpostSnapshot, f64),
     Rune(&'a RuneSnapshot, u64),
+    NativeRune(&'a rm_simulator_world::rmuc_2027::State, usize, u64),
 }
 struct Target<'a> {
     id: TargetId,
@@ -246,6 +255,11 @@ impl Target<'_> {
                 predicted.rebuild_armors();
                 predicted.armors[face].pose
             }
+            Motion::NativeRune(state, index, now_ns) => state.rune_pose_at(
+                rm_simulator_world::Team::BOTH[index],
+                state.config.runes[index].targets[face],
+                now_ns.saturating_add((future_s.max(0.) * 1e9) as u64),
+            ),
             Motion::Rune(rune, now_ns) => {
                 let then = now_ns.saturating_add((future_s.max(0.) * 1e9) as u64);
                 rm_simulator_world::rune::scoring_pose(
@@ -260,7 +274,7 @@ impl Target<'_> {
     }
     fn half_size(&self) -> DVec2 {
         match self.motion {
-            Motion::Rune(..) => {
+            Motion::Rune(..) | Motion::NativeRune(..) => {
                 DVec2::splat(rm_simulator_world::rune::EFFECTIVE_TARGET_RADIUS_M * 0.65)
             }
             _ => {
@@ -373,6 +387,28 @@ fn targets(session: &Session, caliber: Caliber) -> Vec<Target<'_>> {
         });
     }
     if caliber == Caliber::Mm17 {
+        if let Some(state) = session.rmuc_2027() {
+            let index = session.team.index();
+            let r = &state.game.runes[index];
+            if state.config.runes.len() == 2
+                && r.phase == rm_simulator_world::gameplay::rmuc_2027::rune::Phase::Activating
+            {
+                result.push(Target {
+                    id: TargetId::Rune(index),
+                    motion: Motion::NativeRune(
+                        state,
+                        index,
+                        state.game.elapsed_ns() + now.saturating_sub(session.snapshot.time_ns),
+                    ),
+                    faces: r
+                        .targets
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, &v)| v.then_some(i))
+                        .collect(),
+                });
+            }
+        }
         for (index, rune) in session.snapshot.runes.iter().enumerate() {
             let owner = session
                 .referee()

@@ -20,13 +20,16 @@ fn reviewed_field_has_live_motion_native_rules_and_restorable_authority() -> any
     assert_eq!(bindings.schema_version, 2);
     assert_eq!(bindings.outpost_motion[0].bodies.len(), 18);
     assert_eq!(bindings.parts.len(), 386);
+    assert_eq!(bindings.rune_motion.len(), 2);
+    assert_eq!(bindings.rune_arms.len(), 2);
+    assert_eq!(bindings.config().terrain_zones.len(), 30);
     let mut invalid = bindings.clone();
     invalid.outpost_motion[0]
         .bodies
         .push("source_body_99999999".into());
     assert!(invalid.validate().is_err());
     let terrain = layout::load_terrain(&cad)?;
-    assert_eq!(terrain.mechanisms.len(), 8);
+    assert_eq!(terrain.mechanisms.len(), 10);
     let moving: usize = terrain
         .mechanisms
         .iter()
@@ -46,6 +49,15 @@ fn reviewed_field_has_live_motion_native_rules_and_restorable_authority() -> any
     let config = layout::field_config(&cad, &layout::LayoutOptions::default());
     let mut field = Field::new_for_season(Season::Rm2027, &config)?;
     layout::add_terrain(&mut field, &terrain)?;
+    assert_eq!(
+        field
+            .static_geometry_snapshot()
+            .moving_parts()
+            .iter()
+            .filter(|part| part.kind == rm_simulator_world::referee::Mechanism::Rune)
+            .count(),
+        2
+    );
     let initial_motion = field.dynamic_geometry_snapshot().into_triangles();
     field.referee_command(RefereeCommand::StartMatch)?;
     field.step(6 * 128)?;
