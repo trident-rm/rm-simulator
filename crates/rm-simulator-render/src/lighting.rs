@@ -48,7 +48,8 @@ pub fn spawn_lighting(commands: &mut Commands) {
     ));
 }
 
-/// Dark indoor backdrop behind the stadium geometry.
+/// Indoor hall cubemap baked once from an artistic venue at its central viewpoint.
+/// Distant seating, walls and roof have no runtime geometry or parallax.
 pub fn skybox(images: &mut Assets<Image>) -> bevy::light::Skybox {
     use bevy::{
         asset::RenderAssetUsages,
@@ -56,7 +57,7 @@ pub fn skybox(images: &mut Assets<Image>) -> bevy::light::Skybox {
             Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
         },
     };
-    const SIZE: u32 = 64;
+    const SIZE: u32 = 512;
     let mut pixels = Vec::with_capacity((SIZE * SIZE * 6 * 4) as usize);
     for face in 0..6 {
         for y in 0..SIZE {
@@ -72,12 +73,7 @@ pub fn skybox(images: &mut Assets<Image>) -> bevy::light::Skybox {
                     _ => Vec3::new(-u, -v, -1.0),
                 }
                 .normalize();
-                let horizon = Vec3::new(16.0, 20.0, 28.0);
-                let color = if direction.y >= 0.0 {
-                    horizon.lerp(Vec3::new(4.0, 6.0, 10.0), direction.y.sqrt())
-                } else {
-                    horizon.lerp(Vec3::new(8.0, 10.0, 14.0), -direction.y)
-                };
+                let color = hall_color(direction);
                 pixels.extend([color.x as u8, color.y as u8, color.z as u8, 255]);
             }
         }
@@ -93,6 +89,7 @@ pub fn skybox(images: &mut Assets<Image>) -> bevy::light::Skybox {
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
     );
+    image.sampler = bevy::image::ImageSampler::linear();
     image
         .reinterpret_stacked_2d_as_array(6)
         .expect("six square skybox faces");
@@ -107,11 +104,54 @@ pub fn skybox(images: &mut Assets<Image>) -> bevy::light::Skybox {
     }
 }
 
+// An intentionally indistinct hall: broad tonal shapes give enclosure without
+// repeated stripes or bright fixtures competing with the field's target lights.
+fn hall_color(direction: Vec3) -> Vec3 {
+    let origin = Vec3::new(0.0, 1.0, 0.0);
+    let wall_distance = 70.0 / direction.x.abs().max(direction.z.abs()).max(1e-6);
+    let roof_distance = if direction.y > 0.0 {
+        30.0 / direction.y
+    } else {
+        f32::INFINITY
+    };
+    let floor_distance = if direction.y < 0.0 {
+        -1.0 / direction.y
+    } else {
+        f32::INFINITY
+    };
+    let distance = wall_distance.min(roof_distance).min(floor_distance);
+    let point = origin + direction * distance;
+    if distance == roof_distance {
+        let mut color = Vec3::new(24.0, 27.0, 32.0);
+        // Just three low-contrast roof beams, softened in the bake itself.
+        for x in [-43.0, 8.0, 49.0] {
+            let beam = (-((point.x - x) / 0.8).powi(2)).exp();
+            color -= Vec3::splat(5.0 * beam);
+        }
+        // Broad diffused fixtures, deliberately sparse and staggered. A soft
+        // superellipse avoids sharp luminous rectangles and cubemap aliasing.
+        for (x, z) in [(-27.0, -23.0), (24.0, -8.0), (-6.0, 34.0)] {
+            let falloff =
+                (-0.5 * (((point.x - x) / 5.0).powi(4) + ((point.z - z) / 9.0).powi(4))).exp();
+            color += Vec3::new(58.0, 59.0, 60.0) * falloff;
+        }
+        color
+    } else if distance == floor_distance {
+        Vec3::new(12.0, 15.0, 20.0)
+    } else {
+        // Seating reads as one dim bank rather than individually striped rows.
+        let seating = (-(point.y / 7.0).powi(4)).exp();
+        let upper_fade = (point.y / 31.0).clamp(0.0, 1.0);
+        Vec3::new(20.0, 23.0, 28.0) - Vec3::splat(3.0 * seating + 2.0 * upper_fade)
+    }
+}
+
 /// Decorative venue, retained with the CAD across matches.
 #[derive(Component)]
 pub struct Stadium;
 
-/// Low-poly stands and welded mesh fencing. Bounds come from the same grounded CAD scenery
+/// Nearby welded mesh fencing and floor apron; the distant venue is in the cubemap.
+/// Bounds come from the same grounded CAD scenery
 /// used to place the collision walls. Venue dimensions are artistic settings.
 pub fn spawn_stadium(
     commands: &mut Commands,
@@ -125,9 +165,6 @@ pub fn spawn_stadium(
     let center = (low + high) * 0.5;
     let half = (high - low) * 0.5;
     let mut steel = None;
-    let mut stands = None;
-    let mut lamps = None;
-    let mut trim = None;
     // Four local wall frames: x runs along the fence, z points out of the field.
     for (offset, rotation, length) in [
         (Vec3::new(0.0, 0.0, half.z + 0.05), 0.0, half.x * 2.0),
@@ -202,57 +239,19 @@ pub fn spawn_stadium(
                 Vec3::new(0.0, height * i as f32 / rows as f32, 0.0),
             );
         }
-        for row in 0..10 {
-            let y = 0.8 + row as f32 * 0.9;
-            let z = 32.0 + row as f32 * 1.8;
-            bar(
-                &mut stands,
-                Vec3::new(length + 64.0, 0.9, 1.8),
-                Vec3::new(0.0, y, z),
-            );
-            bar(
-                &mut trim,
-                Vec3::new(length + 64.0, 0.05, 0.05),
-                Vec3::new(0.0, y + 0.46, z - 0.9),
-            );
-        }
-        bar(
-            &mut stands,
-            Vec3::new(length + 130.0, 36.0, 0.4),
-            Vec3::new(0.0, 17.8, 65.0),
-        );
-        bar(
-            &mut steel,
-            Vec3::new(length + 64.0, 0.25, 0.25),
-            Vec3::new(0.0, 28.0, 28.0),
-        );
-        for i in -2..=2 {
-            bar(
-                &mut lamps,
-                Vec3::new(3.5, 0.1, 1.0),
-                Vec3::new(i as f32 * (length + 64.0) / 5.0, 27.9, 28.0),
-            );
-        }
     }
-    // A broad dark floor and ceiling close the room beyond the CAD slab.
-    for y in [low.y - 0.02, low.y + 36.0] {
-        let mesh = Mesh::from(Cuboid::new(
+    // Retain a ground plane for camera translation and the fence's shadows.
+    let stands = Some(
+        Mesh::from(Cuboid::new(
             half.x * 2.0 + 130.0,
             0.04,
             half.z * 2.0 + 130.0,
         ))
-        .transformed_by(Transform::from_xyz(center.x, y, center.z));
-        stands
-            .as_mut()
-            .expect("stands")
-            .merge(&mesh)
-            .expect("cuboid attributes");
-    }
+        .transformed_by(Transform::from_xyz(center.x, low.y - 0.02, center.z)),
+    );
     for (index, (mesh, color, emission)) in [
         (steel, Color::srgb(0.28, 0.32, 0.36), 0.0),
         (stands, Color::srgb(0.025, 0.033, 0.05), 0.0),
-        (trim, Color::srgb(0.10, 0.18, 0.24), 0.4),
-        (lamps, Color::srgb(0.85, 0.92, 1.0), 5.0),
     ]
     .into_iter()
     .enumerate()

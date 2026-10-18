@@ -158,8 +158,8 @@ window stays open. The CAD package is verified once per process, so a second
 join is quick. The title background is a darkened in-game screenshot without
 the gameplay HUD. The field sits in a dark stadium, with visible wire fencing
 aligned to its two-metre collision boundary at the edge of the grounded CAD
-scenery. The slab apron lies outside the fence, with distant stadium seating
-and walls beyond it.
+scenery. The slab apron lies outside the fence. Distant seating, walls and ceiling
+lights use an indoor cubemap instead of stadium meshes; they have no parallax.
 
 ### LAN lobbies
 
@@ -269,7 +269,9 @@ its small level pads. Invisible walls, 2 m high, surround the loaded floor bound
 to keep robots inside the arena. The CAD floor remains the driving surface;
 there is no invisible catch plane beneath a loaded field.
 
-The default field is enclosed by a dark stadium with neutral lighting. Equipment
+The default field sits in a dark indoor hall with neutral lighting. Distant
+seating, walls and roof lights are baked into a cubemap; the nearby fence and
+floor apron retain geometry. Equipment
 paint follows team ownership:
 red occupies +x and blue occupies -x. Destroying an outpost opens its team's base
 shields. Friendly-fire rules are unchanged.

@@ -161,7 +161,9 @@ unpainted cream and its markings are flush cream solids; the simulator
 recolours only that yellow-tinted cream (floor dark, arena light grey), so
 painted materials, white line markings included, are left alone.
 
-The default field is enclosed by a dark stadium with neutral lighting. Equipment
+The default field sits in a dark indoor hall with neutral lighting. Distant
+seating, walls and roof lights are baked into a cubemap; the nearby fence and
+floor apron retain geometry. Equipment
 paint follows team ownership: red occupies +x and blue occupies -x. Destroying
 an outpost opens its team's base shields. Friendly-fire rules are unchanged.
 

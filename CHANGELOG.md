@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- Replace distant stadium meshes with a soft, low-contrast indoor-hall cubemap, retaining
+  the nearby wire fence and floor apron. Field lighting and collision are unchanged.
+
 - Add a source-bound Artisans folding Hero for 2026 practice. T folds/unfolds its
   arm while the firing stage counter-rotates; camera, muzzle, collision proxies
   and debug overlays follow its actual joint angle. Check external clearances,
