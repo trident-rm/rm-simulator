@@ -234,7 +234,11 @@ impl Session {
             let simulation = Simulation::from_cad(
                 cad,
                 &options,
-                Some(ChassisConfig::default()),
+                Some(if args.host.team_cad {
+                    ChassisConfig::team_cad()
+                } else {
+                    ChassisConfig::default()
+                }),
                 args.host.start_paused,
                 |stage| match stage {
                     BuildProgress::ReadingTerrain => progress(0.3, "Reading terrain triangles"),

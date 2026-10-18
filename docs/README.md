@@ -33,3 +33,5 @@ Git history.
 | Renderer benchmark commands and interpretation | [Render benchmark](render-benchmark.md) |
 | Optional Steam integration | [Steam](steam.md) |
 | License, provenance and third-party notices | [Notices](../NOTICE.md) |
+
+- [Hardware and robot model candidates](hardware-models.md): source-derived referee modules, team CAD survey and assembled Omni prototype.

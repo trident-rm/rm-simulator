@@ -15,6 +15,7 @@ pub mod quality;
 pub mod rune;
 pub mod sync;
 pub mod targets;
+pub mod team_robot;
 use bevy::{
     camera::{Exposure, Hdr},
     core_pipeline::tonemapping::Tonemapping,

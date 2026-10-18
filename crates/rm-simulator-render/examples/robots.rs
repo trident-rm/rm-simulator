@@ -89,6 +89,8 @@ fn robot(model: RobotModel, y: f64, effect: &str) -> ChassisAppearance {
         let q = Quat::from_rotation_z(i as f32 * std::f32::consts::FRAC_PI_2)
             * Quat::from_rotation_y(-15_f32.to_radians());
         ArmorAppearance {
+            plate_visible: true,
+            bracket_prisms_m: vec![],
             local: PoseFlu {
                 translation_m: [x, y, 0.015],
                 rotation_wxyz: [q.w as f64, q.x as f64, q.y as f64, q.z as f64],
@@ -115,6 +117,11 @@ fn robot(model: RobotModel, y: f64, effect: &str) -> ChassisAppearance {
         },
         pose: pose(0.0, y, z, 0.0),
         body_half_m: [hx as f32, hy as f32, hz as f32],
+        body_shell_visible: true,
+        frame_beam_step_m: 0.0,
+        body_outline_m: vec![],
+        bumper_prisms_m: vec![],
+        bumper_base_prisms: 0,
         wheels: (if model == RobotModel::Drone {
             vec![]
         } else if balance {
@@ -133,6 +140,8 @@ fn robot(model: RobotModel, y: f64, effect: &str) -> ChassisAppearance {
         })
         .into_iter()
         .map(|[x, dy]| WheelAppearance {
+            suspension_anchor_m: [x, y + dy, z + hz],
+            suspension_lower_m: [x, y + dy, radius],
             pose: pose(
                 x,
                 y + dy,

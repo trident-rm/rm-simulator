@@ -182,6 +182,10 @@ pub fn blend_chassis(a: &ChassisSnapshot, b: &ChassisSnapshot, t: f64) -> Chassi
     result.turret = pose(a.turret, b.turret, t);
     for (wheel, old) in result.wheels.iter_mut().zip(&a.wheels) {
         wheel.hub_m = vector(old.hub_m, wheel.hub_m, t);
+        wheel.angular_velocity_rad_s = old.angular_velocity_rad_s
+            + (wheel.angular_velocity_rad_s - old.angular_velocity_rad_s) * t;
+        wheel.suspension_compression_m = old.suspension_compression_m
+            + (wheel.suspension_compression_m - old.suspension_compression_m) * t;
         let delta = (wheel.spin_rad - old.spin_rad + std::f64::consts::PI)
             .rem_euclid(std::f64::consts::TAU)
             - std::f64::consts::PI;

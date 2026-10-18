@@ -4,6 +4,37 @@
 
 ## Unreleased
 
+- Give uncolored team robot surfaces and the prototype's uniform pale CAD tint
+  a dark graphite presentation material, preserving other source colors and all
+  original color metadata.
+
+- Load an optional verified team-CAD Omni robot with `--robot-assets`, retaining
+  source credits and binding its wheels, two-axis gimbal and pitch linkage to
+  live poses. Fit wheel hubs, staggered armor, camera and authoritative muzzle;
+  use simplified gameplay colliders and existing ray suspension. Protocol 60
+  carries the fitted preset; headless hosts can select it with `--team-cad`.
+
+- Add an octagonal omni chassis with a 570 mm lower deck extension and semicircular diagonal wheel guards,
+  four diagonal OmniX wheels, inboard spring/guide suspension and stacked crossed
+  support beams beneath the shell, with moving axle arms and an inspection cutaway. Integrate
+  wheel inertia, motor torque, tyre slip and per-wheel traction under the shared
+  drive-power budget. Preserve axle speed and suspension compression through
+  protocol 59 checkpoints and RMO9 owner anchors. Add a CAD-free physical
+  `omni_chassis` inspection example. Recess armor behind the bumper on rough
+  designated support carriers, guided by the 2027 mounting figures and the
+  supplied OmniX URDF; preserve shared carrier visual/collision geometry.
+  Move wheels onto the X diagonals to lower armor into the side bays; stagger
+  the front/rear pair 28 mm above the side pair with matching frame levels and
+  carrier spacers. Simplify the omni/Sentry gimbal to two triangular side plates and a chamfered
+  launcher housing, remove the decorative radar rack, and lower the rear light
+  bar approximately 20 mm while keeping its LEDs above the rear armor. Keep the
+  camera supported and join the barrel directly to the speed-monitor housing.
+  Measure direct armor collision speed before solver response so an elevated
+  obstacle still registers a qualifying impact.
+
+- Document source-derived coarse referee hardware candidates in rm-map-tools,
+  preparing AM02/AM12 armor, VT03, LI01, SM01 and FI02 for later robot models.
+
 - Enable native RMUC 2027 adaptive armor selection and per-hit damage regions.
   Spend accumulated opportunities after ten enemy hits; freeze center and area
   until reselection. Apply 0.5×/1.5× raw projectile damage with attack/defense

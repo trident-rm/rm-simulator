@@ -4,3 +4,7 @@
 # Existing domain terms and coordinate indices, not spelling errors.
 iy = "iy"
 PNGs = "PNGs"
+
+[default.extend-words]
+# RoboMaster team name; retain its official spelling in source credits.
+ENTERPRIZE = "ENTERPRIZE"

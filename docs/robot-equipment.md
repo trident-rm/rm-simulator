@@ -40,20 +40,125 @@ threads, connector contacts, optical calibration and electromagnetic behavior.
 
 ## Chassis assumptions
 
-Infantry retains the existing 22 kg chassis and 153 mm omni-wheel assumptions.
+Infantry uses a 22 kg chassis, a 410 mm octagonal deck and four 153 mm omni
+wheels on the diagonals, 245 mm from centre (approximately ±173 mm in x and y).
+The deck corner cut is 95 mm. A solid 30 mm lower extrusion joins the deck
+underside, reaching 285 mm in the cardinal directions (570 mm overall), just
+outside the tilted armor housings. Its deep diagonal bays leave room for the
+wheels. Each wheel has a horizontal semicircular metal guard wrapping around its
+footprint, with a 12 mm wide, 20 mm tall band. Both ends join the lower deck.
+Twelve convex sectors describe each guard. The first eight prisms form the
+lower extrusion and another 48 form the four guards; collision and rendering
+share these vertices. The guards stay fixed to the chassis during suspension travel.
+Armor faces sit at 250 mm reach. The front/rear pair is 58 mm above the body
+centre, 28 mm above the left/right pair, following the stacked beam sets.
+Chassis spacers support the raised pair’s unchanged carrier feet. Their physical
+housings retain at least 5 mm of horizontal wall clearance; the lower bumper
+stays below their lower edges. All bumper parts clear the wheels' swept
+suspension envelopes by more than 2 mm.
+Two deep bracket side carriers and a horizontal mounting foot depict the
+designated support, using the same simplified prisms for collision and rendering.
+The foot or its chassis spacer rests on the lower deck; only the carrier touches the module's
+rear plane.
+Inside the deck shell, two parallel upper beams cross two perpendicular lower
+beams. Their ends support the cardinal armor bays, with short posts at the beam
+crossings. Each wheel's spring sits inboard, 60% of the way from the body centre
+to the hub, and terminates below the roof. A non-spinning carriage arm joins its
+moving lower mount to the inner axle face. The guide and spring follow wheel
+heave without following axle spin. This is a rough structural depiction using
+the existing effective wheel spring/damper rates, rather than articulated joint
+physics; at full droop the lower carriage can extend beneath the lower deck.
+The CAD-free `omni_chassis` example accepts `open` after the terrain argument to
+hide the shell and armor for an internal-frame cutaway (`bare` hides armor only).
+The LI01 bar rises on chassis-mounted posts so it remains above the rear armor.
+Moving the wheels onto the X diagonals frees the cardinal armor bays, allowing
+plates to sit 100 mm lower. The gun pivot returns to 200 mm above the body centre.
+The omni/Sentry gimbal uses a low yaw bearing and two solid triangular side
+plates, with a chamfered pitch housing mounted at their tops and a small camera
+seat. The hinge shaft and joint caps are hidden; there is no U-shaped bridge.
+The decorative radar rack and exposed truss/flywheel/feeder detail are omitted.
+Camera/SM01 mounts, the visible lens/first-person eye, muzzle and yaw/pitch
+ownership remain shared with the existing controls. Collision retains the
+conservative neck/cradle envelope.
+The rear LI01 is mounted close to the armor: its main LED strip clears the rear
+plate top by 2 mm, with the housing inboard of the armor. This lowers the default
+mount approximately 20 mm relative to the previous taller posts.
+The inspection example’s final `aimed` argument commands about 34° yaw and
+20° elevation through the physical gimbal controller.
+Extreme downward aim still has the prototype's existing
+barrel/body intersection limitations.
+This chassis width uses ROB 2027 V1.0.0 Table 2-7's 600 mm stowed cube as guidance
+(and 800 mm extended cube, 28 kg excluding referee equipment). The supplied 2026
+V2.0.0 Table 2-8 has the same envelopes and a 25 kg limit. These are reference
+bounds, not implemented compliance checks: the fixed barrel has no stowing mode.
+
+The mounting reference is ROB 2027 §3.6, S117–S118 (designated bracket), S120
+(orientation), S122 (rigid connection), S126–S128 (bumper protection and no other
+structure touching armor), and S129 / Figures 3-23–3-24 (unobstructed faces).
+Figure 3-15 supplies the carrier outline; its 141 mm width, 15 mm rails and
+86 mm mounting spacing guide the rough carrier. Other fitted depths and
+clearances are model assumptions. This is a recognizable carrier approximation,
+not a manufacturing model or complete angular-occlusion certification.
+
+The user-supplied `sentry_urdf_final.zip` was inspected at zero joint angles.
+Its 16 visual STL meshes total 1,156,301 triangles; the assembled bounds are
+approximately 496 × 514 × 567 mm. Four roughly 152 mm wheels have diagonal
+45° axes, and each `*_hanging_joint` is fixed. It therefore supplies a useful
+OmniX geometry/mounting reference, but does not define dynamic suspension.
+The source inertia blocks sum to about 8.98 kg and were not adopted as measured
+robot mass. The prototype now uses the same diagonal layout, with independently simulated
+suspension instead of the reference URDF's fixed hanging joints. Source geometry and extracted review files stay
+in ignored `local-assets/`; none is embedded, redistributed or used as a collider.
+The source URDF SHA-256 is
+`9649bace89c5f9dd69a6b8a7de4c62d8a9923c448462e91366c7582d5b96d61f`.
+
+Each ray wheel has independent spring/damper compression, a 120 mm ordinary travel
+limit with a progressive bump stop, 1,000 N/m spring and 135 N s/m damper. A 22 kg
+robot settles with about 54 mm sag and 54 N load per wheel on flat ground.
+Telescoping guides and helical springs follow the actual wheel centres, including
+full droop in the air. The ring supplies ordinary contact support when the robot
+tips; it does not add an artificial upright controller.
+
+Drives integrate actual axle speed and a lumped 0.008 kg m² rotational inertia.
+Speed controllers request independent motor torques, capped by the assumed
+60 N stall force and 3.8 m/s free-running speed; tyre slip limits ground traction
+to friction times that wheel's normal load. A slipping or airborne wheel can spin
+faster than ground travel. Eight internal drive slices run within each Rapier slice of the 128 Hz
+physics tick; their combined mechanical output and copper losses share the
+existing 120 W assumed budget. This remains a ray-wheel approximation: no
+individual roller contacts, unsprung wheel rigid bodies, motor thermal model or
+measured motor/tyre calibration. Reflected wheel inertia does not transfer a
+separate axle reaction torque to the chassis.
+
+Axle speed and spring compression survive protocol 59 checkpoints and RMO9
+owner anchors; hubs are rebuilt at their compressed/drooped positions. Contact
+loads and traction are local diagnostics, recomputed on the next physics tick.
+Hero and Balance keep their body geometry and also use the inertial drive model.
+
+Create actual physics-backed review renders without loading the arena:
+
+```sh
+nix develop -c cargo run -p rm-simulator-app --example omni_chassis --locked -- local-assets/omni.png oblique flat
+# Other views: top, side. Replace flat with uneven for a 35 mm front-left-wheel step.
+# Append bare to hide armor panels while retaining carriers for inspection.
+```
+
+The simulator's referee hardware remains the procedural approximation described
+above; the separately reviewed STEP-derived candidates are not runtime mounts yet.
+
+
 Hero uses a 30 kg, 660 × 560 × 120 mm body envelope, 203 mm mecanum wheels,
 65 mm wheel width and a taller, wider gimbal. These are design choices, not
 rulebook dimensions. The muzzle sits 350 mm ahead of the gun pivot, leaving an exposed barrel
 section behind the speed monitor. This length is an app design choice.
-Both retain four small scoring modules. The visible
-central enclosure and perimeter frame fit inside a conservative box collider;
-individual decorative modules and rollers do not add colliders.
+Both retain four small scoring modules. Hero retains its conservative box
+collider; individual decorative modules and rollers do not add colliders.
 
 Hero wheel axles are parallel. Its contact-force directions are mirrored at
 45 degrees and use the hub cross rolling-direction term for yaw. Wheel spin
 accounts for the projection onto that direction. This extends the existing
-ideal roller/suspension model; it does not model each roller contact or motor
-controller. Renderer wheel centers follow suspension contacts when grounded.
+ideal roller/suspension model; it does not model each roller contact or a calibrated motor
+controller. Renderer wheel centres follow the suspended positions on every snapshot.
 
 Each pilot names its robot in `Hello` (protocol 33): the Hero, or the
 Infantry 3, 4 or 5. The host spawns the matching chassis, records its kind
@@ -122,7 +227,7 @@ The title flow selects the robot/team first, then a compatible chassis.
 Infantry 3/4/5 offers omni or balance; Sentry uses omni; Hero and Engineer use
 mecanum; Drone uses Flight. The host validates the pairing. Hello, snapshots and owner anchors
 carry the selection and jump state in protocol 52 (`RMI5` input batches,
-`RMO8` owner anchors); use matching builds.
+`RMO9` owner anchors); use matching builds.
 
 All new models are authored boxes, cylinders and wheel details. The supplied
 `sentry_urdf_final/robot.urdf`, `combine_urdf/urdf/combine_urdf.urdf` and
@@ -138,12 +243,12 @@ above and behind the camera instead of rotating across its view with the body.
 Ground robots retain four small visible scoring modules; decorative arms, towers and links do not
 add mesh colliders. Hero's geometry and dynamics remain unchanged.
 
-The omni wheel contacts are centered on the four edges, 245 mm from the centre.
+The omni wheel contacts lie on the four diagonals, 245 mm from the centre.
 Their double roller rows, spokes and motor mounts are procedural details.
 The omni mock uses softer 1 kN/m springs with 80 mm unloaded extension
-(about 54 mm static sag) to keep the side wheels loaded as the front wheel
-enters a ramp. Its assumed 60 N drives and 1.0 drive friction account for
-only two motors propelling a straight run. Hero and Engineer retain their
+(about 54 mm static sag) to retain independent ground contact on ramps.
+Its assumed 60 N drives and 1.0 drive friction apply to all four wheels, each
+contributing through a 45-degree rolling direction during a straight run. Hero and Engineer retain their
 original suspension and tyre tuning.
 Engineer uses an open truss frame with shoulder, elbow and wrist housings,
 paired arm plates and a canted open gripper.

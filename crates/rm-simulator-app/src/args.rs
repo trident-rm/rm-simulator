@@ -76,6 +76,9 @@ impl PerformanceChoice {
     about = "First-person RoboMaster field simulator"
 )]
 pub struct Args {
+    /// Directory containing the approved team robot neutral.glb and manifest.json.
+    #[arg(long)]
+    pub robot_assets: Option<std::path::PathBuf>,
     #[command(flatten)]
     pub host: HostArgs,
     /// Lobby directory as HOST:PORT.
@@ -274,6 +277,11 @@ impl Args {
     /// when Bevy would otherwise choose the executable's directory.
     pub fn resolve_asset_path(&mut self) -> std::io::Result<()> {
         self.host.cad_assets = std::path::absolute(&self.host.cad_assets)?;
+        if let Some(path) = &mut self.robot_assets {
+            *path = std::path::absolute(&*path)?;
+            crate::robot_assets::verify(path)?;
+            self.host.team_cad = true;
+        }
         Ok(())
     }
 

@@ -269,11 +269,12 @@ not a refactor.
   Mesh contacts are two-sided.
   `Field::static_geometry` returns what the physics holds, for the app's
   wireframe. The chassis is a
-  dynamic body with a cuboid for the chassis box and one for the turret,
-  and four massless armor housings on its sides,
-  whose wheels are ray casts with spring/damper suspension and ideal omni
-  tyres; it steps in the same world as the projectiles, which score on the
-  armor and bounce off the rest. `C` in the app draws the physics geometry as a
+  dynamic body with an octagonal deck and compact lower bumper and wheel guards for omni
+  Infantry/Sentry (box for other presets), a turret cuboid and four massless
+  armor housings. Ray-cast wheels have independent spring/damper suspension,
+  lumped rotational inertia, motor torque and slip-limited omni tyres;
+  projectile colliders never support suspension rays. The chassis steps in the
+  same world as projectiles, which score on armor and bounce off the rest. `C` in the app draws the physics geometry as a
   wireframe of the client's presented scene. The debug view uses verified local
   geometry and sends no host capture requests. Raw contacts leave physics in
   order and are detected/scored by the world at the end of each tick.

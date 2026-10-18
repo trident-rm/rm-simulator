@@ -53,6 +53,22 @@ package alongside its source manifests. No rm-map-tools code is vendored here.
 
 Dependencies retain their own licenses.
 
+### Team robot CAD candidates
+
+The local source-derived robot trials credit Zhongzhou Zhulong / 芝士披萨k
+(2026 chassis), Northeast Agricultural University TCP / yep~ (2026 omni wheel
+and suspension), and Zhejiang University Hello World / Chenic (2026 gimbal).
+Their original geometry and appearance retain the authors' terms; the
+simulator's `MIT OR Apache-2.0` software license does not cover them.
+The intended use is noncommercial RoboMaster team-to-team simulation.
+
+Original release links, stated restrictions, import status and the simplification
+experiment are recorded in [Robot CAD candidates](docs/hardware-models.md#team-robot-cad-investigation-2026-10-18).
+The original files and generated candidates remain in ignored local storage;
+none is currently distributed as a runtime robot asset. Candidate GLBs carry
+author credit and source references in their metadata. A shipped robot package
+must retain its own CAD notice, source provenance and original terms.
+
 ## Mozilla Public License 2.0 components
 
 The competitor UI uses Bevy Feathers (MIT OR Apache-2.0) and Bevy Flair
@@ -128,3 +144,15 @@ manual are embedded or redistributed.
 
 The Valve Steamworks SDK under `vendor/steamworks-sdk/` is downloaded separately
 and is not part of this repository or its license. See `docs/steam.md`.
+
+
+Additional optional robot visual candidates are derived from Qingdao University
+Future / 夜猫子祖先's RM2026 tunnel Infantry release
+(<https://bbs.herkules.dev/articles/01M0Z3PSBB7SCJAQM749SETCH4>) and Anhui Institute
+of Information Engineering Artisans / 北极's RM2026 tunnel Hero release
+(<https://bbs.herkules.dev/articles/01M0Z88C7S9FRCVHS1AHS0S5KW>). Their CAD remains
+external and retains its authors' original terms; Future limits use to
+noncommercial RoboMaster team exchange. The original article links, source
+checksums and notices accompany generated candidates. No third-party robot CAD
+is relicensed under this workspace's software license. Graphite display materials
+are simulator presentation choices, with source appearance retained separately.

@@ -465,11 +465,25 @@ impl Simulation {
         chassis: crate::protocol::Chassis,
     ) -> Result<u32, String> {
         self.validate_roster(robot)?;
-        self.spawn_in_slot(
-            team,
-            Some(chassis.config(robot)?),
-            robot.kind(),
-            Some(robot),
+        let config = self.robot_config(robot, chassis)?;
+        self.spawn_in_slot(team, Some(config), robot.kind(), Some(robot))
+    }
+    fn robot_config(
+        &self,
+        robot: Robot,
+        chassis: crate::protocol::Chassis,
+    ) -> Result<ChassisConfig, String> {
+        let config = chassis.config(robot)?;
+        Ok(
+            if self.spawner_config().is_some_and(|c| c.team_cad)
+                && !config.mecanum
+                && !config.balance_assist
+                && !config.planar_flight
+            {
+                ChassisConfig::team_cad()
+            } else {
+                config
+            },
         )
     }
     fn validate_roster(&self, robot: Robot) -> Result<(), String> {
@@ -551,7 +565,7 @@ impl Simulation {
         yaw_deg: f64,
     ) -> Result<u32, String> {
         self.validate_roster(robot)?;
-        let config = chassis.config(robot)?;
+        let config = self.robot_config(robot, chassis)?;
         let spawner = self
             .spawner
             .as_ref()
@@ -570,7 +584,7 @@ impl Simulation {
         position_m: [f64; 2],
     ) -> Result<u32, String> {
         self.validate_roster(robot)?;
-        let config = chassis.config(robot)?;
+        let config = self.robot_config(robot, chassis)?;
         if !position_m.into_iter().all(f64::is_finite) {
             return Err("spawn position must be finite".into());
         }
@@ -1451,6 +1465,45 @@ mod tests {
         });
         let id = simulation.spawn_chassis(Team::Red).unwrap();
         (simulation, id)
+    }
+
+    #[test]
+    fn team_cad_profile_survives_slot_and_explicit_spawning() {
+        use crate::protocol::Chassis;
+        let mut sim = simulation().with_spawner(ChassisSpawner {
+            config: ChassisConfig::team_cad(),
+            terrain: None,
+        });
+        let slot = sim.spawn_robot(Team::Red, Robot::Infantry3).unwrap();
+        let explicit = sim
+            .spawn_robot_at_with_chassis(
+                Team::Blue,
+                Robot::Infantry4,
+                Chassis::Omni,
+                [-5., 0., 0.],
+                0.,
+            )
+            .unwrap();
+        let state = sim.snapshot();
+        for id in [slot, explicit] {
+            assert_eq!(
+                state.chassis.iter().find(|c| c.id == id).unwrap().config,
+                ChassisConfig::team_cad()
+            );
+        }
+        // Deployment shares this selector, while other drivetrains keep their presets.
+        for (robot, chassis) in [
+            (Robot::Hero, Chassis::Auto),
+            (Robot::Engineer, Chassis::Auto),
+            (Robot::Drone, Chassis::Auto),
+            (Robot::Infantry3, Chassis::Balance),
+        ] {
+            assert_eq!(
+                sim.robot_config(robot, chassis).unwrap(),
+                chassis.config(robot).unwrap()
+            );
+        }
+        assert!(sim.robot_config(Robot::Hero, Chassis::Balance).is_err());
     }
 
     #[test]

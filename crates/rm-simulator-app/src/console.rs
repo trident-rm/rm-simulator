@@ -691,6 +691,9 @@ fn complete(world: &mut World) {
                 }
                 Wait::Ready => {
                     if crate::loading::in_match(world)
+                        && world
+                            .get_resource::<rm_simulator_render::team_robot::TeamRobotStatus>()
+                            .is_none_or(|s| s.is_ready())
                         && world.resource::<CaptureReadiness>().ready()
                         && world.resource::<Session>().commands_confirmed()
                     {
@@ -732,6 +735,7 @@ fn state(world: &mut World) -> Value {
     let player = world.get_resource::<Player>();
     json!({
         "ready": crate::loading::in_match(world),
+        "team_robot":world.get_resource::<rm_simulator_render::team_robot::TeamRobotStatus>().map(|s|json!({"requested":s.requested,"ready":s.ready,"failed":s.failed})),
         "tick": session.snapshot.tick, "paused":session.paused,
         "presentation_time_ns": session.presentation_time_ns(),
         "role":session.role, "chassis_id":session.chassis_id,

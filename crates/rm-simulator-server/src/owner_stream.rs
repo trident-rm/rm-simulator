@@ -14,19 +14,19 @@ use rm_simulator_world::{ChassisConfig, ChassisSnapshot};
 use serde::{Deserialize, Serialize};
 use std::io;
 
-/// Anchor magic, `RMO8`, checked before any field is read. The eighth revision
-/// adds stabilization strength to the seventh revision's jump input and latch.
+/// Anchor magic, `RMO9`, checked before any field is read. The ninth revision
+/// adds independent wheel axle speed and suspension compression.
 /// It keeps the `RMO4` header and configuration reference and quantizes every
 /// dynamic float: translations to millimetres, velocities to 1 cm/s, rates to
 /// 1 mrad/s and aims to 0.1 mrad. Quaternions travel smallest-three in six
 /// bytes (see [`crate::binary_snapshot::bitpack::smallest_three`]), where
 /// `RMO5` spent eight on four 1/32767 components. Aims ride
-/// 32-bit alongside wheel roll because both rotate without bound; every other
-/// range fits 16 bits with room for violent motion (±327 m/s, ±32 rad/s). A
+/// 32-bit alongside wheel roll and wheel speed; compression uses 16 bits. Other
+/// ranges fit 16 bits with room for violent motion (±327 m/s, ±32 rad/s). A
 /// hostile or corrupt anchor still decodes to finite values, and
 /// out-of-range or non-finite dynamics fail at encode time, so the datagram
 /// size stays fixed whatever the motion.
-pub const MAGIC: &[u8; 4] = b"RMO8";
+pub const MAGIC: &[u8; 4] = b"RMO9";
 /// Largest accepted anchor datagram in bytes. An encoding past this fails
 /// rather than fragmenting, because one anchor must fit one datagram.
 pub const MAX_BYTES: usize = 1000;
@@ -160,7 +160,13 @@ impl OwnerAnchor {
     /// size. Errors when a dynamic value is non-finite or outside its
     /// quantized range, or when the whole anchor exceeds [`MAX_BYTES`].
     pub fn encode(&self) -> io::Result<Vec<u8>> {
-        if !self.owner.command.is_finite() {
+        if !self.owner.command.is_finite()
+            || self
+                .owner
+                .wheels
+                .iter()
+                .any(|w| w.suspension_compression_m < 0.0)
+        {
             return Err(invalid());
         }
         let mut bytes = MAGIC.to_vec();
@@ -213,6 +219,8 @@ impl OwnerAnchor {
             }
             bytes.extend(quantize_i32(wheel.spin_rad, AIM_SCALE)?.to_le_bytes());
             bytes.extend(quantize_i16(wheel.target_m_s, VEL_SCALE)?.to_le_bytes());
+            bytes.extend(quantize_i32(wheel.angular_velocity_rad_s, RATE_SCALE)?.to_le_bytes());
+            bytes.extend(quantize_i16(wheel.suspension_compression_m, POS_MM)?.to_le_bytes());
         }
         if bytes.len() > MAX_BYTES {
             return Err(io::Error::other("owner anchor exceeds datagram budget"));
@@ -307,10 +315,15 @@ impl OwnerAnchor {
                 hub_m: reader.q32_array::<3>(POS_MM)?,
                 spin_rad: reader.q32(AIM_SCALE)?,
                 target_m_s: reader.q16(VEL_SCALE)?,
+                angular_velocity_rad_s: reader.q32(RATE_SCALE)?,
+                suspension_compression_m: reader.q16(POS_MM)?,
                 contact: None,
             });
         }
-        if !reader.0.is_empty() || snapshot_id == 0 {
+        if !reader.0.is_empty()
+            || snapshot_id == 0
+            || wheels.iter().any(|w| w.suspension_compression_m < 0.0)
+        {
             return Err(invalid());
         }
         Ok(Self {
@@ -337,7 +350,7 @@ impl OwnerAnchor {
         })
     }
 }
-/// Quantizer scales for the `RMO8` dynamic body, chosen to mirror the
+/// Quantizer scales for the `RMO9` dynamic body, chosen to mirror the
 /// checkpoint precisions: millimetre positions, smallest-three quaternions,
 /// centimetre-per-second velocities, milliradian-per-second rates and
 /// 0.1 mrad aims. Wheel roll keeps 0.1 mrad in 32 bits because roll is
@@ -624,6 +637,12 @@ mod tests {
                 close(x, y, 0.001);
             }
             close(a.spin_rad, b.spin_rad, 0.0001);
+            close(a.angular_velocity_rad_s, b.angular_velocity_rad_s, 0.001);
+            close(
+                a.suspension_compression_m,
+                b.suspension_compression_m,
+                0.001,
+            );
             close(a.target_m_s, b.target_m_s, 0.01);
         }
     }
@@ -651,6 +670,8 @@ mod tests {
         for wheel in &mut noisy.owner.wheels {
             wheel.spin_rad = 200.197827635331;
             wheel.target_m_s = std::f64::consts::SQRT_2;
+            wheel.angular_velocity_rad_s = 49.67123;
+            wheel.suspension_compression_m = 0.053954;
         }
         let packed = noisy.encode().unwrap();
         assert_eq!(
@@ -664,7 +685,7 @@ mod tests {
         );
         assert!(
             packed.len() < 230,
-            "the quantized anchor must stay near 202 bytes, not 444"
+            "the quantized anchor must stay near 226 bytes, not 444"
         );
         // A different configuration must not decode an anchor that names the
         // old one, even when its wheel count happens to agree.

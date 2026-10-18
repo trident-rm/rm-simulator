@@ -54,7 +54,13 @@ fn main() -> anyhow::Result<()> {
     let simulation = Simulation::from_cad(
         &cad,
         &options,
-        (!args.no_chassis).then(ChassisConfig::default),
+        (!args.no_chassis).then(|| {
+            if args.host.team_cad {
+                ChassisConfig::team_cad()
+            } else {
+                ChassisConfig::default()
+            }
+        }),
         args.host.start_paused,
         |stage| {
             if let BuildProgress::TerrainReady(description) = stage {

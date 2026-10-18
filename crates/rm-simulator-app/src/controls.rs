@@ -421,9 +421,13 @@ pub fn drive_camera(
         // with the gimbal on a tilted chassis while looking along the aim.
         player.position = mount.translation
             + mount.rotation
-                * rm_simulator_render::chassis::camera_eye(
-                    chassis.config.turret_half_m.map(|v| v as f32),
-                );
+                * if chassis.config.team_cad {
+                    rm_simulator_render::team_robot::camera_eye()
+                } else {
+                    rm_simulator_render::chassis::camera_eye(
+                        chassis.config.turret_half_m.map(|v| v as f32),
+                    )
+                };
         player.position = session.corrected_eye(player.position);
         **camera = Transform::from_translation(player.position).with_rotation(mount.rotation);
     }

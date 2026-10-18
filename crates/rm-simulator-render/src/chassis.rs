@@ -16,18 +16,20 @@ use crate::{
 };
 use bevy::prelude::*;
 
-/// Procedural robot silhouettes. All parts are simple authored shapes;
-/// no source STEP or URDF geometry is loaded or embedded.
+/// Caller-selected robot visuals: procedural silhouettes or an external source-derived scene.
+/// Source CAD is never embedded in the renderer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RobotModel {
-    /// Sentry lower body without the radar tower.
+    /// Imported source-derived team Omni model; supplied by the caller.
+    TeamCad,
+    /// Four-wheel omni platform.
     #[default]
     Omni,
     /// Existing Hero model.
     Hero,
     /// Fixed-leg two-wheel infantry approximation.
     Balance,
-    /// Omni platform with a decorative radar tower.
+    /// Omni Sentry platform with the standard two-axis gimbal.
     Sentry,
     /// Mecanum platform with a fixed, folded manipulator and no gun.
     Engineer,
@@ -74,7 +76,7 @@ pub struct ChassisBody;
 /// What a chassis was built as. The number and the drivetrain are baked
 /// into its meshes, so a chassis whose appearance later names others (a
 /// roster that arrives after the first snapshot) is rebuilt.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Component, Clone, Debug, PartialEq)]
 pub struct ChassisBuild {
     /// Procedural body silhouette baked into the meshes.
     pub model: RobotModel,
@@ -82,6 +84,18 @@ pub struct ChassisBuild {
     pub armor_pattern: crate::armor::ArmorPattern,
     /// Whether it was built with mecanum wheels.
     pub mecanum: bool,
+    /// Deck dimensions used when this visual was constructed, in FLU metres.
+    pub body_half_m: [f32; 3],
+    /// Whether the outer deck shell was drawn.
+    pub body_shell_visible: bool,
+    /// Vertical separation between upper and lower frame beam centres, in metres.
+    pub frame_beam_step_m: f32,
+    /// Source footprint used to construct the deck, in FLU metres.
+    pub body_outline_m: Vec<[f32; 2]>,
+    /// Source prisms used to construct the lower bumper and wheel guards, in FLU metres.
+    pub bumper_prisms_m: Vec<[[f32; 3]; 8]>,
+    /// Leading lower-deck prism count used to select chassis finish.
+    pub bumper_base_prisms: usize,
 }
 /// Index into `ChassisAppearance::wheels`.
 #[derive(Component)]
@@ -119,6 +133,33 @@ pub struct ChassisArmorLight {
     pub struck: Handle<StandardMaterial>,
     /// Unpowered white-plastic diffuser material.
     pub dark: Handle<StandardMaterial>,
+}
+
+#[derive(Component)]
+struct ChassisArmorPanel {
+    chassis: u32,
+    plate: usize,
+}
+fn sync_armor_panels(
+    input: Res<SceneInput>,
+    index: Res<ChassisIndex>,
+    mut panels: Query<(&ChassisArmorPanel, &mut Visibility)>,
+) {
+    let Some(scene) = &input.0 else { return };
+    for (panel, mut visibility) in &mut panels {
+        if let Some(armor) = index
+            .0
+            .get(&panel.chassis)
+            .and_then(|i| scene.chassis.get(*i))
+            .and_then(|c| c.armor.get(panel.plate))
+        {
+            visibility.set_if_neq(if armor.plate_visible {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            });
+        }
+    }
 }
 
 /// Small armor module geometry, from the caller's rules: housing half
@@ -225,9 +266,9 @@ pub struct ChassisVisualsPlugin {
 }
 /// Appearance and armor geometry captured from the plugin at build time.
 #[derive(Resource, Clone, Copy)]
-struct Config {
-    rendering: RenderingConfig,
-    armor: ArmorOptics,
+pub(crate) struct Config {
+    pub(crate) rendering: RenderingConfig,
+    pub(crate) armor: ArmorOptics,
 }
 impl Plugin for ChassisVisualsPlugin {
     fn build(&self, app: &mut App) {
@@ -247,7 +288,9 @@ impl Plugin for ChassisVisualsPlugin {
                     ingest_chassis,
                     sync_chassis,
                     sync_balance_legs,
+                    sync_omni_suspension,
                     sync_armor_lights,
+                    sync_armor_panels,
                     sync_equipment_lights,
                 )
                     .chain()
@@ -707,6 +750,77 @@ fn prototype_body(
                 accent,
             );
         }
+    } else if !chassis.bumper_prisms_m.is_empty() {
+        let outline = &chassis.body_outline_m;
+        // An octagonal deck, compact lower extrusion and individual wheel guards.
+        let vertices: Vec<_> = [-hz, hz]
+            .into_iter()
+            .flat_map(|z| outline.iter().map(move |&[x, y]| Vec3::new(-y, z, -x)))
+            .collect();
+        if chassis.body_shell_visible {
+            p.0.push((
+                extruded_polygon(&vertices),
+                shell.clone(),
+                Transform::default(),
+            ));
+        }
+        // Two parallel upper rails cross two lower rails, leaving the spring
+        // carriages inboard at their intersections. The rail ends support the
+        // cardinal armor bays; the designated armor carriers remain separate.
+        let lower_beam_y = hz - 0.022 - chassis.frame_beam_step_m;
+        for side in [-1.0, 1.0] {
+            p.beam(
+                Vec3::new(side * hx * 0.5, hz - 0.022, -hy + 0.015),
+                Vec3::new(side * hx * 0.5, hz - 0.022, hy - 0.015),
+                0.025,
+                0.024,
+                metal,
+            );
+            p.beam(
+                Vec3::new(-hx + 0.015, lower_beam_y, side * hy * 0.35),
+                Vec3::new(hx - 0.015, lower_beam_y, side * hy * 0.35),
+                0.025,
+                0.024,
+                metal,
+            );
+        }
+        for x in [-hx * 0.5, hx * 0.5] {
+            for z in [-hy * 0.35, hy * 0.35] {
+                p.beam(
+                    Vec3::new(x, lower_beam_y, z),
+                    Vec3::new(x, hz - 0.022, z),
+                    0.018,
+                    0.018,
+                    metal,
+                );
+            }
+        }
+        for (index, prism) in chassis.bumper_prisms_m.iter().enumerate() {
+            let vertices: Vec<_> = prism
+                .iter()
+                .map(|&[x, y, z]| Vec3::new(-y, z, -x))
+                .collect();
+            p.0.push((
+                extruded_polygon(&vertices),
+                if index < chassis.bumper_base_prisms {
+                    shell.clone()
+                } else {
+                    metal.clone()
+                },
+                Transform::default(),
+            ));
+        }
+        p.block(
+            Vec3::new(0.19, 0.035, 0.18),
+            Vec3::new(0.0, hz + 0.0175, 0.0),
+            black,
+        );
+        p.block(
+            Vec3::new(0.20, 0.008, 0.19),
+            Vec3::new(0.0, hz + 0.039, 0.0),
+            accent,
+        );
+        spawn_omni_suspension(body, meshes, chassis, metal, black);
     } else {
         // Four edge-centred omni wheels surround a compact core. The open
         // corner frame and short motor outriggers leave each tyre exposed.
@@ -794,72 +908,6 @@ fn prototype_body(
     }
     for (mesh, material, transform) in p.0 {
         body.spawn((
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(material),
-            transform,
-        ));
-    }
-}
-
-#[derive(Component)]
-struct SentryRadar;
-
-/// Sensor rack is local to the pitch cradle, above and behind the eye.
-fn spawn_sentry_radar(
-    body: &mut ChildSpawnerCommands,
-    meshes: &mut Assets<Mesh>,
-    metal: &Handle<StandardMaterial>,
-    shell: &Handle<StandardMaterial>,
-    black: &Handle<StandardMaterial>,
-    accent: &Handle<StandardMaterial>,
-) {
-    let mut p = PrototypeParts::default();
-    {
-        // Sloped rear sensor bridge and a perforated-looking upper rack.
-        for side in [-1.0, 1.0] {
-            p.beam(
-                Vec3::new(side * 0.067, -0.015, 0.09),
-                Vec3::new(side * 0.067, 0.20, 0.15),
-                0.015,
-                0.022,
-                metal,
-            );
-            p.beam(
-                Vec3::new(side * 0.067, 0.20, -0.055),
-                Vec3::new(side * 0.067, 0.20, 0.18),
-                0.012,
-                0.018,
-                shell,
-            );
-        }
-        for z in [-0.055, 0.06, 0.18] {
-            p.beam(
-                Vec3::new(-0.075, 0.20, z),
-                Vec3::new(0.075, 0.20, z),
-                0.012,
-                0.012,
-                metal,
-            );
-        }
-        p.beam(
-            Vec3::new(-0.067, 0.20, -0.055),
-            Vec3::new(0.067, 0.20, 0.18),
-            0.010,
-            0.010,
-            metal,
-        );
-        p.cylinder(0.043, 0.037, Vec3::new(0.0, 0.22, 0.135), Vec3::Y, black);
-        p.cylinder(0.044, 0.006, Vec3::new(0.0, 0.242, 0.135), Vec3::Y, accent);
-        p.block(
-            Vec3::new(0.067, 0.045, 0.045),
-            Vec3::new(0.0, 0.22, -0.055),
-            shell,
-        );
-        p.cylinder(0.013, 0.005, Vec3::new(0.0, 0.22, -0.08), Vec3::Z, black);
-    }
-    for (mesh, material, transform) in p.0 {
-        body.spawn((
-            SentryRadar,
             Mesh3d(meshes.add(mesh)),
             MeshMaterial3d(material),
             transform,
@@ -1004,9 +1052,333 @@ fn sync_balance_legs(
     }
 }
 
+/// Flat-shaded extrusion: bottom and top polygons share counterclockwise
+/// source order. Construct outward winding from the centroid in Bevy space.
+fn extruded_polygon(vertices: &[Vec3]) -> Mesh {
+    use bevy::{asset::RenderAssetUsages, mesh::PrimitiveTopology};
+    let n = vertices.len() / 2;
+    let center = vertices.iter().copied().sum::<Vec3>() / vertices.len() as f32;
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut triangle = |a: Vec3, mut b: Vec3, mut c: Vec3| {
+        if (b - a).cross(c - a).dot((a + b + c) / 3.0 - center) < 0.0 {
+            std::mem::swap(&mut b, &mut c);
+        }
+        let normal = (b - a).cross(c - a).normalize();
+        positions.extend([a.to_array(), b.to_array(), c.to_array()]);
+        normals.extend([normal.to_array(); 3]);
+    };
+    for k in 1..n - 1 {
+        triangle(vertices[0], vertices[k], vertices[k + 1]);
+        triangle(vertices[n], vertices[n + k], vertices[n + k + 1]);
+    }
+    for i in 0..n {
+        let j = (i + 1) % n;
+        triangle(vertices[i], vertices[j], vertices[n + j]);
+        triangle(vertices[i], vertices[n + j], vertices[n + i]);
+    }
+    let uv = vec![[0.0, 0.0]; positions.len()];
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+}
+
+#[derive(Component)]
+struct OmniSuspension {
+    chassis: u32,
+    wheel: usize,
+    arm: bool,
+}
+
+fn suspension_transform(chassis: &crate::sync::ChassisAppearance, wheel: usize) -> Transform {
+    let mut body = Transform::default();
+    apply_pose(&mut body, chassis.pose);
+    let inverse = body.to_matrix().inverse();
+    let wheel = &chassis.wheels[wheel];
+    let top = inverse.transform_point3(crate::flu_position(wheel.suspension_anchor_m));
+    let lower = inverse.transform_point3(crate::flu_position(wheel.suspension_lower_m));
+    let delta = top - lower;
+    Transform::from_translation(lower)
+        .with_rotation(Quat::from_rotation_arc(Vec3::Y, delta.normalize_or_zero()))
+        .with_scale(Vec3::new(1.0, delta.length().max(0.001), 1.0))
+}
+
+/// Non-spinning carriage arm from the inboard spring to the inner axle face.
+fn suspension_arm_transform(chassis: &crate::sync::ChassisAppearance, wheel: usize) -> Transform {
+    let mut body = Transform::default();
+    apply_pose(&mut body, chassis.pose);
+    let inverse = body.to_matrix().inverse();
+    let wheel = &chassis.wheels[wheel];
+    let lower = inverse.transform_point3(crate::flu_position(wheel.suspension_lower_m));
+    let hub = inverse.transform_point3(crate::flu_position(wheel.pose.translation_m));
+    let outward = Vec3::new(hub.x, 0.0, hub.z).normalize_or_zero();
+    let axle = hub - outward * (0.5 * wheel.width_m + 0.004);
+    let delta = axle - lower;
+    Transform::from_translation(lower)
+        .with_rotation(Quat::from_rotation_arc(Vec3::Y, delta.normalize_or_zero()))
+        .with_scale(Vec3::new(1.0, delta.length().max(0.001), 1.0))
+}
+
+/// One normalized helical spring around a telescoping guide, along local +Y.
+fn spring_mesh() -> Mesh {
+    use bevy::{asset::RenderAssetUsages, mesh::PrimitiveTopology};
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let point = |i: usize, j: usize| {
+        let phase = i as f32 / 60.0 * std::f32::consts::TAU * 6.0;
+        let around = j as f32 / 6.0 * std::f32::consts::TAU;
+        let radial = Vec3::new(phase.cos(), 0.0, phase.sin());
+        let normal = radial * around.cos() + Vec3::Y * around.sin();
+        let p = radial * 0.012
+            + Vec3::Y * (0.1 + i as f32 / 60.0 * 0.8)
+            + Vec3::new(normal.x * 0.0017, normal.y * 0.012, normal.z * 0.0017);
+        (p, normal)
+    };
+    for i in 0..60 {
+        for j in 0..6 {
+            let quad = [
+                point(i, j),
+                point(i + 1, j),
+                point(i + 1, j + 1),
+                point(i, j + 1),
+            ];
+            for k in [0, 1, 2, 0, 2, 3] {
+                positions.push(quad[k].0.to_array());
+                normals.push(quad[k].1.to_array());
+            }
+        }
+    }
+    let uv = vec![[0.0, 0.0]; positions.len()];
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+}
+
+fn spawn_omni_suspension(
+    body: &mut ChildSpawnerCommands,
+    meshes: &mut Assets<Mesh>,
+    chassis: &crate::sync::ChassisAppearance,
+    metal: &Handle<StandardMaterial>,
+    black: &Handle<StandardMaterial>,
+) {
+    let spring = meshes.add(spring_mesh());
+    let guide = meshes.add(Cylinder::new(0.005, 1.0).mesh().resolution(8).build());
+    let arm = meshes.add(Cuboid::new(0.022, 1.0, 0.026));
+    for wheel in 0..chassis.wheels.len() {
+        body.spawn((
+            OmniSuspension {
+                chassis: chassis.id,
+                wheel,
+                arm: false,
+            },
+            suspension_transform(chassis, wheel),
+            Visibility::Inherited,
+        ))
+        .with_children(|slider| {
+            slider.spawn((
+                Mesh3d(guide.clone()),
+                MeshMaterial3d(black.clone()),
+                Transform::from_xyz(0.0, 0.5, 0.0),
+            ));
+            slider.spawn((Mesh3d(spring.clone()), MeshMaterial3d(metal.clone())));
+        });
+        body.spawn((
+            OmniSuspension {
+                chassis: chassis.id,
+                wheel,
+                arm: true,
+            },
+            suspension_arm_transform(chassis, wheel),
+            Visibility::Inherited,
+        ))
+        .with_children(|carriage| {
+            carriage.spawn((
+                Mesh3d(arm.clone()),
+                MeshMaterial3d(metal.clone()),
+                Transform::from_xyz(0.0, 0.5, 0.0),
+            ));
+        });
+    }
+}
+fn sync_omni_suspension(
+    input: Res<SceneInput>,
+    index: Res<ChassisIndex>,
+    mut parts: Query<(&OmniSuspension, &mut Transform)>,
+) {
+    let Some(scene) = &input.0 else { return };
+    for (part, mut transform) in &mut parts {
+        let Some(chassis) = index
+            .0
+            .get(&part.chassis)
+            .and_then(|i| scene.chassis.get(*i))
+        else {
+            continue;
+        };
+        if part.wheel < chassis.wheels.len() {
+            transform.set_if_neq(if part.arm {
+                suspension_arm_transform(chassis, part.wheel)
+            } else {
+                suspension_transform(chassis, part.wheel)
+            });
+        }
+    }
+}
+
+/// Low yaw bearing with two solid triangular cheeks. Their hidden hinge lies
+/// at the caller's pitch pivot; no external joint caps or connecting fork are drawn.
+fn simple_yaw_parts(
+    chassis: &crate::sync::ChassisAppearance,
+    metal: &Handle<StandardMaterial>,
+    graphite: &Handle<StandardMaterial>,
+    black: &Handle<StandardMaterial>,
+) -> PrototypeParts {
+    let [tx, ty, tz] = chassis.turret_half_m;
+    let drop = chassis.pivot_above_body_m.max(0.02);
+    let base = -drop
+        + if chassis.bumper_prisms_m.is_empty() {
+            0.100
+        } else {
+            0.045
+        };
+    let triangle_base = -(tz * 0.70).hypot(tx * 0.90) - 0.008;
+    let cap_bottom = triangle_base - 0.006;
+    let mut p = PrototypeParts::default();
+    if cap_bottom > base {
+        p.cylinder(
+            tx.max(ty) * 1.02,
+            cap_bottom - base,
+            Vec3::new(0.0, (base + cap_bottom) / 2.0, 0.0),
+            Vec3::Y,
+            black,
+        );
+    }
+    p.cylinder(
+        tx.max(ty) * 1.25,
+        0.006,
+        Vec3::new(0.0, triangle_base - 0.003, 0.0),
+        Vec3::Y,
+        metal,
+    );
+    for side in [-1.0, 1.0] {
+        // The inner plate face meets the plain pitch housing at its hidden pivot.
+        let x = side * (ty * 0.85 + 0.004);
+        let profile = [
+            (triangle_base, -tx * 0.70),
+            (triangle_base, tx * 0.70),
+            (0.008, 0.0),
+        ];
+        let vertices: Vec<_> = [-0.004, 0.004]
+            .into_iter()
+            .flat_map(|offset| {
+                profile
+                    .iter()
+                    .map(move |&(y, z)| Vec3::new(x + offset, y, z))
+            })
+            .collect();
+        p.0.push((
+            extruded_polygon(&vertices),
+            graphite.clone(),
+            Transform::default(),
+        ));
+    }
+    p
+}
+
+/// One small camera seat on the plain pitch housing. The shared lens pose stays fixed.
+fn simple_pitch_parts(half_m: [f32; 3], metal: &Handle<StandardMaterial>) -> PrototypeParts {
+    let [tx, _, tz] = half_m;
+    let mut p = PrototypeParts::default();
+    let roof = tz * 0.70;
+    let seat_top = tz - 0.004;
+    p.block(
+        Vec3::new(0.026, seat_top - roof, tx * 0.30),
+        Vec3::new(0.0, (seat_top + roof) / 2.0, -tx * 0.80),
+        metal,
+    );
+    p
+}
+
+/// Place the rear LI01 low enough to sit close to the armor while its main LED
+/// strip stays above the rear plate. The housing is already inboard of that plate.
+fn light_bar_base_m(chassis: &crate::sync::ChassisAppearance, armor: ArmorOptics) -> f32 {
+    let rear_top = chassis
+        .armor
+        .get(2)
+        .map(|rear| {
+            let mut transform = Transform::default();
+            apply_pose(&mut transform, rear.local);
+            rear.local.translation_m[2] as f32
+                + armor.housing_half_m[2] * (transform.rotation * Vec3::Y).y.abs()
+        })
+        .unwrap_or(chassis.body_half_m[2]);
+    // LI01's 14 mm LED strip is centred 64 mm above its mounting origin.
+    (chassis.body_half_m[2] + 0.005).max(rear_top + 0.002 - (0.064 - 0.007))
+}
+
+/// Overlay the imported plate faces with the same caller-owned identity and hit lights.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn imported_armor(
+    parent: &mut ChildSpawnerCommands,
+    chassis: &crate::sync::ChassisAppearance,
+    config: &Config,
+    atlas: &ArmorAtlas,
+    diffuser: &DiffuserProfile,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    let rendering = config.rendering;
+    let lit = materials.add(powered_diffuser_material(rendering, chassis.team, diffuser));
+    let dark = materials.add(diffuser_material(rendering));
+    let struck = materials.add(struck_material(rendering));
+    let ink = materials.add(atlas.material(rendering));
+    let artwork = meshes.add(atlas.mesh(chassis.armor_pattern, config.armor.face_size_m[1]));
+    let bar = meshes.add(diffuser_mesh(0.010, config.armor.light_length_m, 0.004));
+    for (plate, module) in chassis.armor.iter().enumerate() {
+        let mut transform = Transform::default();
+        apply_pose(&mut transform, module.local);
+        parent
+            .spawn((transform, Visibility::Inherited))
+            .with_children(|p| {
+                p.spawn((
+                    ArmorArtwork(chassis.armor_pattern),
+                    Mesh3d(artwork.clone()),
+                    MeshMaterial3d(ink.clone()),
+                    Transform::from_xyz(0., 0., -0.0015)
+                        .with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
+                ));
+                for side in [-1., 1.] {
+                    p.spawn((
+                        Mesh3d(bar.clone()),
+                        MeshMaterial3d(lit.clone()),
+                        Transform::from_xyz(side * config.armor.light_span_m * 0.5, 0., -0.002),
+                        ChassisArmorLight {
+                            chassis: chassis.id,
+                            plate,
+                            lit: lit.clone(),
+                            dark: dark.clone(),
+                            struck: struck.clone(),
+                        },
+                    ));
+                }
+            });
+    }
+}
+
 /// Spawn new chassis and rebuild changed model choices; the renderer is passive.
 fn spawn_chassis(
-    scene: (Res<SceneInput>, Res<ChassisIndex>),
+    scene: (
+        Res<SceneInput>,
+        Res<ChassisIndex>,
+        Option<Res<crate::team_robot::TeamRobotAssets>>,
+    ),
     config: Res<Config>,
     optics: (Res<ArmorAtlas>, Res<DiffuserProfile>),
     existing: Query<(Entity, &ChassisId, Option<&ChassisBuild>)>,
@@ -1014,7 +1386,7 @@ fn spawn_chassis(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let (input, index) = scene;
+    let (input, index, team_assets) = scene;
     let (atlas, diffuser) = optics;
     let Some(scene) = input.0.as_ref() else {
         return;
@@ -1023,6 +1395,12 @@ fn spawn_chassis(
         model: chassis.model,
         armor_pattern: chassis.armor_pattern,
         mecanum: chassis.mecanum,
+        body_half_m: chassis.body_half_m,
+        body_shell_visible: chassis.body_shell_visible,
+        frame_beam_step_m: chassis.frame_beam_step_m,
+        body_outline_m: chassis.body_outline_m.clone(),
+        bumper_prisms_m: chassis.bumper_prisms_m.clone(),
+        bumper_base_prisms: chassis.bumper_base_prisms,
     };
     let stale: std::collections::HashSet<u32> = existing
         .iter()
@@ -1043,6 +1421,9 @@ fn spawn_chassis(
         .collect();
     let rendering = config.rendering;
     for chassis in &scene.chassis {
+        if chassis.model == RobotModel::TeamCad && team_assets.is_some() {
+            continue;
+        }
         if existing_ids.contains(&chassis.id) {
             continue;
         }
@@ -1109,6 +1490,9 @@ fn spawn_chassis(
                     &mut meshes,
                     if chassis.model == RobotModel::Drone {
                         [0.10, 0.075, 0.03]
+                    } else if !chassis.bumper_prisms_m.is_empty() {
+                        // Leave the four inboard suspension bays outside the central case.
+                        [hx * 0.35, hy * 0.35, hz * 0.65]
                     } else {
                         [hx * 0.60, hy * 0.60, hz * 0.65]
                     },
@@ -1186,10 +1570,20 @@ fn spawn_chassis(
                 if chassis.model == RobotModel::Drone {
                     return;
                 }
+                let bar_base = light_bar_base_m(chassis, armor);
+                if bar_base > hz + 0.011 {
+                    for x in [-0.05, 0.05] {
+                        body.spawn((
+                            Mesh3d(meshes.add(Cuboid::new(0.010, bar_base - hz, 0.010))),
+                            MeshMaterial3d(aluminium.clone()),
+                            Transform::from_xyz(x, (bar_base + hz) / 2.0, hx - 0.028),
+                        ));
+                    }
+                }
                 attach_equipment(
                     body,
                     equipment::light_bar(),
-                    Transform::from_xyz(0.0, hz + 0.01, hx - 0.028)
+                    Transform::from_xyz(0.0, bar_base, hx - 0.028)
                         .with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
                     chassis.id,
                     &mut meshes,
@@ -1205,71 +1599,87 @@ fn spawn_chassis(
                     &equipment_materials,
                 );
                 for (plate, module) in chassis.armor.iter().enumerate() {
+                    for prism in &module.bracket_prisms_m {
+                        let vertices: Vec<_> = prism
+                            .iter()
+                            .map(|&[x, y, z]| Vec3::new(-y, z, -x))
+                            .collect();
+                        body.spawn((
+                            Mesh3d(meshes.add(extruded_polygon(&vertices))),
+                            MeshMaterial3d(aluminium.clone()),
+                            Transform::default(),
+                        ));
+                    }
+                    let has_carrier = !module.bracket_prisms_m.is_empty();
                     let mut transform = Transform::default();
                     apply_pose(&mut transform, module.local);
-                    body.spawn((transform, Visibility::Inherited))
-                        .with_children(|module| {
-                            // Face +x is Bevy -Z: the housing sits behind it.
-                            module.spawn((
-                                Mesh3d(housing.clone()),
-                                MeshMaterial3d(graphite.clone()),
-                                Transform::from_xyz(0.0, 0.0, armor.housing_half_m[0]),
-                            ));
-                            module.spawn((
-                                Mesh3d(face.clone()),
-                                MeshMaterial3d(panel.clone()),
-                                Transform::from_xyz(0.0, 0.0, -0.002),
-                            ));
-                            // Rectangle fronts face +Z; armor's outward face is -Z.
-                            // Rotate the entire UV-mapped plane so the glyph reads normally.
-                            module.spawn((
-                                ArmorArtwork(chassis.armor_pattern),
-                                Mesh3d(artwork.clone()),
-                                MeshMaterial3d(ink.clone()),
-                                Transform::from_xyz(0.0, 0.0, -0.0045)
-                                    .with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
-                            ));
-                            // Raised panel bezel, exposed corner fasteners and rear brackets.
-                            for x in [-0.048, 0.048] {
-                                for y in [-0.046, 0.046] {
-                                    module.spawn((
-                                        Mesh3d(
-                                            meshes.add(
-                                                Cylinder::new(0.0035, 0.002)
-                                                    .mesh()
-                                                    .resolution(8)
-                                                    .build(),
-                                            ),
-                                        ),
-                                        MeshMaterial3d(aluminium.clone()),
-                                        Transform::from_xyz(x, y, -0.003).with_rotation(along_z()),
-                                    ));
-                                }
+                    body.spawn((
+                        ChassisArmorPanel {
+                            chassis: chassis.id,
+                            plate,
+                        },
+                        transform,
+                        if module.plate_visible {
+                            Visibility::Inherited
+                        } else {
+                            Visibility::Hidden
+                        },
+                    ))
+                    .with_children(|module| {
+                        // Face +x is Bevy -Z: the housing sits behind it.
+                        module.spawn((
+                            Mesh3d(housing.clone()),
+                            MeshMaterial3d(graphite.clone()),
+                            Transform::from_xyz(0.0, 0.0, armor.housing_half_m[0]),
+                        ));
+                        module.spawn((
+                            Mesh3d(face.clone()),
+                            MeshMaterial3d(panel.clone()),
+                            Transform::from_xyz(0.0, 0.0, -0.002),
+                        ));
+                        // Rectangle fronts face +Z; armor's outward face is -Z.
+                        // Rotate the entire UV-mapped plane so the glyph reads normally.
+                        module.spawn((
+                            ArmorArtwork(chassis.armor_pattern),
+                            Mesh3d(artwork.clone()),
+                            MeshMaterial3d(ink.clone()),
+                            Transform::from_xyz(0.0, 0.0, -0.0045)
+                                .with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
+                        ));
+                        // Raised panel bezel, exposed corner fasteners and rear brackets.
+                        for x in [-0.048, 0.048] {
+                            for y in [-0.046, 0.046] {
+                                module.spawn((
+                                    Mesh3d(meshes.add(
+                                        Cylinder::new(0.0035, 0.002).mesh().resolution(8).build(),
+                                    )),
+                                    MeshMaterial3d(aluminium.clone()),
+                                    Transform::from_xyz(x, y, -0.003).with_rotation(along_z()),
+                                ));
+                            }
+                            if !has_carrier {
                                 module.spawn((
                                     Mesh3d(meshes.add(Cuboid::new(0.012, 0.11, 0.018))),
                                     MeshMaterial3d(black.clone()),
                                     Transform::from_xyz(x, -0.006, 0.025),
                                 ));
                             }
-                            for side in [-1.0, 1.0] {
-                                module.spawn((
-                                    Mesh3d(bar.clone()),
-                                    MeshMaterial3d(armor_lit.clone()),
-                                    ChassisArmorLight {
-                                        chassis: chassis.id,
-                                        plate,
-                                        lit: armor_lit.clone(),
-                                        struck: struck.clone(),
-                                        dark: armor_off.clone(),
-                                    },
-                                    Transform::from_xyz(
-                                        side * armor.light_span_m / 2.0,
-                                        0.0,
-                                        -0.005,
-                                    ),
-                                ));
-                            }
-                        });
+                        }
+                        for side in [-1.0, 1.0] {
+                            module.spawn((
+                                Mesh3d(bar.clone()),
+                                MeshMaterial3d(armor_lit.clone()),
+                                ChassisArmorLight {
+                                    chassis: chassis.id,
+                                    plate,
+                                    lit: armor_lit.clone(),
+                                    struck: struck.clone(),
+                                    dark: armor_off.clone(),
+                                },
+                                Transform::from_xyz(side * armor.light_span_m / 2.0, 0.0, -0.005),
+                            ));
+                        }
+                    });
                 }
             });
         for (index, wheel) in chassis.wheels.iter().enumerate() {
@@ -1496,6 +1906,7 @@ fn spawn_chassis(
         let [tx, ty, tz] = chassis.turret_half_m;
         let drop = chassis.pivot_above_body_m.max(0.02);
         let arm_gap = ty + 0.012;
+        let simple_gimbal = matches!(chassis.model, RobotModel::Omni | RobotModel::Sentry);
         if chassis.model != RobotModel::Drone {
             commands
                 .spawn((
@@ -1505,6 +1916,19 @@ fn spawn_chassis(
                     Visibility::Inherited,
                 ))
                 .with_children(|stage| {
+                    if simple_gimbal {
+                        for (mesh, material, transform) in
+                            simple_yaw_parts(chassis, &aluminium, &graphite, &black).0
+                        {
+                            stage.spawn((
+                                Mesh3d(meshes.add(mesh)),
+                                MeshMaterial3d(material),
+                                transform,
+                            ));
+                        }
+                        return;
+                    }
+
                     stage.spawn((
                         Mesh3d(meshes.add(Cylinder::new(tx.max(ty) * 1.6, 0.012))),
                         MeshMaterial3d(steel.clone()),
@@ -1543,52 +1967,66 @@ fn spawn_chassis(
         }
         // Pitch stage: the cradle with the barrel, feeder and camera.
         let barrel = chassis.barrel_length_m.max(0.01);
+        let tube_length = (barrel - equipment::speed_monitor_length_m(chassis.mecanum)).max(0.01);
         commands
             .spawn((
                 id,
                 ChassisTurret,
-                Mesh3d(box_mesh(&mut meshes, [tx, ty, tz])),
+                Mesh3d(if simple_gimbal {
+                    meshes.add(equipment::housing(ty * 1.70, tz * 1.40, tx * 1.80, 0.008))
+                } else {
+                    box_mesh(&mut meshes, [tx, ty, tz])
+                }),
                 MeshMaterial3d(graphite.clone()),
                 Transform::default(),
                 Visibility::Inherited,
             ))
             .with_children(|turret| {
-                if chassis.model == RobotModel::Sentry {
-                    spawn_sentry_radar(turret, &mut meshes, &aluminium, &steel, &black, &accent);
+                if simple_gimbal {
+                    for (mesh, material, transform) in
+                        simple_pitch_parts(chassis.turret_half_m, &aluminium).0
+                    {
+                        turret.spawn((
+                            Mesh3d(meshes.add(mesh)),
+                            MeshMaterial3d(material),
+                            transform,
+                        ));
+                    }
                 }
-                // Pitch axle through the cradle.
-                turret.spawn((
-                    Mesh3d(meshes.add(Cylinder::new(0.008, 2.0 * arm_gap + 0.01))),
-                    MeshMaterial3d(steel.clone()),
-                    Transform::from_rotation(along_x()),
-                ));
+                if !simple_gimbal {
+                    // Pitch axle through the cradle.
+                    turret.spawn((
+                        Mesh3d(meshes.add(Cylinder::new(0.008, 2.0 * arm_gap + 0.01))),
+                        MeshMaterial3d(steel.clone()),
+                        Transform::from_rotation(along_x()),
+                    ));
+                }
                 // Barrel along the turret's +x (Bevy -Z) with a muzzle ring.
                 turret.spawn((
                     Mesh3d(
                         meshes.add(
-                            Cylinder::new(
-                                if chassis.mecanum { 0.025 } else { 0.012 },
-                                barrel - 0.12,
-                            )
-                            .mesh()
-                            .resolution(16)
-                            .build(),
+                            Cylinder::new(if chassis.mecanum { 0.025 } else { 0.012 }, tube_length)
+                                .mesh()
+                                .resolution(16)
+                                .build(),
                         ),
                     ),
                     MeshMaterial3d(black.clone()),
-                    Transform::from_xyz(0.0, 0.0, -(barrel - 0.12) / 2.0).with_rotation(along_z()),
+                    Transform::from_xyz(0.0, 0.0, -tube_length / 2.0).with_rotation(along_z()),
                 ));
                 turret.spawn((
                     Mesh3d(meshes.add(Cylinder::new(0.018, 0.02))),
                     MeshMaterial3d(steel.clone()),
                     Transform::from_xyz(0.0, 0.0, -tx - 0.01).with_rotation(along_z()),
                 ));
-                // Feeder drum on top, camera block ahead of it.
-                turret.spawn((
-                    Mesh3d(meshes.add(Cylinder::new(ty * 0.7, 0.03))),
-                    MeshMaterial3d(black.clone()),
-                    Transform::from_xyz(0.0, tz + 0.015, tx * 0.3),
-                ));
+                if !simple_gimbal {
+                    // Feeder drum on top, camera block ahead of it.
+                    turret.spawn((
+                        Mesh3d(meshes.add(Cylinder::new(ty * 0.7, 0.03))),
+                        MeshMaterial3d(black.clone()),
+                        Transform::from_xyz(0.0, tz + 0.015, tx * 0.3),
+                    ));
+                }
                 attach_equipment(
                     turret,
                     equipment::camera(),
@@ -1726,13 +2164,22 @@ mod tests {
                 rotation_wxyz: [h, 0.0, 0.0, h],
             },
             body_half_m: [0.26, 0.26, 0.05],
+            body_shell_visible: true,
+            frame_beam_step_m: 0.0,
+            body_outline_m: vec![],
+            bumper_prisms_m: vec![],
+            bumper_base_prisms: 0,
             wheels: vec![
                 WheelAppearance {
                     pose: PoseFlu::default(),
+                    suspension_anchor_m: [0.0, 0.0, 0.2],
+                    suspension_lower_m: [0.0, 0.0, 0.1],
                     radius_m: 0.07,
                     width_m: 0.04,
                 },
                 WheelAppearance {
+                    suspension_anchor_m: [0.0, 0.0, 0.2],
+                    suspension_lower_m: [0.0, 0.0, 0.1],
                     pose: PoseFlu {
                         translation_m: [x_m + 0.2, 2.2, 0.1],
                         rotation_wxyz: [1.0, 0.0, 0.0, 0.0],
@@ -1743,6 +2190,8 @@ mod tests {
             ],
             armor: vec![
                 ArmorAppearance {
+                    plate_visible: true,
+                    bracket_prisms_m: vec![],
                     local: PoseFlu {
                         translation_m: [0.28, 0.0, 0.015],
                         rotation_wxyz: [1.0, 0.0, 0.0, 0.0],
@@ -1750,6 +2199,8 @@ mod tests {
                     hit_flash: false,
                 },
                 ArmorAppearance {
+                    plate_visible: true,
+                    bracket_prisms_m: vec![],
                     local: PoseFlu {
                         translation_m: [0.0, 0.28, 0.015],
                         rotation_wxyz: [h, 0.0, 0.0, h],
@@ -1898,72 +2349,6 @@ mod tests {
         );
     }
     #[test]
-    fn sentry_radar_follows_gimbal_instead_of_spinning_body() {
-        let mut app = App::new();
-        app.add_plugins((
-            bevy::asset::AssetPlugin::default(),
-            bevy::transform::TransformPlugin,
-        ))
-        .init_asset::<Mesh>()
-        .init_asset::<StandardMaterial>()
-        .init_resource::<Assets<Image>>()
-        .init_resource::<ArmorAtlas>()
-        .init_resource::<DiffuserProfile>()
-        .init_resource::<SceneInput>()
-        .insert_resource(Config {
-            rendering: RenderingConfig::default(),
-            armor: optics(),
-        })
-        .init_resource::<ChassisIndex>()
-        .add_systems(
-            Update,
-            (index_chassis, spawn_chassis, ingest_chassis, sync_chassis).chain(),
-        );
-        let mut chassis = appearance(7, 0.0);
-        chassis.model = RobotModel::Sentry;
-        app.world_mut().resource_mut::<SceneInput>().0 = Some(SceneState {
-            chassis: vec![chassis.clone()],
-            ..default()
-        });
-        app.update();
-        let radar: Vec<_> = app
-            .world_mut()
-            .query_filtered::<(Entity, &ChildOf, &GlobalTransform), With<SentryRadar>>()
-            .iter(app.world())
-            .map(|(entity, parent, pose)| (entity, parent.parent(), *pose))
-            .collect();
-        assert!(!radar.is_empty());
-        for (_, parent, _) in &radar {
-            assert!(app.world().get::<ChassisTurret>(*parent).is_some());
-        }
-        chassis.pose.rotation_wxyz = [1.0, 0.0, 0.0, 0.0];
-        app.world_mut()
-            .resource_mut::<SceneInput>()
-            .0
-            .as_mut()
-            .unwrap()
-            .chassis[0] = chassis.clone();
-        app.update();
-        for (entity, _, before) in &radar {
-            assert_eq!(app.world().get::<GlobalTransform>(*entity).unwrap(), before);
-        }
-        // Both yaw and pitch are owned by the camera/gimbal cradle.
-        chassis.turret.rotation_wxyz = [0.5, 0.5, 0.5, 0.5];
-        app.world_mut()
-            .resource_mut::<SceneInput>()
-            .0
-            .as_mut()
-            .unwrap()
-            .chassis[0] = chassis;
-        app.update();
-        assert!(
-            radar
-                .iter()
-                .any(|(e, _, before)| app.world().get::<GlobalTransform>(*e).unwrap() != before)
-        );
-    }
-
-    #[test]
     fn chassis_sets_are_spawned_per_id_and_removed_when_the_id_leaves() {
         let mut app = App::new();
         app.add_plugins((bevy::asset::AssetPlugin::default(),))
@@ -2054,7 +2439,13 @@ mod tests {
             ChassisBuild {
                 model: RobotModel::Hero,
                 armor_pattern: crate::armor::ArmorPattern::One,
-                mecanum: true
+                mecanum: true,
+                body_half_m: hero.body_half_m,
+                body_shell_visible: hero.body_shell_visible,
+                frame_beam_step_m: hero.frame_beam_step_m,
+                body_outline_m: hero.body_outline_m.clone(),
+                bumper_prisms_m: hero.bumper_prisms_m.clone(),
+                bumper_base_prisms: hero.bumper_base_prisms,
             }
         );
         app.update();
@@ -2077,6 +2468,101 @@ mod tests {
             0
         );
     }
+    #[test]
+    fn panel_cutaway_visibility_follows_the_caller_without_removing_carriers() {
+        let mut app = App::new();
+        app.init_resource::<SceneInput>()
+            .init_resource::<ChassisIndex>()
+            .add_systems(Update, (index_chassis, sync_armor_panels).chain());
+        let panel = app
+            .world_mut()
+            .spawn((
+                ChassisArmorPanel {
+                    chassis: 7,
+                    plate: 0,
+                },
+                Visibility::Inherited,
+            ))
+            .id();
+        let carrier = app.world_mut().spawn(Visibility::Inherited).id();
+        let mut chassis = appearance(7, 0.0);
+        chassis.armor[0].plate_visible = false;
+        app.world_mut().resource_mut::<SceneInput>().0 = Some(SceneState {
+            chassis: vec![chassis],
+            ..Default::default()
+        });
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(panel).unwrap(),
+            Visibility::Hidden
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(carrier).unwrap(),
+            Visibility::Inherited
+        );
+        app.world_mut()
+            .resource_mut::<SceneInput>()
+            .0
+            .as_mut()
+            .unwrap()
+            .chassis[0]
+            .armor[0]
+            .plate_visible = true;
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(panel).unwrap(),
+            Visibility::Inherited
+        );
+    }
+
+    #[test]
+    fn simple_launcher_details_fit_the_existing_cradle_envelope() {
+        use bevy::mesh::VertexAttributeValues;
+        let finish = Handle::<StandardMaterial>::default();
+        let half = [0.06, 0.06, 0.06];
+        let parts = simple_pitch_parts(half, &finish);
+        for (mesh, _, transform) in parts.0 {
+            let Some(VertexAttributeValues::Float32x3(vertices)) =
+                mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+            else {
+                panic!("missing positions")
+            };
+            for vertex in vertices {
+                let p = transform.transform_point(Vec3::from_array(*vertex));
+                assert!(p.is_finite());
+                assert!(
+                    p.x.abs() <= half[1] + 1e-4
+                        && p.y.abs() <= half[2] + 1e-4
+                        && p.z.abs() <= half[0] + 1e-4,
+                    "launcher detail exceeds cradle: {p:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn omni_sliders_follow_individual_wheels_without_rotating_with_spin() {
+        let mut chassis = appearance(7, 0.0);
+        chassis.wheels[0].pose.translation_m = [0.245, 2.0, 0.075];
+        chassis.wheels[0].suspension_anchor_m = [0.145, 2.0, 0.20];
+        chassis.wheels[0].suspension_lower_m = [0.145, 2.0, 0.075];
+        let first = suspension_transform(&chassis, 0);
+        let arm = suspension_arm_transform(&chassis, 0);
+        assert!((first.scale.y - 0.125).abs() < 1e-6);
+        chassis.wheels[0].pose.rotation_wxyz = [0.0, 0.0, 1.0, 0.0];
+        assert_eq!(first, suspension_transform(&chassis, 0));
+        assert_eq!(arm, suspension_arm_transform(&chassis, 0));
+        let untouched = suspension_transform(&chassis, 1);
+        chassis.wheels[0].pose.translation_m[2] += 0.025;
+        chassis.wheels[0].suspension_lower_m[2] += 0.025;
+        assert!((suspension_transform(&chassis, 0).scale.y - 0.100).abs() < 1e-6);
+        assert_eq!(untouched, suspension_transform(&chassis, 1));
+        let moved_arm = suspension_arm_transform(&chassis, 0);
+        assert!((moved_arm.translation.y - arm.translation.y - 0.025).abs() < 1e-6);
+        assert!((moved_arm.scale.y - arm.scale.y).abs() < 1e-6);
+        assert!(spring_mesh().count_vertices() > 0);
+    }
+
     #[test]
     fn equipment_hp_segments_follow_snapshot_and_defeat() {
         let mut app = App::new();

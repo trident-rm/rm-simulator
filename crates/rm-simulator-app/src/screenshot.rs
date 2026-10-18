@@ -100,6 +100,7 @@ impl ScreenshotRequest {
 pub fn take_screenshot(
     mut request: ResMut<ScreenshotRequest>,
     cad: Res<CadSceneStatus>,
+    robot: Option<Res<rm_simulator_render::team_robot::TeamRobotStatus>>,
     debug: Res<crate::debug::CollisionDebug>,
     session: Res<crate::session::Session>,
     readiness: Res<CaptureReadiness>,
@@ -119,6 +120,10 @@ pub fn take_screenshot(
         );
         return;
     }
+    if let Some(failure) = robot.as_ref().and_then(|s| s.failed.as_ref()) {
+        finish_capture(&mut request, Err(failure.clone()), &mut exit);
+        return;
+    }
     if let Some(failure) = &cad.failed {
         error!("cannot take screenshot: {failure}");
         finish_capture(&mut request, Err(failure.clone()), &mut exit);
@@ -129,7 +134,8 @@ pub fn take_screenshot(
         finish_capture(&mut request, Err(failure.into()), &mut exit);
         return;
     }
-    if !cad.ready()
+    if robot.as_ref().is_some_and(|s| !s.is_ready())
+        || !cad.ready()
         || debug.pending()
         || !session.commands_confirmed()
         || readiness.0.load(Ordering::Acquire) != 0

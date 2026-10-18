@@ -41,6 +41,10 @@ impl Rounding for Fine {
             (Fine::Chassis, "angular_velocity_rad_s" | "gimbal_velocity_rad_s") => {
                 round(RATE_SCALE, 18, K_RATE)
             }
+            (Fine::Chassis, "wheel_suspension_compression_m") => {
+                round(TRANSLATION_SCALE, 24, K_TRANSLATION)
+            }
+            (Fine::Chassis, "wheel_angular_velocity_rad_s") => round(RATE_SCALE, 24, K_RATE),
             (Fine::Chassis, "held_aim_rad" | "wheel_spin_rad") => round(ANGLE_SCALE, 24, K_ANGLE),
             (Fine::Chassis, "rotation_wxyz") => Fine::Rotation,
             (Fine::Chassis, _) => Fine::Chassis,

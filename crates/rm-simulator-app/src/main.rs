@@ -36,6 +36,7 @@ mod projectile_prediction;
 mod referee_link;
 #[cfg(feature = "referee-link")]
 mod referee_video;
+mod robot_assets;
 mod scene;
 mod screenshot;
 mod session;
@@ -68,12 +69,23 @@ fn main() -> AppExit {
     let steam_runtime = steam_support::SteamRuntime::initialize();
     let mut args = Args::parse();
     if let Err(error) = args.resolve_asset_path() {
-        eprintln!("resolving --cad-assets: {error}");
+        eprintln!("resolving assets: {error}");
         return AppExit::error();
     }
     let mut app = App::new();
     #[cfg(feature = "steam")]
     steam_support::install(&mut app, steam_runtime);
+    if let Some(path) = &args.robot_assets {
+        use bevy::asset::io::{AssetSourceBuilder, file::FileAssetReader};
+        let root = std::path::absolute(path).expect("robot asset path");
+        app.register_asset_source(
+            "robots",
+            AssetSourceBuilder::new(move || Box::new(FileAssetReader::new(root.clone()))),
+        );
+        app.insert_resource(rm_simulator_render::team_robot::TeamRobotAssets {
+            file: "robots://neutral.glb".into(),
+        });
+    }
     let mut plugins = DefaultPlugins
         .set(WindowPlugin {
             primary_window: Some(Window {
@@ -100,6 +112,7 @@ fn main() -> AppExit {
     }
     app.insert_resource(args.window_mode);
     app.add_plugins(plugins)
+        .add_plugins(rm_simulator_render::team_robot::TeamRobotVisualsPlugin)
         .add_plugins(presentation::PresentationPlugin)
         .add_plugins(screenshot::ScreenshotReadinessPlugin)
         .add_plugins(CadScenePlugin {

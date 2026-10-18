@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! A four-wheel omni chassis driven on ray-cast wheels inside the field's rapier
-//! world. The body is one dynamic cuboid with a second cuboid for the turret
+//! world. The omni body is an octagonal deck and compact lower bumper, with a cuboid for the turret
 //! that reaches down to the body top (so low roofs stop the chassis and
 //! nothing slips between the two). Each wheel is a ray from its hub along
 //! the body's -z that carries a spring/damper suspension and an ideal omni tyre:
-//! a motor-limited friction force along the rolling direction and a small roller
+//! independent motor torque, wheel inertia, slip-limited traction and a small roller
 //! resistance along the axle, so the four wheels together move the body
 //! holonomically. Ground is whatever the ray hits: the floor plane, the field
 //! CAD (bumps, ramps, tunnels) or the tower proxies. Four small armor
@@ -166,6 +166,38 @@ impl Default for ChassisDynamics {
     }
 }
 
+/// Octagonal deck, close-fitting lower bumper and wheel guards. Dimensions are
+/// prototype assumptions, sized within ROB 2027 Table 2-7's 600 mm stowed cube.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OmniFrame {
+    /// Equal corner cut on the deck's rectangular footprint, in metres.
+    pub corner_cut_m: f64,
+    /// Lower bumper's outer cardinal reach in metres (historical ring parameter).
+    pub ring_half_m: f64,
+    /// Corner cut of the lower bumper, leaving diagonal wheel bays, in metres.
+    pub ring_corner_cut_m: f64,
+    /// Width of the wheel guard bars in their horizontal plane, in metres.
+    pub ring_width_m: f64,
+    /// Wheel guard vertical thickness, in metres.
+    pub ring_height_m: f64,
+    /// Wheel guard attachment centre height relative to the body origin, in metres.
+    pub ring_center_z_m: f64,
+}
+
+/// Counterclockwise chamfered rectangle in body FLU metres.
+fn octagon(hx: f64, hy: f64, cut: f64) -> [[f64; 2]; 8] {
+    [
+        [hx, hy - cut],
+        [hx - cut, hy],
+        [-hx + cut, hy],
+        [-hx, hy - cut],
+        [-hx, -hy + cut],
+        [-hx + cut, -hy],
+        [hx - cut, -hy],
+        [hx, -hy + cut],
+    ]
+}
+
 /// Physical description of the chassis. All lengths are in the body frame:
 /// origin at the body centre, +x forward, +y left, +z up.
 ///
@@ -191,6 +223,9 @@ impl Default for ChassisDynamics {
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChassisConfig {
+    /// Source-fitted Zhulong/Hello World Omni prototype; selects its measured mounts.
+    #[serde(default)]
+    pub team_cad: bool,
     /// Actuator and suspension tuning.
     pub dynamics: ChassisDynamics,
     /// Drive layout: `true` is mecanum rollers, `false` ideal omni wheels.
@@ -208,9 +243,12 @@ pub struct ChassisConfig {
     pub tether: Option<Tether>,
     /// Total chassis mass in kilograms, armour modules excluded.
     pub mass_kg: f64,
-    /// Body collider half extents; the body covers the wheels' footprint so
-    /// walls stop the chassis before a wheel would enter them.
+    /// Deck collider half extents in metres. The omni ring covers its wheels;
+    /// other presets use a conservative box around their footprint.
     pub body_half_m: [f64; 3],
+    /// Optional octagonal deck and compact lower bumper; other presets keep their box.
+    #[serde(default)]
+    pub omni_frame: Option<OmniFrame>,
     /// Turret centre in the body frame (the gun pivot) and half extents. The
     /// collider is a column of this footprint from the body top to the turret
     /// top, standing in for the gimbal neck.
@@ -228,6 +266,9 @@ pub struct ChassisConfig {
     pub wheel_radius_m: f64,
     /// Axle width of one wheel, in metres.
     pub wheel_width_m: f64,
+    /// Wheel and reflected drivetrain rotational inertia, in kg m². Assumed.
+    #[serde(default = "default_wheel_inertia")]
+    pub wheel_inertia_kg_m2: f64,
     /// Gap between the wheel bottom and the ground with the suspension fully
     /// extended. Compression beyond it is resisted by the same spring. The
     /// static sag (weight over stiffness) is the margin a wheel keeps before
@@ -252,21 +293,28 @@ pub struct ChassisConfig {
     /// One small armor module on each side of the body (front, left, back,
     /// right): its scoring face stands this far outside the body side, its
     /// centre this high above the body centre, and it leans back by this
-    /// angle so the outward normal tilts up. Real plates lean about 15
-    /// degrees; the figure is assumed, the manual gives no single value.
+    /// angle so the outward normal tilts up. ROB 2027 S120 (2026 S149)
+    /// requires a normal 75° from vertical: 15° above the horizontal.
     pub armor_standoff_m: f64,
-    /// Armour centre height above the body centre, in metres.
+    /// Lower armor-pair centre height above the body centre, in metres.
+    /// Omni front/rear faces add `frame_beam_step_m()`; other frames use this for all faces.
     pub armor_height_m: f64,
     /// Lean angle of the plate in radians; the outward normal tilts up by this.
     pub armor_tilt_rad: f64,
 }
+fn default_wheel_inertia() -> f64 {
+    0.008
+}
+
 impl Default for ChassisConfig {
     /// A typical infantry: 22 kg (competition robots weigh about 22 to 32 kg),
-    /// 0.52 m square body, 153 mm omni wheels at the
-    /// four edge midpoints (245 mm from centre), prototype drives (about 4.6 N m at the
+    /// 0.41 m octagonal deck and 0.556 m lower bumper, 153 mm omni wheels at the
+    /// four diagonals (245 mm from centre), prototype drives (about 4.6 N m at the
     /// wheel, 3.8 m/s free running). Assumed values, see the module notes.
     fn default() -> Self {
+        let d = 0.245 * std::f64::consts::FRAC_1_SQRT_2;
         Self {
+            team_cad: false,
             dynamics: ChassisDynamics {
                 suspension_travel_m: 0.12,
                 ..Default::default()
@@ -276,36 +324,206 @@ impl Default for ChassisConfig {
             planar_flight: false,
             tether: None,
             mass_kg: 22.0,
-            body_half_m: [0.26, 0.26, 0.05],
+            body_half_m: [0.205, 0.205, 0.05],
+            omni_frame: Some(OmniFrame {
+                corner_cut_m: 0.095,
+                ring_half_m: 0.285,
+                ring_corner_cut_m: 0.257,
+                ring_width_m: 0.012,
+                ring_height_m: 0.020,
+                ring_center_z_m: -0.070,
+            }),
             turret_center_m: [0.0, 0.0, 0.2],
             turret_half_m: [0.06, 0.06, 0.06],
             hub_drop_m: 0.05,
-            wheel_hubs_m: vec![[0.245, 0.0], [0.0, 0.245], [-0.245, 0.0], [0.0, -0.245]],
+            wheel_hubs_m: vec![[d, d], [-d, d], [-d, -d], [d, -d]],
             wheel_radius_m: 0.0765,
             wheel_width_m: 0.04,
+            wheel_inertia_kg_m2: default_wheel_inertia(),
             suspension_rest_m: 0.08,
-            // Softer independent suspension keeps the driven side wheels loaded
-            // while the front edge wheel climbs a ramp.
+            // Compliant independent suspension retains contact on twisted ground.
             suspension_stiffness_n_m: 1_000.0,
             // About 0.9 of critical for a quarter of 22 kg on 1 kN/m.
             suspension_damping_n_s_m: 135.0,
-            // Only the two side wheels propel a straight run in this layout.
+            // All four drives contribute through their 45-degree rolling directions.
             wheel_stall_force_n: 60.0,
             wheel_no_load_speed_m_s: 3.8,
             slip_stiffness_n_s_m: 150.0,
             drive_friction: 1.0,
             roller_friction: 0.03,
-            armor_standoff_m: 0.02,
-            armor_height_m: 0.015,
+            // Recess the carrier and face inside the compact lower bumper.
+            armor_standoff_m: 0.045,
+            armor_height_m: 0.030,
             armor_tilt_rad: 15_f64.to_radians(),
         }
     }
 }
 impl ChassisConfig {
+    /// Source-fitted Zhulong chassis / Hello World gimbal, at original scale.
+    /// Mounts come from the approved STEP assembly recipe (2026-10-18), not
+    /// rulebook dimensions. Mass, springs and motors retain assumed tuning.
+    ///
+    /// ```
+    /// use rm_simulator_physics::chassis::ChassisConfig;
+    /// let robot = ChassisConfig::team_cad();
+    /// assert!(robot.team_cad);
+    /// assert_eq!(robot.wheel_hubs_m.len(), 4);
+    /// ```
+    pub fn team_cad() -> Self {
+        let d = 0.178_306_329_501_305;
+        Self {
+            team_cad: true,
+            omni_frame: Some(OmniFrame {
+                ring_half_m: 0.290,
+                ring_height_m: 0.030,
+                ring_center_z_m: -0.085,
+                ..Self::default().omni_frame.unwrap()
+            }),
+            wheel_hubs_m: vec![[d, d], [d, -d], [-d, d], [-d, -d]],
+            wheel_radius_m: 0.0775,
+            // Source axle at Y=-13.1776 mm relative to body reference Y=85 mm.
+            // Account for the assumed 22 kg / four 1 kN/m springs at static sag.
+            hub_drop_m: 0.098_177_595_154_746 - (0.08 - 22.0 * 9.81 / 4_000.0),
+            turret_center_m: [0., 0., 0.24095 + 0.1295 - 0.085],
+            turret_half_m: [0.145, 0.075, 0.12],
+            armor_height_m: 0.0035,
+            armor_standoff_m: 0.059_041_51,
+            ..Self::default()
+        }
+    }
+    /// Gun muzzle offset from the pitch pivot in local FLU metres.
+    /// The source SM01 front is 206.577 mm ahead of the gimbal pivot.
+    ///
+    /// ```
+    /// use rm_simulator_physics::chassis::ChassisConfig;
+    /// assert_eq!(ChassisConfig::team_cad().muzzle_offset_m(), [0.20657673, 0., 0.]);
+    /// ```
+    pub fn muzzle_offset_m(&self) -> [f64; 3] {
+        if self.team_cad {
+            [0.206_576_73, 0., 0.]
+        } else {
+            [MUZZLE_FORWARD_M, 0., 0.]
+        }
+    }
+
+    /// Deck footprint in body FLU metres, counterclockwise. A box has four corners.
+    ///
+    /// ```
+    /// use rm_simulator_physics::chassis::ChassisConfig;
+    /// assert_eq!(ChassisConfig::default().body_outline_m().len(), 8);
+    /// assert_eq!(ChassisConfig::hero().body_outline_m().len(), 4);
+    /// ```
+    pub fn body_outline_m(&self) -> Vec<[f64; 2]> {
+        let [x, y, _] = self.body_half_m;
+        self.omni_frame.as_ref().map_or_else(
+            || vec![[x, y], [-x, y], [-x, -y], [x, -y]],
+            |frame| octagon(x, y, frame.corner_cut_m).to_vec(),
+        )
+    }
+    /// Convex lower bumper and wheel guard prisms in body FLU metres. Each has
+    /// four vertices per end face, shared by collision and rendering.
+    /// The first eight prisms form a solid lower-deck extrusion. Each wheel
+    /// then adds a horizontal semicircular guard whose ends join the lower deck.
+    /// The diagonal bays keep every guard clear of the suspended tyre envelope.
+    ///
+    /// ```
+    /// use rm_simulator_physics::chassis::ChassisConfig;
+    /// assert_eq!(ChassisConfig::default().bumper_prisms_m().len(), 56);
+    /// assert!(ChassisConfig::hero().bumper_prisms_m().is_empty());
+    /// ```
+    pub fn bumper_prisms_m(&self) -> Vec<[[f64; 3]; 8]> {
+        let Some(f) = &self.omni_frame else {
+            return Vec::new();
+        };
+        let outer = octagon(f.ring_half_m, f.ring_half_m, f.ring_corner_cut_m);
+        let low = f.ring_center_z_m - 0.5 * f.ring_height_m;
+        let top = -self.body_half_m[2];
+        let prism = |xy: [[f64; 2]; 4], lo: f64, hi: f64| {
+            std::array::from_fn(|k| [xy[k % 4][0], xy[k % 4][1], if k < 4 { lo } else { hi }])
+        };
+        let midpoint = |a: [f64; 2], b: [f64; 2]| [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+        // A fan of convex quads fills the bottom without a surrounding moat.
+        let mut parts: Vec<_> = (0..8)
+            .map(|i| {
+                prism(
+                    [
+                        [0.0, 0.0],
+                        midpoint(outer[(i + 7) % 8], outer[i]),
+                        outer[i],
+                        midpoint(outer[i], outer[(i + 1) % 8]),
+                    ],
+                    low,
+                    top,
+                )
+            })
+            .collect();
+        for geometry in wheel_geometry(self) {
+            let radial = geometry.axle;
+            let tangent = geometry.roll;
+            let radius = geometry.hub_m.x.hypot(geometry.hub_m.y);
+            let centre = 0.40 * radius;
+            // Enclose the whole tyre footprint, including its outer corners.
+            let inner =
+                (radius + 0.5 * self.wheel_width_m - centre).hypot(self.wheel_radius_m) + 0.008;
+            let outer = inner + f.ring_width_m;
+            // A horizontal bow around the wheel, with both ends embedded in the
+            // lower deck. It stays below the armor and clear of vertical travel.
+            for sector in 0..12 {
+                let angle = |i: usize| std::f64::consts::PI * i as f64 / 12.0;
+                let a = angle(sector);
+                let b = angle(sector + 1);
+                let xy = [(inner, a), (outer, a), (outer, b), (inner, b)].map(|(r, angle)| {
+                    let p = radial * (centre + r * angle.sin()) + tangent * (r * angle.cos());
+                    [p.x, p.y]
+                });
+                parts.push(prism(xy, low, low + f.ring_height_m));
+            }
+        }
+        parts
+    }
+    /// Fixed upper and moving lower spring mounts in body-local FLU metres.
+    /// Omni mounts are inboard of the tyre, between the crossed frame beams.
+    /// The lower carriage follows wheel heave without rotating with its axle.
+    /// `compression_m` is suspension compression from full droop, in metres.
+    /// These depict the existing effective wheel spring; they add no joint dynamics.
+    /// Returns `None` for an absent wheel.
+    ///
+    /// ```
+    /// use rm_simulator_physics::chassis::ChassisConfig;
+    /// let cfg = ChassisConfig::default();
+    /// let [upper, lower] = cfg.suspension_mounts_m(0, 0.05).unwrap();
+    /// assert!(upper[2] < cfg.body_half_m[2]);
+    /// assert!(lower[2] < upper[2]);
+    /// assert!(cfg.suspension_mounts_m(99, 0.0).is_none());
+    /// ```
+    pub fn suspension_mounts_m(&self, wheel: usize, compression_m: f64) -> Option<[[f64; 3]; 2]> {
+        let &[x, y] = self.wheel_hubs_m.get(wheel)?;
+        let inboard = if self.omni_frame.is_some() { 0.60 } else { 1.0 };
+        let upper_z = if self.omni_frame.is_some() {
+            self.body_half_m[2] - 0.022
+        } else {
+            self.body_half_m[2]
+        };
+        let lower_z = -self.hub_drop_m - self.suspension_rest_m
+            + compression_m
+            + if self.omni_frame.is_some() {
+                0.025
+            } else {
+                0.0
+            };
+        Some([
+            [x * inboard, y * inboard, upper_z],
+            [x * inboard, y * inboard, lower_z],
+        ])
+    }
+
     /// Assumed Hero prototype with 203 mm mecanum wheels. These are design
     /// choices, not rulebook dimensions; HP and weapon limits remain configured separately.
     pub fn hero() -> Self {
         Self {
+            armor_standoff_m: 0.02,
+            armor_height_m: 0.015,
+            omni_frame: None,
             dynamics: ChassisDynamics {
                 drive_power_w: 160.0,
                 ..Default::default()
@@ -343,6 +561,9 @@ impl ChassisConfig {
     /// ```
     pub fn balance() -> Self {
         Self {
+            armor_standoff_m: 0.02,
+            armor_height_m: 0.015,
+            omni_frame: None,
             balance_assist: true,
             dynamics: ChassisDynamics::default(),
             suspension_rest_m: 0.03,
@@ -395,6 +616,9 @@ impl ChassisConfig {
     /// controls allow; a centred gimbal put upward shots into the frame.
     pub fn drone() -> Self {
         Self {
+            armor_standoff_m: 0.02,
+            armor_height_m: 0.015,
+            omni_frame: None,
             planar_flight: true,
             mass_kg: 5.0,
             body_half_m: [0.40, 0.40, 0.065],
@@ -411,6 +635,23 @@ impl ChassisConfig {
         }
         self.hub_drop_m + self.wheel_radius_m + self.suspension_rest_m
     }
+    /// Assumed separation between the stacked omni frame beam sets, in metres.
+    /// The front/rear armor pair follows the upper beams. This 28 mm prototype
+    /// dimension is inspired by the reference assembly, not a rulebook requirement.
+    ///
+    /// ```
+    /// use rm_simulator_physics::chassis::ChassisConfig;
+    /// assert_eq!(ChassisConfig::default().frame_beam_step_m(), 0.028);
+    /// assert_eq!(ChassisConfig::hero().frame_beam_step_m(), 0.0);
+    /// ```
+    pub fn frame_beam_step_m(&self) -> f64 {
+        if self.omni_frame.is_some() {
+            0.028
+        } else {
+            0.0
+        }
+    }
+
     /// Body-frame pose of each armor scoring face (+x the outward normal,
     /// +y along the width, +z along the height): front, left, back, right.
     ///
@@ -437,16 +678,107 @@ impl ChassisConfig {
         std::array::from_fn(|plate| {
             // Exact axis directions, so a plate never picks up a rounding yaw.
             let (cos, sin) = [(1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)][plate];
-            let reach = if plate.is_multiple_of(2) { hx } else { hy } + self.armor_standoff_m;
+            let reach = if self.team_cad {
+                if plate.is_multiple_of(2) {
+                    0.249_324_54
+                } else {
+                    0.264_041_51
+                }
+            } else {
+                (if plate.is_multiple_of(2) { hx } else { hy }) + self.armor_standoff_m
+            };
             let yaw = plate as f64 * std::f64::consts::FRAC_PI_2;
             let rotation =
                 Rotation::from_rotation_z(yaw) * Rotation::from_rotation_y(-self.armor_tilt_rad);
             Pose {
-                translation_m: [reach * cos, reach * sin, self.armor_height_m],
+                translation_m: [
+                    reach * cos,
+                    reach * sin,
+                    self.armor_height_m
+                        + if self.team_cad && plate.is_multiple_of(2) {
+                            -0.047
+                        } else if plate.is_multiple_of(2) {
+                            self.frame_beam_step_m()
+                        } else {
+                            0.0
+                        },
+                ],
                 rotation_wxyz: [rotation.w, rotation.x, rotation.y, rotation.z],
             }
         })
     }
+    /// Rough designated-carrier geometry behind an omni armor module, in body
+    /// FLU metres. Two deep side carriers and a horizontal mounting foot share
+    /// their vertices with rendering; they are unscored rigid chassis colliders.
+    /// The raised pair also includes a chassis spacer beneath its carrier foot.
+    /// ROB 2027 §3.6, S117–S118 and Figure 3-15 require the official bracket.
+    /// These fitted solids depict it; they are not official replacement drawings.
+    /// Invalid plate indices and non-omni frames return no geometry.
+    ///
+    /// ```
+    /// use rm_simulator_physics::chassis::ChassisConfig;
+    /// let cfg = ChassisConfig::default();
+    /// assert_eq!(cfg.armor_bracket_prisms_m(0).len(), 4);
+    /// assert!(cfg.armor_bracket_prisms_m(4).is_empty());
+    /// ```
+    pub fn armor_bracket_prisms_m(&self, plate: usize) -> Vec<[[f64; 3]; 8]> {
+        if self.omni_frame.is_none() || plate >= ARMOR_COUNT {
+            return Vec::new();
+        }
+        if self.team_cad {
+            return Vec::new();
+        }
+        let face = self.armor_faces()[plate];
+        let yaw = plate as f64 * std::f64::consts::FRAC_PI_2;
+        let rotation = Rotation::from_rotation_z(yaw);
+        let center = Vector::from_array(face.translation_m);
+        let (sin, cos) = self.armor_tilt_rad.sin_cos();
+        // Front carrier edges touch only the housing's rear plane. A small
+        // clearance keeps the foot below the armor rather than touching its lip.
+        let front = |z: f64| [-0.019 * cos - z * sin, -0.019 * sin + z * cos];
+        let lower = front(-0.060);
+        let upper = front(0.060);
+        let profile = [lower, upper, [-0.066, upper[1]], [-0.066, -0.076]];
+        let mut parts: Vec<_> = [-0.043, 0.043]
+            .into_iter()
+            .map(|y| {
+                std::array::from_fn(|k| {
+                    let [x, z] = profile[k % 4];
+                    (center
+                        + rotation * Vector::new(x, y + if k < 4 { -0.0075 } else { 0.0075 }, z))
+                    .to_array()
+                })
+            })
+            .collect();
+        parts.push(std::array::from_fn(|k| {
+            let corners = [
+                [-0.066, -0.0705],
+                [-0.010, -0.0705],
+                [-0.010, 0.0705],
+                [-0.066, 0.0705],
+            ];
+            let [x, y] = corners[k % 4];
+            (center + rotation * Vector::new(x, y, if k < 4 { -0.080 } else { -0.072 })).to_array()
+        }));
+        let step = face.translation_m[2] - self.armor_height_m;
+        if step > 0.0 {
+            // A chassis spacer supports the unchanged designated bracket foot.
+            // It touches the carrier only, never the armor module itself.
+            parts.push(std::array::from_fn(|k| {
+                let corners = [
+                    [-0.066, -0.0705],
+                    [-0.048, -0.0705],
+                    [-0.048, 0.0705],
+                    [-0.066, 0.0705],
+                ];
+                let [x, y] = corners[k % 4];
+                (center + rotation * Vector::new(x, y, if k < 4 { -0.080 - step } else { -0.080 }))
+                    .to_array()
+            }));
+        }
+        parts
+    }
+
     /// Validate dimensions and physical parameters before constructing a chassis.
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.planar_flight && (self.balance_assist || !self.wheel_hubs_m.is_empty()) {
@@ -470,6 +802,7 @@ impl ChassisConfig {
             self.hub_drop_m,
             self.wheel_radius_m,
             self.wheel_width_m,
+            self.wheel_inertia_kg_m2,
             self.suspension_rest_m,
             self.suspension_stiffness_n_m,
             self.suspension_damping_n_s_m,
@@ -486,6 +819,25 @@ impl ChassisConfig {
         }
         if self.body_half_m.iter().any(|v| !v.is_finite() || *v <= 0.0) {
             return Err("body half extents must be finite and positive");
+        }
+        if let Some(f) = &self.omni_frame
+            && ([
+                f.corner_cut_m,
+                f.ring_half_m,
+                f.ring_corner_cut_m,
+                f.ring_width_m,
+                f.ring_height_m,
+            ]
+            .iter()
+            .any(|v| !v.is_finite() || *v <= 0.0)
+                || !f.ring_center_z_m.is_finite()
+                || f.corner_cut_m >= self.body_half_m[0].min(self.body_half_m[1])
+                || f.ring_corner_cut_m >= f.ring_half_m
+                || f.ring_width_m >= f.ring_corner_cut_m
+                || f.ring_half_m - f.ring_width_m <= self.body_half_m[0].max(self.body_half_m[1])
+                || f.ring_center_z_m - 0.5 * f.ring_height_m >= -self.body_half_m[2])
+        {
+            return Err("invalid octagonal frame or ring dimensions");
         }
         if self
             .turret_half_m
@@ -594,16 +946,25 @@ pub struct WheelContact {
     pub normal: [f64; 3],
     /// Suspension force pressing the wheel onto the ground.
     pub load_n: f64,
-    /// Commanded minus actual surface speed along the rolling direction.
+    /// Wheel tread minus ground surface speed along the rolling direction.
     pub slip_m_s: f64,
+    /// Applied rolling traction at this contact, in newtons.
+    pub drive_force_n: f64,
 }
 /// One wheel's state at the end of a tick.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct WheelSnapshot {
-    /// Wheel hub centre in world FLU metres.
+    /// Suspended wheel centre in world FLU metres, including droop/compression.
     pub hub_m: [f64; 3],
-    /// Accumulated wheel rotation about its axle, wrapped to one turn.
+    /// Accumulated rolling angle, wrapped to one turn. Positive travels along
+    /// the configured rolling direction; physical axle rotation has opposite sign.
     pub spin_rad: f64,
+    /// Actual axle speed, in radians per second; independent of body velocity.
+    #[serde(default)]
+    pub angular_velocity_rad_s: f64,
+    /// Spring compression from full droop, in metres; zero when airborne.
+    #[serde(default)]
+    pub suspension_compression_m: f64,
     /// Surface speed the inverse kinematics asked of this wheel.
     pub target_m_s: f64,
     /// Ground contact this tick, or `None` when the ray found no ground.
@@ -684,8 +1045,73 @@ struct WheelGeometry {
 #[derive(Clone, Copy)]
 struct WheelState {
     spin_rad: f64,
+    angular_velocity_rad_s: f64,
+    suspension_compression_m: f64,
     target_m_s: f64,
     contact: Option<WheelContact>,
+}
+
+/// Integrate motor torque and equal/opposite tyre reaction, with shared power.
+/// Eight internal slices per Rapier slice resolve the stiff slip law; time
+/// still advances only on the ordinary fixed 128 Hz world clock.
+fn integrate_wheel_drives(
+    config: &ChassisConfig,
+    wheels: &mut [WheelState],
+    contacts: &[(f64, f64)],
+    dt_s: f64,
+) -> (Vec<f64>, f64) {
+    let ratio = config.wheel_radius_m
+        / if config.mecanum {
+            std::f64::consts::SQRT_2
+        } else {
+            1.0
+        };
+    let slices = 8;
+    let dt = dt_s / f64::from(slices);
+    let mut forces = vec![0.0; wheels.len()];
+    let mut motors = vec![0.0; wheels.len()];
+    let mut average_scale = 0.0;
+    for _ in 0..slices {
+        let mut mechanical_w = 0.0;
+        let mut copper_w = 0.0;
+        for (wheel, motor) in wheels.iter().zip(&mut motors) {
+            let speed = wheel.angular_velocity_rad_s * ratio;
+            let error = wheel.target_m_s - speed;
+            let limit = config.wheel_stall_force_n
+                * if error * speed > 0.0 {
+                    (1.0 - speed.abs() / config.wheel_no_load_speed_m_s).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+            *motor = (4.0 * config.slip_stiffness_n_s_m * error).clamp(-limit, limit);
+            mechanical_w += (*motor * speed).max(0.0);
+            copper_w +=
+                config.dynamics.motor_stall_loss_w * (*motor / config.wheel_stall_force_n).powi(2);
+        }
+        let scale = drive_power_scale(mechanical_w, copper_w, config.dynamics.drive_power_w);
+        average_scale += scale / f64::from(slices);
+        for (((wheel, &motor), &(ground_speed, grip)), force) in wheels
+            .iter_mut()
+            .zip(&motors)
+            .zip(contacts)
+            .zip(&mut forces)
+        {
+            let speed = wheel.angular_velocity_rad_s * ratio;
+            let traction =
+                (config.slip_stiffness_n_s_m * (speed - ground_speed)).clamp(-grip, grip);
+            // Tyre reaction resists the motor even when the body cannot move.
+            wheel.angular_velocity_rad_s +=
+                (motor * scale - traction) * ratio / config.wheel_inertia_kg_m2 * dt;
+            wheel.spin_rad = wrap_angle(wheel.spin_rad + wheel.angular_velocity_rad_s * dt);
+            *force += traction / f64::from(slices);
+        }
+    }
+    for (wheel, &(ground_speed, _)) in wheels.iter_mut().zip(contacts) {
+        if let Some(contact) = &mut wheel.contact {
+            contact.slip_m_s = wheel.angular_velocity_rad_s * ratio - ground_speed;
+        }
+    }
+    (forces, average_scale)
 }
 
 /// One chassis inside a physics world: its Rapier bodies and colliders, the
@@ -739,7 +1165,7 @@ impl ChassisSnapshot {
     /// Recompute the wheel values that follow from the rest of the snapshot:
     /// each hub centre from `pose` and the configured hub layout, and each
     /// tyre target from the inverse kinematics of `command` (zero while
-    /// `defeated`, whose drive is cut). A codec that carries only wheel spin
+    /// `defeated`, whose drive is cut). A codec carrying wheel compression
     /// calls this after decoding. The hub matches the host within the pose's
     /// own precision. The target matches whenever the command has not changed
     /// since the last tick; a restored chassis recomputes both before using
@@ -771,8 +1197,9 @@ impl ChassisSnapshot {
     /// snapshot.derive_wheel_kinematics();
     /// let hub = snapshot.config.wheel_hubs_m[0];
     /// assert!((snapshot.wheels[0].hub_m[0] - (1.0 + hub[0])).abs() < 1e-12);
-    /// assert_eq!(snapshot.wheels[0].target_m_s, 0.0); // Front wheel rolls sideways.
-    /// assert_eq!(snapshot.wheels[1].target_m_s, -1.0); // Side wheel drives forward.
+    /// let projected = std::f64::consts::FRAC_1_SQRT_2;
+    /// assert!((snapshot.wheels[0].target_m_s + projected).abs() < 1e-12);
+    /// assert!((snapshot.wheels[2].target_m_s - projected).abs() < 1e-12);
     /// ```
     pub fn derive_wheel_kinematics(&mut self) {
         let pose = rapier_pose(self.pose);
@@ -782,7 +1209,13 @@ impl ChassisSnapshot {
             self.command
         };
         for (wheel, geometry) in self.wheels.iter_mut().zip(wheel_geometry(&self.config)) {
-            wheel.hub_m = pose.transform_point(geometry.hub_m).to_array();
+            wheel.hub_m = pose
+                .transform_point(
+                    geometry.hub_m
+                        + Vector::Z
+                            * (wheel.suspension_compression_m - self.config.suspension_rest_m),
+                )
+                .to_array();
             wheel.target_m_s = command.forward_m_s * geometry.roll.x
                 + command.left_m_s * geometry.roll.y
                 + command.yaw_rate_rad_s * geometry.lever_m;
@@ -824,14 +1257,56 @@ impl Chassis {
             TURRET_MASS_SHARE
         };
         let [hx, hy, hz] = config.body_half_m;
-        world.insert_collider(
+        let deck = if config.omni_frame.is_some() {
+            let points: Vec<_> = config
+                .body_outline_m()
+                .iter()
+                .flat_map(|&[x, y]| [Vector::new(x, y, -hz), Vector::new(x, y, hz)])
+                .collect();
+            ColliderBuilder::convex_hull(&points).ok_or("invalid octagonal deck")?
+        } else {
             ColliderBuilder::cuboid(hx, hy, hz)
-                .mass(config.mass_kg * (1.0 - turret_share))
+        };
+        world.insert_collider(
+            deck.mass(config.mass_kg * (1.0 - turret_share))
                 .friction(BODY_FRICTION)
                 .restitution(ROBOT_RESTITUTION)
                 .restitution_combine_rule(CoefficientCombineRule::Min),
             Some(body),
         );
+        if config.team_cad {
+            // Source-envelope gameplay proxies, not visual triangles or mass estimates.
+            // The center case extends below the nominal frame; ammunition bays sit
+            // above the scoring faces and inset from their leaning upper edges.
+            for (half, centre) in [
+                ([0.103, 0.103, 0.079], [0., 0., -0.030]),
+                ([0.10, 0.07, 0.032], [0.145, 0.16, 0.077]),
+                ([0.10, 0.07, 0.032], [-0.145, 0.16, 0.077]),
+                ([0.10, 0.07, 0.032], [0.145, -0.16, 0.077]),
+                ([0.10, 0.07, 0.032], [-0.145, -0.16, 0.077]),
+            ] {
+                world.insert_collider(
+                    ColliderBuilder::cuboid(half[0], half[1], half[2])
+                        .translation(vector(centre))
+                        .density(0.0)
+                        .friction(BODY_FRICTION)
+                        .restitution(ROBOT_RESTITUTION),
+                    Some(body),
+                );
+            }
+        }
+        for prism in config.bumper_prisms_m() {
+            let vertices = prism.map(Vector::from_array);
+            world.insert_collider(
+                ColliderBuilder::convex_hull(&vertices)
+                    .ok_or("invalid bumper prism")?
+                    .density(0.0)
+                    .friction(BODY_FRICTION)
+                    .restitution(ROBOT_RESTITUTION)
+                    .restitution_combine_rule(CoefficientCombineRule::Min),
+                Some(body),
+            );
+        }
         let [tx, ty, tz] = config.turret_half_m;
         let [cx, cy, cz] = config.turret_center_m;
         let turret_top = cz + tz;
@@ -870,10 +1345,24 @@ impl Chassis {
                 )
             })
             .collect();
+        for plate in 0..ARMOR_COUNT {
+            for prism in config.armor_bracket_prisms_m(plate) {
+                world.insert_collider(
+                    ColliderBuilder::convex_hull(&prism.map(Vector::from_array))
+                        .ok_or("invalid armor carrier")?
+                        .density(0.0)
+                        .friction(BODY_FRICTION)
+                        .restitution(ROBOT_RESTITUTION),
+                    Some(body),
+                );
+            }
+        }
         let geometry = wheel_geometry(&config);
         let wheels = vec![
             WheelState {
                 spin_rad: 0.0,
+                angular_velocity_rad_s: 0.0,
+                suspension_compression_m: 0.0,
                 target_m_s: 0.0,
                 contact: None,
             };
@@ -936,7 +1425,7 @@ impl Chassis {
         let transform = rapier_pose(turret);
         Pose {
             translation_m: transform
-                .transform_point(Vector::new(MUZZLE_FORWARD_M, 0.0, 0.0))
+                .transform_point(vector(self.config.muzzle_offset_m()))
                 .to_array(),
             rotation_wxyz: turret.rotation_wxyz,
         }
@@ -1007,6 +1496,8 @@ impl Chassis {
         for wheel in &mut self.wheels {
             wheel.contact = None;
             wheel.target_m_s = 0.0;
+            wheel.angular_velocity_rad_s = 0.0;
+            wheel.suspension_compression_m = 0.0;
         }
         world
             .bodies
@@ -1039,7 +1530,13 @@ impl Chassis {
                 .iter()
                 .chain(&state.gimbal_velocity_rad_s)
                 .any(|v| !v.is_finite())
-            || state.wheels.iter().any(|w| !w.spin_rad.is_finite())
+            || state.wheels.len() != self.wheels.len()
+            || state.wheels.iter().any(|w| {
+                !w.spin_rad.is_finite()
+                    || !w.angular_velocity_rad_s.is_finite()
+                    || !w.suspension_compression_m.is_finite()
+                    || w.suspension_compression_m < 0.0
+            })
         {
             return Err("non-finite prediction state");
         }
@@ -1059,6 +1556,8 @@ impl Chassis {
         body.set_angvel(Vector::from_array(state.angular_velocity_rad_s), true);
         for (wheel, saved) in self.wheels.iter_mut().zip(&state.wheels) {
             wheel.spin_rad = saved.spin_rad;
+            wheel.angular_velocity_rad_s = saved.angular_velocity_rad_s;
+            wheel.suspension_compression_m = saved.suspension_compression_m;
             // Both are outputs of the previous tick, recomputed before they
             // are used again; carrying them makes a restore snapshot equal.
             wheel.target_m_s = saved.target_m_s;
@@ -1138,11 +1637,19 @@ impl Chassis {
             return;
         }
         let reach = cfg.wheel_radius_m + cfg.suspension_rest_m;
-        let filter = QueryFilter::default().exclude_rigid_body(self.body);
+        // Projectile group 2 must not act as a suspension support. A ray spring
+        // resting on a loose 17 mm ball would invent a rigid terrain column.
+        let filter =
+            QueryFilter::default()
+                .exclude_rigid_body(self.body)
+                .groups(InteractionGroups::new(
+                    Group::ALL,
+                    Group::ALL & !Group::GROUP_2,
+                    InteractionTestMode::And,
+                ));
         self.forces.clear();
         self.drive_forces.clear();
-        let mut mechanical_w = 0.0;
-        let mut copper_w = 0.0;
+        let mut tyre_contacts = Vec::with_capacity(self.wheels.len());
         for (wheel, geometry) in self.wheels.iter_mut().zip(&self.geometry) {
             let hub = pose.transform_point(geometry.hub_m);
             let axle = pose.rotation * geometry.axle;
@@ -1163,20 +1670,14 @@ impl Chassis {
                         .then_some((hit.time_of_impact, normal))
                 });
             let Some((distance, normal)) = ground else {
-                wheel.spin_rad = wrap_angle(
-                    wheel.spin_rad
-                        + target / cfg.wheel_radius_m
-                            * dt_s
-                            * if cfg.mecanum {
-                                std::f64::consts::SQRT_2
-                            } else {
-                                1.0
-                            },
-                );
                 wheel.contact = None;
+                wheel.suspension_compression_m = 0.0;
+                tyre_contacts.push((0.0, 0.0));
+                self.drive_forces.push((Vector::ZERO, hub));
                 continue;
             };
             let compression = reach - distance;
+            wheel.suspension_compression_m = compression;
             let hub_velocity = linvel + angvel.cross(hub - com);
             let compression_rate = -hub_velocity.dot(up);
             let overtravel = (compression - cfg.dynamics.suspension_travel_m).max(0.0);
@@ -1193,53 +1694,45 @@ impl Chassis {
             let roller_dir = (axle - normal * axle.dot(normal)).normalize();
             if !roll_dir.is_finite() || !roller_dir.is_finite() {
                 wheel.contact = None;
+                wheel.suspension_compression_m = 0.0;
+                tyre_contacts.push((0.0, 0.0));
+                self.drive_forces.push((Vector::ZERO, hub));
                 continue;
             }
             let roll_speed = contact_velocity.dot(roll_dir);
             let roller_speed = contact_velocity.dot(roller_dir);
-            let slip = target - roll_speed;
-            // Torque falls linearly with speed when driving the wheel faster in
-            // its direction of travel; braking and reversing get the stall force.
-            let available = if slip * roll_speed > 0.0 {
-                cfg.wheel_stall_force_n
-                    * (1.0 - roll_speed.abs() / cfg.wheel_no_load_speed_m_s).clamp(0.0, 1.0)
-            } else {
-                cfg.wheel_stall_force_n
-            };
             let grip = cfg.drive_friction * load;
-            let drive = (cfg.slip_stiffness_n_s_m * slip)
-                .clamp(-available, available)
-                .clamp(-grip, grip);
+            tyre_contacts.push((roll_speed, grip));
             let roller_grip = cfg.roller_friction * load;
             let roller =
                 (-cfg.slip_stiffness_n_s_m * roller_speed).clamp(-roller_grip, roller_grip);
-            mechanical_w += (drive * roll_speed).max(0.0);
-            copper_w += cfg.dynamics.motor_stall_loss_w * (drive / cfg.wheel_stall_force_n).powi(2);
-            self.drive_forces.push((roll_dir * drive, point));
+            self.drive_forces.push((roll_dir, point));
             self.forces.push((roller_dir * roller, point));
             self.forces.push((up * load, hub));
-            wheel.spin_rad = wrap_angle(
-                wheel.spin_rad
-                    + roll_speed / cfg.wheel_radius_m
-                        * dt_s
-                        * if cfg.mecanum {
-                            std::f64::consts::SQRT_2
-                        } else {
-                            1.0
-                        },
-            );
             wheel.contact = Some(WheelContact {
                 point_m: point.to_array(),
                 normal: normal.to_array(),
                 load_n: load,
-                slip_m_s: slip,
+                slip_m_s: 0.0,
+                drive_force_n: 0.0,
             });
         }
         let body = &mut world.bodies[self.body];
         // Forces and torques are separate accumulators; both must be cleared.
         body.reset_forces(false);
         body.reset_torques(false);
-        let scale = drive_power_scale(mechanical_w, copper_w, cfg.dynamics.drive_power_w);
+        let (traction, scale) = integrate_wheel_drives(cfg, &mut self.wheels, &tyre_contacts, dt_s);
+        for ((wheel, (force, _)), traction) in self
+            .wheels
+            .iter_mut()
+            .zip(&mut self.drive_forces)
+            .zip(traction)
+        {
+            *force *= traction;
+            if let Some(contact) = &mut wheel.contact {
+                contact.drive_force_n = traction;
+            }
+        }
         let supported = self
             .wheels
             .iter()
@@ -1276,7 +1769,7 @@ impl Chassis {
         }
         self.jump_held = self.command.jump;
         for (force, point) in self.drive_forces.drain(..) {
-            body.add_force_at_point(force * scale, point, true);
+            body.add_force_at_point(force, point, true);
         }
         for (force, point) in self.forces.drain(..) {
             body.add_force_at_point(force, point, true);
@@ -1339,8 +1832,17 @@ impl Chassis {
                 .iter()
                 .zip(&self.geometry)
                 .map(|(wheel, geometry)| WheelSnapshot {
-                    hub_m: pose.transform_point(geometry.hub_m).to_array(),
+                    hub_m: pose
+                        .transform_point(
+                            geometry.hub_m
+                                + Vector::Z
+                                    * (wheel.suspension_compression_m
+                                        - self.config.suspension_rest_m),
+                        )
+                        .to_array(),
                     spin_rad: wheel.spin_rad,
+                    angular_velocity_rad_s: wheel.angular_velocity_rad_s,
+                    suspension_compression_m: wheel.suspension_compression_m,
                     target_m_s: wheel.target_m_s,
                     contact: wheel.contact,
                 })
@@ -1407,6 +1909,344 @@ mod tests {
         let mut ballistics = WorldPhysics::new(&[], 0.0);
         ballistics.add_chassis(Team::Red, config, spawn).unwrap();
         ballistics
+    }
+
+    #[test]
+    fn compact_bumper_extends_the_lower_deck_and_stays_inside_the_stowed_width() {
+        let cfg = ChassisConfig::default();
+        cfg.validate().unwrap();
+        assert_eq!(cfg.body_outline_m().len(), 8);
+        let prisms = cfg.bumper_prisms_m();
+        assert_eq!(prisms.len(), 56);
+        for prism in &prisms {
+            for p in prism {
+                assert!(p[0].abs() <= 0.285 && p[1].abs() <= 0.285);
+            }
+        }
+        let frame = cfg.omni_frame.as_ref().unwrap();
+        for prism in &prisms[8..] {
+            for (i, p) in prism.iter().enumerate() {
+                let z =
+                    frame.ring_center_z_m + if i < 4 { -0.5 } else { 0.5 } * frame.ring_height_m;
+                assert!((p[2] - z).abs() < 1e-12);
+            }
+        }
+        for prism in &prisms[..8] {
+            for p in &prism[4..] {
+                assert_eq!(p[2], -cfg.body_half_m[2]);
+            }
+        }
+        // A ray into a diagonal corner misses the deck box's old square corner,
+        // while a horizontal ray at bumper height hits the compact lower extrusion.
+        let deck: Vec<_> = cfg
+            .body_outline_m()
+            .iter()
+            .flat_map(|&[x, y]| [Vector::new(x, y, -0.05), Vector::new(x, y, 0.05)])
+            .collect();
+        let deck = SharedShape::convex_hull(&deck).unwrap();
+        assert!(!deck.contains_point(&Pose3::IDENTITY, Vector::new(0.20, 0.20, 0.0)));
+        let ring = SharedShape::compound(
+            prisms
+                .iter()
+                .map(|p| {
+                    (
+                        Pose3::IDENTITY,
+                        SharedShape::convex_hull(&p.map(Vector::from_array)).unwrap(),
+                    )
+                })
+                .collect(),
+        );
+        let ray = Ray::new(Vector::new(0.5, 0.0, -0.07), -Vector::X);
+        let distance = ring.cast_ray(&Pose3::IDENTITY, &ray, 1.0, true).unwrap();
+        assert!((distance - 0.215).abs() < 1e-9);
+        assert!(ring.contains_point(&Pose3::IDENTITY, Vector::new(0.0, 0.0, -0.07)));
+    }
+
+    #[test]
+    fn lower_bumper_and_guards_clear_every_suspended_wheel() {
+        let cfg = ChassisConfig::default();
+        for wheel in wheel_geometry(&cfg) {
+            for prism in cfg.bumper_prisms_m() {
+                let points = prism
+                    .iter()
+                    .map(|p| Vector::new(p[0], p[1], 0.0))
+                    .collect::<Vec<_>>();
+                let mut axes = vec![wheel.axle, wheel.roll];
+                for (i, point) in points.iter().enumerate() {
+                    for other in &points[i + 1..] {
+                        let edge = other - point;
+                        if edge.length_squared() > 1e-20 {
+                            axes.push(Vector::new(-edge.y, edge.x, 0.0).normalize());
+                        }
+                    }
+                }
+                assert!(
+                    axes.into_iter().any(|axis| {
+                        let centre = wheel.hub_m.dot(axis);
+                        let radius = 0.5 * cfg.wheel_width_m * wheel.axle.dot(axis).abs()
+                            + cfg.wheel_radius_m * wheel.roll.dot(axis).abs();
+                        let low = points
+                            .iter()
+                            .map(|p| p.dot(axis))
+                            .fold(f64::INFINITY, f64::min);
+                        let high = points
+                            .iter()
+                            .map(|p| p.dot(axis))
+                            .fold(f64::NEG_INFINITY, f64::max);
+                        low - (centre + radius) > 0.002 || centre - radius - high > 0.002
+                    }),
+                    "bumper clips the wheel's swept envelope"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn armor_carriers_are_recessed_rigid_and_leave_the_ring_as_first_wall_contact() {
+        let cfg = ChassisConfig::default();
+        let mut armor_vertices = Vec::new();
+        for (plate, face) in cfg.armor_faces().iter().enumerate() {
+            let face = rapier_pose(*face);
+            let prisms = cfg.armor_bracket_prisms_m(plate);
+            assert_eq!(prisms.len(), if plate.is_multiple_of(2) { 4 } else { 3 });
+            for prism in &prisms {
+                for &point in prism {
+                    let local = face.inverse_transform_point(Vector::from_array(point));
+                    assert!(
+                        local.x <= -0.019 + 1e-12,
+                        "carrier protrudes through armor: {local:?}"
+                    );
+                }
+            }
+            // The carrier foot is horizontal and recessed onto the lower deck.
+            for p in &prisms.last().unwrap()[..4] {
+                assert!((p[2] + cfg.body_half_m[2]).abs() < 1e-12);
+            }
+            let [hx, hy, hz] = SMALL_ARMOR_HOUSING_HALF_M;
+            for x in [-2.0 * hx, 0.0] {
+                for y in [-hy, hy] {
+                    for z in [-hz, hz] {
+                        armor_vertices.push(face.transform_point(Vector::new(x, y, z)));
+                    }
+                }
+            }
+        }
+        let ring: Vec<_> = cfg
+            .bumper_prisms_m()
+            .into_iter()
+            .flatten()
+            .map(Vector::from_array)
+            .collect();
+        // Every horizontal wall orientation must meet the bumper first, even
+        // after including the plate tilt and full physical housing corners.
+        for degree in 0..360 {
+            let a = f64::from(degree).to_radians();
+            let n = Vector::new(a.cos(), a.sin(), 0.0);
+            let support = |vertices: &[Vector]| {
+                vertices
+                    .iter()
+                    .map(|v| v.dot(n))
+                    .fold(f64::NEG_INFINITY, f64::max)
+            };
+            assert!(support(&ring) - support(&armor_vertices) > 0.005);
+        }
+    }
+
+    #[test]
+    fn diagonal_wheels_clear_the_low_cardinal_armor_through_suspension_travel() {
+        let cfg = ChassisConfig::default();
+        for geometry in wheel_geometry(&cfg) {
+            assert!((geometry.hub_m.x.abs() - geometry.hub_m.y.abs()).abs() < 1e-12);
+            assert!((geometry.hub_m.x.hypot(geometry.hub_m.y) - 0.245).abs() < 1e-12);
+            // Separation in each armor plate's width direction is independent
+            // of wheel height, so this holds for full droop and compression.
+            for width_axis in [Vector::X, Vector::Y] {
+                let tyre_near = geometry.hub_m.dot(width_axis).abs()
+                    - cfg.wheel_radius_m * geometry.roll.dot(width_axis).abs()
+                    - 0.5 * cfg.wheel_width_m * geometry.axle.dot(width_axis).abs();
+                assert!(tyre_near - SMALL_ARMOR_HOUSING_HALF_M[1] > 0.025);
+            }
+        }
+        assert_eq!(cfg.armor_height_m, 0.030);
+    }
+
+    #[test]
+    fn omni_opposing_armor_pairs_follow_the_stacked_beam_heights() {
+        let cfg = ChassisConfig::default();
+        let faces = cfg.armor_faces();
+        assert_eq!(faces[0].translation_m[2], faces[2].translation_m[2]);
+        assert_eq!(faces[1].translation_m[2], faces[3].translation_m[2]);
+        assert!(
+            (faces[0].translation_m[2] - faces[1].translation_m[2] - cfg.frame_beam_step_m()).abs()
+                < 1e-12
+        );
+        let hero = ChassisConfig::hero().armor_faces();
+        assert!(
+            hero.iter()
+                .all(|p| p.translation_m[2] == hero[0].translation_m[2])
+        );
+    }
+
+    #[test]
+    fn omni_springs_are_inboard_below_the_roof_and_follow_each_wheels_heave() {
+        let cfg = ChassisConfig::default();
+        for (wheel, hub) in cfg.wheel_hubs_m.iter().enumerate() {
+            let [upper, lower] = cfg.suspension_mounts_m(wheel, 0.05).unwrap();
+            assert!(
+                upper[0].hypot(upper[1]) + 0.014 < hub[0].hypot(hub[1]) - cfg.wheel_width_m / 2.0
+            );
+            assert!(upper[2] + 0.014 < cfg.body_half_m[2]);
+            assert!(lower[2] > -0.08);
+            let [next_upper, next_lower] = cfg.suspension_mounts_m(wheel, 0.075).unwrap();
+            assert_eq!(upper, next_upper);
+            assert_eq!(&lower[..2], &next_lower[..2]);
+            assert!((next_lower[2] - lower[2] - 0.025).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn airborne_motors_spin_up_with_inertia_and_restore_exactly() {
+        let cfg = ChassisConfig::default();
+        let mut physics = chassis_world(cfg.clone(), Pose::at([0.0, 0.0, 20.0]));
+        physics
+            .command_chassis(
+                0,
+                ChassisCommand {
+                    forward_m_s: 2.0,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let first = run(&mut physics, 1);
+        let rate = first.wheels[1].angular_velocity_rad_s.abs();
+        assert!(rate > 0.0 && rate < 2.0 / cfg.wheel_radius_m);
+        let state = run(&mut physics, 32);
+        assert!(
+            state
+                .wheels
+                .iter()
+                .all(|w| w.contact.is_none() && w.suspension_compression_m == 0.0)
+        );
+        assert!(state.wheels[1].angular_velocity_rad_s.abs() > rate);
+        assert!(state.velocity_m_s[0].abs() < 1e-12);
+        let mut restored = WorldPhysics::new(&[], 0.0);
+        restored.restore_chassis(&state).unwrap();
+        assert_eq!(restored.chassis_snapshots()[0], state);
+        let a = run(&mut physics, 32);
+        let b = run(&mut restored, 32);
+        for (a, b) in a.wheels.iter().zip(b.wheels) {
+            assert_eq!(a.angular_velocity_rad_s, b.angular_velocity_rad_s);
+            assert_eq!(a.spin_rad, b.spin_rad);
+        }
+    }
+
+    #[test]
+    fn low_grip_spins_wheels_without_inventing_traction() {
+        let cfg = ChassisConfig {
+            drive_friction: 0.015,
+            ..Default::default()
+        };
+        let mut physics = chassis_world(cfg.clone(), Pose::at([0.0, 0.0, cfg.rest_height_m()]));
+        run(&mut physics, 256);
+        physics
+            .command_chassis(
+                0,
+                ChassisCommand {
+                    forward_m_s: 2.5,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let state = run(&mut physics, 64);
+        assert!(state.velocity_m_s[0] < 0.3, "{state:?}");
+        for i in 0..4 {
+            let w = state.wheels[i];
+            let c = w.contact.unwrap();
+            assert!(w.angular_velocity_rad_s.abs() * cfg.wheel_radius_m > 1.0);
+            assert!(c.slip_m_s.abs() > 0.8);
+            assert!(c.drive_force_n.abs() <= cfg.drive_friction * c.load_n + 1e-8);
+        }
+    }
+
+    #[test]
+    fn a_loose_projectile_does_not_become_a_suspension_support() {
+        let cfg = ChassisConfig::default();
+        let mut physics = chassis_world(cfg.clone(), Pose::at([0.0, 0.0, cfg.rest_height_m()]));
+        physics
+            .fire(
+                0,
+                Pose::at([cfg.wheel_hubs_m[0][0], cfg.wheel_hubs_m[0][1], 0.030]),
+                Shot {
+                    caliber: Caliber::Mm17,
+                    speed_m_s: 0.1,
+                },
+                None,
+            )
+            .unwrap();
+        let state = run(&mut physics, 1);
+        let front = state.wheels[0];
+        assert!(front.suspension_compression_m < 0.001, "{front:?}");
+        assert!(front.contact.unwrap().point_m[2].abs() < 1e-9);
+    }
+
+    #[test]
+    fn each_suspension_responds_to_its_own_ground_height() {
+        let cfg = ChassisConfig::default();
+        let mut physics = chassis_world(cfg.clone(), Pose::at([0.0, 0.0, cfg.rest_height_m()]));
+        let flat = run(&mut physics, 256);
+        let [x, y] = cfg.wheel_hubs_m[0];
+        physics
+            .add_static_mesh(
+                vec![
+                    [x - 0.04, y - 0.04, 0.025],
+                    [x + 0.04, y - 0.04, 0.025],
+                    [x + 0.04, y + 0.04, 0.025],
+                    [x - 0.04, y + 0.04, 0.025],
+                ],
+                vec![[0, 1, 2], [0, 2, 3]],
+            )
+            .unwrap();
+        let raised = run(&mut physics, 1);
+        assert!(
+            raised.wheels[0].suspension_compression_m
+                > flat.wheels[0].suspension_compression_m + 0.02
+        );
+        assert!(
+            raised.wheels[0].contact.unwrap().load_n
+                > raised.wheels[2].contact.unwrap().load_n + 15.0
+        );
+        assert!((raised.wheels[0].hub_m[2] - raised.wheels[2].hub_m[2] - 0.025).abs() < 0.003);
+    }
+
+    #[test]
+    fn wheel_reaction_and_shared_motor_budget_are_independent_per_corner() {
+        let cfg = ChassisConfig::default();
+        let initial = WheelState {
+            spin_rad: 0.0,
+            angular_velocity_rad_s: 0.0,
+            suspension_compression_m: 0.0,
+            target_m_s: 2.0,
+            contact: None,
+        };
+        let mut wheels = vec![initial; 4];
+        let contacts = [(0.0, 0.0), (0.0, 100.0), (0.0, 100.0), (0.0, 100.0)];
+        for _ in 0..64 {
+            integrate_wheel_drives(&cfg, &mut wheels, &contacts, 1.0 / 128.0);
+        }
+        assert!(wheels[0].angular_velocity_rad_s > wheels[1].angular_velocity_rad_s + 5.0);
+        assert_eq!(
+            wheels[1].angular_velocity_rad_s,
+            wheels[2].angular_velocity_rad_s
+        );
+        let mut restricted = cfg.clone();
+        restricted.dynamics.drive_power_w = 10.0;
+        let mut low = vec![initial; 4];
+        let mut high = vec![initial; 4];
+        for _ in 0..16 {
+            integrate_wheel_drives(&restricted, &mut low, &contacts, 1.0 / 128.0);
+            integrate_wheel_drives(&cfg, &mut high, &contacts, 1.0 / 128.0);
+        }
+        assert!(low[0].angular_velocity_rad_s < high[0].angular_velocity_rad_s);
     }
 
     #[test]
@@ -2002,9 +2842,8 @@ mod tests {
             .unwrap();
         let snapshot = run(&mut ballistics, 4_000);
         let speed = snapshot.velocity_m_s[0];
-        // The two side-midpoint wheels roll along the forward axis, so their
-        // no-load speed directly caps straight-line body speed.
-        let top = config.wheel_no_load_speed_m_s;
+        // Each diagonal wheel sees forward speed / sqrt(2).
+        let top = config.wheel_no_load_speed_m_s * std::f64::consts::SQRT_2;
         assert!(speed > 0.8 * top && speed < top, "{speed}");
         assert!(
             ballistics
@@ -2016,6 +2855,42 @@ mod tests {
                     }
                 )
                 .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod team_cad_tests {
+    use super::*;
+    use crate::projectile::{TargetFrames, WorldPhysics};
+    #[test]
+    fn source_mounts_settle_and_muzzle_follows_the_fitted_barrel() {
+        let cfg = ChassisConfig::team_cad();
+        cfg.validate().unwrap();
+        let faces = cfg.armor_faces();
+        assert!((faces[1].translation_m[2] - faces[0].translation_m[2] - 0.047).abs() < 1e-12);
+        let mut world = WorldPhysics::new(&[], 0.);
+        let id = world
+            .add_chassis(
+                Team::Red,
+                cfg.clone(),
+                Pose::at([0., 0., cfg.rest_height_m()]),
+            )
+            .unwrap();
+        let frames = TargetFrames::new(Vec::new());
+        for tick in 0..512 {
+            world.step(tick * crate::tick_ns(), &frames).unwrap();
+        }
+        let c = &world.chassis_snapshots()[0];
+        assert!((c.pose.translation_m[2] - 0.175_675_827).abs() < 0.003);
+        assert!(c.wheels.iter().all(|w| w.contact.is_some()));
+        let muzzle = world.chassis_muzzle_pose(id).unwrap();
+        assert!((muzzle.translation_m[0] - 0.206_576_73).abs() < 0.002);
+        assert!((muzzle.translation_m[2] - 0.461_125_827).abs() < 0.003);
+        assert!(
+            c.wheels
+                .iter()
+                .all(|w| w.angular_velocity_rad_s.abs() < 0.01)
         );
     }
 }

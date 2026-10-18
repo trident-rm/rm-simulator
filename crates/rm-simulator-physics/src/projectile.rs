@@ -563,6 +563,9 @@ pub struct WorldPhysics {
     projectiles: Vec<Projectile>,
     /// Velocities before integration, in the current projectile order.
     velocities_before: Vec<Vector>,
+    /// Incoming linear/angular velocity and centre of mass, in chassis order.
+    /// Armor collision speed must be measured before the solver stops a robot.
+    chassis_velocities_before: Vec<(Vector, Vector, Vector)>,
     chassis: Vec<Chassis>,
     /// Armor collisions since the last [`WorldPhysics::take_armor_collisions`].
     armor_collisions: Vec<ArmorCollision>,
@@ -653,6 +656,7 @@ impl WorldPhysics {
             removals: std::collections::VecDeque::new(),
             projectiles: Vec::new(),
             velocities_before: Vec::new(),
+            chassis_velocities_before: Vec::new(),
             chassis: Vec::new(),
             armor_collisions: Vec::new(),
             next_chassis_id: 0,
@@ -1519,6 +1523,15 @@ impl WorldPhysics {
             for chassis in &mut self.chassis {
                 chassis.apply_forces(&mut self.world, substep_s);
             }
+            self.chassis_velocities_before.clear();
+            for chassis in &self.chassis {
+                let body = &self.world.bodies[chassis.body()];
+                self.chassis_velocities_before.push((
+                    body.linvel(),
+                    body.angvel(),
+                    body.center_of_mass(),
+                ));
+            }
             self.world.step();
             contacts
                 .extend(self.capture_contacts(frames, frac_prev, frac_next, substep_s, next_ns));
@@ -1730,10 +1743,21 @@ impl WorldPhysics {
                         .position()
                         .transform_point(local);
                     let other_body = self.world.colliders[other].parent();
-                    let other_velocity = other_body.map_or(Vector::ZERO, |body| {
-                        self.world.bodies[body].velocity_at_point(point)
-                    });
-                    let own_velocity = self.world.bodies[chassis.body()].velocity_at_point(point);
+                    let other_index = other_body
+                        .and_then(|body| self.chassis.iter().position(|c| c.body() == body));
+                    let incoming = |i: usize| {
+                        let (linear, angular, com) = self.chassis_velocities_before[i];
+                        linear + angular.cross(point - com)
+                    };
+                    let other_velocity = other_index.map_or_else(
+                        || {
+                            other_body.map_or(Vector::ZERO, |body| {
+                                self.world.bodies[body].velocity_at_point(point)
+                            })
+                        },
+                        incoming,
+                    );
+                    let own_velocity = incoming(index);
                     let normal = chassis
                         .armor_pose(&self.world, plate)
                         .transform_vector(Vector::X);
@@ -1741,12 +1765,7 @@ impl WorldPhysics {
                     if normal_speed_m_s < ARMOR_COLLISION_SPEED_M_S {
                         continue;
                     }
-                    let other_chassis = other_body.and_then(|body| {
-                        self.chassis
-                            .iter()
-                            .find(|c| c.body() == body)
-                            .map(Chassis::id)
-                    });
+                    let other_chassis = other_index.map(|i| self.chassis[i].id());
                     self.armor_collisions.push(ArmorCollision {
                         chassis: chassis.id(),
                         plate: plate as u32,

@@ -28,7 +28,7 @@ use rm_simulator_world::{
 };
 use std::collections::HashMap;
 
-use crate::controls::{Drive, MUZZLE_FORWARD_M, PlayerCamera};
+use crate::controls::{Drive, PlayerCamera};
 use crate::frames::{dquat, gimbal_poses, pose_flu, transform_of, wxyz};
 
 use crate::session::{FlashSettings, Session};
@@ -481,14 +481,8 @@ fn wheel_pose(
     };
     let rotation = dquat(chassis.pose.rotation_wxyz)
         * DQuat::from_rotation_z(axle_yaw)
-        * DQuat::from_rotation_y(wheel.spin_rad);
-    // The ray starts at a suspension anchor. Draw a grounded wheel one radius
-    // above its contact instead of leaving it hovering at the unloaded anchor.
-    let centre = wheel.contact.map_or(wheel.hub_m, |contact| {
-        (DVec3::from_array(contact.point_m)
-            + dquat(chassis.pose.rotation_wxyz) * DVec3::Z * chassis.config.wheel_radius_m)
-            .to_array()
-    });
+        * DQuat::from_rotation_y(-wheel.spin_rad);
+    let centre = wheel.hub_m;
     PoseFlu {
         translation_m: centre,
         rotation_wxyz: wxyz(rotation.normalize()),
@@ -542,14 +536,18 @@ pub(crate) fn chassis_appearance(
         model: {
             use rm_simulator_render::chassis::RobotModel;
             use rm_simulator_server::protocol::Robot;
-            match robot {
-                Some(Robot::Engineer) => RobotModel::Engineer,
-                Some(Robot::Drone) => RobotModel::Drone,
-                Some(Robot::Sentry) => RobotModel::Sentry,
-                Some(Robot::Hero) => RobotModel::Hero,
-                _ if config.balance_assist => RobotModel::Balance,
-                None if config.mecanum => RobotModel::Hero,
-                _ => RobotModel::Omni,
+            if config.team_cad {
+                RobotModel::TeamCad
+            } else {
+                match robot {
+                    Some(Robot::Engineer) => RobotModel::Engineer,
+                    Some(Robot::Drone) => RobotModel::Drone,
+                    Some(Robot::Sentry) => RobotModel::Sentry,
+                    Some(Robot::Hero) => RobotModel::Hero,
+                    _ if config.balance_assist => RobotModel::Balance,
+                    None if config.mecanum => RobotModel::Hero,
+                    _ => RobotModel::Omni,
+                }
             }
         },
         armor_pattern: armor_pattern(chassis, robot),
@@ -559,12 +557,46 @@ pub(crate) fn chassis_appearance(
         team: team_color(chassis.team),
         pose: pose_flu(chassis.pose),
         body_half_m: config.body_half_m.map(|v| v as f32),
+        body_shell_visible: true,
+        frame_beam_step_m: config.frame_beam_step_m() as f32,
+        body_outline_m: config
+            .body_outline_m()
+            .iter()
+            .map(|p| p.map(|v| v as f32))
+            .collect(),
+        bumper_base_prisms: if config.omni_frame.is_some() {
+            config.body_outline_m().len()
+        } else {
+            0
+        },
+        bumper_prisms_m: config
+            .bumper_prisms_m()
+            .iter()
+            .map(|p| p.map(|p| p.map(|v| v as f32)))
+            .collect(),
         wheels: chassis
             .wheels
             .iter()
             .zip(&config.wheel_hubs_m)
-            .map(|(wheel, hub)| WheelAppearance {
+            .enumerate()
+            .map(|(index, (wheel, hub))| WheelAppearance {
                 pose: wheel_pose(chassis, *hub, wheel),
+                suspension_anchor_m: {
+                    let mounts = config
+                        .suspension_mounts_m(index, wheel.suspension_compression_m)
+                        .unwrap();
+                    (DVec3::from_array(chassis.pose.translation_m)
+                        + dquat(chassis.pose.rotation_wxyz) * DVec3::from_array(mounts[0]))
+                    .to_array()
+                },
+                suspension_lower_m: {
+                    let mounts = config
+                        .suspension_mounts_m(index, wheel.suspension_compression_m)
+                        .unwrap();
+                    (DVec3::from_array(chassis.pose.translation_m)
+                        + dquat(chassis.pose.rotation_wxyz) * DVec3::from_array(mounts[1]))
+                    .to_array()
+                },
                 radius_m: config.wheel_radius_m as f32,
                 width_m: config.wheel_width_m as f32,
             })
@@ -574,6 +606,12 @@ pub(crate) fn chassis_appearance(
             .iter()
             .enumerate()
             .map(|(plate, face)| ArmorAppearance {
+                plate_visible: true,
+                bracket_prisms_m: config
+                    .armor_bracket_prisms_m(plate)
+                    .iter()
+                    .map(|p| p.map(|p| p.map(|v| v as f32)))
+                    .collect(),
                 local: pose_flu(*face),
                 hit_flash: flash.get(plate).copied().unwrap_or(false),
             })
@@ -582,7 +620,7 @@ pub(crate) fn chassis_appearance(
         turret,
         turret_half_m: config.turret_half_m.map(|v| v as f32),
         pivot_above_body_m: (config.turret_center_m[2] - config.body_half_m[2]) as f32,
-        barrel_length_m: MUZZLE_FORWARD_M,
+        barrel_length_m: config.muzzle_offset_m()[0] as f32,
         defeated: chassis.defeated,
     }
 }

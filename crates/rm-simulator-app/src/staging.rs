@@ -659,7 +659,7 @@ fn preview(
             crate::frames::dquat(pose.rotation_wxyz) * bevy::math::DVec3::from_array(local);
         (bevy::math::DVec3::from_array(pose.translation_m) + rotated).to_array()
     };
-    let snapshot = ChassisSnapshot {
+    let mut snapshot = ChassisSnapshot {
         // This id is visual only, and cannot be sent back to the host.
         id: u32::MAX,
         placement_revision: 0,
@@ -683,6 +683,7 @@ fn preview(
             .collect(),
         config,
     };
+    snapshot.derive_wheel_kinematics();
     crate::scene::chassis_appearance(&snapshot, &[], Some(stage.robot))
 }
 

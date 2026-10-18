@@ -13,7 +13,7 @@ other simulator crate.
 
 | File | Owns |
 |---|---|
-| `src/chassis.rs` | The four-wheel chassis: a dynamic body cuboid and a turret cuboid, ray-cast wheels with spring/damper suspension and ideal omni tyres, four armor housings, gimbal dynamics and the shared drivetrain power budget. `ChassisConfig` presets are the omni Infantry and the mecanum Hero. |
+| `src/chassis.rs` | The four-wheel chassis: an octagonal omni deck and compact lower bumper (box on other presets), a turret cuboid, ray-cast spring/damper suspension, independent wheel inertia, motor torque and slip-limited omni tyres, four armor housings, gimbal dynamics and the shared drivetrain power budget. `ChassisConfig` presets are the omni Infantry and the mecanum Hero. |
 | `src/projectile.rs` | `WorldPhysics`, `Shot`, `Caliber`, `Contact`, `TargetFace`, `TargetFrames`, `StaticGeometry` and `ProjectilePolicy`: projectile flight, scoring faces and raw contacts in physical order. |
 | `src/geometry.rs` | Shared collision captures and read-only clearance queries consumed by the world facade. |
 | `src/motion.rs` | Prescribed rotor and rail motion (`RotorMotion`, `SinusoidalMotion`, `MechanismState`) and fitted armor geometry; rune pose helpers live under `motion::rune`. |

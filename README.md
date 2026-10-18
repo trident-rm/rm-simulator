@@ -288,6 +288,10 @@ Generate the simplified map from your field package with the sibling
 uv run --with numpy --with pillow python scripts/generate-minimap.py
 ```
 
+An optional source-derived team robot loads with `--robot-assets DIR`; see
+[hardware models](docs/hardware-models.md) for the external package, credits and
+physics approximations. A headless host selects its fitted dimensions with `--team-cad`.
+
 Use `--cad-assets PATH` and `--map-tools PATH` for other locations. The generator
 writes `minimap.png` and `minimap.json` beside the external field manifest.
 The app checks the image and package hashes, preserves the map aspect ratio,

@@ -1809,7 +1809,10 @@ mod tests {
                     team: Team::Blue,
                     kind: RobotKind::Infantry,
                     performance: None,
-                    spawn: Pose::at([1.5, 0.6, spawn]),
+                    // Keep the second pilot clear of spent Rune rounds. A
+                    // later robot/ball impact amplifies unretained contact-solver
+                    // residuals and does not test checkpoint completeness.
+                    spawn: Pose::at([1.5, -2.0, spawn]),
                 },
             ],
             referee: Some(RefereeConfig::alternating(1, 2)),
@@ -3053,7 +3056,9 @@ mod tests {
         field.add_static_mesh(vertices, triangles).unwrap();
         assert_eq!(field.static_geometry().1.len(), 6 + count);
         // A projectile fired at the block comes back.
-        let muzzle = Pose::at([0.0, 0.0, 0.5]);
+        // Offset from the robot so the returning ball tests the wall rather
+        // than striking the chassis whose new silhouette is being tested below.
+        let muzzle = Pose::at([0.0, 0.45, 0.5]);
         field
             .fire(muzzle, Shot::at_limit(Caliber::Mm17), None)
             .unwrap();
@@ -3348,11 +3353,11 @@ mod tests {
             referee_events(&field).contains(&RefereeEvent::BaseArmorExpanded { team: Team::Red })
         );
     }
-    /// Driving armor into a wall during a round costs collision HP; idle
-    /// practice and a slow approach do not.
+    /// The bumper protects armor from full-height walls. An elevated obstacle
+    /// can still strike armor directly; only a running round charges collision HP.
     #[test]
     fn armor_collisions_cost_hp_only_in_a_running_round() {
-        let run = |start: bool| {
+        let run = |start: bool, bottom_m: f64| {
             let mut field = Field::new(&FieldConfig {
                 runes: Vec::new(),
                 outposts: Vec::new(),
@@ -3372,8 +3377,8 @@ mod tests {
             field
                 .add_static_mesh(
                     vec![
-                        [4.0, -2.0, 0.0],
-                        [4.0, 2.0, 0.0],
+                        [4.0, -2.0, bottom_m],
+                        [4.0, 2.0, bottom_m],
                         [4.0, -2.0, 1.0],
                         [4.0, 2.0, 1.0],
                     ],
@@ -3396,9 +3401,14 @@ mod tests {
             field.step(ticks(4_000_000_000)).unwrap();
             field.snapshot().referee.unwrap().robots[0].hp
         };
-        let hp = run(true);
+        let hp = run(true, 0.21);
         assert!(hp < 200 && hp % referee::COLLISION_DAMAGE_HP == 0, "{hp}");
-        assert_eq!(run(false), 200);
+        assert_eq!(run(false, 0.21), 200);
+        assert_eq!(
+            run(true, 0.0),
+            200,
+            "the protective ring must contact a full wall first"
+        );
     }
     #[test]
     fn launches_follow_the_gameplay_rules_and_roster() {

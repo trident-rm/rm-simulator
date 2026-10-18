@@ -98,7 +98,9 @@ use serde::{Deserialize, Serialize};
 /// Version 54 carries native 2027 combat/adaptive state and pilot logistics.
 /// Version 55 adds historical Base deficit, Fortress reserve and training-bot placement.
 /// Version 58 carries adaptive armor selections and per-impact damage regions.
-pub const PROTOCOL_VERSION: u32 = 58;
+/// Version 59 carries wheel axle velocity, suspension compression and octagonal frames.
+/// Version 60 carries the source-fitted team robot mount profile.
+pub const PROTOCOL_VERSION: u32 = 60;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///

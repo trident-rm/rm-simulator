@@ -143,14 +143,19 @@ pub(crate) fn interaction() -> Vec<Part> {
     parts
 }
 
-/// SM01/SM11 open muzzle shroud. Guide pp.4–5 gives 109.81/119.70 mm
-/// lengths and 41.20/73.80 mm heights. Widths are approximate drawing readings.
-/// The front opening remains empty, with the barrel terminating at its rear.
+/// SM01/SM11 housing lengths in metres, from the guide pp.4–5.
+/// Shared with the barrel joint so the tube meets the rear of the shroud.
+pub(crate) fn speed_monitor_length_m(hero: bool) -> f32 {
+    if hero { 0.1197 } else { 0.10981 }
+}
+
+/// SM01/SM11 open muzzle shroud. Guide pp.4–5 gives 41.20/73.80 mm
+/// heights; widths are approximate drawing readings. The front stays open.
 pub(crate) fn speed_monitor(hero: bool) -> Vec<Part> {
     let (length, height, bore) = if hero {
-        (0.1197, 0.0738, 0.044)
+        (speed_monitor_length_m(hero), 0.0738, 0.044)
     } else {
-        (0.10981, 0.0412, 0.022)
+        (speed_monitor_length_m(hero), 0.0412, 0.022)
     };
     let width = bore + 0.020;
     let mut parts = Vec::new();

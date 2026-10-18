@@ -80,6 +80,10 @@ pub struct ProjectileAppearance {
 pub struct WheelAppearance {
     /// Hub pose in world FLU metres; the axle is local +y and the spin is applied.
     pub pose: PoseFlu,
+    /// Fixed upper suspension mount in world FLU metres.
+    pub suspension_anchor_m: [f64; 3],
+    /// Moving inboard spring attachment in world FLU metres; independent of axle spin.
+    pub suspension_lower_m: [f64; 3],
     /// Wheel radius in metres.
     pub radius_m: f32,
     /// Wheel width along the axle in metres.
@@ -89,6 +93,11 @@ pub struct WheelAppearance {
 /// the outward normal, +y width, +z height) and whether it is flashing.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ArmorAppearance {
+    /// Draw the armor module; false exposes its retained carrier for cutaway views.
+    pub plate_visible: bool,
+    /// Rigid carrier prisms in body FLU metres, matching caller-owned colliders.
+    /// Empty retains the legacy rear supports. Four vertices per end polygon.
+    pub bracket_prisms_m: Vec<[[f32; 3]; 8]>,
     /// Face pose in the chassis body frame, in FLU metres.
     pub local: PoseFlu,
     /// True while this plate shows the grey strike flash.
@@ -117,6 +126,18 @@ pub struct ChassisAppearance {
     pub pose: PoseFlu,
     /// Body box half extents in FLU metres: x depth, y width, z height.
     pub body_half_m: [f32; 3],
+    /// Whether to draw the outer deck shell; false exposes the internal frame for inspection.
+    pub body_shell_visible: bool,
+    /// Vertical separation between upper and lower frame beam centres, in metres.
+    pub frame_beam_step_m: f32,
+    /// Counterclockwise deck footprint in local FLU metres; empty uses the legacy model.
+    pub body_outline_m: Vec<[f32; 2]>,
+    /// Lower bumper and guard prisms in local FLU metres, four vertices per end.
+    /// These are caller-owned geometry shared with its collider description.
+    pub bumper_prisms_m: Vec<[[f32; 3]; 8]>,
+    /// Number of leading bumper prisms belonging to the solid lower deck.
+    /// Remaining prisms are metal wheel guard bars.
+    pub bumper_base_prisms: usize,
     /// Wheels, indexed by [`crate::chassis::ChassisWheel`].
     pub wheels: Vec<WheelAppearance>,
     /// Armor plates, indexed by [`crate::chassis::ChassisArmorLight::plate`].

@@ -185,13 +185,6 @@ impl ConfigWire {
             Self::Exact(Box::new(config.clone()))
         }
     }
-    fn to_config(&self) -> rm_simulator_world::ChassisConfig {
-        match self {
-            Self::Infantry => rm_simulator_world::ChassisConfig::default(),
-            Self::Hero => rm_simulator_world::ChassisConfig::hero(),
-            Self::Exact(config) => (**config).clone(),
-        }
-    }
     fn into_config(self) -> rm_simulator_world::ChassisConfig {
         match self {
             Self::Infantry => rm_simulator_world::ChassisConfig::default(),
@@ -213,7 +206,8 @@ struct ChassisRecord {
     defeated: bool,
 }
 /// The dynamic part of a [`rm_simulator_world::ChassisSnapshot`], with each
-/// wheel reduced to its spin. Contacts are diagnostics; hubs and tyre targets
+/// wheel reduced to spin, axle speed and spring compression. Contacts are
+/// diagnostics; hubs and tyre targets
 /// are rebuilt with
 /// [`rm_simulator_world::ChassisSnapshot::derive_wheel_kinematics`] after the
 /// pose is normalized.
@@ -226,6 +220,8 @@ struct ChassisMotion {
     held_aim_rad: [f64; 2],
     gimbal_velocity_rad_s: [f64; 2],
     wheel_spin_rad: Vec<f64>,
+    wheel_angular_velocity_rad_s: Vec<f64>,
+    wheel_suspension_compression_m: Vec<f64>,
 }
 /// Stable identity and shooter, caliber, a position and velocity vector, then
 /// the retirement bookkeeping. Spin is not carried: it moves no ball a client
@@ -412,6 +408,16 @@ impl PlayerSnapshot {
                 held_aim_rad: chassis.held_aim_rad,
                 gimbal_velocity_rad_s: chassis.gimbal_velocity_rad_s,
                 wheel_spin_rad: chassis.wheels.iter().map(|wheel| wheel.spin_rad).collect(),
+                wheel_angular_velocity_rad_s: chassis
+                    .wheels
+                    .iter()
+                    .map(|wheel| wheel.angular_velocity_rad_s)
+                    .collect(),
+                wheel_suspension_compression_m: chassis
+                    .wheels
+                    .iter()
+                    .map(|wheel| wheel.suspension_compression_m)
+                    .collect(),
             })
             .collect();
         let projectiles = field
@@ -534,7 +540,10 @@ impl PlayerSnapshot {
         let mut chassis = Vec::with_capacity(records.len());
         for (Aligned(record), motion) in records.0.into_iter().zip(motion) {
             let config = record.config.into_config();
-            if motion.wheel_spin_rad.len() != config.wheel_hubs_m.len() {
+            if motion.wheel_spin_rad.len() != config.wheel_hubs_m.len()
+                || motion.wheel_angular_velocity_rad_s.len() != config.wheel_hubs_m.len()
+                || motion.wheel_suspension_compression_m.len() != config.wheel_hubs_m.len()
+            {
                 return Err(invalid("checkpoint wheel count does not match the chassis"));
             }
             let mut snapshot = rm_simulator_world::ChassisSnapshot {
@@ -553,10 +562,18 @@ impl PlayerSnapshot {
                 wheels: motion
                     .wheel_spin_rad
                     .into_iter()
-                    .map(|spin_rad| rm_simulator_world::WheelSnapshot {
-                        spin_rad,
-                        ..Default::default()
-                    })
+                    .zip(motion.wheel_angular_velocity_rad_s)
+                    .zip(motion.wheel_suspension_compression_m)
+                    .map(
+                        |((spin_rad, angular_velocity_rad_s), suspension_compression_m)| {
+                            rm_simulator_world::WheelSnapshot {
+                                spin_rad,
+                                angular_velocity_rad_s,
+                                suspension_compression_m,
+                                ..Default::default()
+                            }
+                        },
+                    )
                     .collect(),
                 defeated: record.defeated,
             };
@@ -803,13 +820,13 @@ fn angle_grid(angle: f64) -> f64 {
 }
 
 /// Carries chassis motion `lead_ticks` forward. See [`predict_baseline`].
-fn predict_motion(records: &[Aligned<ChassisRecord>], motion: &mut [ChassisMotion], lead: i64) {
+fn predict_motion(_records: &[Aligned<ChassisRecord>], motion: &mut [ChassisMotion], lead: i64) {
     use fixed_point::{ANGLE_SCALE, RATE_SCALE, TRANSLATION_SCALE, VELOCITY_SCALE};
     let dt_ns = i128::from(lead) * i128::from(rm_simulator_world::tick_ns());
     let dt_s = dt_ns as f64 / NS_PER_S as f64;
     let substeps = lead.unsigned_abs().min(MAX_ROTATION_SUBSTEPS);
     let h = dt_s / substeps as f64;
-    for (record, motion) in records.iter().zip(motion) {
+    for motion in motion {
         for axis in 0..3 {
             let v = motion.velocity_m_s[axis];
             for translation in [&mut motion.pose, &mut motion.turret].map(|p| &mut p.translation_m)
@@ -853,37 +870,14 @@ fn predict_motion(records: &[Aligned<ChassisRecord>], motion: &mut [ChassisMotio
             }
             advance(held_pitch, ANGLE_SCALE, pitch_rate, RATE_SCALE, dt_ns);
         }
-        // Wheels roll at the surface speed the command asks of them, the rate
-        // the physics integrates while a wheel is off the ground.
-        let config = record.config.to_config();
-        if motion.wheel_spin_rad.len() != config.wheel_hubs_m.len() {
-            continue;
-        }
-        let mut probe = rm_simulator_world::ChassisSnapshot {
-            jump_held: false,
-            placement_revision: record.placement_revision,
-            id: record.id,
-            team: record.team,
-            config,
-            pose: motion.pose,
-            turret: motion.turret,
-            velocity_m_s: [0.; 3],
-            angular_velocity_rad_s: [0.; 3],
-            command: record.command,
-            held_aim_rad: [0.; 2],
-            gimbal_velocity_rad_s: [0.; 2],
-            wheels: vec![Default::default(); motion.wheel_spin_rad.len()],
-            defeated: record.defeated,
-        };
-        probe.derive_wheel_kinematics();
-        let factor = if probe.config.mecanum {
-            std::f64::consts::SQRT_2
-        } else {
-            1.
-        };
-        for (spin, wheel) in motion.wheel_spin_rad.iter_mut().zip(&probe.wheels) {
-            let next =
-                wrap_angle(*spin + wheel.target_m_s / probe.config.wheel_radius_m * factor * dt_s);
+        // Baseline predictor only: extrapolate measured axle speed. Full world
+        // prediction uses the restored motor, inertia and suspension state.
+        for (spin, rate) in motion
+            .wheel_spin_rad
+            .iter_mut()
+            .zip(&motion.wheel_angular_velocity_rad_s)
+        {
+            let next = wrap_angle(*spin + rate * dt_s);
             if grid_steps(*spin, ANGLE_SCALE).is_some() && next.is_finite() {
                 *spin = angle_grid(next);
             }
@@ -968,7 +962,7 @@ fn tick_mut(node: &mut Node) -> io::Result<&mut u64> {
 /// they are. The tick advances by `lead`. Each chassis and turret translation
 /// advances by the body velocity; the body rotation integrates its angular
 /// velocity; the turret rotation and held aim integrate the gimbal rates; each
-/// wheel spins at its commanded surface speed. A projectile moves at its
+/// wheel spins at its measured axle speed. A projectile moves at its
 /// velocity, falling under [`rm_simulator_world::projectile::GRAVITY_M_S2`]
 /// until its first contact. Velocities, drag, contacts, spawns and retirement
 /// are not predicted: this is only a predictor, and a wrong guess costs bits,
@@ -1909,9 +1903,14 @@ mod tests {
             ..Default::default()
         };
         let mut config = FieldConfig::default();
-        for (index, chassis) in [ChassisConfig::default(), ChassisConfig::hero(), custom]
-            .into_iter()
-            .enumerate()
+        for (index, chassis) in [
+            ChassisConfig::default(),
+            ChassisConfig::hero(),
+            custom,
+            ChassisConfig::team_cad(),
+        ]
+        .into_iter()
+        .enumerate()
         {
             config.chassis.push(ChassisPlacement {
                 team: Team::Red,
@@ -1930,7 +1929,12 @@ mod tests {
                 .iter()
                 .map(|record| &record.config)
                 .collect::<Vec<_>>()[..],
-            [ConfigWire::Infantry, ConfigWire::Hero, ConfigWire::Exact(_)]
+            [
+                ConfigWire::Infantry,
+                ConfigWire::Hero,
+                ConfigWire::Exact(_),
+                ConfigWire::Exact(_)
+            ]
         ));
         assert!(matches!(wire.rules.projectile_policy, PolicyWire::Default));
         // A policy off the preset travels exactly too.

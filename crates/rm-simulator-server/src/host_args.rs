@@ -27,6 +27,9 @@ use rm_simulator_world::{Caliber, RuneKind, Shot, outpost, projectile::Projectil
 /// accepted by the other.
 #[derive(Args, Debug, Clone)]
 pub struct HostArgs {
+    /// Use the source-fitted team Omni prototype for omni Infantry and Sentry.
+    #[arg(long)]
+    pub team_cad: bool,
     /// Directory holding the extracted RMUC2026 CAD (`manifest.json`, `*.glb`, `equipment/`).
     #[arg(long, default_value_os_t = crate::cad_assets::default_cad_assets())]
     pub cad_assets: std::path::PathBuf,
