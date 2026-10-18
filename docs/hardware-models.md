@@ -282,3 +282,72 @@ Regression coverage checks actual collider height, refusal to unfold through a
 owner-anchor endpoints, compact/fixed input round trips and expired input leases.
 The live console exercise presses T, captures mid/end poses and collider overlays,
 fires while folded and unfolds again through ordinary host commands.
+
+
+## Replacement roster intake (2026-10-19)
+
+The selected direction is to retire the procedural robot designs in favor of
+source-derived assemblies. The intended roster is two Infantry options (the
+assembled Omni and Future tunnel Infantry), two Engineer-derived Heavy options
+(stair and tunnel), and a tunnel Sentry. Artisans' Hero remains an articulated
+2026 reference rather than a substitute for the RM2027 Heavy. This is a model
+migration; it does not add unrequested manipulation or assembly gameplay.
+
+The source intake inventory is
+`../rm-map-tools/benchmarks/2026-10-18-team-robot/roster.json`. Runtime binding
+and visual review are separate gates: the existing app still accepts only the
+previously fitted Omni and Hero packages. Do not present raw candidate GLBs as
+playable models or remove the existing rendering path before replacements work.
+
+| New donor | Source | Intake status |
+| --- | --- | --- |
+| Tunnel Heavy | [Capital Normal University PIE / H3](https://bbs.herkules.dev/articles/01M0YXED5X9S8DKY2BBCT220PZ) | Complete STEP, named six-axis arm/chassis assemblies; simplified review candidate |
+| Stair Heavy | [Beijing Institute of Technology DreamChaser / L1u_Yuz3ng](https://bbs.herkules.dev/articles/01M0YXED625E111Y2BP1XG6KS2) | Complete national-finals single-arm STEP; 337,237-triangle review package; other released variants retained |
+| Tunnel Sentry | [Fudan University Nebula EGA / alumls](https://bbs.herkules.dev/articles/01M0Z2DS984MGKHD6CFKNF39BB) | Complete native SolidWorks assemblies acquired; complete STEP conversion required |
+| Temporary Sentry | [Yancheng Institute of Technology SaltWave](https://bbs.herkules.dev/articles/01M0Z7ERF51MMHVCHRX05H2P13) | Complete half-swerve/half-omni STEP; 218,879-triangle review package; user-approved alternative while EGA awaits conversion; tunnel capability unverified |
+
+The user downloaded the two Baidu releases on Metis and authorized their copy
+from Downloads. Thirteen CAD/report/archive files (3,497,690,266 bytes) were
+copied into `local-assets/robot-cad-survey/incoming/` and SHA-256 verified against
+the remote originals. Demonstration videos were not needed for CAD intake.
+The original files remain on Metis. All third-party terms and credits stay with
+the source packages; no CAD is embedded into the simulator software assets.
+
+PIE's source has 1,694 solids and 16 separately owned open-shell leaves. Its
+complete review mesh is 165,541 triangles, retaining 1,369 source hierarchy
+groups. Its source-pose envelope is approximately 613 × 851 × 411 mm
+(width × length × height). This is not a tunnel-clearance measurement: the
+report §4.2 describes horizontally folding arm links, camera lift and UWB
+retraction. Those must move before a clearance test; scaling the model to fit is
+not allowed. All source faces are unstyled, so graphite is a display override.
+Source +Y is up, unlike the earlier robots' +Z-up STEP frames.
+
+For future bindings, preserve wheel/steering/suspension, serial arm, gimbal,
+UWB and camera assemblies independently. Stair-climbing claims in the source
+report do not imply that the simulator's ray-wheel chassis can climb those
+steps. Fit physical linkage/contact proxies and explicit actuator states before
+claiming the capability. The model migration and retirement of procedural
+visuals remain pending until the replacement packages pass those checks.
+
+### Reference geometry cleanup
+
+The new candidate exports exclude inspected rulebook/mounting envelopes, which
+were previously displayed as solid hardware: controller/camera hemispheres,
+camera viewing cones and the large UWB viewing cone. The PIE cleanup also removes
+an overlapping coarse camera proxy; the complete source VT03 camera remains.
+SaltWave loses a CAD ground-reference sheet and two controller clearance cones.
+Those cones share a solid with the real board, so only their triangles are
+removed. A mixed UWB leaf likewise retains its physical housing and connectors.
+
+Physical candidate counts are now **165,147** triangles for PIE and **217,711**
+for SaltWave. DreamChaser remains **337,237**. The raw cooked inputs remain
+unchanged. The exporter records exact selectors/reasons, prunes unused reference
+resources and verifies retained vertex/normal values, source materials and part
+poses exactly. Previews use matched raw-source framing for before/after checks.
+Source-model envelopes shrink when reference volumes are removed; they still do
+not certify tunnel clearance or a working climb/fold configuration.
+
+The other source models were checked for similar helper geometry. Physical
+rounded LiDAR/energy housings and the Future Infantry's cylindrical post remain.
+The source stair linkage is still in its published articulated pose; animation
+binding, rather than geometry deletion, must produce the driving stance.
