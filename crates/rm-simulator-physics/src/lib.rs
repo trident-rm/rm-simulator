@@ -30,6 +30,7 @@
 #![deny(missing_docs)]
 pub mod chassis;
 pub mod geometry;
+pub mod manipulator;
 pub mod mechanism;
 pub mod motion;
 pub mod projectile;

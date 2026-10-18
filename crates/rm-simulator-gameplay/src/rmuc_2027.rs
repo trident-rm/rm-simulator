@@ -20,6 +20,8 @@ pub mod adaptive;
 /// Button-driven assembly progression and shared-core arbitration.
 pub mod assembly;
 pub mod combat;
+/// Sensor-driven assembly manipulation workbench; separate from virtual match rewards.
+pub mod manipulation;
 pub mod match_rules;
 /// Native 2027 Rune activation, motion, rings and non-field benefits.
 pub mod rune;

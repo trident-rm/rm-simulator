@@ -789,6 +789,10 @@ shots near cover. No Vision2027 dependency or copied implementation is required.
 
 ## Robot equipment
 
+The standalone [Cartesian assembly workbench](docs/assembly-workbench.md) lets
+you practice insertion, lifting and rotation with an Engineer chassis and a
+generic arm. It is separate from live match assembly progression.
+
 `just run --robot hero --third-person` drives the mecanum Hero; omit `--robot`
 for the omni Infantry 3, or choose robot then chassis on the title screen.
 `--chassis balance` selects the two-wheel Infantry mock with balance assist and

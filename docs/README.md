@@ -29,6 +29,7 @@ Git history.
 | Asset contracts and composition | [Semantic assets](semantic-assets.md) |
 | Reproducible simplification and installation | [Field detail](field-detail.md) |
 | Robot geometry and artwork assumptions | [Robot equipment](robot-equipment.md) |
+| Cartesian Engineer assembly prototype and boundaries | [Assembly workbench](assembly-workbench.md) |
 | CPU measurements and reproducibility | [Performance](performance.md) |
 | Renderer benchmark commands and interpretation | [Render benchmark](render-benchmark.md) |
 | Optional Steam integration | [Steam](steam.md) |

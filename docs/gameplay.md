@@ -368,6 +368,10 @@ this view; restore and checkpoint encoding reject mismatched copies.
 
 ## RMUC 2027 virtual assembly
 
+The separate [Cartesian assembly workbench](assembly-workbench.md) now evaluates
+mechanism sensors and ordered manipulation. It does not yet replace the live
+referee-button prototype below or grant its own match rewards.
+
 `rmuc_2027::assembly` implements the progression state machine from UC §5.4.3
 and Tables 5-11/12 without robot manipulation. A referee starts an attempt with
 team and difficulty, then presses **Finish assembly** before the deadline or

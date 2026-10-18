@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+- Add a standalone Cartesian Engineer assembly workbench with a rate-limited
+  gripper, serial-arm inverse kinematics, difficulties 1–3 and optional PIE
+  source chassis. Add a deterministic sensor evaluator for all four difficulties,
+  ordered insertion/lift/P/Q steps, dwell, confirmation lockout and paired timing.
+  This uses schematic equipment and a generic arm; live Heavy admission and
+  referee-button progression remain separate.
+
 - Add source-bound PIE tunnel Engineer and Future low Omni Infantry packages.
   T stows PIE's arm, camera and UWB with oriented collision envelopes; Future
   uses its fixed-height chassis and prescribed gimbal bindings. Checksummed
