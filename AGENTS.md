@@ -139,8 +139,10 @@ packages use approximate antenna polygons for control, supply, Vantage and
 terrain traversal; other unsupported areas remain inspection-only. Never feed these
 into the 2026 referee. `gameplay::rmuc_2027::match_rules` owns the live 2027
 combat/control subset, including native heat, allowance, healing, respawn and
-combat XP and continuous Base/Vantage/Highland/Fortress field benefits. Assembly
-progression and reinforcement effects remain unavailable. Native Road/Highland/
+combat XP and continuous Base/Vantage/Highland/Fortress field benefits. Virtual
+assembly supports referee Start/Finish/Cancel, automatic 45-second timeouts,
+shared-core exclusion, income, Infantry caps and permanent defense; physical
+manipulation, Heavy progression and reinforcement effects remain unavailable. Native Road/Highland/
 Tunnel traversal and Small/Big Rune effects are supported. Source Rune arm
 subtrees and detector banks are bound by `scripts/bind-rmuc2027-rune.py` without
 remeshing. Adaptive observations/statistics live in `gameplay::rmuc_2027::adaptive`;

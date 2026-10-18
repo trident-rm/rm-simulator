@@ -166,6 +166,9 @@ impl Match {
             effects.cooling_half_per_s = base * 2 * buff.cooling;
             effects.cooling_per_s = effects.cooling_half_per_s / 2;
         }
+        effects.defense_pct = effects
+            .defense_pct
+            .max(self.assembly[r.team.index()].defense_pct());
         // Weakness prevents RFID-point benefits (§5.3.2), not non-field Rune
         // benefits, which survive death and apply while their source exists (Table 5-26).
         if !r.online || r.combat.weakened {

@@ -17,6 +17,8 @@
 
 /// Live RMUC 2027 control/structure match subset.
 pub mod adaptive;
+/// Button-driven assembly progression and shared-core arbitration.
+pub mod assembly;
 pub mod combat;
 pub mod match_rules;
 /// Native 2027 Rune activation, motion, rings and non-field benefits.

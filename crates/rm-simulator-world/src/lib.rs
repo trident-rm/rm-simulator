@@ -1083,6 +1083,18 @@ impl Field {
                         state.game.add_robot(r.id, r.team, r.role);
                     }
                 }
+                RefereeCommand::StartAssembly { team, difficulty } => state
+                    .game
+                    .start_assembly(referee::game_team(team), difficulty)
+                    .map_err(FieldError::Referee)?,
+                RefereeCommand::FinishAssembly { team } => state
+                    .game
+                    .finish_assembly(referee::game_team(team))
+                    .map_err(FieldError::Referee)?,
+                RefereeCommand::CancelAssembly { team } => state
+                    .game
+                    .cancel_assembly(referee::game_team(team))
+                    .map_err(FieldError::Referee)?,
                 RefereeCommand::ActivateRune { team } => {
                     if state.config.runes.len() != 2 {
                         return Err(FieldError::Referee(

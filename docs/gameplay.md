@@ -111,8 +111,9 @@ diagram-derived antenna polygons against hardware. The optional
 [console smoke scenario](console.md#deterministic-tick-scripts) checks actual
 host commands and authoritative replies with the bound field. These checks
 cover native control, continuous field benefits, terrain traversal and Rune.
-Assembly and reinforcement remain outside its scope. `just control-test` also
-runs `terrain_2027` and `rune_2027`; the latter enumerates both teams, all six
+Virtual assembly is supported as described below; physical manipulation and
+reinforcement remain outside its scope. `just control-test` also
+runs `assembly_2027`, `terrain_2027` and `rune_2027`; the latter enumerates both teams, all six
 Big arm counts and each ring-table tier, including exact target deadlines and
 restore across pending bonus hits.
 
@@ -347,7 +348,7 @@ Fortress timers, control, base/outpost HP, physical ownership and rebuilds,
 permanent rotor stops, attack totals and single-round results. Native combat
 adds 10 Hz heat/cooling, launch locks and allowance, delayed logistics, healing,
 respawn/weakness/invincibility, combat XP and Infantry performance. The initial
-level cap is five; assembly and field buff systems remain separate. Adaptive
+level cap starts at five and virtual assembly raises it to seven/ten. Adaptive
 observations and statistics are carried but reinforcement effects are inactive.
 The user-selected permanent heat-lock boundary is Figure 5-1's `>=`.
 It receives
@@ -364,3 +365,32 @@ schema; the world checks `season-2027` before creation or restore.
 The native `FieldSnapshot.rmuc_2027` presentation state remains available when a
 viewer drops `restore`. Checkpoints encode the authority once and reconstruct
 this view; restore and checkpoint encoding reject mismatched copies.
+
+## RMUC 2027 virtual assembly
+
+`rmuc_2027::assembly` implements the progression state machine from UC §5.4.3
+and Tables 5-11/12 without robot manipulation. A referee starts an attempt with
+team and difficulty, then presses **Finish assembly** before the deadline or
+lets it time out. Cancel also releases the core without rewards. Repeated
+Finish is refused. Attempts, outcomes, deadlines, completion counts and rewards
+are checkpoint authority, including through UDP baselines and prediction.
+
+Difficulties unlock at 0/60/120/180 seconds and require the preceding difficulty
+completed. Levels 1–3 can overlap across teams. Level 4 reserves both cores,
+requires the other team idle, and can succeed only once per team. Failed attempts
+may be retried. Match end cancels active attempts; Reset clears all progression.
+
+The prototype treats Start as instantaneous core positioning and Finish as all
+required manipulation, including both level-four cores. **Every difficulty uses
+45 seconds**, with completion strictly before the deadline. The manual specifies
+45 seconds only for level four; the lower-difficulty limit is a simulator policy.
+Pause freezes the timer; SkipTo ages it normally. There is no physical Heavy,
+RFID, attachment, paired-step, recovery or invincibility requirement in this mode.
+
+Successful attempts grant Table 5-12 recurring income, Infantry caps and strongest
+25%/50% permanent robot/Base/owned-Outpost defense. Income settles on round-aligned
+ten-second boundaries, with no terminal 7:00 payment. Completion submitted at a
+settlement timestamp affects future payments. Heavy level/HP changes and launcher
+permission remain deferred with Heavy equipment support. Assembly can be exercised
+without any deployed robots; buttons remain referee-only rather than granting
+pilots a way to certify real physical completion.

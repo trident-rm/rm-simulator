@@ -296,6 +296,21 @@ UC §5.4.3 also defines removal/failure, loss of assembly-zone detection for
 retains chassis/gimbal power for up to 15 s to disengage; its launcher is off.
 This is a specific exception to ordinary defeated-robot actuation.
 
+### Virtual assembly prototype
+
+The live simulator supports referee Start/Finish/Cancel rather than physical
+assembly. Start represents positioned cores; Finish certifies the complete
+attempt, including both cores at difficulty 4. All difficulties have a 45-second
+simulation-time limit in this prototype (only difficulty 4 has this limit in
+the manual). Timeout is settled before an action at the exact deadline; failure
+and cancellation grant no rewards and free the cores immediately. No physical
+recovery delay, contact loss, attached-Heavy death or zone invincibility is
+modeled. Income is paid on round-aligned ten-second boundaries before 7:00;
+a completion submitted on a boundary affects later payments. UC unlocks,
+prerequisites, shared-core priority, one-time level 4, income, Infantry caps and
+strongest permanent defense are implemented. Heavy level/HP and launcher
+installation are deferred. See [gameplay](gameplay.md#rmuc-2027-virtual-assembly).
+
 ### Launcher installation and Heavy properties
 
 UC §5.7.1: launcher permission unlocks by difficulty 3 **or** after elapsed time

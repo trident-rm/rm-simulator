@@ -659,6 +659,23 @@ pub enum RefereeCommand {
         /// Team whose rune to trigger.
         team: Team,
     },
+    /// Start a native 2027 virtual assembly; substitutes for positioning a core.
+    StartAssembly {
+        /// Team attempting assembly.
+        team: Team,
+        /// Difficulty, 1–4 (UC Table 5-11).
+        difficulty: u8,
+    },
+    /// Complete the team's virtual assembly before its deadline.
+    FinishAssembly {
+        /// Team whose active attempt succeeds.
+        team: Team,
+    },
+    /// Abandon the team's active virtual assembly without rewards.
+    CancelAssembly {
+        /// Team abandoning its attempt.
+        team: Team,
+    },
     /// Add one opportunity without spending anything.
     GrantRuneOpportunity {
         /// Team to grant it to.
@@ -1808,6 +1825,11 @@ impl Referee {
                 slot.last_completed_groups = 0;
                 self.push_event(RefereeEvent::RuneActivating { team });
                 Ok(())
+            }
+            RefereeCommand::StartAssembly { .. }
+            | RefereeCommand::FinishAssembly { .. }
+            | RefereeCommand::CancelAssembly { .. } => {
+                return Err("virtual assembly requires native RMUC 2027");
             }
             RefereeCommand::GrantRuneOpportunity { team } => {
                 self.teams[team.index()].rune_opportunities = self.teams[team.index()]

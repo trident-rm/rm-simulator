@@ -74,7 +74,7 @@ config labelled 2027 is rejected. Default `Field::new` uses its explicit config;
 restore selects admission from the native authority carried in `FieldRestore`.
 Mixed-season geometry/referee state is rejected.
 
-Protocol **56** carries the complete optional 2027 authority in confirmations,
+Protocol **57** carries the complete optional 2027 authority in confirmations,
 checkpoints and deltas. Types remain available in every build so the wire shape
 is independent of Cargo feature unification; live admission and restore still
 check the feature. The existing checkpoint ZSTD dictionary is retained unchanged.
@@ -120,13 +120,19 @@ physics motion and client presentation. Coverage limitations are listed in the
 Native 2027 combat now includes heat/launch locks, allowance, purchases/healing,
 normal/paid respawn and combat XP/performance with the initial level cap of five.
 Adaptive launch/hit statistics and opportunities are carried in protocol 55;
-reinforcement selection/effects and assembly progression remain unavailable.
+reinforcement selection/effects and physical assembly remain unavailable; virtual
+assembly progression is supported (protocol 57).
 See [the lifecycle boundary](rmuc2027-field.md#combat-lifecycle-and-adaptive-armor-infrastructure).
 
 Protocol 55 also carries historical Base HP minima and per-side Fortress reserve
 spending. Continuous Base/Vantage/Highland/Fortress field effects are native 2027;
 Protocol 56 adds native Road/Highland/Tunnel sequences, timed benefits,
 first-kind traversal/Vantage XP and Small/Big Rune opportunities, ring scoring,
-team benefits and source-CAD motion. Assembly and reinforcement effects remain
+team benefits and source-CAD motion. Physical assembly and reinforcement effects remain
 unavailable. The season matrix runs the terrain/Rune integration suites with
 2027 alone and with both features.
+
+Protocol 57 adds native virtual assembly attempts and referee Start/Finish/Cancel
+commands. Completion rewards include recurring income, Infantry caps and permanent
+defense; physical manipulation and Heavy equipment remain unavailable. See
+[virtual assembly](gameplay.md#rmuc-2027-virtual-assembly) for timeout policies.

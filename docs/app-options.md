@@ -62,7 +62,7 @@ joined with `--connect` takes those from the server.
 | `--public-lobby` | Reserved public listing option; currently rejected |
 | `--advertise-address IP:PORT` | Reserved public game address override |
 | `--listen [ADDR]` | Host the local world for other clients (default `0.0.0.0:7700`) |
-| `--http [ADDR]` | Serve the HTTP referee panel (default `127.0.0.1:7780`) |
+| `--http [ADDR]` | Serve the HTTP referee panel (default `127.0.0.1:7780`), including native 2027 assembly Start/Finish/Cancel buttons |
 | `--team red\|blue` / `--name NAME` | Team and name announced to the server (default red, `pilot`); a client that names no team is put on the team with fewer pilots. The referee joins on neither team but `F` still spends this team's opportunity |
 | `--rune-flash-hz F` / `--rune-flashes N` | Blink rate and count of an activated rune's arms (default 2 Hz, 3 blinks, then lit; rate 0 never blinks, count 0 blinks until the state changes) |
 | `--hit-flash-ms T` | How long a struck armor module shows grey (default 50) |

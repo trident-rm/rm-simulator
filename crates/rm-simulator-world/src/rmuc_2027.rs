@@ -492,6 +492,56 @@ mod tests {
         assert!(!zone.contains([1.1, 0., 0.15]));
     }
     #[test]
+    fn virtual_assembly_commands_restore_timeout_and_finish() {
+        let mut f = field();
+        f.referee_command(RefereeCommand::StartMatch).unwrap();
+        f.step(640).unwrap();
+        f.referee_command(RefereeCommand::StartAssembly {
+            team: Team::Red,
+            difficulty: 1,
+        })
+        .unwrap();
+        f.step(128).unwrap();
+        let mut restored = Field::restore(&f.snapshot(), &StaticGeometry::default(), 0.).unwrap();
+        for field in [&mut f, &mut restored] {
+            field
+                .referee_command(RefereeCommand::FinishAssembly { team: Team::Red })
+                .unwrap();
+            field
+                .referee_command(RefereeCommand::StartAssembly {
+                    team: Team::Blue,
+                    difficulty: 1,
+                })
+                .unwrap();
+            field.step(45 * 128).unwrap();
+            assert!(
+                field
+                    .referee_command(RefereeCommand::FinishAssembly { team: Team::Blue })
+                    .is_err()
+            );
+            let game = &field.rmuc_2027().unwrap().game;
+            assert_eq!(game.assembly[0].income_per_10s, 40);
+            assert_eq!(
+                game.assembly[1].outcome,
+                crate::gameplay::rmuc_2027::assembly::Outcome::TimedOut
+            );
+            game.validate().unwrap();
+        }
+        assert_eq!(f.snapshot().rmuc_2027, restored.snapshot().rmuc_2027);
+        #[cfg(feature = "season-2026")]
+        {
+            let mut legacy = Field::new(&FieldConfig::default()).unwrap();
+            assert!(
+                legacy
+                    .referee_command(RefereeCommand::StartAssembly {
+                        team: Team::Red,
+                        difficulty: 1
+                    })
+                    .is_err()
+            );
+        }
+    }
+    #[test]
     fn native_rune_collision_uses_rune_driver_and_survives_restore() {
         let mut f = field();
         let vertices = vec![[21., 0., 2.], [21., 0.1, 2.], [21., 0., 2.1]];

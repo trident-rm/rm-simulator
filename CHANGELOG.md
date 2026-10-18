@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+- Add button-driven RMUC 2027 assembly: start, finish, cancel and automatic
+  timeout; difficulty unlocks, shared-core exclusion, recurring income,
+  Infantry level caps and permanent team defense. Expose referee-panel buttons
+  and console commands, preserving attempts and rewards in protocol 57.
+  The prototype uses a 45-second timeout at every difficulty and requires no
+  Heavy, RFID contact or manipulation.
+
 - Add native RMUC 2027 Road, Highland and Tunnel traversal sequences, timed
   defense/cooling, first-benefit XP, cooldowns and live RFID diagnostics.
   Add the native Small/Big Rune authority, ring scoring, opportunities, motion

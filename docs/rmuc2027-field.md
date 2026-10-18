@@ -1207,3 +1207,14 @@ five-stage Big target graphics and visual disabled-ring masks are not reproduced
 Run `scripts/terrain-rune-scenarios.py` against a paused embedded referee for
 actual RFID entry and physical-projectile Small/Big activation checks; see
 [console scenarios](console.md#native-terrain-and-rune-scenarios).
+
+## Virtual assembly (2026-10-18)
+
+Protocol **57** adds a referee-controlled Start/Finish/Cancel assembly state
+machine. Earlier entries above describing absent assembly income/cap increases
+are superseded: successful virtual completions apply recurring income, Infantry
+caps and permanent team defense. Attempts and exclusive 45-second prototype
+deadlines survive checkpoints; level-four attempts reserve both cores. The HTTP
+panel shows buttons and both teams' state. No CAD changes, Heavy, RFID contacts
+or physical manipulation are required. See [virtual assembly](gameplay.md#rmuc-2027-virtual-assembly)
+for rules, simulator timing policies and deferred Heavy equipment consequences.

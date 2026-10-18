@@ -126,12 +126,14 @@ pub struct Match {
     pub rotor_direction: i8,
     /// Damage credited to each attacking team, excluding overkill and friendly damage.
     pub attack_damage: [u64; 2],
-    /// Combat economy balances, UC Table 5-6; assembly income is not enabled.
+    /// Combat economy balances, UC Table 5-6; including assembly income.
     pub gold: [u32; 2],
     /// Rounds bought for gold by team, capped at 1,000 (Table 5-7).
     pub purchased_rounds: [u32; 2],
     /// Assembly-controlled Infantry level caps; initially five (Table 5-12).
     pub level_caps: [u8; 2],
+    /// Button-driven assembly attempts and permanent progression, Red then Blue.
+    pub assembly: [super::assembly::Assembly; 2],
     /// Adaptive-armor launch/hit observations; all damage still uses default armor.
     pub adaptive: super::adaptive::Adaptive,
     /// Native team Rune authority, Red then Blue, independent of the 2026 engine.
@@ -179,6 +181,7 @@ impl Match {
             gold: [0; 2],
             purchased_rounds: [0; 2],
             level_caps: [5; 2],
+            assembly: std::array::from_fn(|_| Default::default()),
             adaptive: super::adaptive::Adaptive::default(),
             runes: std::array::from_fn(|i| super::rune::Rune::new(direction, i as u64 + 1)),
             robots: vec![],
@@ -243,8 +246,16 @@ impl Match {
         if (self.phase == Phase::Running && self.elapsed_ns() >= ROUND_NS)
             || self.runes.iter().any(|r| !r.validate(self.elapsed_ns()))
             || !self.adaptive.validate(self.elapsed_ns())
+            || self.assembly.iter().any(|a| !a.validate(self.elapsed_ns()))
+            || (self
+                .assembly
+                .iter()
+                .all(|a| a.outcome == super::assembly::Outcome::Active)
+                && self.assembly.iter().any(|a| a.difficulty == 4))
             || self.purchased_rounds.iter().any(|&v| v > 1000)
-            || self.level_caps.iter().any(|v| ![5, 7, 10].contains(v))
+            || Team::BOTH
+                .into_iter()
+                .any(|t| self.level_caps[t.index()] != self.assembly[t.index()].level_cap())
             || self.robots.iter().any(|r| {
                 !r.combat.validate(self.elapsed_ns())
                     || !r.terrain.validate(self.elapsed_ns())
@@ -449,6 +460,11 @@ impl Match {
                 .min(ROUND_NS - now)
                 .min(SCORE_PERIOD_NS - now % SCORE_PERIOD_NS);
             dt = dt.min(self.combat_boundary_ns());
+            for a in &self.assembly {
+                if a.outcome == super::assembly::Outcome::Active {
+                    dt = dt.min(a.deadline_ns.saturating_sub(now));
+                }
+            }
             for rune in &self.runes {
                 dt = dt.min(rune.boundary(now));
             }
@@ -505,7 +521,14 @@ impl Match {
                     self.rune_big_experience(side);
                 }
             }
+            self.settle_assembly();
             self.advance_combat(dt);
+            if at < ROUND_NS && at.is_multiple_of(10_000_000_000) {
+                for team in Team::BOTH {
+                    self.gold[team.index()] = self.gold[team.index()]
+                        .saturating_add(self.assembly[team.index()].income_per_10s);
+                }
+            }
             let now = self.elapsed_ns();
             for robot in &mut self.robots {
                 robot.terrain.expire(now);
@@ -608,7 +631,8 @@ impl Match {
             let defense = self.runes[team.index()]
                 .buff
                 .as_ref()
-                .map_or(0, |b| b.defense_pct);
+                .map_or(0, |b| b.defense_pct)
+                .max(self.assembly[team.index()].defense_pct());
             (20 * attack_pct * (100 - defense) + 5000) / 10000
         };
         let (team, applied) = match target {
@@ -687,6 +711,11 @@ impl Match {
     }
     /// Settle UC §5.8 in order. Surviving base HP never breaks a timeout tie.
     pub fn finish(&mut self) {
+        for a in &mut self.assembly {
+            if a.outcome == super::assembly::Outcome::Active {
+                a.outcome = super::assembly::Outcome::Cancelled;
+            }
+        }
         let comparison = if self.base_hp.contains(&0) {
             vec![(self.base_hp.map(u64::from), ResultReason::BaseDestroyed)]
         } else {

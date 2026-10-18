@@ -316,3 +316,24 @@ It leaves paused Idle on success and inspectable paused state on failure.
 `projectiles` for reproducing detector and motion failures. Running the full
 scenario requires a GPU even in headless window mode; `just control-test` runs
 engine/adapter/console tests without a GPU.
+
+## Virtual 2027 assembly
+
+On a native 2027 match, the HTTP referee panel (`--http`) has **Start assembly**,
+**Finish assembly**, and **Cancel** buttons with team/difficulty selectors and
+per-team deadline, outcome and income. The console exposes the same authorized
+referee actions:
+
+```json
+{"type":"world","command":{"Referee":{"StartAssembly":{"team":"Red","difficulty":1}}}}
+{"type":"world","command":{"Referee":{"FinishAssembly":{"team":"Red"}}}}
+{"type":"world","command":{"Referee":{"CancelAssembly":{"team":"Red"}}}}
+```
+
+Finish and Cancel are alternatives for one active attempt. Start requires a
+running round; the prototype needs no robot or contact. Inspect
+`/rmuc_2027/assembly/0` (Red) or `/rmuc_2027/assembly/1` (Blue) for `outcome`,
+`difficulty`, `started_ns`, `deadline_ns`, `completions` and `income_per_10s`.
+Use `step` while paused to test timeout exactly: 5,760 ticks equal 45 seconds.
+The deadline is exclusive; a Finish at that timestamp fails. See
+[virtual assembly](gameplay.md#rmuc-2027-virtual-assembly) for policies and scope.

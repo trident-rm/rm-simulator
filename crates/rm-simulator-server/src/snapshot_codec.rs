@@ -1207,6 +1207,23 @@ mod tests {
             .step(6_000_000_000 / rm_simulator_world::tick_ns())
             .unwrap();
         field
+            .referee_command(RefereeCommand::StartAssembly {
+                team: rm_simulator_world::Team::Red,
+                difficulty: 1,
+            })
+            .unwrap();
+        field
+            .referee_command(RefereeCommand::FinishAssembly {
+                team: rm_simulator_world::Team::Red,
+            })
+            .unwrap();
+        field
+            .referee_command(RefereeCommand::StartAssembly {
+                team: rm_simulator_world::Team::Blue,
+                difficulty: 1,
+            })
+            .unwrap();
+        field
             .buy_ammo(robot, rm_simulator_world::Caliber::Mm17)
             .unwrap();
         field
