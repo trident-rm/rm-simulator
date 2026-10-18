@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+- Add source-bound PIE tunnel Engineer and Future low Omni Infantry packages.
+  T stows PIE's arm, camera and UWB with oriented collision envelopes; Future
+  uses its fixed-height chassis and prescribed gimbal bindings. Checksummed
+  serial configurations, optics and armor mounts travel in protocol 64.
+  Test 250 mm clearance, blocked opening under the roof, mid-transform restore
+  and source-group loading without enabling unfinished RM2027 Heavy gameplay.
+
 - Add the DreamChaser stair-climbing Engineer donor: T raises the front wheels
   and extends the rear legs, then returns to level travel. Source-bound links,
   individual wheel forces, moving suspension anchors and clearance checks follow

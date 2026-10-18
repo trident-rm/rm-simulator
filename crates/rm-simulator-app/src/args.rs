@@ -281,8 +281,19 @@ impl Args {
             *path = std::path::absolute(&*path)?;
             self.host.folding_hero = crate::robot_assets::verify(path)?;
             self.host.stair_heavy = crate::robot_assets::is_stair_heavy(path)?;
-            self.host.team_cad = !(self.host.folding_hero || self.host.stair_heavy);
-            if self.host.stair_heavy && self.robot == Robot::default() {
+            self.host.source_chassis = crate::robot_assets::source_chassis(path)?;
+            self.host.team_cad = !(self.host.folding_hero
+                || self.host.stair_heavy
+                || self.host.source_chassis.is_some());
+            if (self.host.stair_heavy
+                || self
+                    .host
+                    .source_chassis
+                    .as_ref()
+                    .and_then(|c| c.articulation.as_ref())
+                    .is_some_and(|a| a.profile == "pie-tunnel-heavy-v1"))
+                && self.robot == Robot::default()
+            {
                 self.robot = Robot::Engineer;
             }
             if self.host.folding_hero && self.robot == Robot::default() {

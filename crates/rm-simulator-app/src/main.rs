@@ -86,6 +86,20 @@ fn main() -> AppExit {
             file: "robots://neutral.glb".into(),
             folding_hero: args.host.folding_hero,
             stair_heavy: args.host.stair_heavy,
+            articulated: args.host.source_chassis.is_some(),
+            required_groups: args
+                .host
+                .source_chassis
+                .as_ref()
+                .and_then(|c| c.articulation.as_ref())
+                .map(|a| {
+                    a.joints
+                        .iter()
+                        .map(|j| j.name.clone())
+                        .chain((0..4).map(|i| format!("wheel-{i}")))
+                        .collect()
+                })
+                .unwrap_or_default(),
             replace_armor: robot_assets::replacement_armor(path)
                 .expect("verified robot armor mounts"),
         });

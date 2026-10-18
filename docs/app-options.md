@@ -24,7 +24,7 @@ joined with `--connect` takes those from the server.
 | `--robot hero\|engineer\|infantry-3\|infantry-4\|infantry-5\|sentry\|drone` | Robot you drive on any host. Hero fires 42 mm; Infantry (default), Sentry and Drone fire 17 mm. Engineer has a fixed decorative arm; Drone flies at fixed altitude. Engineer has no launcher |
 | `--chassis auto\|omni\|balance\|mecanum\|flight` | Default `auto`: Infantry/Sentry use omni, Hero/Engineer use mecanum; Drone uses fixed-altitude flight. Infantry also offers balance (two wheels, mock balance assist and jump). Incompatible choices are rejected |
 | `--performance TYPE` | Section 5.4.2 performance type requested after joining: `long-range` or `melee` for the Hero, `hp-cooling`, `hp-burst`, `power-cooling` or `power-burst` for an infantry. Unset keeps the rulebook default; a host refuses a type for the other class or during a running round |
-| `--robot-assets DIR` | Optional verified source-derived Omni, folding Hero or stair Heavy package; selects its fitted local physics and validated replacement armor when supplied |
+| `--robot-assets DIR` | Optional verified source-derived Omni, folding Hero, stair Heavy or tunnel package; selects its fitted local physics and validated replacement armor when supplied |
 | `--stair-heavy` | Host selects the DreamChaser stair linkage; pilot with `--robot engineer` on a 2026 field |
 | `--folding-hero` | Host selects the source-bound folding Hero preset; use a 2026 field |
 | `--team-cad` | Host option selecting the fitted team Omni dimensions without requiring visual assets |
@@ -268,7 +268,7 @@ an NVIDIA laptop GPU; Mac performance still needs separate measurements.
 | Q / E | Rotate the Drone's body left/right; the mouse aims its gimbal separately |
 | Left Ctrl | Fast: 5 m/s drive command, 8 m/s flight |
 | R | Toggle chassis spin (6 rad/s) while driving |
-| T | Toggle mechanism: Hero fold / stair Heavy wheel linkage (2026 practice) |
+| T | Toggle mechanism: Hero fold / stair Heavy wheel linkage / PIE tunnel stow (2026 practice) |
 | V | Toggle first- and third-person view while driving |
 | C | Cycle physics colliders: Off / Overlay / Only |
 | F3 | Open / close debug panel: collider Off / Overlay / Only, visual wireframe, buff/RFID zones and labels, rendering statistics, remote motion buffering, reset own robot to spawn |

@@ -439,7 +439,9 @@ pub fn drive_camera(
         // with the gimbal on a tilted chassis while looking along the aim.
         player.position = mount.translation
             + mount.rotation
-                * if let Some(folding) = &chassis.config.folding {
+                * if let Some(a) = &chassis.config.articulation {
+                    rm_simulator_render::flu_position(a.camera_offset_m)
+                } else if let Some(folding) = &chassis.config.folding {
                     rm_simulator_render::flu_position(folding.camera_offset_m)
                 } else if chassis.config.team_cad {
                     rm_simulator_render::team_robot::camera_eye()

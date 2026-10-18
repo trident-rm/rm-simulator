@@ -234,7 +234,9 @@ impl Session {
             let simulation = Simulation::from_cad(
                 cad,
                 &options,
-                Some(if args.host.stair_heavy {
+                Some(if let Some(c) = &args.host.source_chassis {
+                    c.clone()
+                } else if args.host.stair_heavy {
                     ChassisConfig::stair_heavy()
                 } else if args.host.folding_hero {
                     ChassisConfig::folding_hero()

@@ -22,11 +22,14 @@ use rm_simulator_world::{Caliber, RuneKind, Shot, outpost, projectile::Projectil
 
 /// Field, rune, weapon and chassis options shared by every host.
 ///
-/// Both binaries that embed this struct expose every field as a `--flag` with
+/// Both binaries that embed this struct expose each CLI field as a `--flag` with
 /// the same name, help text and default, so a command line written for one is
-/// accepted by the other.
+/// accepted by the other. `source_chassis` is embedding-only, populated after asset verification.
 #[derive(Args, Debug, Clone)]
 pub struct HostArgs {
+    /// Verified source-package chassis supplied by the embedding application.
+    #[arg(skip)]
+    pub source_chassis: Option<rm_simulator_world::ChassisConfig>,
     /// DreamChaser stair-climbing Engineer practice donor (RM2027 Heavy visual source).
     #[arg(long, conflicts_with_all=["team_cad","folding_hero"])]
     pub stair_heavy: bool,

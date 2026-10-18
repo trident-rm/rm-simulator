@@ -293,3 +293,299 @@ impl ClimbingConfig {
         })
     }
 }
+
+/// Source-fitted rigid joint chain. All reference mounts are body-local FLU metres.
+/// One primary input drives a prescribed stow sequence; no actuator torque is inferred.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ArticulationConfig {
+    /// Fitted muzzle offset from the pitch pivot, local FLU metres.
+    pub muzzle_offset_m: [f64; 3],
+    /// Fitted camera eye offset from the pitch pivot, local FLU metres.
+    pub camera_offset_m: [f64; 3],
+    /// Package profile identity retained in snapshots and used by asset adapters.
+    pub profile: String,
+    /// Maximum primary input, radians; zero for a fixed-height source robot.
+    pub limit_rad: f64,
+    /// Prescribed primary input rate, radians per second; positive.
+    pub speed_rad_s: f64,
+    /// Topologically ordered joints. Parents must precede children.
+    pub joints: Vec<SourceJoint>,
+    /// Four source-fitted armor scoring face poses, body-local FLU.
+    pub armor_faces: [Pose; 4],
+}
+/// Rigid source group driven by a parent, the primary transform, or gimbal aim.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SourceJoint {
+    /// Source GLB motion-group name, unique within this configuration.
+    pub name: String,
+    /// Earlier joint index, or no parent for a body attachment.
+    pub parent: Option<usize>,
+    /// Reference hinge position, body-local FLU metres.
+    pub pivot_m: [f64; 3],
+    /// Unit rotation axis in the reference body frame.
+    pub axis: [f64; 3],
+    /// Rotation at the stowed endpoint, radians (or gain for an aim joint).
+    pub angle_rad: f64,
+    /// Translation at the stowed endpoint, in reference body FLU metres.
+    pub translation_m: [f64; 3],
+    /// Input source: primary transform, body-relative yaw, or body-relative pitch.
+    pub drive: JointDrive,
+    /// Optional conservative source envelope, relative to the reference hinge.
+    pub collision: Option<JointEnvelope>,
+}
+/// Input used by a source joint.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum JointDrive {
+    /// Normalized primary input, from zero to one.
+    Transform,
+    /// Body-relative gimbal yaw, radians.
+    Yaw,
+    /// Body-relative gimbal elevation, radians.
+    Pitch,
+}
+/// Cuboid envelope of a source group, in its hinge-local reference frame.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct JointEnvelope {
+    /// Cuboid rotation relative to its reference hinge, wxyz unit quaternion.
+    pub rotation_wxyz: [f64; 4],
+    /// Centre relative to its hinge, metres.
+    pub center_m: [f64; 3],
+    /// Positive half extents, metres.
+    pub half_m: [f64; 3],
+}
+impl ArticulationConfig {
+    /// Reject cycles, duplicate names, nonunit axes and nonfinite source geometry.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let finite = |v: [f64; 3]| v.into_iter().all(f64::is_finite);
+        if !finite(self.muzzle_offset_m)
+            || !finite(self.camera_offset_m)
+            || self.profile.is_empty()
+            || self.joints.is_empty()
+            || self.joints.len() > 64
+            || !self.limit_rad.is_finite()
+            || !(0. ..=std::f64::consts::PI).contains(&self.limit_rad)
+            || !self.speed_rad_s.is_finite()
+            || self.speed_rad_s <= 0.
+        {
+            return Err("invalid source articulation input");
+        }
+        let mut names = std::collections::HashSet::new();
+        for (i, j) in self.joints.iter().enumerate() {
+            if j.name.is_empty()
+                || !names.insert(&j.name)
+                || j.parent.is_some_and(|p| p >= i)
+                || !finite(j.pivot_m)
+                || !finite(j.axis)
+                || !finite(j.translation_m)
+                || (Vector::from_array(j.axis).length() - 1.).abs() > 1e-6
+                || !j.angle_rad.is_finite()
+                || j.collision.is_some_and(|c| {
+                    !finite(c.center_m)
+                        || c.half_m.into_iter().any(|v| !v.is_finite() || v <= 0.)
+                        || !c.rotation_wxyz.into_iter().all(f64::is_finite)
+                        || (c.rotation_wxyz.into_iter().map(|v| v * v).sum::<f64>() - 1.).abs()
+                            > 1e-6
+                })
+            {
+                return Err("invalid source articulation joint");
+            }
+        }
+        for p in self.armor_faces {
+            if !finite(p.translation_m)
+                || !p.rotation_wxyz.into_iter().all(f64::is_finite)
+                || (p.rotation_wxyz.into_iter().map(|v| v * v).sum::<f64>() - 1.).abs() > 1e-6
+            {
+                return Err("invalid source armor mount");
+            }
+        }
+        Ok(())
+    }
+    /// Body-local rigid frames for the bounded primary input and local gimbal aim.
+    /// Validate the graph before evaluation; parent frames are composed exactly.
+    ///
+    /// ```
+    /// use rm_simulator_physics::mechanism::*;
+    /// # let config = ArticulationConfig {
+    /// #   profile: "example".into(), limit_rad: 1., speed_rad_s: 0.5,
+    /// #   muzzle_offset_m: [0.2,0.,0.], camera_offset_m: [0.1,0.,0.],
+    /// #   armor_faces: rm_simulator_physics::chassis::ChassisConfig::default().armor_faces(),
+    /// #   joints: vec![SourceJoint { name: "camera".into(), parent: None,
+    /// #     pivot_m: [0.,0.,0.2], axis: [0.,1.,0.], angle_rad: 0.,
+    /// #     translation_m: [0.,0.,-0.05], drive: JointDrive::Transform, collision: None }],
+    /// # };
+    /// config.validate()?;
+    /// let stowed = config.poses(1., [0., 0.]);
+    /// assert!((stowed[0].translation_m[2] - 0.15).abs() < 1e-12);
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn poses(&self, input_rad: f64, aim_rad: [f64; 2]) -> Vec<Pose> {
+        let mut deltas: Vec<Pose3> = Vec::with_capacity(self.joints.len());
+        self.joints
+            .iter()
+            .map(|j| {
+                let value = match j.drive {
+                    JointDrive::Transform => {
+                        if self.limit_rad > 0. {
+                            (input_rad / self.limit_rad).clamp(0., 1.)
+                        } else {
+                            0.
+                        }
+                    }
+                    JointDrive::Yaw => aim_rad[0],
+                    JointDrive::Pitch => aim_rad[1],
+                };
+                let pivot = Pose3::from_translation(Vector::from_array(j.pivot_m));
+                let rotation =
+                    Rotation::from_scaled_axis(Vector::from_array(j.axis) * (j.angle_rad * value));
+                let change =
+                    Pose3::from_parts(Vector::from_array(j.translation_m) * value, rotation);
+                let delta = j.parent.map_or(Pose3::IDENTITY, |p| deltas[p])
+                    * pivot
+                    * change
+                    * pivot.inverse();
+                deltas.push(delta);
+                pose(delta * pivot)
+            })
+            .collect()
+    }
+    /// Body-local conservative envelopes in the same poses as their source shells.
+    pub fn collision_parts(&self, input_rad: f64, aim_rad: [f64; 2]) -> Vec<(Pose, [f64; 3])> {
+        self.joints
+            .iter()
+            .zip(self.poses(input_rad, aim_rad))
+            .filter_map(|(j, p)| {
+                j.collision.map(|c| {
+                    (
+                        pose(
+                            rigid(p)
+                                * rigid(Pose {
+                                    translation_m: c.center_m,
+                                    rotation_wxyz: c.rotation_wxyz,
+                                }),
+                        ),
+                        c.half_m,
+                    )
+                })
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod serial_tests {
+    use super::*;
+    fn fixture() -> ArticulationConfig {
+        ArticulationConfig {
+            muzzle_offset_m: [0.2, 0., 0.],
+            camera_offset_m: [0.1, 0., 0.],
+            profile: "test".into(),
+            limit_rad: 1.,
+            speed_rad_s: 0.5,
+            armor_faces: crate::chassis::ChassisConfig::default().armor_faces(),
+            joints: vec![
+                SourceJoint {
+                    name: "arm".into(),
+                    parent: None,
+                    pivot_m: [0., 0., 0.2],
+                    axis: [0., 1., 0.],
+                    angle_rad: std::f64::consts::FRAC_PI_2,
+                    translation_m: [0.; 3],
+                    drive: JointDrive::Transform,
+                    collision: Some(JointEnvelope {
+                        center_m: [0.1, 0., 0.],
+                        half_m: [0.1, 0.02, 0.02],
+                        rotation_wxyz: [1., 0., 0., 0.],
+                    }),
+                },
+                SourceJoint {
+                    name: "carriage".into(),
+                    parent: Some(0),
+                    pivot_m: [0.2, 0., 0.2],
+                    axis: [0., 0., 1.],
+                    angle_rad: 0.,
+                    translation_m: [0., 0., -0.1],
+                    drive: JointDrive::Transform,
+                    collision: None,
+                },
+            ],
+        }
+    }
+    #[test]
+    fn serial_motion_composes_parent_rotation_and_carriage_translation() {
+        let c = fixture();
+        c.validate().unwrap();
+        let p = c.poses(1., [0.; 2]);
+        for (a, b) in p[1].translation_m.into_iter().zip([-0.1, 0., 0.]) {
+            assert!((a - b).abs() < 1e-12);
+        }
+        let b = c.collision_parts(1., [0.; 2]);
+        assert_eq!(b.len(), 1);
+        assert!((b[0].0.translation_m[2] - 0.1).abs() < 1e-12);
+        assert_eq!(c.poses(2., [0.; 2]), p);
+    }
+    #[test]
+    fn invalid_graph_and_collision_frames_are_rejected() {
+        let mut c = fixture();
+        c.joints[0].parent = Some(1);
+        assert!(c.validate().is_err());
+        let mut c = fixture();
+        c.joints[1].name = "arm".into();
+        assert!(c.validate().is_err());
+        let mut c = fixture();
+        c.joints[0].axis = [0.; 3];
+        assert!(c.validate().is_err());
+        let mut c = fixture();
+        c.joints[0].collision.as_mut().unwrap().rotation_wxyz = [0.; 4];
+        assert!(c.validate().is_err());
+    }
+    #[test]
+    fn gimbal_drives_are_independent_from_primary_input() {
+        let mut c = fixture();
+        c.joints[0].drive = JointDrive::Yaw;
+        assert_eq!(c.poses(0., [0.; 2])[0], c.poses(1., [0.; 2])[0]);
+        assert_ne!(c.poses(0., [0.; 2])[0], c.poses(0., [0.5, 0.])[0]);
+    }
+    #[test]
+    fn serial_chassis_restore_replays_the_current_primary_input() {
+        use crate::{
+            TargetFrames, Team, WorldPhysics,
+            chassis::{ChassisCommand, ChassisConfig},
+            tick_ns,
+        };
+        let cfg = ChassisConfig {
+            articulation: Some(fixture()),
+            omni_frame: None,
+            ..Default::default()
+        };
+        cfg.validate().unwrap();
+        let mut a = WorldPhysics::new(&[], 0.);
+        let id = a
+            .add_chassis(Team::Red, cfg, Pose::at([0., 0., 3.]))
+            .unwrap();
+        a.command_chassis(
+            id,
+            ChassisCommand {
+                folded: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let frames = TargetFrames::new(vec![]);
+        for t in 0..40 {
+            a.step(t * tick_ns(), &frames).unwrap();
+        }
+        let snapshot = a.chassis_snapshot(id).unwrap();
+        let mut b = WorldPhysics::new(&[], 0.);
+        b.restore_chassis(&snapshot).unwrap();
+        for t in 40..70 {
+            a.step(t * tick_ns(), &frames).unwrap();
+            b.step(t * tick_ns(), &frames).unwrap();
+        }
+        let x = a.chassis_snapshot(id).unwrap();
+        let y = b.chassis_snapshot(id).unwrap();
+        assert_eq!(x.fold_angle_rad, y.fold_angle_rad);
+        for (a, b) in x.pose.translation_m.into_iter().zip(y.pose.translation_m) {
+            assert!((a - b).abs() < 1e-8);
+        }
+    }
+}

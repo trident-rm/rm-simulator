@@ -102,7 +102,7 @@ The essentials, for driving and for match control:
 | Q / E | Rotate the Drone's body left/right; the mouse aims its gimbal separately |
 | Left Ctrl | Fast: 5 m/s drive command, 8 m/s flight |
 | R | Toggle chassis spin (6 rad/s) while driving |
-| T | Toggle mechanism: Hero fold / stair Heavy wheel linkage (2026 practice) |
+| T | Toggle mechanism: Hero fold / stair Heavy wheel linkage / PIE tunnel stow (2026 practice) |
 | V | Toggle first- and third-person view while driving |
 | C | Cycle physics colliders: Off / Overlay / Only |
 | F3 | Open / close debug panel: collider Off / Overlay / Only, visual wireframe, buff/RFID zones and labels, rendering statistics, remote motion buffering, reset own robot to spawn |

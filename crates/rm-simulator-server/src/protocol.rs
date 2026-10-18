@@ -104,7 +104,8 @@ use serde::{Deserialize, Serialize};
 /// Version 62 aligns source armor mounts and large Hero housing collisions.
 /// The wire layout is unchanged; older prediction uses incompatible fitted shapes.
 /// Version 63 carries the source stair linkage configuration and primary actuator semantics.
-pub const PROTOCOL_VERSION: u32 = 63;
+/// Version 64 carries verified source serial joints, oriented collision envelopes and fitted optics.
+pub const PROTOCOL_VERSION: u32 = 64;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///

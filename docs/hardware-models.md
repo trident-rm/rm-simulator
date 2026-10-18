@@ -301,7 +301,7 @@ playable models or remove the existing rendering path before replacements work.
 
 | New donor | Source | Intake status |
 | --- | --- | --- |
-| Tunnel Heavy | [Capital Normal University PIE / H3](https://bbs.herkules.dev/articles/01M0YXED5X9S8DKY2BBCT220PZ) | Complete STEP, named six-axis arm/chassis assemblies; simplified review candidate |
+| Tunnel Heavy | [Capital Normal University PIE / H3](https://bbs.herkules.dev/articles/01M0YXED5X9S8DKY2BBCT220PZ) | Complete STEP; source-bound stow mechanism and fitted Engineer practice package |
 | Stair Heavy | [Beijing Institute of Technology DreamChaser / L1u_Yuz3ng](https://bbs.herkules.dev/articles/01M0YXED625E111Y2BP1XG6KS2) | Complete national-finals single-arm STEP; 337,237-triangle review package; other released variants retained |
 | Tunnel Sentry | [Fudan University Nebula EGA / alumls](https://bbs.herkules.dev/articles/01M0Z2DS984MGKHD6CFKNF39BB) | Complete native SolidWorks assemblies acquired; complete STEP conversion required |
 | Temporary Sentry | [Yancheng Institute of Technology SaltWave](https://bbs.herkules.dev/articles/01M0Z7ERF51MMHVCHRX05H2P13) | Complete half-swerve/half-omni STEP; 218,879-triangle review package; user-approved alternative while EGA awaits conversion; tunnel capability unverified |
@@ -326,8 +326,10 @@ For future bindings, preserve wheel/steering/suspension, serial arm, gimbal,
 UWB and camera assemblies independently. Stair-climbing claims in the source
 report do not imply that the simulator's ray-wheel chassis can climb those
 steps. Fit physical linkage/contact proxies and explicit actuator states before
-claiming the capability. The model migration and retirement of procedural
-visuals remain pending until the replacement packages pass those checks.
+claiming the capability. The PIE and Future runtime bindings now pass the contact fixture described in
+[robot equipment](robot-equipment.md#tunnel-capable-source-packages). Other
+review candidates remain unbound until their mechanisms and clearances pass
+those checks.
 
 ### Reference geometry cleanup
 

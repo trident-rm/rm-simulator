@@ -475,7 +475,20 @@ impl Simulation {
     ) -> Result<ChassisConfig, String> {
         let config = chassis.config(robot)?;
         Ok(
-            if robot == Robot::Engineer
+            if self
+                .spawner_config()
+                .and_then(|c| c.articulation.as_ref())
+                .is_some_and(|a| match a.profile.as_str() {
+                    "pie-tunnel-heavy-v1" => robot == Robot::Engineer,
+                    "future-tunnel-infantry-v1" => matches!(
+                        robot,
+                        Robot::Infantry3 | Robot::Infantry4 | Robot::Infantry5
+                    ),
+                    _ => false,
+                })
+            {
+                self.spawner_config().unwrap().clone()
+            } else if robot == Robot::Engineer
                 && self.spawner_config().is_some_and(|c| c.climbing.is_some())
             {
                 ChassisConfig::stair_heavy()

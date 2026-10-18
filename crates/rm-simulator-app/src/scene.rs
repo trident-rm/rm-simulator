@@ -533,23 +533,37 @@ pub(crate) fn chassis_appearance(
     let aim = pose_flu(chassis.turret);
     let (yaw_stage, turret) = gimbal_poses(pose_flu(chassis.pose), aim);
     ChassisAppearance {
-        source_joints: config
-            .climbing
-            .as_ref()
-            .map(|c| {
-                let p = c.poses(chassis.fold_angle_rad);
-                [
-                    ("front", p.front),
-                    ("coupler", p.coupler),
-                    ("rear", p.rear),
-                    ("guide", p.guide),
-                    ("slider", p.slider),
-                ]
-                .into_iter()
-                .map(|(name, p)| (name.to_string(), pose_flu(p)))
+        source_joints: if let Some(a) = &config.articulation {
+            let q = dquat(chassis.pose.rotation_wxyz);
+            let aimq = dquat(chassis.turret.rotation_wxyz);
+            let d = q.inverse() * (aimq * DVec3::X);
+            a.joints
+                .iter()
+                .zip(a.poses(
+                    chassis.fold_angle_rad,
+                    [d.y.atan2(d.x), d.z.clamp(-1., 1.).asin()],
+                ))
+                .map(|(j, p)| (j.name.clone(), pose_flu(p)))
                 .collect()
-            })
-            .unwrap_or_default(),
+        } else {
+            config
+                .climbing
+                .as_ref()
+                .map(|c| {
+                    let p = c.poses(chassis.fold_angle_rad);
+                    [
+                        ("front", p.front),
+                        ("coupler", p.coupler),
+                        ("rear", p.rear),
+                        ("guide", p.guide),
+                        ("slider", p.slider),
+                    ]
+                    .into_iter()
+                    .map(|(name, p)| (name.to_string(), pose_flu(p)))
+                    .collect()
+                })
+                .unwrap_or_default()
+        },
         fold_angle_rad: chassis.fold_angle_rad as f32,
         fold_collision_parts: {
             let mut parts = config.transform_collision_parts(
@@ -583,7 +597,9 @@ pub(crate) fn chassis_appearance(
         model: {
             use rm_simulator_render::chassis::RobotModel;
             use rm_simulator_server::protocol::Robot;
-            if config.climbing.is_some() {
+            if config.articulation.is_some() {
+                RobotModel::Articulated
+            } else if config.climbing.is_some() {
                 RobotModel::StairHeavy
             } else if config.folding.is_some() {
                 RobotModel::FoldingHero

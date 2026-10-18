@@ -17,8 +17,18 @@ pub fn verify(root: &Path) -> std::io::Result<bool> {
         && manifest["profile"] == "dreamchaser-stair-heavy-v1"
         && manifest["source"]["cad_sha256"]
             == "dd98239dce94e35cb2ccc43171f4edc6e35c77f3f0659f91890750b98bad0e01";
+    let tunnel = manifest["schema"] == 4
+        && manifest["profile"] == "pie-tunnel-heavy-v1"
+        && manifest["source"]["cad_sha256"]
+            == "bfb91b499f17488ed1deb523568869f2fcb29436a53cbc39ec5e64ac4a822c47";
+    let future = manifest["schema"] == 4
+        && manifest["profile"] == "future-tunnel-infantry-v1"
+        && manifest["source"]["cad_sha256"]
+            == "d82b2c6950ec29d1d9609e1b5973d7981500be95bfb5f22b41b5eb68ced4bbbd";
     if !folding_hero
         && !stair
+        && !tunnel
+        && !future
         && (manifest["schema"] != 1
             || manifest["sources"]["chassis"]["cad_sha256"] != chassis
             || manifest["sources"]["gimbal"]["cad_sha256"] != gimbal
@@ -35,6 +45,7 @@ pub fn verify(root: &Path) -> std::io::Result<bool> {
     if manifest["files"]["neutral"]["sha256"] != actual {
         return Err(std::io::Error::other("robot neutral.glb checksum mismatch"));
     }
+    source_chassis(root)?;
     replacement_armor(root)?;
     Ok(folding_hero)
 }
@@ -59,7 +70,9 @@ pub fn replacement_armor(root: &Path) -> std::io::Result<bool> {
         return Err(invalid());
     }
     let hero = manifest["profile"] == "artisans-folding-hero-v1";
-    let config = if manifest["profile"] == "dreamchaser-stair-heavy-v1" {
+    let config = if let Some(c) = source_chassis(root)? {
+        c
+    } else if manifest["profile"] == "dreamchaser-stair-heavy-v1" {
         rm_simulator_world::chassis::ChassisConfig::stair_heavy()
     } else if hero {
         rm_simulator_world::chassis::ChassisConfig::folding_hero()
@@ -103,6 +116,31 @@ pub fn replacement_armor(root: &Path) -> std::io::Result<bool> {
         }
     }
     Ok(true)
+}
+
+/// Read and validate a checksummed source-fitted chassis configuration, if present.
+pub fn source_chassis(root: &Path) -> std::io::Result<Option<rm_simulator_world::ChassisConfig>> {
+    let m: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join("manifest.json"))?)?;
+    if m["schema"] != 4 {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(root.join("chassis.json"))?;
+    if m["files"]["chassis"]["file"] != "chassis.json"
+        || m["files"]["chassis"]["sha256"] != format!("{:x}", Sha256::digest(&bytes))
+    {
+        return Err(std::io::Error::other("source chassis checksum mismatch"));
+    }
+    let c: rm_simulator_world::ChassisConfig = serde_json::from_slice(&bytes)?;
+    c.validate().map_err(std::io::Error::other)?;
+    if c.articulation
+        .as_ref()
+        .is_none_or(|a| Some(a.profile.as_str()) != m["profile"].as_str())
+    {
+        return Err(std::io::Error::other(
+            "source articulation profile mismatch",
+        ));
+    }
+    Ok(Some(c))
 }
 
 #[cfg(test)]

@@ -20,6 +20,8 @@ use bevy::prelude::*;
 /// Source CAD is never embedded in the renderer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RobotModel {
+    /// Source-fitted serial joints with caller-provided motion group poses.
+    Articulated,
     /// Imported source-derived team Omni model; supplied by the caller.
     TeamCad,
     /// Imported Artisans Hero with a folding arm and counter-rotating pitch stage.
@@ -636,7 +638,10 @@ fn prototype_body(
             );
         }
         spawn_balance_legs(body, meshes, chassis, metal, accent, black);
-    } else if matches!(chassis.model, RobotModel::Engineer | RobotModel::StairHeavy) {
+    } else if matches!(
+        chassis.model,
+        RobotModel::Engineer | RobotModel::StairHeavy | RobotModel::Articulated
+    ) {
         // Open box-section frame rather than a solid sandwich slab. Wide
         // mecanum wheels remain outside its side plates.
         for side in [-1.0, 1.0] {
@@ -1963,7 +1968,10 @@ fn spawn_chassis(
         }
         // Yaw stage: a turntable on the body top, a pedestal and the fork
         // whose arms hold the pitch axle either side of the cradle.
-        if matches!(chassis.model, RobotModel::Engineer | RobotModel::StairHeavy) {
+        if matches!(
+            chassis.model,
+            RobotModel::Engineer | RobotModel::StairHeavy | RobotModel::Articulated
+        ) {
             continue;
         }
         let [tx, ty, tz] = chassis.turret_half_m;

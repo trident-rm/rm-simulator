@@ -224,6 +224,9 @@ fn octagon(hx: f64, hy: f64, cut: f64) -> [[f64; 2]; 8] {
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChassisConfig {
+    /// Source-fitted serial joints and armor mounts, loaded from a verified package.
+    #[serde(default)]
+    pub articulation: Option<crate::mechanism::ArticulationConfig>,
     /// Optional source-fitted single-input wheel linkage for stair traversal.
     #[serde(default)]
     pub climbing: Option<crate::mechanism::ClimbingConfig>,
@@ -321,6 +324,7 @@ impl Default for ChassisConfig {
     fn default() -> Self {
         let d = 0.245 * std::f64::consts::FRAC_1_SQRT_2;
         Self {
+            articulation: None,
             climbing: None,
             folding: None,
             team_cad: false,
@@ -481,9 +485,10 @@ impl ChassisConfig {
     /// The legacy `fold_angle_rad` snapshot field carries this one input for
     /// either mutually exclusive folding or stair-climbing configurations.
     pub fn transform_limit_rad(&self) -> f64 {
-        self.folding
+        self.articulation
             .as_ref()
-            .map(|f| f.folded_angle_rad)
+            .map(|a| a.limit_rad)
+            .or_else(|| self.folding.as_ref().map(|f| f.folded_angle_rad))
             .or_else(|| self.climbing.as_ref().map(|c| c.travel_rad()))
             .unwrap_or(0.)
     }
@@ -494,7 +499,35 @@ impl ChassisConfig {
         aim_rad: [f64; 2],
         angle_rad: f64,
     ) -> Vec<(Pose, [f64; 3])> {
-        if let Some(folding) = &self.folding {
+        if let Some(a) = &self.articulation {
+            let local = rapier_pose(body).rotation.inverse()
+                * Vector::new(
+                    aim_rad[1].cos() * aim_rad[0].cos(),
+                    aim_rad[1].cos() * aim_rad[0].sin(),
+                    aim_rad[1].sin(),
+                );
+            let aim = [local.y.atan2(local.x), local.z.clamp(-1., 1.).asin()];
+            a.collision_parts(angle_rad, aim)
+                .into_iter()
+                .map(|(p, h)| {
+                    (
+                        {
+                            let v = rapier_pose(body) * rapier_pose(p);
+                            Pose {
+                                translation_m: v.translation.to_array(),
+                                rotation_wxyz: [
+                                    v.rotation.w,
+                                    v.rotation.x,
+                                    v.rotation.y,
+                                    v.rotation.z,
+                                ],
+                            }
+                        },
+                        h,
+                    )
+                })
+                .collect()
+        } else if let Some(folding) = &self.folding {
             folding.collision_parts(body, aim_rad, angle_rad).to_vec()
         } else if let Some(climbing) = &self.climbing {
             climbing
@@ -531,7 +564,9 @@ impl ChassisConfig {
     /// assert_eq!(ChassisConfig::team_cad().muzzle_offset_m(), [0.20657673, 0., 0.]);
     /// ```
     pub fn muzzle_offset_m(&self) -> [f64; 3] {
-        if let Some(folding) = &self.folding {
+        if let Some(a) = &self.articulation {
+            a.muzzle_offset_m
+        } else if let Some(folding) = &self.folding {
             folding.muzzle_offset_m
         } else if self.team_cad {
             [0.206_576_73, 0., 0.]
@@ -828,6 +863,9 @@ impl ChassisConfig {
     /// assert!(normals.iter().all(|normal| normal[2] > 0.2));
     /// ```
     pub fn armor_faces(&self) -> [Pose; ARMOR_COUNT] {
+        if let Some(a) = &self.articulation {
+            return a.armor_faces;
+        }
         if self.climbing.is_some() {
             return [
                 [0.32379092, 0., 0.01032271],
@@ -1001,6 +1039,17 @@ impl ChassisConfig {
 
     /// Validate dimensions and physical parameters before constructing a chassis.
     pub fn validate(&self) -> Result<(), &'static str> {
+        if let Some(a) = &self.articulation {
+            a.validate()?;
+            if self.folding.is_some()
+                || self.climbing.is_some()
+                || self.planar_flight
+                || self.balance_assist
+                || self.team_cad
+            {
+                return Err("source articulation requires an exclusive ground chassis");
+            }
+        }
         if self.climbing.is_some()
             && (self.folding.is_some()
                 || self.planar_flight
@@ -1519,11 +1568,12 @@ impl Chassis {
         // above the body centre, as on a real robot. A flying body keeps all
         // of it centred instead: its roll and pitch locks hold only while
         // the inertia stays axis-aligned, and its gimbal hangs off-centre.
-        let turret_share = if config.planar_flight || config.folding.is_some() {
-            0.0
-        } else {
-            TURRET_MASS_SHARE
-        };
+        let turret_share =
+            if config.planar_flight || config.folding.is_some() || config.articulation.is_some() {
+                0.0
+            } else {
+                TURRET_MASS_SHARE
+            };
         let [hx, hy, hz] = config.body_half_m;
         let deck = if config.omni_frame.is_some() {
             let points: Vec<_> = config
@@ -1599,7 +1649,7 @@ impl Chassis {
                     ),
                 );
             }
-        } else {
+        } else if config.articulation.is_none() {
             world.insert_collider(
                 ColliderBuilder::cuboid(tx, ty, column_half)
                     .translation(Vector::new(cx, cy, column_bottom + column_half))
@@ -1609,6 +1659,19 @@ impl Chassis {
                     .restitution_combine_rule(CoefficientCombineRule::Min),
                 Some(body),
             );
+        }
+        if config.articulation.is_some() {
+            for (p, h) in config.transform_collision_parts(Pose::default(), [0., 0.], 0.) {
+                fold_colliders.push(
+                    world.insert_collider(
+                        ColliderBuilder::cuboid(h[0], h[1], h[2])
+                            .position(rapier_pose(p))
+                            .density(0.)
+                            .friction(BODY_FRICTION),
+                        Some(body),
+                    ),
+                );
+            }
         }
         if config.climbing.is_some() {
             // Fixed electronics shelf is behind the front entry bay; a full
@@ -2103,6 +2166,9 @@ impl Chassis {
     fn step_fold(&mut self, world: &mut PhysicsWorld, dt_s: f64) {
         let limit = self.config.transform_limit_rad();
         if limit == 0. {
+            if self.config.articulation.is_some() {
+                self.sync_fold_colliders(world);
+            }
             return;
         }
         let speed = self
@@ -2110,6 +2176,7 @@ impl Chassis {
             .folding
             .as_ref()
             .map(|f| f.speed_rad_s)
+            .or_else(|| self.config.articulation.as_ref().map(|a| a.speed_rad_s))
             .unwrap_or_else(|| self.config.climbing.as_ref().unwrap().speed_rad_s);
         let before = self.fold_angle_rad;
         let goal = if self.command.folded { limit } else { 0. };

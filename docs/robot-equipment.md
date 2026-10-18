@@ -416,3 +416,108 @@ rather than an in-game screen recording. Step geometry matches the physical
 fixture; the camera follows the chassis without changing its motion. Requires
 rm-map-tools' Python environment, its diagnostic C++ rasterizer, clang++ and
 FFmpeg. Video and preview frames stay in ignored local-assets.
+
+### Tunnel-capable source packages
+
+Two more optional runtime packages use checksummed `chassis.json` configurations
+with source-fitted serial joints, oriented collision envelopes, armor faces and
+optical mounts. The host carries this complete configuration in checkpoints and
+owner anchors (protocol 64); the renderer receives named poses from the app.
+
+| Package | Practice slot | Height on level loaded suspension | Mechanism |
+| --- | --- | --- | --- |
+| `bound-tunnel-heavy` (PIE) | 2026 Engineer | about 302 mm open / 228 mm stowed | T levels the arm, lowers the camera carriage and retracts UWB |
+| `bound-tunnel-infantry` (Future) | Infantry, Omni | about 249 mm at neutral pitch | Fixed-height chassis; source yaw and firing pitch articulate |
+| `bound-hero-armored` (Artisans) | 2026 Hero | Folded profile passes the 250 mm fixture | Existing T folding arm |
+
+These measurements include loaded tyre placement. Future's wheel **assembly**
+bounds include suspension/mounting hardware and must not be used as its tyre
+centre/radius. Its small clearance is a level-floor result, not a guarantee over
+bumps or with the gun elevated. No model is scaled to fit the opening.
+
+```sh
+just run --cad-assets field --robot-assets local-assets/robot-cad-survey/bound-tunnel-heavy --third-person
+just run --cad-assets field --robot-assets local-assets/robot-cad-survey/bound-tunnel-infantry --third-person
+```
+
+PIE remains an Engineer practice donor, without admitting RM2027 Heavy gameplay
+or manipulation/assembly. Its report §4.2 and the CAD joint axes support the
+prescribed stow: shoulder levels by 7°, elbow counter-rotates, camera carriage
+travels 70 mm along its 45° rail, and UWB rotates 20° at its independent hinge.
+T requests an endpoint; external obstacles stop an opening arm and allow it to
+retract again. The sequence is a fitted simulator policy with an assumed input
+rate, not recovered firmware, torque calibration or a complete six-axis arm
+controller. Source self-collision and flexible belts/cables are not simulated.
+Reviewed dangling motor leads are cut, retaining the motor housings and shafts.
+
+Future's source gimbal is rotated at its yaw bearing into a forward neutral pose.
+Its barrel, camera and collision follow prescribed yaw/pitch joints. The small
+pitch linkage is an approximate visual binding, not a solved four-bar mechanism.
+Source materials and vertex/index buffers are retained exactly. Open/unclassified
+CAD shells remain visual geometry; collision uses fitted physical solid envelopes
+and the simulator's replacement armor modules. These envelopes are conservative
+approximations, including an oriented box along PIE's long shoulder link to avoid
+filling empty space above the stowed arm.
+
+The temporary SaltWave Sentry is not certified for the tunnel: its fixed upper
+structure is too tall and no source folding mechanism has been identified. EGA's
+native SolidWorks assembly still needs a complete STEP conversion before a
+source-faithful tunnel Sentry can be bound.
+
+Rebuild the packages with rm-map-tools' `bind_tunnel.py`. Export the ordinary
+Engineer config as the documented baseline rather than copying a live snapshot:
+
+```sh
+nix develop -c cargo build -p rm-simulator-app --example robot_tunnel --locked
+target/nix/debug/examples/robot_tunnel export-base local-assets/tunnel-base-config.json
+../rm-map-tools/ocpenv/bin/python ../rm-map-tools/benchmarks/2026-10-18-team-robot/bind_tunnel.py \
+  --sources local-assets/robot-cad-survey --out local-assets/robot-cad-survey/bound-tunnel-heavy \
+  --base-config local-assets/tunnel-base-config.json
+# Add --source infantry and change --out to bound-tunnel-infantry for Future.
+```
+
+Run the contact fixture (2 m long, 250 mm roof clearance) without a GPU:
+
+```sh
+target/nix/debug/examples/robot_tunnel local-assets/robot-cad-survey/bound-tunnel-heavy/chassis.json stowed
+target/nix/debug/examples/robot_tunnel local-assets/robot-cad-survey/bound-tunnel-heavy/chassis.json open
+target/nix/debug/examples/robot_tunnel local-assets/robot-cad-survey/bound-tunnel-infantry/chassis.json stowed
+target/nix/debug/examples/robot_tunnel export-hero local-assets/hero-tunnel-config.json
+target/nix/debug/examples/robot_tunnel local-assets/hero-tunnel-config.json stowed
+```
+
+The open PIE control must stop before entering. The stowed PIE case also attempts
+to open under the roof, verifies blocking, stows again and exits. Each run restores
+a checkpoint mid-sequence and then continues through ordinary contact physics.
+Use `scripts/robot-mechanism-console.py` with a fresh PIE session to test T through
+the actual app/host path and save intermediate and endpoint screenshots.
+
+Run the complete positive/negative fixture matrix with:
+
+```sh
+python3 scripts/tunnel-mechanism-scenarios.py
+```
+
+It additionally checks Future against a 240 mm roof and the Hero in both open
+and folded poses. The generated packages and visual reviews remain local;
+committed code contains recipes and fitted simulation configuration contracts.
+
+Record the tunnel fixture at 32 fps (every fourth 128 Hz tick) by supplying a
+fourth positional argument. JSONL contains the configuration, reference joint
+frames, and each frame's actual body, source joints, wheel centres and spin:
+
+```sh
+target/nix/debug/examples/robot_tunnel local-assets/robot-cad-survey/bound-tunnel-infantry/chassis.json \
+  stowed .25 local-assets/future-tunnel-motion.jsonl
+../rm-map-tools/ocpenv/bin/python scripts/render-tunnel-video.py \
+  --package local-assets/robot-cad-survey/bound-tunnel-infantry \
+  --motion local-assets/future-tunnel-motion.jsonl --out local-assets/future-tunnel.mp4 \
+  --title 'Future Omni Infantry'
+```
+
+Use the PIE package/config or exported Hero config and `bound-hero-armored` for
+the other clips. The offline renderer consumes Rust-evaluated source joint
+frames and recorded wheel motion. The far strip of the actual roof is rendered
+as a cutaway; cyan dashes show its 250 mm underside at the centre plane. This
+makes small clearances visible without hiding the robot behind the full roof.
+The rendered roof cutaway does not change the physical collision fixture.

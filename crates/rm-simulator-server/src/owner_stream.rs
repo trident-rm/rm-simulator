@@ -709,6 +709,29 @@ mod tests {
     }
 
     #[test]
+    fn serial_configuration_and_primary_input_survive_owner_anchor() {
+        let (state, chassis) = anchored(177, 5, 3);
+        let mut anchor = OwnerAnchor::from_state(&state, chassis).unwrap();
+        let mut config = serde_json::to_value(&anchor.owner.config).unwrap();
+        config["omni_frame"] = serde_json::Value::Null;
+        config["articulation"] = serde_json::json!({"profile":"serial-test","limit_rad":1.,"speed_rad_s":0.5,
+            "muzzle_offset_m":[0.2,0.,0.],"camera_offset_m":[0.1,0.,0.],
+            "armor_faces":anchor.owner.config.armor_faces(),
+            "joints":[{"name":"camera","parent":null,"pivot_m":[0.,0.,0.2],"axis":[0.,1.,0.],
+            "angle_rad":0.,"translation_m":[0.,0.,-0.05],"drive":"Transform","collision":null}]});
+        anchor.owner.config = serde_json::from_value(config).unwrap();
+        anchor.owner.config.validate().unwrap();
+        anchor.owner.fold_angle_rad = 0.6;
+        anchor.owner.command.folded = true;
+        let decoded = OwnerAnchor::decode(&anchor.encode().unwrap(), &anchor.owner.config).unwrap();
+        assert_quantized(&anchor, &decoded);
+        assert_eq!(
+            decoded.owner.config.articulation,
+            anchor.owner.config.articulation
+        );
+    }
+
+    #[test]
     fn anchor_round_trips_against_its_named_configuration_only() {
         let (state, chassis) = anchored(177, 5, 3);
         let mut anchor = OwnerAnchor::from_state(&state, chassis).unwrap();

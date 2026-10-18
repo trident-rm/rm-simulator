@@ -13,6 +13,10 @@ use bevy::{prelude::*, world_serialization::WorldInstanceReady};
 /// Caller-provided verified robot asset. The app registers its external asset source.
 #[derive(Resource)]
 pub struct TeamRobotAssets {
+    /// Required named motion groups from the caller's verified serial binding.
+    pub required_groups: Vec<String>,
+    /// Source-fitted serial joints; all motion frames are supplied by the caller.
+    pub articulated: bool,
     /// glTF path including asset source, without a scene label.
     pub file: String,
     /// Select the bound folding Hero instead of the original Omni assembly.
@@ -25,7 +29,9 @@ pub struct TeamRobotAssets {
 impl TeamRobotAssets {
     pub(crate) fn supports(&self, model: RobotModel) -> bool {
         model
-            == if self.stair_heavy {
+            == if self.articulated {
+                RobotModel::Articulated
+            } else if self.stair_heavy {
                 RobotModel::StairHeavy
             } else if self.folding_hero {
                 RobotModel::FoldingHero
@@ -156,7 +162,7 @@ fn spawn(
                 ),
                 Transform::from_xyz(
                     0.,
-                    -if assets.stair_heavy {
+                    -if assets.stair_heavy || assets.articulated {
                         0.
                     } else if assets.folding_hero {
                         0.1684552
@@ -188,6 +194,7 @@ fn use_graphite(extras: &str) -> bool {
 fn loaded(
     event: On<WorldInstanceReady>,
     roots: Query<&AssetRoot>,
+    assets: Option<Res<TeamRobotAssets>>,
     children: Query<&Children>,
     names: Query<(&Name, &Transform)>,
     mut commands: Commands,
@@ -231,7 +238,21 @@ fn loaded(
             });
         }
     }
-    let required = if bound.contains("front") {
+    let required = if let Some(a) = assets.as_ref().filter(|a| a.articulated) {
+        a.required_groups.iter().map(String::as_str).collect()
+    } else if bound.contains("source-body") {
+        vec![
+            "source-body",
+            "shoulder",
+            "elbow",
+            "camera-lift",
+            "uwb",
+            "wheel-0",
+            "wheel-1",
+            "wheel-2",
+            "wheel-3",
+        ]
+    } else if bound.contains("front") {
         vec![
             "body", "front", "rear", "coupler", "guide", "slider", "wheel-0", "wheel-1", "wheel-2",
             "wheel-3",
@@ -276,7 +297,7 @@ fn poll_loading(
     }
 }
 fn link_transform(link: &Link, c: &crate::sync::ChassisAppearance) -> Transform {
-    if c.model == RobotModel::StairHeavy
+    if matches!(c.model, RobotModel::StairHeavy | RobotModel::Articulated)
         && let Some((_, p)) = c.source_joints.iter().find(|(name, _)| name == &link.name)
     {
         let [w, x, y, z] = p.rotation_wxyz;
@@ -315,7 +336,7 @@ fn link_transform(link: &Link, c: &crate::sync::ChassisAppearance) -> Transform 
                 t.translation = Vec3::new(
                     local.y,
                     local.z
-                        + if c.model == RobotModel::StairHeavy {
+                        + if matches!(c.model, RobotModel::StairHeavy | RobotModel::Articulated) {
                             0.
                         } else if c.model == RobotModel::FoldingHero {
                             0.1684552
@@ -326,7 +347,10 @@ fn link_transform(link: &Link, c: &crate::sync::ChassisAppearance) -> Transform 
                 );
                 let angle = local.y.atan2(local.x) - std::f32::consts::FRAC_PI_2;
                 let spin = (body.inverse() * q(w.pose))
-                    * if matches!(c.model, RobotModel::FoldingHero | RobotModel::StairHeavy) {
+                    * if matches!(
+                        c.model,
+                        RobotModel::FoldingHero | RobotModel::StairHeavy | RobotModel::Articulated
+                    ) {
                         Quat::IDENTITY
                     } else {
                         Quat::from_rotation_z(-angle)

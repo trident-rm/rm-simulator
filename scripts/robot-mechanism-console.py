@@ -20,8 +20,9 @@ def run(client, directory):
     c=state['chassis']['config']
     stairs=c.get('climbing')
     folding=c.get('folding')
-    if not (stairs or folding):raise RuntimeError('requires a source-bound transformable robot')
-    limit=stairs['deployed_angle_rad']-stairs['travel_angle_rad'] if stairs else folding['folded_angle_rad']
+    serial=c.get('articulation')
+    if not (stairs or folding or (serial and serial['limit_rad']>0)):raise RuntimeError('requires a source-bound transformable robot')
+    limit=serial['limit_rad'] if serial else (stairs['deployed_angle_rad']-stairs['travel_angle_rad'] if stairs else folding['folded_angle_rad'])
     assert abs(state['chassis']['fold_angle_rad'])<1e-6, 'start at travel/unfolded endpoint'
     assert state['team_robot']['ready'], state['team_robot']
     directory.mkdir(parents=True,exist_ok=True)
@@ -43,7 +44,7 @@ def run(client, directory):
     toggle();returned=step(512)
     assert abs(returned['chassis']['fold_angle_rad'])<1e-4
     shot('returned')
-    result={'profile':'stairs' if stairs else 'hero','mid_angle_rad':angle,'endpoint_rad':limit,
+    result={'profile':serial['profile'] if serial else ('stairs' if stairs else 'hero'),'mid_angle_rad':angle,'endpoint_rad':limit,
             'returned_rad':returned['chassis']['fold_angle_rad'],'team_robot':returned['team_robot']}
     (directory/'result.json').write_text(json.dumps(result,indent=2)+'\n')
     return result
