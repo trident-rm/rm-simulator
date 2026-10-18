@@ -77,6 +77,15 @@
     <p class="muted">45-second prototype deadline at every difficulty. Simulation pause also pauses this timer.</p>
   </div>
   <div class="card">
+    <h2>Adaptive armor (2027)</h2>
+    <label>Team <select id="armorTeam"><option>Red</option><option>Blue</option></select></label>
+    <label>Center X (mm) <input id="armorX" type="number" min="0" max="4294967.295" step="0.001" value="45"></label>
+    <label>Center Y (mm) <input id="armorY" type="number" min="0" max="4294967.295" step="0.001" value="44"></label>
+    <button onclick="referee({SelectReinforcement:{team:$('armorTeam').value,center_um:[Math.round(Number($('armorX').value)*1000),Math.round(Number($('armorY').value)*1000)]}})">Select reinforcement</button>
+    <div id="armorState" class="muted">Native RMUC 2027 only.</div>
+    <p class="muted">Spends one opportunity after 10 enemy hits. Center and area stay fixed until selected again. Coordinates start at the detector's bottom-left; circles are clipped without resizing.</p>
+  </div>
+  <div class="card">
     <h2>Power Rune</h2>
     <div id="runes"></div>
     <div class="row">
@@ -292,9 +301,10 @@ function render2027(state,g) {
   $('clock').textContent=fmt(g.phase==='Countdown' ? g.countdown_ns : Math.max(0,420e9-c.elapsed_ns));
   $('result').textContent=g.result ? `${g.result.winner || 'Draw'} · ${g.result.reason}` : '';
   $('resources').textContent=teams.map((t,i)=>`${t}: ${c.points[i]} control, ${g.gold[i]} gold, ${g.adaptive.launches[i]} launches`).join(' · ');
-  $('policyStatus').textContent='Native 2027 combat, control, field/Rune effects and virtual assembly progression. Heavy equipment and reinforcement remain unavailable.';
+  $('policyStatus').textContent='Native 2027 combat, control, field/Rune effects and virtual assembly progression. Heavy equipment remains unavailable.';
   $('assemblyState').textContent=teams.map((t,i)=>{const a=g.assembly[i];return `${t}: ${a.outcome}, difficulty ${a.difficulty}, highest ${a.completions.filter(n=>n>0).length}, +${a.income_per_10s} gold/10s${a.outcome==='Active'?`, ${Math.max(0,(a.deadline_ns-c.elapsed_ns)/1e9).toFixed(1)}s left`:''}`;}).join(' · ');
   $('runes').textContent='Power Rune rules are not enabled for this subset.';
+  $('armorState').textContent=teams.map((t,i)=>{const a=g.adaptive,s=a.selected[i],hits=a.impacts.filter(h=>h.attacker===t&&h.victim!==t).length;return `${t}: ${a.opportunities[i]} opportunities, ${hits}/10 hits; ${s ? `center (${s.center_um.map(v=>v/1000).join(', ')}) mm, frozen area ${s.area_share_ppb==null?'undefined: default 1×':`${(s.area_share_ppb/1e7).toFixed(2)}%`}`:'default armor'}`;}).join(' · ');
   $('robotDetail').textContent='Infantry uses native 2027 performance tables and the initial level cap of five.';
   $('baseHp').max=10000; $('baseShield').value=0; $('baseShield').disabled=true;
   if(!settingsLoaded) { $('baseHp').value=10000;settingsLoaded=true; }

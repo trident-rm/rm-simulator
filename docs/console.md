@@ -337,3 +337,23 @@ running round; the prototype needs no robot or contact. Inspect
 Use `step` while paused to test timeout exactly: 5,760 ticks equal 45 seconds.
 The deadline is exclusive; a Finish at that timestamp fails. See
 [virtual assembly](gameplay.md#rmuc-2027-virtual-assembly) for policies and scope.
+
+## Adaptive armor selection
+
+The native 2027 HTTP referee panel has team and center selectors under
+**Adaptive armor**. Enter millimetres from the detector's bottom-left corner,
+then press **Select reinforcement**. This proxy Radar action is referee-only.
+One accumulated opportunity and at least ten identified enemy hits are required.
+Console equivalent, with integer micrometres:
+
+```json
+{"type":"world","command":{"Referee":{"SelectReinforcement":{"team":"Red","center_um":[45000,44000]}}}}
+```
+
+`/rmuc_2027/adaptive/selected/0` stores Red's frozen `center_um`,
+`area_share_ppb` and `selected_ns`; index 1 is Blue. A null selection means none
+chosen. A selected null area means undefined statistics froze default armor.
+`opportunities` reports the remaining allowance; `selections` counts spending.
+Each `impacts` entry includes historical `region`: `Default`, `Reinforced` or
+`Unreinforced`. Selection never changes when subsequent statistics change;
+spend another opportunity to update it. See [adaptive armor](gameplay.md#rmuc-2027-adaptive-armor).

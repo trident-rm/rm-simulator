@@ -659,6 +659,13 @@ pub enum RefereeCommand {
         /// Team whose rune to trigger.
         team: Team,
     },
+    /// Spend a native 2027 Radar reinforcement opportunity; referee proxy action.
+    SelectReinforcement {
+        /// Team whose armor receives this center and selection-time area.
+        team: Team,
+        /// Common bottom-left plate coordinates, right/up, in micrometres.
+        center_um: [u32; 2],
+    },
     /// Start a native 2027 virtual assembly; substitutes for positioning a core.
     StartAssembly {
         /// Team attempting assembly.
@@ -1825,6 +1832,9 @@ impl Referee {
                 slot.last_completed_groups = 0;
                 self.push_event(RefereeEvent::RuneActivating { team });
                 Ok(())
+            }
+            RefereeCommand::SelectReinforcement { .. } => {
+                return Err("adaptive reinforcement requires native RMUC 2027");
             }
             RefereeCommand::StartAssembly { .. }
             | RefereeCommand::FinishAssembly { .. }

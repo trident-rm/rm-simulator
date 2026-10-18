@@ -1083,6 +1083,10 @@ impl Field {
                         state.game.add_robot(r.id, r.team, r.role);
                     }
                 }
+                RefereeCommand::SelectReinforcement { team, center_um } => state
+                    .game
+                    .select_reinforcement(referee::game_team(team), center_um)
+                    .map_err(FieldError::Referee)?,
                 RefereeCommand::StartAssembly { team, difficulty } => state
                     .game
                     .start_assembly(referee::game_team(team), difficulty)

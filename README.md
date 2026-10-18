@@ -220,6 +220,10 @@ RMUC 2027 also supports virtual assembly through the `--http` referee panel:
 start a difficulty and press **Finish assembly** before its 45-second prototype
 deadline. No manipulation is required. See [assembly controls and scope](docs/gameplay.md#rmuc-2027-virtual-assembly).
 
+Native 2027 adaptive armor can be selected from the referee panel after ten enemy
+hits and an earned opportunity. Its center and selection-time area stay fixed
+until selected again. See [adaptive armor](docs/gameplay.md#rmuc-2027-adaptive-armor).
+
 Coordinates: the world uses metres in forward/left/up (FLU) with wxyz quaternions.
 The renderer converts to Bevy's right/up/back frame at the scene boundary.
 Crate ownership, tick order, restore and ECS boundaries are documented in

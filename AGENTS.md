@@ -142,7 +142,10 @@ combat/control subset, including native heat, allowance, healing, respawn and
 combat XP and continuous Base/Vantage/Highland/Fortress field benefits. Virtual
 assembly supports referee Start/Finish/Cancel, automatic 45-second timeouts,
 shared-core exclusion, income, Infantry caps and permanent defense; physical
-manipulation, Heavy progression and reinforcement effects remain unavailable. Native Road/Highland/
+manipulation and Heavy progression remain unavailable. Adaptive reinforcement
+uses frozen selection-time areas, inclusive circle boundaries and clipping without
+resizing; undefined selection-time statistics freeze default armor until reselection.
+Referee commands stand in for Radar selection. Native Road/Highland/
 Tunnel traversal and Small/Big Rune effects are supported. Source Rune arm
 subtrees and detector banks are bound by `scripts/bind-rmuc2027-rune.py` without
 remeshing. Adaptive observations/statistics live in `gameplay::rmuc_2027::adaptive`;

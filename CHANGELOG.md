@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+- Enable native RMUC 2027 adaptive armor selection and per-hit damage regions.
+  Spend accumulated opportunities after ten enemy hits; freeze center and area
+  until reselection. Apply 0.5×/1.5× raw projectile damage with attack/defense
+  effects, retain historical impact classifications, and expose referee-panel
+  and console controls. Persist selections in protocol 58. Undefined accuracy
+  freezes default armor; clipping never resizes circles and boundaries count inside.
+
 - Add button-driven RMUC 2027 assembly: start, finish, cancel and automatic
   timeout; difficulty unlocks, shared-core exclusion, recurring income,
   Infantry level caps and permanent team defense. Expose referee-panel buttons

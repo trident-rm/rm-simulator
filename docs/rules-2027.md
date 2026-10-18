@@ -245,11 +245,25 @@ The common center and area define a circular reinforced region on each plate.
 Hit coordinates and region classification are delivered to the victim over the
 ordinary referee link and to the attacker over the Radar wireless link.
 
-Implementation needs team launch/hit statistics, reproducible medians and
-per-hit coordinates, not just an aggregate damage scalar. Do not invent behavior
-for zero launches, zero spread, an opponent with no hits, circles crossing the
-plate edge, or the exact circle boundary. Those details are unresolved in this
-release; see the decision register below.
+The native simulator now supports selection and damage classification. Adopted
+user policies (not official clarifications): the circle boundary is reinforced;
+the circle may extend beyond a plate without resizing; **area freezes when the
+center is selected**, until another opportunity is spent. Both the center and
+area fraction persist through death, ownership transfers and checkpoints. Each
+plate's own detection area determines the circle's radius from that fixed share.
+
+If either team's selection-time accuracy is undefined (no launches, no hits or
+zero spread), selection consumes its opportunity and freezes default 1× armor
+until reselection. Later statistics neither resize the circle nor turn an
+undefined selection into a finite one. Area fraction is rounded once to parts
+per billion for exact checkpoint equality; hit positions/centers use micrometres.
+Centers use nonnegative bottom-left coordinates; a center may lie outside a
+smaller plate. No circle renormalization is performed at the edge.
+
+A referee/console action stands in for Radar selection; playable Radar and
+2027 hardware-message compatibility remain unavailable. Protected/immune accepted
+hits still enter statistics and retain their historical region classification;
+unknown and friendly attackers do not contribute to an opposing-hit count.
 
 ## UC Heavy and assembly progression
 
@@ -781,8 +795,8 @@ not interchangeable with the drivetrain's assumed shared power budget.
 | 2027 field/collision geometry | UC chapter 4; checksum-pinned RMUC source package now adapted by [the runtime builder](rmuc2027-field.md) | Rest-pose composition reviewed; live source-bound outpost rotation, base motion and fitted detector envelopes available. Final masks and base travel remain approximate; see runtime guide. UL remains separate |
 | Armor detection geometry/artwork | ROB §2.1.4 promises pattern details later | Obtain module/drawing assets; do not carry old 101 × 94 mm detection area forward without validation |
 | Aerial-impact detection | UC Table 5-1 explicitly pending | Await force/time/area-impulse thresholds; do not approximate as a projectile rule |
-| Armor statistics singularities | UC §5.2 divides by σ and opposing accuracy | Decide zero-spread/no-hit/no-launch cases from official clarification |
-| Reinforcement clipping and updates | UC §5.2 specifies circle and area but not edge treatment, exact boundary or update cadence | Clarify center constraints, effective clipped area and whether area changes continuously |
+| Armor statistics singularities | UC §5.2 divides by σ and opposing accuracy | Adopted user policy: undefined selection-time accuracy freezes default 1× armor until reselection; opportunity is consumed |
+| Reinforcement clipping and updates | UC §5.2 specifies circle and area but not edge treatment, exact boundary or update cadence | Adopted user policy: freeze area at selection, boundary inside, clip without resizing; common nonnegative coordinates may lie outside smaller plates |
 | Permanent heat-lock equality | UC §5.1.3 text `>` vs Figure 5-1 `>=`; same UL conflict | Adopted by user instruction: Figure 5-1 inclusive `>=`; not an official clarification |
 | Control scoring and contested timing | UC Table 5-21 and p.97 | Adopted: temporary control scores; capture before coincident whole-second scoring; fresh progress after transitions. The native adapter resolves per-robot 2 s expiry. Physical destruction follows stable contact order |
 | Heavy unlock and upgrades | UC §5.7.1, Table 5-16 | Resolve negative unlock times, HP adjustment on Heavy upgrades, confirmation-shot allowance accounting and removal/reinstallation |

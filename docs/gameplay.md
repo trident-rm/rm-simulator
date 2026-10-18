@@ -111,9 +111,9 @@ diagram-derived antenna polygons against hardware. The optional
 [console smoke scenario](console.md#deterministic-tick-scripts) checks actual
 host commands and authoritative replies with the bound field. These checks
 cover native control, continuous field benefits, terrain traversal and Rune.
-Virtual assembly is supported as described below; physical manipulation and
-reinforcement remain outside its scope. `just control-test` also
-runs `assembly_2027`, `terrain_2027` and `rune_2027`; the latter enumerates both teams, all six
+Virtual assembly and adaptive armor are supported as described below; physical
+manipulation and playable Radar remain outside its scope. `just control-test` also
+runs `adaptive_2027`, `assembly_2027`, `terrain_2027` and `rune_2027`; the latter enumerates both teams, all six
 Big arm counts and each ring-table tier, including exact target deadlines and
 restore across pending bonus hits.
 
@@ -394,3 +394,34 @@ settlement timestamp affects future payments. Heavy level/HP changes and launche
 permission remain deferred with Heavy equipment support. Assembly can be exercised
 without any deployed robots; buttons remain referee-only rather than granting
 pilots a way to certify real physical completion.
+
+## RMUC 2027 adaptive armor
+
+Native physical armor contacts use `Match::armor_hit` to record observations,
+resolve current victim ownership, classify the selected circle, and multiply
+raw damage by Table 5-5's 0.5/1.0/1.5 before attack and defense. Protected and
+invincible hits still enter statistics. Each impact retains its classification
+at contact time; later selections never rewrite history. The coordinate-free
+`Match::hit` remains an explicitly default-armor API for synthetic callers.
+
+One opportunity accumulates each elapsed minute. After ten identified hits on
+enemy armor, `SelectReinforcement` spends one and selects the common bottom-left
+center for that team's robot/Base/currently owned Outpost plates. This is a
+referee proxy for the unavailable playable Radar. Each plate uses its own area;
+a common center can lie outside a smaller plate. Selection persists through
+respawn and Outpost transfers, with ownership selecting the applicable team's
+region. Reset clears it.
+
+**Area is frozen at selection time**, not recomputed on hits or launches.
+Reselecting spends another opportunity and snapshots new accuracy. The area
+fraction is rounded once to parts per billion; positions use integer micrometres.
+Undefined accuracy freezes default armor until another selection, consuming the
+opportunity. Circle boundaries are reinforced and circles crossing plate edges
+are clipped without resizing. These are adopted user policies, not official
+rule clarifications. See [the rules reference](rules-2027.md#uc-adaptive-armor).
+
+The `adaptive_2027` suite covers timing/prerequisites, frozen/undefined areas,
+reselection, clipping/boundaries, damage/defense, respawn, Outpost transfer and
+malformed restore. A physical world test shoots through native source detectors
+inside/outside the selected region, then repeats after restore; the wire codec
+checks frozen authority without floating-point checkpoint fields.

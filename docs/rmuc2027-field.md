@@ -1218,3 +1218,15 @@ deadlines survive checkpoints; level-four attempts reserve both cores. The HTTP
 panel shows buttons and both teams' state. No CAD changes, Heavy, RFID contacts
 or physical manipulation are required. See [virtual assembly](gameplay.md#rmuc-2027-virtual-assembly)
 for rules, simulator timing policies and deferred Heavy equipment consequences.
+
+## Frozen adaptive armor (2026-10-18)
+
+Protocol **58** completes adaptive reinforcement damage for native physical
+armor hits. Referee-panel/console selection spends opportunities after ten enemy
+hits, freezes the center and selection-time area fraction, and applies half/raw/
+one-and-a-half damage inside/default/outside. Circle boundaries are inclusive,
+clipping does not resize the circle, and undefined selection-time statistics
+freeze default armor until reselection. Native source detector dimensions drive
+the radius; no asset changes are needed. Earlier statements that adaptive armor
+only records observations are superseded. Radar hardware/wireless integration
+remains unavailable. See [adaptive armor](gameplay.md#rmuc-2027-adaptive-armor).

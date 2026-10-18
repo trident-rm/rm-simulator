@@ -134,7 +134,7 @@ pub struct Match {
     pub level_caps: [u8; 2],
     /// Button-driven assembly attempts and permanent progression, Red then Blue.
     pub assembly: [super::assembly::Assembly; 2],
-    /// Adaptive-armor launch/hit observations; all damage still uses default armor.
+    /// Adaptive-armor observations, selection-time areas and opportunities.
     pub adaptive: super::adaptive::Adaptive,
     /// Native team Rune authority, Red then Blue, independent of the 2026 engine.
     pub runes: [super::rune::Rune; 2],
@@ -612,7 +612,9 @@ impl Match {
             .collect()
     }
     /// Apply Table 5-2 structure and field-adjusted robot projectile damage. The caller
-    /// supplies the calibrated armor contact and caliber. 42 mm remains disabled
+    /// supplies the target and caliber. With no coordinates this API uses default
+    /// armor; physical callers use [`Match::armor_hit`] for adaptive regions.
+    /// 42 mm remains disabled
     /// in this subset until a Heavy launcher can report its suppression state.
     pub fn hit(
         &mut self,
@@ -620,9 +622,21 @@ impl Match {
         shooter: Option<u32>,
         caliber: crate::Caliber,
     ) -> u32 {
+        self.hit_with_region(target, shooter, caliber, super::adaptive::Region::Default)
+    }
+    /// Apply a calibrated armor hit with its Table 5-5 raw-damage region.
+    /// Raw damage is multiplied before attack/defense; no coordinates are inferred.
+    pub fn hit_with_region(
+        &mut self,
+        target: crate::Target,
+        shooter: Option<u32>,
+        caliber: crate::Caliber,
+        region: super::adaptive::Region,
+    ) -> u32 {
         if self.phase != Phase::Running || caliber != crate::Caliber::Mm17 {
             return 0;
         }
+        let raw = 10 * region.half_units();
         let attack = shooter.and_then(|id| self.robots.iter().find(|r| r.id == id).map(|r| r.team));
         let attack_pct = attack
             .and_then(|t| self.runes[t.index()].buff.as_ref())
@@ -633,7 +647,7 @@ impl Match {
                 .as_ref()
                 .map_or(0, |b| b.defense_pct)
                 .max(self.assembly[team.index()].defense_pct());
-            (20 * attack_pct * (100 - defense) + 5000) / 10000
+            (raw * attack_pct * (100 - defense) + 5000) / 10000
         };
         let (team, applied) = match target {
             crate::Target::Base(team) => {
@@ -666,7 +680,7 @@ impl Match {
                     return 0;
                 };
                 let team = r.team;
-                let d = self.damage_robot(id, (20 * attack_pct + 50) / 100, false);
+                let d = self.damage_robot(id, (raw * attack_pct + 50) / 100, false);
                 (team, d)
             }
         };

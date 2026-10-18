@@ -1264,6 +1264,41 @@ mod tests {
             paused: false,
             field: field.snapshot(),
         };
+        // Frozen selections and historic classifications travel through the same
+        // complete checkpoint as active assembly and source-bound mechanism state.
+        {
+            use rm_simulator_world::gameplay::{
+                Target, Team,
+                rmuc_2027::adaptive::{Impact, Region},
+            };
+            let game = &mut state.field.rmuc_2027.as_mut().unwrap().game;
+            game.advance_ns(60_000_000_000);
+            game.adaptive.launches = [20; 2];
+            for team in Team::BOTH {
+                for i in 0..10 {
+                    game.adaptive.impacts.push(Impact {
+                        time_ns: game.elapsed_ns(),
+                        attacker: Some(team),
+                        victim: team.other(),
+                        target: Target::Base(team.other()),
+                        plate: 0,
+                        position_um: [10_000 + i % 2 * 20_000, 20_000],
+                        size_um: [90_000, 88_000],
+                        region: Region::Default,
+                    });
+                }
+                game.select_reinforcement(team, [45_000, 44_000]).unwrap();
+            }
+            game.validate().unwrap();
+        }
+        state.field.restore.as_mut().unwrap().rmuc_2027 = state.field.rmuc_2027.clone();
+        let message = ServerMessage::Snapshot(Box::new(state.clone()));
+        let decoded = decode_player_message(&encode_player_message(&message)).unwrap();
+        let ServerMessage::Snapshot(decoded) = decoded else {
+            panic!("expected snapshot");
+        };
+        assert_eq!(decoded.field.rmuc_2027, state.field.rmuc_2027);
+        assert_eq!(decoded.field.restore, state.field.restore);
         assert!(checkpoint_node(&state).is_ok());
         state.field.rmuc_2027 = None;
         assert!(checkpoint_node(&state).is_err());

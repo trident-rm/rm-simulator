@@ -63,7 +63,7 @@ def main():
                 "cargo", "test", "--locked", "-p", "rm-simulator-gameplay",
                 "--no-default-features", "--features", features,
                 "--test", "control_2027", "--test", "field_buffs_2027",
-                "--test", "terrain_2027", "--test", "rune_2027", "--test", "assembly_2027",
+                "--test", "terrain_2027", "--test", "rune_2027", "--test", "assembly_2027", "--test", "adaptive_2027",
             ], cwd=root, check=True)
 
 

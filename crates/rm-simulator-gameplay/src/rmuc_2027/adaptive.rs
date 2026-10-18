@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! UC 2027 V1.0.0 §5.2 adaptive-armor observations. Reinforcement is not enabled.
+//! UC 2027 V1.0.0 §5.2 adaptive armor with frozen selection-time area.
 //! Coordinates are quantized to micrometres for exact checkpoint equality.
 use crate::{Target, Team};
 use serde::{Deserialize, Serialize};
@@ -22,14 +22,92 @@ pub struct Impact {
     pub position_um: [u32; 2],
     /// Detector width and height in µm, not the surrounding armor housing.
     pub size_um: [u32; 2],
+    /// Classification at contact time; later selections never rewrite history.
+    pub region: Region,
 }
-/// Full round observations; no inferred reinforcement region changes damage.
+/// Damage class from UC Table 5-5, applied to raw projectile damage.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Region {
+    /// No selected finite area: ordinary raw damage.
+    #[default]
+    Default,
+    /// Inside or on the selected circle: half raw damage.
+    Reinforced,
+    /// Outside a selected finite circle: one and a half raw damage.
+    Unreinforced,
+}
+impl Region {
+    /// Exact multiplier in half units: 1, 2 or 3, UC Table 5-5.
+    ///
+    /// ```
+    /// use rm_simulator_gameplay::rmuc_2027::adaptive::Region;
+    /// assert_eq!(20 * Region::Reinforced.half_units() / 2, 10);
+    /// assert_eq!(20 * Region::Unreinforced.half_units() / 2, 30);
+    /// ```
+    pub fn half_units(self) -> u32 {
+        match self {
+            Self::Default => 2,
+            Self::Reinforced => 1,
+            Self::Unreinforced => 3,
+        }
+    }
+}
+/// Selection-time authority, fixed until another opportunity is spent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Selection {
+    /// Shared bottom-left detector coordinates in micrometres, never normalized.
+    /// Nonnegative centers may lie outside an individual smaller plate.
+    pub center_um: [u32; 2],
+    /// Selected plate-area fraction in parts per billion, rounded once.
+    /// None freezes default armor because selection-time accuracy was undefined.
+    pub area_share_ppb: Option<u32>,
+    /// Running-round selection time in nanoseconds.
+    pub selected_ns: u64,
+}
+impl Selection {
+    /// Circle radius squared in square micrometres for this detector size.
+    /// Circle portions beyond plate edges are discarded without resizing.
+    pub fn radius_squared_um2(&self, size_um: [u32; 2]) -> Option<f64> {
+        self.area_share_ppb.map(|share| {
+            f64::from(size_um[0]) * f64::from(size_um[1]) * f64::from(share)
+                / 1e9
+                / std::f64::consts::PI
+        })
+    }
+    /// Classify a point using the frozen area; the circle boundary is reinforced.
+    ///
+    /// ```
+    /// use rm_simulator_gameplay::rmuc_2027::adaptive::{Selection, Region};
+    /// let selection = Selection {
+    ///     center_um: [45_000, 44_000], area_share_ppb: Some(333_333_333),
+    ///     selected_ns: 60_000_000_000,
+    /// };
+    /// assert_eq!(selection.region([45_000, 44_000], [90_000, 88_000]), Region::Reinforced);
+    /// ```
+    pub fn region(&self, position_um: [u32; 2], size_um: [u32; 2]) -> Region {
+        let Some(radius2) = self.radius_squared_um2(size_um) else {
+            return Region::Default;
+        };
+        let [x, y] =
+            std::array::from_fn(|i| f64::from(position_um[i]) - f64::from(self.center_um[i]));
+        if x * x + y * y <= radius2 {
+            Region::Reinforced
+        } else {
+            Region::Unreinforced
+        }
+    }
+}
+/// Full round observations, selected regions and accumulating opportunities.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Adaptive {
     /// Successfully launched projectiles by attacking team.
     pub launches: [u32; 2],
     /// Accumulating one-minute selection opportunities (§5.2).
     pub opportunities: [u32; 2],
+    /// Total selections by team; spent opportunities never return on death or transfer.
+    pub selections: [u32; 2],
+    /// Frozen selected centers and area fractions, Red then Blue.
+    pub selected: [Option<Selection>; 2],
     /// Contacts retained for exact coordinate medians and future victim/Radar views.
     pub impacts: Vec<Impact>,
 }
@@ -45,7 +123,7 @@ pub struct Accuracy {
     /// Hit rate divided by spread, in inverse metres.
     pub accuracy_per_m: f64,
 }
-/// An undefined manual case; callers must not replace it with a damage scalar.
+/// An undefined accuracy formula; selection applies the documented default-armor policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Undefined {
     /// No launches establish an accuracy denominator.
@@ -73,7 +151,7 @@ impl Adaptive {
             .filter(move |h| h.attacker == Some(team) && h.victim != team)
     }
     /// Whether the ten-hit and opportunity prerequisites hold. This does not
-    /// authorize selection: clipping, boundary and singular cases remain pending.
+    /// require finite accuracy: undefined selection freezes default armor.
     pub fn selection_ready(&self, team: Team) -> bool {
         self.opportunities[team.index()] > 0 && self.enemy_hits(team).count() >= 10
     }
@@ -118,21 +196,117 @@ impl Adaptive {
             accuracy_per_m: rate / spread,
         })
     }
-    /// Formula-defined area share for non-singular teams, without geometric
-    /// clipping or inside/outside classification. No damage uses this value.
+    /// Current formula-defined area fraction for non-singular teams (§5.2).
+    /// Selection snapshots this value; subsequent launches/hits do not resize it.
     pub fn area_share(&self, team: Team) -> Result<f64, Undefined> {
         let rho = self.accuracy(team)?.accuracy_per_m / self.accuracy(team.other())?.accuracy_per_m;
         Ok(rho * rho / (2. + rho * rho))
     }
+    /// Spend one opportunity to select/change the common center (§5.2).
+    /// The caller supplies running time; undefined accuracy freezes default armor.
+    /// No opportunity is spent when the ten-hit prerequisite is absent.
+    pub fn select(
+        &mut self,
+        team: Team,
+        center_um: [u32; 2],
+        now_ns: u64,
+    ) -> Result<(), &'static str> {
+        if !self.selection_ready(team) {
+            return Err("adaptive armor needs an opportunity and ten enemy hits");
+        }
+        let area_share_ppb = self.area_share(team).ok().map(|v| (v * 1e9).round() as u32);
+        self.opportunities[team.index()] -= 1;
+        self.selections[team.index()] += 1;
+        self.selected[team.index()] = Some(Selection {
+            center_um,
+            area_share_ppb,
+            selected_ns: now_ns,
+        });
+        Ok(())
+    }
+    /// Classify the victim's current plate; ownership follows the physical target.
+    pub fn region(&self, victim: Team, position_um: [u32; 2], size_um: [u32; 2]) -> Region {
+        self.selected[victim.index()]
+            .as_ref()
+            .map_or(Region::Default, |s| s.region(position_um, size_um))
+    }
     /// Reject malformed coordinates and future observations before restore.
     pub fn validate(&self, elapsed_ns: u64) -> bool {
-        self.opportunities
-            .iter()
-            .all(|&v| u64::from(v) <= elapsed_ns / 60_000_000_000)
-            && self.impacts.iter().all(|h| {
-                h.time_ns <= elapsed_ns
-                    && (0..2).all(|i| h.size_um[i] > 0 && h.position_um[i] <= h.size_um[i])
-            })
+        Team::BOTH.into_iter().all(|team| {
+            let i = team.index();
+            let earned = elapsed_ns / 60_000_000_000;
+            let selection_valid = match &self.selected[i] {
+                None => self.selections[i] == 0,
+                Some(s) => {
+                    self.selections[i] > 0
+                        && s.selected_ns <= elapsed_ns
+                        && s.selected_ns >= 60_000_000_000
+                        && u64::from(self.selections[i]) <= s.selected_ns / 60_000_000_000
+                        && s.area_share_ppb.is_none_or(|v| v <= 1_000_000_000)
+                        && self
+                            .enemy_hits(team)
+                            .filter(|h| h.time_ns <= s.selected_ns)
+                            .count()
+                            >= 10
+                }
+            };
+            selection_valid
+                && u64::from(self.opportunities[i]) + u64::from(self.selections[i]) <= earned
+        }) && self.impacts.iter().all(|h| {
+            h.time_ns <= elapsed_ns
+                && (0..2).all(|i| h.size_um[i] > 0 && h.position_um[i] <= h.size_um[i])
+        })
+    }
+}
+
+impl super::match_rules::Match {
+    /// Select native team reinforcement while running (§5.2). Referee/Radar
+    /// authorization belongs to the host, never the deterministic engine.
+    pub fn select_reinforcement(
+        &mut self,
+        team: Team,
+        center_um: [u32; 2],
+    ) -> Result<(), &'static str> {
+        if self.phase != super::match_rules::Phase::Running {
+            return Err("adaptive armor selection requires a running round");
+        }
+        self.adaptive.select(team, center_um, self.elapsed_ns())
+    }
+    /// Record one calibrated physical armor hit and apply its selected region.
+    /// Target ownership, attacker, timestamp and classification are resolved here;
+    /// caller-supplied observation values for those fields are overwritten.
+    /// Zero-damage accepted contacts still enter the statistics (§5.2).
+    pub fn armor_hit(
+        &mut self,
+        mut impact: Impact,
+        shooter: Option<u32>,
+        caliber: crate::Caliber,
+    ) -> u32 {
+        if self.phase != super::match_rules::Phase::Running
+            || !(0..2).all(|i| impact.size_um[i] > 0 && impact.position_um[i] <= impact.size_um[i])
+        {
+            return 0;
+        }
+        impact.victim = match impact.target {
+            Target::Base(team) => team,
+            Target::Outpost(side) => self.control.snapshot().outposts[side.index()].owner,
+            Target::Robot(id) => {
+                let Some(robot) = self.robots.iter().find(|r| r.id == id) else {
+                    return 0;
+                };
+                robot.team
+            }
+        };
+        impact.attacker =
+            shooter.and_then(|id| self.robots.iter().find(|r| r.id == id).map(|r| r.team));
+        impact.time_ns = self.elapsed_ns();
+        impact.region = self
+            .adaptive
+            .region(impact.victim, impact.position_um, impact.size_um);
+        let target = impact.target;
+        let region = impact.region;
+        self.adaptive.impacts.push(impact);
+        self.hit_with_region(target, shooter, caliber, region)
     }
 }
 
@@ -148,6 +322,7 @@ mod tests {
             plate: 0,
             position_um: [x, y],
             size_um: [100_000; 2],
+            region: Region::Default,
         }
     }
     #[test]

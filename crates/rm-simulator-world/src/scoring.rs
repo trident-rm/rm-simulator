@@ -122,64 +122,61 @@ impl Field {
                 ArmorTarget::Chassis { chassis, .. } => Some(gameplay::Target::Robot(chassis)),
                 _ => None,
             };
-            if let Some(target) = target {
-                if state.game.phase == rmuc_2027::match_rules::Phase::Running {
-                    let victim = match target {
-                        gameplay::Target::Base(t) => Some(t),
-                        gameplay::Target::Outpost(t) => {
-                            Some(state.game.control.snapshot().outposts[t.index()].owner)
-                        }
-                        gameplay::Target::Robot(id) => state
+            if let Some(target) = target
+                && state.game.phase == rmuc_2027::match_rules::Phase::Running
+            {
+                let victim = match target {
+                    gameplay::Target::Base(t) => Some(t),
+                    gameplay::Target::Outpost(t) => {
+                        Some(state.game.control.snapshot().outposts[t.index()].owner)
+                    }
+                    gameplay::Target::Robot(id) => state
+                        .game
+                        .robots
+                        .iter()
+                        .find(|r| r.id == id)
+                        .map(|r| r.team),
+                };
+                if let Some(victim) = victim {
+                    let half = state
+                        .detector(contact.target)
+                        .map_or(projectile::OUTPOST_TARGET_HALF_M, |d| d.half_m);
+                    let size_um = half.map(|v| (v * 2_000_000.).round() as u32);
+                    let position_um = std::array::from_fn(|i| {
+                        ((offset[i] + half[i]) * 1_000_000.)
+                            .round()
+                            .clamp(0., f64::from(size_um[i])) as u32
+                    });
+                    let attacker = contact.shooter.and_then(|id| {
+                        state
                             .game
                             .robots
                             .iter()
                             .find(|r| r.id == id)
-                            .map(|r| r.team),
+                            .map(|r| r.team)
+                    });
+                    let plate = match contact.target {
+                        ArmorTarget::Base { plate, .. } | ArmorTarget::Chassis { plate, .. } => {
+                            plate
+                        }
+                        ArmorTarget::Outpost { face, .. } => face,
+                        _ => 0,
                     };
-                    if let Some(victim) = victim {
-                        let half = state
-                            .detector(contact.target)
-                            .map_or(projectile::OUTPOST_TARGET_HALF_M, |d| d.half_m);
-                        let size_um = half.map(|v| (v * 2_000_000.).round() as u32);
-                        let position_um = std::array::from_fn(|i| {
-                            ((offset[i] + half[i]) * 1_000_000.)
-                                .round()
-                                .clamp(0., f64::from(size_um[i])) as u32
-                        });
-                        let attacker = contact.shooter.and_then(|id| {
-                            state
-                                .game
-                                .robots
-                                .iter()
-                                .find(|r| r.id == id)
-                                .map(|r| r.team)
-                        });
-                        let plate = match contact.target {
-                            ArmorTarget::Base { plate, .. }
-                            | ArmorTarget::Chassis { plate, .. } => plate,
-                            ArmorTarget::Outpost { face, .. } => face,
-                            _ => 0,
-                        };
-                        state
-                            .game
-                            .adaptive
-                            .impacts
-                            .push(gameplay::rmuc_2027::adaptive::Impact {
-                                time_ns: state.game.elapsed_ns(),
-                                attacker,
-                                victim,
-                                target,
-                                plate,
-                                position_um,
-                                size_um,
-                            });
-                    }
+                    hit.damage = state.game.armor_hit(
+                        gameplay::rmuc_2027::adaptive::Impact {
+                            time_ns: state.game.elapsed_ns(),
+                            attacker,
+                            victim,
+                            target,
+                            plate,
+                            position_um,
+                            size_um,
+                            region: gameplay::rmuc_2027::adaptive::Region::Default,
+                        },
+                        contact.shooter,
+                        referee::game_caliber(contact.caliber),
+                    );
                 }
-                hit.damage = state.game.hit(
-                    target,
-                    contact.shooter,
-                    referee::game_caliber(contact.caliber),
-                );
             }
             self.sync_defeats();
             return Ok(hit);

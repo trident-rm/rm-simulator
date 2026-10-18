@@ -775,6 +775,76 @@ mod tests {
         assert!(Field::restore(&snapshot, &StaticGeometry::default(), 0.).is_err());
     }
     #[test]
+    fn physical_adaptive_hits_use_frozen_area_and_restore_regions() {
+        use crate::gameplay::rmuc_2027::{
+            adaptive::{Impact, Region},
+            match_rules::GroundRole,
+        };
+        use crate::gameplay::{Target, Team as GTeam};
+        let mut f = field();
+        let g = &mut f.rmuc_2027.as_mut().unwrap().game;
+        g.add_robot(1, GTeam::Red, GroundRole::Infantry);
+        g.add_robot(2, GTeam::Blue, GroundRole::Infantry);
+        g.start(1);
+        g.advance_ns(match_rules::COUNTDOWN_NS + 60_000_000_000);
+        g.adaptive.launches = [20; 2];
+        for team in GTeam::BOTH {
+            for i in 0..10 {
+                g.armor_hit(
+                    Impact {
+                        time_ns: 0,
+                        attacker: None,
+                        victim: team.other(),
+                        target: Target::Base(team.other()),
+                        plate: 0,
+                        position_um: [10_000 + i % 2 * 20_000, 20_000],
+                        size_um: [90_000, 88_000],
+                        region: Region::Default,
+                    },
+                    Some(if team == GTeam::Red { 1 } else { 2 }),
+                    crate::gameplay::Caliber::Mm17,
+                );
+            }
+        }
+        f.referee_command(RefereeCommand::SelectReinforcement {
+            team: Team::Red,
+            center_um: [45_000, 44_000],
+        })
+        .unwrap();
+        f.fire(
+            Pose::yawed([3.15, 0., 1.], std::f64::consts::PI),
+            Shot::at_limit(Caliber::Mm17),
+            None,
+        )
+        .unwrap();
+        f.step(8).unwrap();
+        let game = &f.rmuc_2027().unwrap().game;
+        assert_eq!(game.outpost_hp[0], 990);
+        assert_eq!(
+            game.adaptive.impacts.last().unwrap().region,
+            Region::Reinforced
+        );
+        let mut restored = Field::restore(&f.snapshot(), &StaticGeometry::default(), 0.).unwrap();
+        for field in [&mut f, &mut restored] {
+            field
+                .fire(
+                    Pose::yawed([3.15, 0.04, 1.04], std::f64::consts::PI),
+                    Shot::at_limit(Caliber::Mm17),
+                    None,
+                )
+                .unwrap();
+            field.step(4).unwrap();
+            let game = &field.rmuc_2027().unwrap().game;
+            assert_eq!(game.outpost_hp[0], 960);
+            assert_eq!(
+                game.adaptive.impacts.last().unwrap().region,
+                Region::Unreinforced
+            );
+            game.validate().unwrap();
+        }
+        assert_eq!(f.rmuc_2027(), restored.rmuc_2027());
+    }
+    #[test]
     fn source_detector_rectangle_and_flat_damage_survive_physical_hits() {
         let mut f = field();
         f.rmuc_2027.as_mut().unwrap().game.phase = match_rules::Phase::Running;
