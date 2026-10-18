@@ -85,6 +85,9 @@ fn main() -> AppExit {
         app.insert_resource(rm_simulator_render::team_robot::TeamRobotAssets {
             file: "robots://neutral.glb".into(),
             folding_hero: args.host.folding_hero,
+            stair_heavy: args.host.stair_heavy,
+            replace_armor: robot_assets::replacement_armor(path)
+                .expect("verified robot armor mounts"),
         });
     }
     let mut plugins = DefaultPlugins

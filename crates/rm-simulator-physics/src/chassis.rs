@@ -224,6 +224,9 @@ fn octagon(hx: f64, hy: f64, cut: f64) -> [[f64; 2]; 8] {
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChassisConfig {
+    /// Optional source-fitted single-input wheel linkage for stair traversal.
+    #[serde(default)]
+    pub climbing: Option<crate::mechanism::ClimbingConfig>,
     /// Optional prescribed folding arm; its collider and muzzle geometry share one state.
     #[serde(default)]
     pub folding: Option<crate::mechanism::FoldingConfig>,
@@ -318,6 +321,7 @@ impl Default for ChassisConfig {
     fn default() -> Self {
         let d = 0.245 * std::f64::consts::FRAC_1_SQRT_2;
         Self {
+            climbing: None,
             folding: None,
             team_cad: false,
             dynamics: ChassisDynamics {
@@ -391,8 +395,8 @@ impl ChassisConfig {
             hub_drop_m: 0.098_177_595_154_746 - (0.08 - 22.0 * 9.81 / 4_000.0),
             turret_center_m: [0., 0., 0.24095 + 0.1295 - 0.085],
             turret_half_m: [0.145, 0.075, 0.12],
-            armor_height_m: 0.0035,
-            armor_standoff_m: 0.059_041_51,
+            armor_height_m: 0.007_695_17,
+            armor_standoff_m: 0.057_919_39,
             ..Self::default()
         }
     }
@@ -430,6 +434,92 @@ impl ChassisConfig {
             armor_standoff_m: 0.055,
             armor_height_m: -0.005,
             ..Self::hero()
+        }
+    }
+
+    /// DreamChaser Engineer donor with its closed stair-climbing wheel linkage.
+    /// Geometry follows the supplied 2026 STEP/report; 38 kg, spring/motor tuning
+    /// and the 40 degree/s actuator rate are simulator assumptions. This profile
+    /// does not admit the unavailable RM2027 Heavy gameplay role.
+    pub fn stair_heavy() -> Self {
+        let linkage = crate::mechanism::ClimbingConfig {
+            front_pivot_m: [0.215, -0.0152747187334],
+            guide_m: [-0.135, -0.1452747187334],
+            slider_height_m: -0.0252747187334,
+            front_pin_length_m: 0.130,
+            front_wheel_length_m: 0.190,
+            coupler_length_m: 0.200,
+            rear_wheel_length_m: 0.320,
+            travel_angle_rad: 0.0926526307467,
+            deployed_angle_rad: 1.3302776523948,
+            speed_rad_s: 40_f64.to_radians(),
+            wheel_left_m: [0.2083, -0.2083],
+            spring_anchor_offset_m: 0.03 - 38. * 9.81 / 40_000.,
+        };
+        let hubs = linkage.poses(0.).hubs_m;
+        Self {
+            climbing: Some(linkage.clone()),
+            mass_kg: 38.,
+            body_half_m: [0.285, 0.270, 0.015],
+            omni_frame: None,
+            wheel_hubs_m: hubs.iter().map(|p| [p[0], p[1]]).collect(),
+            hub_drop_m: -hubs[0][2] - linkage.spring_anchor_offset_m,
+            wheel_radius_m: 0.077,
+            wheel_width_m: 0.094,
+            suspension_rest_m: 0.03,
+            suspension_stiffness_n_m: 10_000.,
+            suspension_damping_n_s_m: 500.,
+            wheel_stall_force_n: 180.,
+            turret_center_m: [0.08, 0., 0.32],
+            turret_half_m: [0.23, 0.16, 0.30],
+            armor_height_m: 0.0,
+            armor_standoff_m: 0.060,
+            ..Self::engineer()
+        }
+    }
+    /// Maximum primary transform input angle, radians; zero for fixed robots.
+    /// The legacy `fold_angle_rad` snapshot field carries this one input for
+    /// either mutually exclusive folding or stair-climbing configurations.
+    pub fn transform_limit_rad(&self) -> f64 {
+        self.folding
+            .as_ref()
+            .map(|f| f.folded_angle_rad)
+            .or_else(|| self.climbing.as_ref().map(|c| c.travel_rad()))
+            .unwrap_or(0.)
+    }
+    /// World collision poses for the primary transform at an explicit input angle.
+    pub fn transform_collision_parts(
+        &self,
+        body: Pose,
+        aim_rad: [f64; 2],
+        angle_rad: f64,
+    ) -> Vec<(Pose, [f64; 3])> {
+        if let Some(folding) = &self.folding {
+            folding.collision_parts(body, aim_rad, angle_rad).to_vec()
+        } else if let Some(climbing) = &self.climbing {
+            climbing
+                .collision_parts(angle_rad)
+                .into_iter()
+                .map(|(p, h)| {
+                    (
+                        {
+                            let p = rapier_pose(body) * rapier_pose(p);
+                            Pose {
+                                translation_m: p.translation.to_array(),
+                                rotation_wxyz: [
+                                    p.rotation.w,
+                                    p.rotation.x,
+                                    p.rotation.y,
+                                    p.rotation.z,
+                                ],
+                            }
+                        },
+                        h,
+                    )
+                })
+                .collect()
+        } else {
+            vec![]
         }
     }
 
@@ -541,6 +631,26 @@ impl ChassisConfig {
     /// assert!(cfg.suspension_mounts_m(99, 0.0).is_none());
     /// ```
     pub fn suspension_mounts_m(&self, wheel: usize, compression_m: f64) -> Option<[[f64; 3]; 2]> {
+        self.suspension_mounts_at_m(wheel, compression_m, 0.)
+    }
+    /// Suspension mounts at an explicit primary linkage angle, in body metres.
+    pub fn suspension_mounts_at_m(
+        &self,
+        wheel: usize,
+        compression_m: f64,
+        angle_rad: f64,
+    ) -> Option<[[f64; 3]; 2]> {
+        if let Some(c) = &self.climbing {
+            let p = *c.poses(angle_rad).hubs_m.get(wheel)?;
+            return Some([
+                [p[0], p[1], p[2] + c.spring_anchor_offset_m],
+                [
+                    p[0],
+                    p[1],
+                    p[2] + c.spring_anchor_offset_m - self.suspension_rest_m + compression_m,
+                ],
+            ]);
+        }
         let &[x, y] = self.wheel_hubs_m.get(wheel)?;
         let inboard = if self.omni_frame.is_some() { 0.60 } else { 1.0 };
         let upper_z = if self.omni_frame.is_some() {
@@ -718,15 +828,65 @@ impl ChassisConfig {
     /// assert!(normals.iter().all(|normal| normal[2] > 0.2));
     /// ```
     pub fn armor_faces(&self) -> [Pose; ARMOR_COUNT] {
+        if self.climbing.is_some() {
+            return [
+                [0.32379092, 0., 0.01032271],
+                [-0.01399811, 0.34581087, -0.05815303],
+                [-0.28285879, 0., -0.08268737],
+                [-0.01400001, -0.34573989, -0.05814805],
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(i, translation_m)| {
+                let q = Rotation::from_rotation_z(i as f64 * std::f64::consts::FRAC_PI_2)
+                    * Rotation::from_rotation_y(-15_f64.to_radians());
+                Pose {
+                    translation_m,
+                    rotation_wxyz: [q.w, q.x, q.y, q.z],
+                }
+            })
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+        }
+        // Source-fitted replacement fronts from robot-armor-v1. Order stays
+        // front/left/back/right even where the source arms are asymmetric.
+        if self.folding.is_some() {
+            return [
+                (
+                    [0.36365273, 0.00000001, -0.01655840],
+                    [0.99138091, -0.00000317, -0.13101104, -0.00002400],
+                ),
+                (
+                    [0.05999869, 0.35522290, -0.01806917],
+                    [0.70111012, 0.09284380, -0.09287754, 0.70085547],
+                ),
+                (
+                    [-0.31373668, -0.00000149, -0.06053783],
+                    [0.00020390, 0.13139881, -0.00002703, 0.99132957],
+                ),
+                (
+                    [0.06000125, -0.35524141, -0.01806626],
+                    [-0.70078373, 0.09286484, 0.09281132, 0.70118781],
+                ),
+            ]
+            .map(|(translation_m, q)| {
+                let norm = q.iter().map(|v| v * v).sum::<f64>().sqrt();
+                Pose {
+                    translation_m,
+                    rotation_wxyz: q.map(|v| v / norm),
+                }
+            });
+        }
         let [hx, hy, _] = self.body_half_m;
         std::array::from_fn(|plate| {
             // Exact axis directions, so a plate never picks up a rounding yaw.
             let (cos, sin) = [(1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)][plate];
             let reach = if self.team_cad {
                 if plate.is_multiple_of(2) {
-                    0.249_324_54
+                    0.248_201_21
                 } else {
-                    0.264_041_51
+                    0.262_919_39
                 }
             } else {
                 (if plate.is_multiple_of(2) { hx } else { hy }) + self.armor_standoff_m
@@ -751,6 +911,22 @@ impl ChassisConfig {
             }
         })
     }
+    /// Physical housing half extents in local FLU metres, behind the face.
+    /// The source Artisans AM12 uses the guide's 235 × 127 mm outline; AM02 keeps the fitted Outpost
+    /// housing contract. Dimensions are CAD fits, not effective scoring areas.
+    ///
+    /// ```
+    /// use rm_simulator_physics::chassis::ChassisConfig;
+    /// assert_eq!(ChassisConfig::folding_hero().armor_housing_half_m()[1], 0.1175);
+    /// ```
+    pub fn armor_housing_half_m(&self) -> [f64; 3] {
+        if self.folding.is_some() {
+            [0.0095, 0.1175, 0.0635]
+        } else {
+            SMALL_ARMOR_HOUSING_HALF_M
+        }
+    }
+
     /// Rough designated-carrier geometry behind an omni armor module, in body
     /// FLU metres. Two deep side carriers and a horizontal mounting foot share
     /// their vertices with rendering; they are unscored rigid chassis colliders.
@@ -825,6 +1001,17 @@ impl ChassisConfig {
 
     /// Validate dimensions and physical parameters before constructing a chassis.
     pub fn validate(&self) -> Result<(), &'static str> {
+        if self.climbing.is_some()
+            && (self.folding.is_some()
+                || self.planar_flight
+                || self.balance_assist
+                || self.wheel_hubs_m.len() != 4)
+        {
+            return Err("climbing needs four ground wheels and one exclusive mechanism");
+        }
+        if let Some(climbing) = &self.climbing {
+            climbing.validate()?;
+        }
         if let Some(folding) = &self.folding {
             folding.validate()?;
         }
@@ -931,7 +1118,8 @@ impl ChassisConfig {
 /// the snapshot follows it at once.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChassisCommand {
-    /// Request the folded endpoint. Non-transformable robots ignore it.
+    /// Request the deployed transform endpoint: folded Hero or raised-front stair stance.
+    /// Fixed robots ignore it; this is a held target, not a repeated toggle.
     #[serde(default)]
     pub folded: bool,
     /// Desired body forward speed, in metres per second.
@@ -1025,7 +1213,7 @@ pub struct WheelSnapshot {
 /// prediction at a checkpoint.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChassisSnapshot {
-    /// Current folding joint angle in radians; zero for fixed-geometry robots.
+    /// Primary transform input angle in radians (folding or stair linkage); zero for fixed robots.
     #[serde(default)]
     pub fold_angle_rad: f64,
     /// Changes on placement or revival, so clients never interpolate across robot lives.
@@ -1064,10 +1252,20 @@ pub struct ChassisSnapshot {
 
 /// Body-frame wheel geometry in `ChassisConfig::wheel_hubs_m` order.
 fn wheel_geometry(config: &ChassisConfig) -> Vec<WheelGeometry> {
+    wheel_geometry_at(config, 0.)
+}
+fn wheel_geometry_at(config: &ChassisConfig, angle_rad: f64) -> Vec<WheelGeometry> {
+    let hubs = config.climbing.as_ref().map(|c| c.poses(angle_rad).hubs_m);
     config
         .wheel_hubs_m
         .iter()
-        .map(|&[x, y]| {
+        .enumerate()
+        .map(|(index, &[x, y])| {
+            let [x, y, z] = hubs.map_or([x, y, -config.hub_drop_m], |h| {
+                let mut p = h[index];
+                p[2] += config.climbing.as_ref().unwrap().spring_anchor_offset_m;
+                p
+            });
             let lever_m = x.hypot(y);
             // Mecanum contact force is perpendicular to the free roller,
             // at 45 degrees to the wheel plane, with mirrored handedness.
@@ -1077,7 +1275,8 @@ fn wheel_geometry(config: &ChassisConfig) -> Vec<WheelGeometry> {
                 Vector::new(-y / lever_m, x / lever_m, 0.0)
             };
             WheelGeometry {
-                hub_m: Vector::new(x, y, -config.hub_drop_m),
+                hub_m: Vector::new(x, y, z),
+                velocity_m_s: Vector::ZERO,
                 roll,
                 axle: Vector::new(roll.y, -roll.x, 0.0),
                 lever_m: x * roll.y - y * roll.x,
@@ -1089,6 +1288,7 @@ fn wheel_geometry(config: &ChassisConfig) -> Vec<WheelGeometry> {
 /// Fixed body-frame geometry of one wheel.
 struct WheelGeometry {
     hub_m: Vector,
+    velocity_m_s: Vector,
     /// Unit rolling direction in the body's horizontal plane.
     roll: Vector,
     /// Free roller direction in the contact plane. Radial for omni wheels.
@@ -1272,7 +1472,11 @@ impl ChassisSnapshot {
         } else {
             self.command
         };
-        for (wheel, geometry) in self.wheels.iter_mut().zip(wheel_geometry(&self.config)) {
+        for (wheel, geometry) in self
+            .wheels
+            .iter_mut()
+            .zip(wheel_geometry_at(&self.config, self.fold_angle_rad))
+        {
             wheel.hub_m = pose
                 .transform_point(
                     geometry.hub_m
@@ -1406,8 +1610,32 @@ impl Chassis {
                 Some(body),
             );
         }
+        if config.climbing.is_some() {
+            // Fixed electronics shelf is behind the front entry bay; a full
+            // depth bounding box would falsely fill the empty climbing clearance.
+            world.insert_collider(
+                ColliderBuilder::cuboid(0.05, 0.26, 0.006)
+                    .translation(Vector::new(-0.075, 0., -0.16))
+                    .density(0.)
+                    .friction(BODY_FRICTION)
+                    .restitution(ROBOT_RESTITUTION),
+                Some(body),
+            );
+            for (pose, half) in config.transform_collision_parts(Pose::default(), [0., 0.], 0.) {
+                fold_colliders.push(
+                    world.insert_collider(
+                        ColliderBuilder::cuboid(half[0], half[1], half[2])
+                            .position(rapier_pose(pose))
+                            .density(0.)
+                            .friction(BODY_FRICTION)
+                            .restitution(ROBOT_RESTITUTION),
+                        Some(body),
+                    ),
+                );
+            }
+        }
         // Armor housings ride the body without adding to its mass.
-        let [ax, ay, az] = SMALL_ARMOR_HOUSING_HALF_M;
+        let [ax, ay, az] = config.armor_housing_half_m();
         let armor = config
             .armor_faces()
             .iter()
@@ -1632,15 +1860,12 @@ impl Chassis {
         world
             .bodies
             .propagate_modified_body_positions_to_colliders(&mut world.colliders);
-        let max_angle = self
-            .config
-            .folding
-            .as_ref()
-            .map_or(0., |f| f.folded_angle_rad);
+        let max_angle = self.config.transform_limit_rad();
         if !state.fold_angle_rad.is_finite() || !(0. ..=max_angle).contains(&state.fold_angle_rad) {
             return Err("invalid folding state");
         }
         self.fold_angle_rad = state.fold_angle_rad;
+        self.geometry = wheel_geometry_at(&self.config, self.fold_angle_rad);
         self.placement_revision = state.placement_revision;
         self.set_command(state.command)?;
         self.defeated = state.defeated;
@@ -1776,7 +2001,8 @@ impl Chassis {
             };
             let compression = reach - distance;
             wheel.suspension_compression_m = compression;
-            let hub_velocity = linvel + angvel.cross(hub - com);
+            let hub_velocity =
+                linvel + angvel.cross(hub - com) + pose.rotation * geometry.velocity_m_s;
             let compression_rate = -hub_velocity.dot(up);
             let overtravel = (compression - cfg.dynamics.suspension_travel_m).max(0.0);
             let bump_stop = cfg.dynamics.bump_stop_stiffness_n_m
@@ -1787,7 +2013,8 @@ impl Chassis {
                 + cfg.suspension_damping_n_s_m * compression_rate)
                 .max(0.0);
             let point = ray.point_at(distance);
-            let contact_velocity = linvel + angvel.cross(point - com);
+            let contact_velocity =
+                linvel + angvel.cross(point - com) + pose.rotation * geometry.velocity_m_s;
             let roll_dir = normal.cross(axle).normalize();
             let roller_dir = (axle - normal * axle.dot(normal)).normalize();
             if !roll_dir.is_finite() || !roller_dir.is_finite() {
@@ -1874,27 +2101,39 @@ impl Chassis {
         }
     }
     fn step_fold(&mut self, world: &mut PhysicsWorld, dt_s: f64) {
-        let Some(folding) = &self.config.folding else {
+        let limit = self.config.transform_limit_rad();
+        if limit == 0. {
             return;
-        };
-        let goal = if self.command.folded {
-            folding.folded_angle_rad
-        } else {
-            0.
-        };
+        }
+        let speed = self
+            .config
+            .folding
+            .as_ref()
+            .map(|f| f.speed_rad_s)
+            .unwrap_or_else(|| self.config.climbing.as_ref().unwrap().speed_rad_s);
+        let before = self.fold_angle_rad;
+        let goal = if self.command.folded { limit } else { 0. };
         if !self.defeated {
-            let change = folding.speed_rad_s * dt_s;
+            let change = speed * dt_s;
             let next = self.fold_angle_rad + (goal - self.fold_angle_rad).clamp(-change, change);
             if next == self.fold_angle_rad || self.fold_path_clear(world, next) {
                 self.fold_angle_rad = next;
             }
         }
+        if self.config.climbing.is_some() {
+            let old = wheel_geometry_at(&self.config, before);
+            self.geometry = wheel_geometry_at(&self.config, self.fold_angle_rad);
+            for (g, p) in self.geometry.iter_mut().zip(old) {
+                g.velocity_m_s = (g.hub_m - p.hub_m) / dt_s;
+            }
+        }
         self.sync_fold_colliders(world);
     }
     fn fold_path_clear(&self, world: &PhysicsWorld, next: f64) -> bool {
-        let folding = self.config.folding.as_ref().unwrap();
         let body = pose_of(&world.bodies[self.body]);
-        let before = folding.collision_parts(body, self.aim_rad, self.fold_angle_rad);
+        let before = self
+            .config
+            .transform_collision_parts(body, self.aim_rad, self.fold_angle_rad);
         // Bound angular sampling even for a caller-supplied faster actuator.
         let samples = ((next - self.fold_angle_rad).abs() / 0.25_f64.to_radians())
             .ceil()
@@ -1902,9 +2141,14 @@ impl Chassis {
         for step in 1..=samples {
             let angle =
                 self.fold_angle_rad + (next - self.fold_angle_rad) * step as f64 / samples as f64;
-            for ((old_pose, _), (new_pose, half)) in before
-                .into_iter()
-                .zip(folding.collision_parts(body, self.aim_rad, angle))
+            for ((old_pose, _), (new_pose, half)) in
+                before
+                    .iter()
+                    .copied()
+                    .zip(
+                        self.config
+                            .transform_collision_parts(body, self.aim_rad, angle),
+                    )
             {
                 let shape = Cuboid::new(vector(half));
                 let new_pose = rapier_pose(new_pose);
@@ -1943,16 +2187,16 @@ impl Chassis {
         true
     }
     pub(crate) fn sync_fold_colliders(&self, world: &mut PhysicsWorld) {
-        let Some(folding) = &self.config.folding else {
-            return;
-        };
         let body = pose_of(&world.bodies[self.body]);
         let inverse = world.bodies[self.body].position().inverse();
-        for (handle, (pose, _)) in self.fold_colliders.iter().zip(folding.collision_parts(
-            body,
-            self.aim_rad,
-            self.fold_angle_rad,
-        )) {
+        for (handle, (pose, _)) in
+            self.fold_colliders
+                .iter()
+                .zip(
+                    self.config
+                        .transform_collision_parts(body, self.aim_rad, self.fold_angle_rad),
+                )
+        {
             world.colliders[*handle].set_position_wrt_parent(inverse * rapier_pose(pose));
             world.colliders[*handle].set_position(rapier_pose(pose));
         }
@@ -3196,5 +3440,111 @@ mod folding_tests {
         for i in 0..3 {
             assert!((a.translation_m[i] - b.translation_m[i]).abs() < 1e-8);
         }
+    }
+}
+
+#[cfg(test)]
+mod climbing_tests {
+    use super::*;
+    use crate::{TargetFrames, WorldPhysics, tick_ns};
+
+    #[test]
+    fn closed_linkage_keeps_lengths_and_level_travel() {
+        let config = ChassisConfig::stair_heavy();
+        config.validate().unwrap();
+        let c = config.climbing.as_ref().unwrap();
+        for i in 0..=128 {
+            let p = c.poses(c.travel_rad() * i as f64 / 128.);
+            let distance = |a: Pose, b: Pose| {
+                (Vector::from_array(a.translation_m) - Vector::from_array(b.translation_m)).length()
+            };
+            assert!((distance(p.front, p.coupler) - c.front_pin_length_m).abs() < 1e-10);
+            assert!((distance(p.coupler, p.rear) - c.coupler_length_m).abs() < 1e-10);
+            assert!((p.rear.translation_m[2] - c.slider_height_m).abs() < 1e-10);
+            for hub in p.hubs_m {
+                assert!(hub.into_iter().all(f64::is_finite));
+            }
+        }
+        let p = c.poses(0.);
+        assert!((p.hubs_m[0][2] - p.hubs_m[2][2]).abs() < 1e-10);
+        let mut invalid = c.clone();
+        invalid.coupler_length_m = 0.001;
+        assert!(invalid.validate().is_err());
+        let mut invalid = config.clone();
+        invalid.folding = ChassisConfig::folding_hero().folding;
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn moving_hubs_and_actuator_restore_mid_climb() {
+        let cfg = ChassisConfig::stair_heavy();
+        let mut host = WorldPhysics::new(&[], 0.);
+        let id = host
+            .add_chassis(Team::Red, cfg, Pose::at([0., 0., 3.]))
+            .unwrap();
+        host.command_chassis(
+            id,
+            ChassisCommand {
+                folded: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let frames = TargetFrames::new(vec![]);
+        for tick in 0..40 {
+            host.step(tick * tick_ns(), &frames).unwrap();
+        }
+        let saved = host.chassis_snapshot(id).unwrap();
+        assert!(
+            saved.fold_angle_rad > 0.1 && saved.fold_angle_rad < saved.config.transform_limit_rad()
+        );
+        let mut restored = WorldPhysics::new(&[], 0.);
+        restored.restore_chassis(&saved).unwrap();
+        let copy = restored.chassis_snapshot(id).unwrap();
+        assert_eq!(copy.fold_angle_rad, saved.fold_angle_rad);
+        for (a, b) in saved.wheels.iter().zip(&copy.wheels) {
+            for (x, y) in a.hub_m.iter().zip(b.hub_m) {
+                assert!((x - y).abs() < 1e-9);
+            }
+        }
+        for tick in 40..70 {
+            host.step(tick * tick_ns(), &frames).unwrap();
+            restored.step(tick * tick_ns(), &frames).unwrap();
+        }
+        let a = host.chassis_snapshot(id).unwrap();
+        let b = restored.chassis_snapshot(id).unwrap();
+        assert_eq!(a.fold_angle_rad, b.fold_angle_rad);
+        for (x, y) in a.pose.translation_m.into_iter().zip(b.pose.translation_m) {
+            assert!((x - y).abs() < 1e-8);
+        }
+    }
+    #[test]
+    fn defeated_stair_actuator_stops_at_its_current_input() {
+        let mut w = WorldPhysics::new(&[], 0.);
+        let id = w
+            .add_chassis(
+                Team::Red,
+                ChassisConfig::stair_heavy(),
+                Pose::at([0., 0., 3.]),
+            )
+            .unwrap();
+        w.command_chassis(
+            id,
+            ChassisCommand {
+                folded: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let frames = TargetFrames::new(vec![]);
+        for tick in 0..40 {
+            w.step(tick * tick_ns(), &frames).unwrap();
+        }
+        let angle = w.chassis_snapshot(id).unwrap().fold_angle_rad;
+        w.set_chassis_defeated(id, true);
+        for tick in 40..80 {
+            w.step(tick * tick_ns(), &frames).unwrap();
+        }
+        assert_eq!(w.chassis_snapshot(id).unwrap().fold_angle_rad, angle);
     }
 }

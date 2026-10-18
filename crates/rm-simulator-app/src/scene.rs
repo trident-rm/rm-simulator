@@ -533,21 +533,59 @@ pub(crate) fn chassis_appearance(
     let aim = pose_flu(chassis.turret);
     let (yaw_stage, turret) = gimbal_poses(pose_flu(chassis.pose), aim);
     ChassisAppearance {
-        fold_angle_rad: chassis.fold_angle_rad as f32,
-        fold_collision_parts: config
-            .folding
+        source_joints: config
+            .climbing
             .as_ref()
-            .map(|f| {
-                f.collision_parts(chassis.pose, chassis.held_aim_rad, chassis.fold_angle_rad)
-                    .into_iter()
-                    .map(|(pose, half)| (pose_flu(pose), half.map(|x| x as f32)))
-                    .collect()
+            .map(|c| {
+                let p = c.poses(chassis.fold_angle_rad);
+                [
+                    ("front", p.front),
+                    ("coupler", p.coupler),
+                    ("rear", p.rear),
+                    ("guide", p.guide),
+                    ("slider", p.slider),
+                ]
+                .into_iter()
+                .map(|(name, p)| (name.to_string(), pose_flu(p)))
+                .collect()
             })
             .unwrap_or_default(),
+        fold_angle_rad: chassis.fold_angle_rad as f32,
+        fold_collision_parts: {
+            let mut parts = config.transform_collision_parts(
+                chassis.pose,
+                chassis.held_aim_rad,
+                chassis.fold_angle_rad,
+            );
+            if config.climbing.is_some() {
+                // Include the fixed upper proxy and rear shelf in debug/fallback drawings.
+                let q = dquat(chassis.pose.rotation_wxyz);
+                for (center, half) in [
+                    (config.turret_center_m, config.turret_half_m),
+                    ([-0.075, 0., -0.16], [0.05, 0.26, 0.006]),
+                ] {
+                    let p = DVec3::from_array(chassis.pose.translation_m)
+                        + q * DVec3::from_array(center);
+                    parts.push((
+                        rm_simulator_world::Pose {
+                            translation_m: p.to_array(),
+                            rotation_wxyz: chassis.pose.rotation_wxyz,
+                        },
+                        half,
+                    ));
+                }
+            }
+            parts
+                .into_iter()
+                .map(|(p, h)| (pose_flu(p), h.map(|v| v as f32)))
+                .collect()
+        },
         model: {
             use rm_simulator_render::chassis::RobotModel;
             use rm_simulator_server::protocol::Robot;
-            if config.folding.is_some() {
+            if config.climbing.is_some() {
+                RobotModel::StairHeavy
+            } else if config.folding.is_some() {
                 RobotModel::FoldingHero
             } else if config.team_cad {
                 RobotModel::TeamCad
@@ -596,7 +634,11 @@ pub(crate) fn chassis_appearance(
                 pose: wheel_pose(chassis, *hub, wheel),
                 suspension_anchor_m: {
                     let mounts = config
-                        .suspension_mounts_m(index, wheel.suspension_compression_m)
+                        .suspension_mounts_at_m(
+                            index,
+                            wheel.suspension_compression_m,
+                            chassis.fold_angle_rad,
+                        )
                         .unwrap();
                     (DVec3::from_array(chassis.pose.translation_m)
                         + dquat(chassis.pose.rotation_wxyz) * DVec3::from_array(mounts[0]))
@@ -604,7 +646,11 @@ pub(crate) fn chassis_appearance(
                 },
                 suspension_lower_m: {
                     let mounts = config
-                        .suspension_mounts_m(index, wheel.suspension_compression_m)
+                        .suspension_mounts_at_m(
+                            index,
+                            wheel.suspension_compression_m,
+                            chassis.fold_angle_rad,
+                        )
                         .unwrap();
                     (DVec3::from_array(chassis.pose.translation_m)
                         + dquat(chassis.pose.rotation_wxyz) * DVec3::from_array(mounts[1]))
@@ -619,6 +665,23 @@ pub(crate) fn chassis_appearance(
             .iter()
             .enumerate()
             .map(|(plate, face)| ArmorAppearance {
+                optics: Some(ArmorOptics {
+                    housing_half_m: config.armor_housing_half_m().map(|v| v as f32),
+                    face_size_m: [
+                        if config.folding.is_some() {
+                            0.223
+                        } else {
+                            0.128
+                        },
+                        0.113,
+                    ],
+                    light_span_m: if config.folding.is_some() {
+                        0.225
+                    } else {
+                        0.130
+                    },
+                    light_length_m: 0.056,
+                }),
                 plate_visible: true,
                 bracket_prisms_m: config
                     .armor_bracket_prisms_m(plate)

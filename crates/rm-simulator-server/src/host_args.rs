@@ -27,6 +27,9 @@ use rm_simulator_world::{Caliber, RuneKind, Shot, outpost, projectile::Projectil
 /// accepted by the other.
 #[derive(Args, Debug, Clone)]
 pub struct HostArgs {
+    /// DreamChaser stair-climbing Engineer practice donor (RM2027 Heavy visual source).
+    #[arg(long, conflicts_with_all=["team_cad","folding_hero"])]
+    pub stair_heavy: bool,
     /// Source-fitted Artisans Hero with a transformable folding launcher.
     #[arg(long, conflicts_with = "team_cad")]
     pub folding_hero: bool,

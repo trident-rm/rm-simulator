@@ -24,6 +24,8 @@ pub enum RobotModel {
     TeamCad,
     /// Imported Artisans Hero with a folding arm and counter-rotating pitch stage.
     FoldingHero,
+    /// Imported DreamChaser Engineer donor with a closed stair linkage.
+    StairHeavy,
     /// Four-wheel omni platform.
     #[default]
     Omni,
@@ -167,7 +169,7 @@ fn sync_armor_panels(
     }
 }
 
-/// Small armor module geometry, from the caller's rules: housing half
+/// Armor module geometry, from the caller's fitted physical profile: housing half
 /// extents behind the face (x depth, y width, z height), the visible panel
 /// and the two light bars either side of it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -634,7 +636,7 @@ fn prototype_body(
             );
         }
         spawn_balance_legs(body, meshes, chassis, metal, accent, black);
-    } else if chassis.model == RobotModel::Engineer {
+    } else if matches!(chassis.model, RobotModel::Engineer | RobotModel::StairHeavy) {
         // Open box-section frame rather than a solid sandwich slab. Wide
         // mecanum wheels remain outside its side plates.
         for side in [-1.0, 1.0] {
@@ -1328,12 +1330,13 @@ fn light_bar_base_m(chassis: &crate::sync::ChassisAppearance, armor: ArmorOptics
     (chassis.body_half_m[2] + 0.005).max(rear_top + 0.002 - (0.064 - 0.007))
 }
 
-/// Overlay the imported plate faces with the same caller-owned identity and hit lights.
+/// Draw source-fitted armor, or overlay legacy CAD, with caller-owned hit lights.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn imported_armor(
     parent: &mut ChildSpawnerCommands,
     chassis: &crate::sync::ChassisAppearance,
     config: &Config,
+    replace: bool,
     atlas: &ArmorAtlas,
     diffuser: &DiffuserProfile,
     meshes: &mut Assets<Mesh>,
@@ -1344,14 +1347,51 @@ pub(crate) fn imported_armor(
     let dark = materials.add(diffuser_material(rendering));
     let struck = materials.add(struck_material(rendering));
     let ink = materials.add(atlas.material(rendering));
-    let artwork = meshes.add(atlas.mesh(chassis.armor_pattern, config.armor.face_size_m[1]));
-    let bar = meshes.add(diffuser_mesh(0.010, config.armor.light_length_m, 0.004));
+    let shell = materials.add(material(rendering, Color::srgb(0.10, 0.11, 0.13)));
+    let panel = materials.add(material(rendering, Color::srgb(0.17, 0.18, 0.20)));
     for (plate, module) in chassis.armor.iter().enumerate() {
+        let armor = module.optics.unwrap_or(config.armor);
+        let artwork = meshes.add(atlas.mesh(chassis.armor_pattern, armor.face_size_m[1]));
+        let bar = meshes.add(diffuser_mesh(0.010, armor.light_length_m, 0.004));
+        let housing = meshes.add(equipment::housing(
+            2. * armor.housing_half_m[1],
+            2. * armor.housing_half_m[2],
+            2. * armor.housing_half_m[0],
+            0.008,
+        ));
+        let face = meshes.add(Cuboid::new(
+            armor.face_size_m[0],
+            armor.face_size_m[1],
+            0.001,
+        ));
         let mut transform = Transform::default();
         apply_pose(&mut transform, module.local);
         parent
-            .spawn((transform, Visibility::Inherited))
+            .spawn((
+                ChassisArmorPanel {
+                    chassis: chassis.id,
+                    plate,
+                },
+                transform,
+                if module.plate_visible {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                },
+            ))
             .with_children(|p| {
+                if replace {
+                    p.spawn((
+                        Mesh3d(housing),
+                        MeshMaterial3d(shell.clone()),
+                        Transform::from_xyz(0., 0., armor.housing_half_m[0]),
+                    ));
+                    p.spawn((
+                        Mesh3d(face),
+                        MeshMaterial3d(panel.clone()),
+                        Transform::from_xyz(0., 0., 0.0005),
+                    ));
+                }
                 p.spawn((
                     ArmorArtwork(chassis.armor_pattern),
                     Mesh3d(artwork.clone()),
@@ -1363,7 +1403,7 @@ pub(crate) fn imported_armor(
                     p.spawn((
                         Mesh3d(bar.clone()),
                         MeshMaterial3d(lit.clone()),
-                        Transform::from_xyz(side * config.armor.light_span_m * 0.5, 0., -0.002),
+                        Transform::from_xyz(side * armor.light_span_m * 0.5, 0., -0.002),
                         ChassisArmorLight {
                             chassis: chassis.id,
                             plate,
@@ -1463,7 +1503,6 @@ fn spawn_chassis(
         );
         let armor_off = materials.add(diffuser_material(rendering));
         let struck = materials.add(struck_material(rendering));
-        let artwork = meshes.add(atlas.mesh(chassis.armor_pattern, config.armor.face_size_m[1]));
         let ink = materials.add(atlas.material(rendering));
         let dark = materials.add(material(rendering, Color::srgb(0.12, 0.12, 0.13)));
 
@@ -1477,18 +1516,6 @@ fn spawn_chassis(
         };
         let [hx, hy, hz] = chassis.body_half_m;
         let armor = config.armor;
-        let housing = meshes.add(equipment::housing(
-            2.0 * armor.housing_half_m[1],
-            2.0 * armor.housing_half_m[2],
-            2.0 * armor.housing_half_m[0],
-            0.008,
-        ));
-        let face = meshes.add(Cuboid::new(
-            armor.face_size_m[0] * 0.64,
-            armor.face_size_m[1] * 0.72,
-            0.004,
-        ));
-        let bar = meshes.add(diffuser_mesh(0.010, armor.light_length_m, 0.004));
         commands
             .spawn((
                 id,
@@ -1607,6 +1634,21 @@ fn spawn_chassis(
                     &equipment_materials,
                 );
                 for (plate, module) in chassis.armor.iter().enumerate() {
+                    let armor = module.optics.unwrap_or(config.armor);
+                    let artwork =
+                        meshes.add(atlas.mesh(chassis.armor_pattern, armor.face_size_m[1]));
+                    let housing = meshes.add(equipment::housing(
+                        2.0 * armor.housing_half_m[1],
+                        2.0 * armor.housing_half_m[2],
+                        2.0 * armor.housing_half_m[0],
+                        0.008,
+                    ));
+                    let face = meshes.add(Cuboid::new(
+                        armor.face_size_m[0] * 0.64,
+                        armor.face_size_m[1] * 0.72,
+                        0.004,
+                    ));
+                    let bar = meshes.add(diffuser_mesh(0.010, armor.light_length_m, 0.004));
                     for prism in &module.bracket_prisms_m {
                         let vertices: Vec<_> = prism
                             .iter()
@@ -1921,7 +1963,7 @@ fn spawn_chassis(
         }
         // Yaw stage: a turntable on the body top, a pedestal and the fork
         // whose arms hold the pitch axle either side of the cradle.
-        if chassis.model == RobotModel::Engineer {
+        if matches!(chassis.model, RobotModel::Engineer | RobotModel::StairHeavy) {
             continue;
         }
         let [tx, ty, tz] = chassis.turret_half_m;
@@ -2180,6 +2222,7 @@ mod tests {
     fn appearance(id: u32, x_m: f64) -> ChassisAppearance {
         let h = std::f64::consts::FRAC_1_SQRT_2;
         ChassisAppearance {
+            source_joints: vec![],
             model: RobotModel::Omni,
             armor_pattern: crate::armor::ArmorPattern::Three,
             mecanum: false,
@@ -2219,6 +2262,7 @@ mod tests {
             ],
             armor: vec![
                 ArmorAppearance {
+                    optics: None,
                     plate_visible: true,
                     bracket_prisms_m: vec![],
                     local: PoseFlu {
@@ -2228,6 +2272,7 @@ mod tests {
                     hit_flash: false,
                 },
                 ArmorAppearance {
+                    optics: None,
                     plate_visible: true,
                     bracket_prisms_m: vec![],
                     local: PoseFlu {
@@ -2686,6 +2731,83 @@ mod tests {
         app.world_mut().resource_mut::<SceneInput>().0 = None;
         app.update();
         assert_eq!(app.world().resource::<Writes>().0, 0);
+    }
+
+    #[test]
+    fn replacement_modules_draw_full_fitted_housings_and_keep_identity_and_light_bindings() {
+        let mut app = App::new();
+        app.add_plugins(bevy::asset::AssetPlugin::default())
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<ArmorAtlas>()
+            .init_resource::<DiffuserProfile>()
+            .add_systems(
+                Startup,
+                |mut commands: Commands,
+                 atlas: Res<ArmorAtlas>,
+                 diffuser: Res<DiffuserProfile>,
+                 mut meshes: ResMut<Assets<Mesh>>,
+                 mut materials: ResMut<Assets<StandardMaterial>>| {
+                    let mut c = appearance(7, 0.);
+                    c.armor[0].optics = Some(ArmorOptics {
+                        housing_half_m: [0.0095, 0.1175, 0.0635],
+                        face_size_m: [0.223, 0.113],
+                        light_span_m: 0.225,
+                        light_length_m: 0.056,
+                    });
+                    commands
+                        .spawn((Transform::default(), Visibility::Inherited))
+                        .with_children(|parent| {
+                            imported_armor(
+                                parent,
+                                &c,
+                                &Config {
+                                    rendering: RenderingConfig::default(),
+                                    armor: optics(),
+                                },
+                                true,
+                                &atlas,
+                                &diffuser,
+                                &mut meshes,
+                                &mut materials,
+                            );
+                        });
+                },
+            );
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(world.query::<&ChassisArmorPanel>().iter(world).count(), 2);
+        assert_eq!(world.query::<&ArmorArtwork>().iter(world).count(), 2);
+        assert_eq!(world.query::<&ChassisArmorLight>().iter(world).count(), 4);
+        let children: Vec<_> = world
+            .query::<(&ChassisArmorPanel, &Children)>()
+            .iter(world)
+            .find(|(p, _)| p.plate == 0)
+            .unwrap()
+            .1
+            .iter()
+            .collect();
+        // First child is the physical shell; its front rests on the scoring plane.
+        let mesh = world.get::<Mesh3d>(children[0]).unwrap();
+        let transform = world.get::<Transform>(children[0]).unwrap();
+        let mesh = world.resource::<Assets<Mesh>>().get(&mesh.0).unwrap();
+        let bevy::mesh::VertexAttributeValues::Float32x3(points) =
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap()
+        else {
+            panic!("positions")
+        };
+        let width = points
+            .iter()
+            .map(|p| p[0])
+            .fold(f32::NEG_INFINITY, f32::max)
+            - points.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min);
+        let front = points
+            .iter()
+            .map(|p| p[2] + transform.translation.z)
+            .fold(f32::INFINITY, f32::min);
+        assert!((width - 0.235).abs() < 1e-6);
+        assert!(front.abs() < 1e-6);
     }
 
     #[test]

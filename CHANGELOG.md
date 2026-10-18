@@ -4,6 +4,20 @@
 
 ## Unreleased
 
+- Add the DreamChaser stair-climbing Engineer donor: T raises the front wheels
+  and extends the rear legs, then returns to level travel. Source-bound links,
+  individual wheel forces, moving suspension anchors and clearance checks follow
+  an analytically closed linkage; restore and prediction retain its input.
+  Keep this in the 2026 Engineer practice slot while RM2027 Heavy rules remain
+  unavailable. Protocol 63 carries the fitted climbing configuration.
+
+- Replace source armor surfaces in optional fitted robot packages with complete
+  simulator modules, retaining source mounting hardware. Align collision,
+  numbered artwork and team/hit/defeat lights at source-fitted mounts; give the
+  folding Hero large physical housings while retaining the existing effective
+  detector policy. Validate replacement bindings before import. Protocol 63
+  rejects clients with incompatible fitted armor shapes.
+
 - Replace distant stadium meshes with a soft, low-contrast indoor-hall cubemap, retaining
   the nearby wire fence and floor apron. Field lighting and collision are unchanged.
 

@@ -293,7 +293,7 @@ pub fn drive_chassis(
         drive.folded = chassis.command.folded;
     }
     if !ui.blocks_input()
-        && chassis.config.folding.is_some()
+        && chassis.config.transform_limit_rad() > 0.
         && ui
             .controls
             .just_pressed(InputAction::Transform, &keys, buttons.as_deref())

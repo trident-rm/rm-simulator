@@ -101,7 +101,10 @@ use serde::{Deserialize, Serialize};
 /// Version 59 carries wheel axle velocity, suspension compression and octagonal frames.
 /// Version 60 carries the source-fitted team robot mount profile.
 /// Version 61 carries folding input and the restorable geometry joint angle.
-pub const PROTOCOL_VERSION: u32 = 61;
+/// Version 62 aligns source armor mounts and large Hero housing collisions.
+/// The wire layout is unchanged; older prediction uses incompatible fitted shapes.
+/// Version 63 carries the source stair linkage configuration and primary actuator semantics.
+pub const PROTOCOL_VERSION: u32 = 63;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///

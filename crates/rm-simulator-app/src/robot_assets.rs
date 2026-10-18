@@ -13,7 +13,12 @@ pub fn verify(root: &Path) -> std::io::Result<bool> {
         && manifest["profile"] == "artisans-folding-hero-v1"
         && manifest["source"]["cad_sha256"]
             == "71d6ddb07672028613c03ab2abca508cd616f93a3e2b5481b6696a063b86dd6e";
+    let stair = manifest["schema"] == 3
+        && manifest["profile"] == "dreamchaser-stair-heavy-v1"
+        && manifest["source"]["cad_sha256"]
+            == "dd98239dce94e35cb2ccc43171f4edc6e35c77f3f0659f91890750b98bad0e01";
     if !folding_hero
+        && !stair
         && (manifest["schema"] != 1
             || manifest["sources"]["chassis"]["cad_sha256"] != chassis
             || manifest["sources"]["gimbal"]["cad_sha256"] != gimbal
@@ -30,12 +35,114 @@ pub fn verify(root: &Path) -> std::io::Result<bool> {
     if manifest["files"]["neutral"]["sha256"] != actual {
         return Err(std::io::Error::other("robot neutral.glb checksum mismatch"));
     }
+    replacement_armor(root)?;
     Ok(folding_hero)
+}
+
+/// Whether the verified package selects the source-bound stair Engineer.
+pub fn is_stair_heavy(root: &Path) -> std::io::Result<bool> {
+    let m: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join("manifest.json"))?)?;
+    Ok(m["profile"] == "dreamchaser-stair-heavy-v1")
+}
+
+/// Validate the optional replacement contract against the host's fitted profile.
+/// Legacy packages retain CAD surfaces and receive artwork/light overlays only.
+pub fn replacement_armor(root: &Path) -> std::io::Result<bool> {
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join("manifest.json"))?)?;
+    let Some(armor) = manifest.get("armor") else {
+        return Ok(false);
+    };
+    let invalid =
+        || std::io::Error::other("robot armor bindings do not match the fitted collision profile");
+    if armor["schema"] != "robot-armor-v1" || armor["runtime_replacement"] != true {
+        return Err(invalid());
+    }
+    let hero = manifest["profile"] == "artisans-folding-hero-v1";
+    let config = if manifest["profile"] == "dreamchaser-stair-heavy-v1" {
+        rm_simulator_world::chassis::ChassisConfig::stair_heavy()
+    } else if hero {
+        rm_simulator_world::chassis::ChassisConfig::folding_hero()
+    } else {
+        rm_simulator_world::chassis::ChassisConfig::team_cad()
+    };
+    let modules = armor["modules"].as_array().ok_or_else(invalid)?;
+    if modules.len() != 4 {
+        return Err(invalid());
+    }
+    for ((index, module), face) in modules.iter().enumerate().zip(config.armor_faces()) {
+        if module["id"] != index || module["kind"] != if hero { "AM12" } else { "AM02" } {
+            return Err(invalid());
+        }
+        let pose: rm_simulator_world::Pose =
+            serde_json::from_value(module["body_face_pose_flu"].clone()).map_err(|_| invalid())?;
+        let half: [f64; 3] =
+            serde_json::from_value(module["housing_half_m"].clone()).map_err(|_| invalid())?;
+        if pose
+            .translation_m
+            .iter()
+            .zip(face.translation_m)
+            .any(|(a, b)| !a.is_finite() || (a - b).abs() > 0.0002)
+            || half
+                .iter()
+                .zip(config.armor_housing_half_m())
+                .any(|(a, b)| !a.is_finite() || (a - b).abs() > 0.000001)
+            || pose.rotation_wxyz.iter().any(|a| !a.is_finite())
+        {
+            return Err(invalid());
+        }
+        let dot = pose
+            .rotation_wxyz
+            .iter()
+            .zip(face.rotation_wxyz)
+            .map(|(a, b)| a * b)
+            .sum::<f64>();
+        let norm = pose.rotation_wxyz.iter().map(|a| a * a).sum::<f64>();
+        if (norm - 1.).abs() > 0.00001 || dot.abs() < 0.99999 {
+            return Err(invalid());
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacement_mounts_must_match_the_physical_profile() {
+        let root = std::env::temp_dir().join(format!("rm-armor-asset-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        for hero in [false, true] {
+            let config = if hero {
+                rm_simulator_world::chassis::ChassisConfig::folding_hero()
+            } else {
+                rm_simulator_world::chassis::ChassisConfig::team_cad()
+            };
+            let modules: Vec<_> = config
+                .armor_faces()
+                .into_iter()
+                .enumerate()
+                .map(|(id, pose)| {
+                    serde_json::json!({
+                        "id": id, "kind": if hero { "AM12" } else { "AM02" },
+                        "body_face_pose_flu": pose, "housing_half_m": config.armor_housing_half_m()
+                    })
+                })
+                .collect();
+            let mut manifest = serde_json::json!({"profile": if hero { "artisans-folding-hero-v1" } else { "omni" },
+                "armor": {"schema": "robot-armor-v1", "runtime_replacement": true, "modules": modules}});
+            let write = |value: &serde_json::Value| {
+                std::fs::write(root.join("manifest.json"), value.to_string()).unwrap()
+            };
+            write(&manifest);
+            assert!(replacement_armor(&root).unwrap());
+            manifest["armor"]["modules"][0]["body_face_pose_flu"]["translation_m"][0] = 12.into();
+            write(&manifest);
+            assert!(replacement_armor(&root).is_err());
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn profile_and_mesh_integrity_are_both_required() {

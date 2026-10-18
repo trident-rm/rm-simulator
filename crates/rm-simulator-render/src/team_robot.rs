@@ -17,11 +17,17 @@ pub struct TeamRobotAssets {
     pub file: String,
     /// Select the bound folding Hero instead of the original Omni assembly.
     pub folding_hero: bool,
+    /// Select the source-bound stair Engineer instead of the Omni/Hero package.
+    pub stair_heavy: bool,
+    /// Source armor surfaces were removed and need complete caller-fitted modules.
+    pub replace_armor: bool,
 }
 impl TeamRobotAssets {
     pub(crate) fn supports(&self, model: RobotModel) -> bool {
         model
-            == if self.folding_hero {
+            == if self.stair_heavy {
+                RobotModel::StairHeavy
+            } else if self.folding_hero {
                 RobotModel::FoldingHero
             } else {
                 RobotModel::TeamCad
@@ -137,6 +143,7 @@ fn spawn(
                 parent,
                 c,
                 &config,
+                assets.replace_armor,
                 &atlas,
                 &diffuser,
                 &mut meshes,
@@ -149,7 +156,9 @@ fn spawn(
                 ),
                 Transform::from_xyz(
                     0.,
-                    -if assets.folding_hero {
+                    -if assets.stair_heavy {
+                        0.
+                    } else if assets.folding_hero {
                         0.1684552
                     } else {
                         BODY_Y_M
@@ -166,6 +175,9 @@ fn spawn(
 // uniform pale blue CAD tint. Preserve white paint and every other source color.
 fn use_graphite(extras: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(extras).is_ok_and(|v| {
+        if v.get("display_override").is_some() {
+            return false;
+        }
         (v["step_colour_origin"] == "fallback"
             && v.get("step_colour_srgb").is_some_and(|c| c.is_null()))
             || (v["step_colour_origin"] == "source"
@@ -219,7 +231,12 @@ fn loaded(
             });
         }
     }
-    let required = if bound.contains("fold") {
+    let required = if bound.contains("front") {
+        vec![
+            "body", "front", "rear", "coupler", "guide", "slider", "wheel-0", "wheel-1", "wheel-2",
+            "wheel-3",
+        ]
+    } else if bound.contains("fold") {
         vec![
             "body", "yaw", "fold", "pitch", "wheel-0", "wheel-1", "wheel-2", "wheel-3",
         ]
@@ -259,6 +276,17 @@ fn poll_loading(
     }
 }
 fn link_transform(link: &Link, c: &crate::sync::ChassisAppearance) -> Transform {
+    if c.model == RobotModel::StairHeavy
+        && let Some((_, p)) = c.source_joints.iter().find(|(name, _)| name == &link.name)
+    {
+        let [w, x, y, z] = p.rotation_wxyz;
+        return Transform::from_translation(Vec3::new(
+            p.translation_m[1] as f32,
+            p.translation_m[2] as f32,
+            p.translation_m[0] as f32,
+        ))
+        .with_rotation(Quat::from_xyzw(y as f32, z as f32, x as f32, w as f32));
+    }
     let mut t = link.rest;
     let relative = q(c.pose).inverse() * q(c.yaw_stage);
     let forward = relative * Vec3::X;
@@ -287,7 +315,9 @@ fn link_transform(link: &Link, c: &crate::sync::ChassisAppearance) -> Transform 
                 t.translation = Vec3::new(
                     local.y,
                     local.z
-                        + if c.model == RobotModel::FoldingHero {
+                        + if c.model == RobotModel::StairHeavy {
+                            0.
+                        } else if c.model == RobotModel::FoldingHero {
                             0.1684552
                         } else {
                             BODY_Y_M
@@ -296,7 +326,7 @@ fn link_transform(link: &Link, c: &crate::sync::ChassisAppearance) -> Transform 
                 );
                 let angle = local.y.atan2(local.x) - std::f32::consts::FRAC_PI_2;
                 let spin = (body.inverse() * q(w.pose))
-                    * if c.model == RobotModel::FoldingHero {
+                    * if matches!(c.model, RobotModel::FoldingHero | RobotModel::StairHeavy) {
                         Quat::IDENTITY
                     } else {
                         Quat::from_rotation_z(-angle)
@@ -338,6 +368,7 @@ mod tests {
     fn appearance(id: u32, x_m: f64) -> ChassisAppearance {
         let h = std::f64::consts::FRAC_1_SQRT_2;
         ChassisAppearance {
+            source_joints: vec![],
             model: RobotModel::Omni,
             armor_pattern: crate::armor::ArmorPattern::Three,
             mecanum: false,
@@ -377,6 +408,7 @@ mod tests {
             ],
             armor: vec![
                 ArmorAppearance {
+                    optics: None,
                     plate_visible: true,
                     bracket_prisms_m: vec![],
                     local: PoseFlu {
@@ -386,6 +418,7 @@ mod tests {
                     hit_flash: false,
                 },
                 ArmorAppearance {
+                    optics: None,
                     plate_visible: true,
                     bracket_prisms_m: vec![],
                     local: PoseFlu {
@@ -490,5 +523,43 @@ mod tests {
             let expected = Quat::from_xyzw(local.y, local.z, local.x, local.w);
             assert!(got.rotation.abs_diff_eq(expected, 1e-5));
         }
+    }
+    #[test]
+    fn stair_links_use_caller_frames_and_wheels_keep_body_local_hubs() {
+        let mut c = appearance(3, 5.);
+        c.model = RobotModel::StairHeavy;
+        let p = pose(Quat::from_rotation_y(0.7), Vec3::new(0.12, 0., -0.03));
+        c.source_joints = vec![("front".into(), p)];
+        let got = link_transform(
+            &Link {
+                id: 3,
+                name: "front".into(),
+                rest: Transform::IDENTITY,
+            },
+            &c,
+        );
+        assert!(
+            got.translation
+                .abs_diff_eq(Vec3::new(0., -0.03, 0.12), 1e-6)
+        );
+        assert!(got.rotation.abs_diff_eq(Quat::from_rotation_x(0.7), 1e-6));
+        let hub = Vec3::new(0.11, 0.2083, -0.20);
+        let body = q(c.pose);
+        let origin = Vec3::from_array(c.pose.translation_m.map(|x| x as f32));
+        c.wheels[0].pose = pose(body, origin + body * hub);
+        let wheel = link_transform(
+            &Link {
+                id: 3,
+                name: "wheel-0".into(),
+                rest: Transform::IDENTITY,
+            },
+            &c,
+        );
+        assert!(
+            wheel
+                .translation
+                .abs_diff_eq(Vec3::new(hub.y, hub.z, hub.x), 1e-5)
+        );
+        assert!(wheel.rotation.abs_diff_eq(Quat::IDENTITY, 1e-5));
     }
 }

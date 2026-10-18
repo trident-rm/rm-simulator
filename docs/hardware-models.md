@@ -351,3 +351,64 @@ The other source models were checked for similar helper geometry. Physical
 rounded LiDAR/energy housings and the Future Infantry's cylindrical post remain.
 The source stair linkage is still in its published articulated pose; animation
 binding, rather than geometry deletion, must produce the driving stance.
+
+### Material-aware source candidates
+
+The candidate exporter in `rm-map-tools` additionally writes `materials.glb` and
+`materials.json`: dark rubber rollers/treads, dark carbon, lighter metal,
+printed polymer and separate armor faces/housings/red diffusers. Assignments
+use leaf names and inspected product-specific envelope classes, preserving
+source-painted surfaces. Clamps remain metal; unclear parts stay neutral gray.
+These are display interpretations, not measured material properties. Red
+strips are illustrative and are not bound to live team/armor state yet.
+
+The material pass retains every triangle and all source attributes, poses,
+hierarchy and original materials; mixed open-shell wheels get separate index
+subsets for their rollers without remeshing. The generated report verifies
+these invariants. `review_candidates.py --materials` shows the colors in
+`review-materials/`; its diffuse rasterizer does not preview full PBR reflections
+or a carbon weave texture. Current Omni/Hero runtime packages remain unchanged
+while these five complete source candidates undergo appearance review.
+
+
+### Source armor replacement
+
+`bind_armor.py` in rm-map-tools now creates a separate runtime package with the
+source armor surfaces removed. The source package stays intact. Each module is
+identified by its source leaf, detector face, housing and paired diffusers;
+separate support brackets/fasteners remain. The flattened Zhulong model instead
+uses four pinned whole-module solid IDs (3, 6, 81, 82), not damaged CAD names.
+
+The fitted Omni and folding Hero each receive four complete simulator modules,
+including collision housings, numbered artwork and team/strike/defeat lights.
+Omni uses small AM02 housings; the folding Hero uses 235 mm-wide AM12 housings
+at the source's asymmetric front/side/back positions. The collider front,
+artwork and lights use the same caller-owned scoring-face frame. Debug collision
+views and restore use those same dimensions. Protocol 63 separates these fitted
+physics semantics from older clients. Legacy packages still load as CAD plus
+artwork/light overlays; the app checks the replacement manifest against its
+fitted physical profile before enabling full modules.
+
+The **existing 101 × 94 mm effective detector** remains in use, including on
+the large Hero shell. This work fits physical armor; it does not assert a newly
+verified AM12 scoring region or expand damage coverage to its whole backing.
+The imported CAD triangle mesh never becomes the scoring mask or collider.
+
+All five raw candidates export `armor.json` and `armor-ready.glb` with four
+unique mounts, replacement selectors and preservation checks. SaltWave contains
+four additional overlapping source modules about 1.2–1.3 mm from those mounts;
+explicit source-path aliases merge them into four targets. Both copies' shell,
+face and diffusers are removed from the armor-ready variant. These candidates
+still need chassis/motion admission before becoming playable.
+
+```sh
+../rm-map-tools/ocpenv/bin/python ../rm-map-tools/benchmarks/2026-10-18-team-robot/bind_armor.py \
+  --sources local-assets/robot-cad-survey \
+  --package local-assets/robot-cad-survey/assembled \
+  --out local-assets/robot-cad-survey/assembled-armored
+just run --robot-assets local-assets/robot-cad-survey/assembled-armored
+```
+
+Use `bound-hero` / `bound-hero-armored` in that command for the Hero, then run
+with `--cad-assets field` for 2026 practice. Generated packages remain local;
+no new model assets are embedded in the binary or checked into Git.

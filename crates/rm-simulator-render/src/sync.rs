@@ -93,6 +93,8 @@ pub struct WheelAppearance {
 /// the outward normal, +y width, +z height) and whether it is flashing.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ArmorAppearance {
+    /// Optional caller-fitted physical module geometry; absent uses plugin defaults.
+    pub optics: Option<crate::chassis::ArmorOptics>,
     /// Draw the armor module; false exposes its retained carrier for cutaway views.
     pub plate_visible: bool,
     /// Rigid carrier prisms in body FLU metres, matching caller-owned colliders.
@@ -110,6 +112,8 @@ pub struct ArmorAppearance {
 /// by `team`; a defeated robot's lights go dark.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChassisAppearance {
+    /// Source rigid-link poses in body FLU coordinates, supplied by the caller.
+    pub source_joints: Vec<(String, PoseFlu)>,
     /// Current folding joint angle in radians; zero for fixed robots.
     pub fold_angle_rad: f32,
     /// Caller-owned world poses/half extents for articulated collision cuboids, in metres.

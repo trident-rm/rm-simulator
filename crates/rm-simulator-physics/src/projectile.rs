@@ -1855,6 +1855,78 @@ mod tests {
         }
     }
     #[test]
+    fn fitted_robot_modules_collide_on_each_face_and_restore_the_same_housings() {
+        for config in [ChassisConfig::team_cad(), ChassisConfig::folding_hero()] {
+            for plate in 0..4 {
+                let mut physics = WorldPhysics::new(&[], 0.);
+                let id = physics
+                    .add_chassis(Team::Red, config.clone(), Pose::at([0., 0., 0.8]))
+                    .unwrap();
+                let owner = &physics.chassis[0];
+                let face = owner.armor_pose(&physics.world, plate);
+                let collider = &physics.world.colliders[owner.armor_colliders()[plate]];
+                let half = collider.shape().as_cuboid().unwrap().half_extents;
+                assert_eq!(half.to_array(), config.armor_housing_half_m());
+                // The collider's front is exactly the scoring plane.
+                let front = collider
+                    .position()
+                    .transform_point(Vector::new(half.x, 0., 0.));
+                assert!((front - face.translation).length() < 1e-8);
+                let mut muzzle = face;
+                muzzle.translation += face.rotation * Vector::new(0.3, 0., 0.);
+                muzzle.rotation *= Rotation::from_rotation_z(std::f64::consts::PI);
+                physics
+                    .fire(
+                        0,
+                        Pose {
+                            translation_m: muzzle.translation.to_array(),
+                            rotation_wxyz: [
+                                muzzle.rotation.w,
+                                muzzle.rotation.x,
+                                muzzle.rotation.y,
+                                muzzle.rotation.z,
+                            ],
+                        },
+                        Shot::at_limit(Caliber::Mm17),
+                        None,
+                    )
+                    .unwrap();
+                let mut contacts = Vec::new();
+                for tick in 0..8 {
+                    contacts.extend(
+                        physics
+                            .step(tick * tick_ns(), &TargetFrames::new(vec![]))
+                            .unwrap(),
+                    );
+                }
+                let target = ArmorTarget::Chassis {
+                    chassis: id,
+                    plate: plate as u32,
+                };
+                let hit = contacts
+                    .iter()
+                    .find(|c| c.target == target)
+                    .expect("projectile hits the fitted module");
+                assert!(scoring_offset(target, hit.local_m).is_some(), "{hit:?}");
+                let snapshot = physics.chassis_snapshot(id).unwrap();
+                let mut restored = WorldPhysics::new(&[], 0.);
+                restored.restore_chassis(&snapshot).unwrap();
+                let owner = &restored.chassis[0];
+                let collider = &restored.world.colliders[owner.armor_colliders()[plate]];
+                assert_eq!(
+                    collider
+                        .shape()
+                        .as_cuboid()
+                        .unwrap()
+                        .half_extents
+                        .to_array(),
+                    config.armor_housing_half_m()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn rotating_source_mesh_retains_pivot_and_motion_through_geometry_restore() {
         let mut physics = WorldPhysics::new(&[], 0.);
         physics

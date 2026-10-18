@@ -55,7 +55,9 @@ fn main() -> anyhow::Result<()> {
         &cad,
         &options,
         (!args.no_chassis).then(|| {
-            if args.host.folding_hero {
+            if args.host.stair_heavy {
+                ChassisConfig::stair_heavy()
+            } else if args.host.folding_hero {
                 ChassisConfig::folding_hero()
             } else if args.host.team_cad {
                 ChassisConfig::team_cad()

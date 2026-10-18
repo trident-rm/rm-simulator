@@ -475,7 +475,13 @@ impl Simulation {
     ) -> Result<ChassisConfig, String> {
         let config = chassis.config(robot)?;
         Ok(
-            if robot == Robot::Hero && self.spawner_config().is_some_and(|c| c.folding.is_some()) {
+            if robot == Robot::Engineer
+                && self.spawner_config().is_some_and(|c| c.climbing.is_some())
+            {
+                ChassisConfig::stair_heavy()
+            } else if robot == Robot::Hero
+                && self.spawner_config().is_some_and(|c| c.folding.is_some())
+            {
                 ChassisConfig::folding_hero()
             } else if self.spawner_config().is_some_and(|c| c.team_cad)
                 && !config.mecanum

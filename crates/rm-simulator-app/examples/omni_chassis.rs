@@ -46,6 +46,7 @@ fn appearance(c: &ChassisSnapshot) -> ChassisAppearance {
     let direction = body_q.inverse() * (aim_q * bevy::math::DVec3::X);
     let yaw = body_q * bevy::math::DQuat::from_rotation_z(direction.y.atan2(direction.x));
     ChassisAppearance {
+        source_joints: vec![],
         model: RobotModel::Omni,
         armor_pattern: armor::ArmorPattern::Three,
         mecanum: false,
@@ -112,6 +113,7 @@ fn appearance(c: &ChassisSnapshot) -> ChassisAppearance {
             .iter()
             .enumerate()
             .map(|(plate, p)| ArmorAppearance {
+                optics: None,
                 plate_visible: true,
                 bracket_prisms_m: cfg
                     .armor_bracket_prisms_m(plate)

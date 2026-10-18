@@ -219,9 +219,11 @@ Experience follows section 5.4.1 and Table 5-11: launches, damage dealt and
 kills award it, up to level 10 (`LevelUp`). A level-up raises current HP by the
 maximum HP gained.
 
-A chassis carries four small armor modules (front, left, back, right) on its
-body sides, leaning back 15° (an assumption; the manual gives no single
-angle). They detect like the outpost's small armor: the 101 × 94 mm area of
+A chassis carries four armor modules (front, left, back, right) on its
+body sides. Most presets use fitted small housings; the optional source-bound
+Hero uses large physical housings at its source mount poses. Procedural mounts
+lean back 15°; source-bound mounts follow the fitted CAD. All retain the existing
+small-detector policy, including the large Hero housing: the 101 × 94 mm area of
 Figure 5-16, above the normal speeds (12 m/s for 17 mm per Table 5-1, 8 m/s for
 42 mm, relaxed from its 10 m/s), at most once per 50 ms (17 mm) or 200 ms (42 mm) per module. A
 detected strike removes 20 HP (17 mm) or 200 HP (42 mm, Table 5-2), scaled by

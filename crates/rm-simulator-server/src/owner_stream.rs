@@ -160,12 +160,7 @@ impl OwnerAnchor {
     /// size. Errors when a dynamic value is non-finite or outside its
     /// quantized range, or when the whole anchor exceeds [`MAX_BYTES`].
     pub fn encode(&self) -> io::Result<Vec<u8>> {
-        let max_fold = self
-            .owner
-            .config
-            .folding
-            .as_ref()
-            .map_or(0., |f| f.folded_angle_rad);
+        let max_fold = self.owner.config.transform_limit_rad();
         if !self.owner.fold_angle_rad.is_finite()
             || self.owner.fold_angle_rad < 0.
             || self.owner.fold_angle_rad > max_fold
@@ -314,7 +309,7 @@ impl OwnerAnchor {
         if !command.is_finite() {
             return Err(invalid());
         }
-        let max_angle = config.folding.as_ref().map_or(0., |f| f.folded_angle_rad);
+        let max_angle = config.transform_limit_rad();
         let fold_angle_rad = reader.q32(AIM_SCALE)?;
         if fold_angle_rad < -0.0001 || fold_angle_rad > max_angle + 0.0001 {
             return Err(invalid());
@@ -694,6 +689,23 @@ mod tests {
         }
         anchor.owner.fold_angle_rad = max + 1.;
         assert!(anchor.encode().is_err());
+    }
+
+    #[test]
+    fn stair_input_and_endpoint_survive_owner_anchor() {
+        let (state, chassis) = anchored(177, 5, 3);
+        let mut anchor = OwnerAnchor::from_state(&state, chassis).unwrap();
+        anchor.owner.config = rm_simulator_world::ChassisConfig::stair_heavy();
+        anchor.owner.command.folded = true;
+        let max = anchor.owner.config.transform_limit_rad();
+        for angle in [0.3, max] {
+            anchor.owner.fold_angle_rad = angle;
+            let decoded =
+                OwnerAnchor::decode(&anchor.encode().unwrap(), &anchor.owner.config).unwrap();
+            assert_quantized(&anchor, &decoded);
+            assert!(decoded.owner.fold_angle_rad <= max);
+            assert!(decoded.owner.config.climbing.is_some());
+        }
     }
 
     #[test]

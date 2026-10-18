@@ -457,7 +457,11 @@ fn primitive_transforms(
         for armor in &chassis.armor {
             result.push((
                 false,
-                box_transform(body.mul_transform(pose_transform(armor.local)), small, true),
+                box_transform(
+                    body.mul_transform(pose_transform(armor.local)),
+                    armor.optics.map_or(small, |o| o.housing_half_m),
+                    true,
+                ),
             ));
         }
     }

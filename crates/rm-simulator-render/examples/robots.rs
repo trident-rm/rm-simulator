@@ -89,6 +89,7 @@ fn robot(model: RobotModel, y: f64, effect: &str) -> ChassisAppearance {
         let q = Quat::from_rotation_z(i as f32 * std::f32::consts::FRAC_PI_2)
             * Quat::from_rotation_y(-15_f32.to_radians());
         ArmorAppearance {
+            optics: None,
             plate_visible: true,
             bracket_prisms_m: vec![],
             local: PoseFlu {
@@ -100,6 +101,7 @@ fn robot(model: RobotModel, y: f64, effect: &str) -> ChassisAppearance {
     })
     .collect();
     ChassisAppearance {
+        source_joints: vec![],
         model,
         armor_pattern: match model {
             RobotModel::Hero => armor::ArmorPattern::One,

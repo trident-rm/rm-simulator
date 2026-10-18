@@ -20,7 +20,7 @@ SM01, FI02 and LI01 guides themselves identify v1.0, 2018.11.
 | Module | Reference | Implemented approximation |
 |---|---|---|
 | AM02 small armor | `RoboMaster 装甲模块 AM02&AM12 2020 使用说明书.pdf`, pp.3–8; `AM02 2019.STEP` | Chamfered shell, smaller central dark panel, four exposed fasteners, rear supports, two rounded white plastic diffusers and SVG-derived white printing. Keeps the existing 141 × 135 × 19 mm physics housing and scoring face. The guide lists 140 × 125 mm; the STEP's axis-aligned envelope is approximately 19 × 130 × 141 mm. These are different envelopes, not grounds for silently changing the scoring constants. |
-| AM12 large armor | Same guide, pp.4,6,8; `AM12 2019.STEP` | Evaluated, not fitted. The guide lists 235 × 127 mm. The supplied assembly is rotated, so its world-axis bounds cannot be used directly as width/height. Both prototypes retain AM02 scoring armor. A large-armor variant needs coordinated collider, scoring and appearance work. |
+| AM12 large armor | Same guide, pp.4,6,8; `AM12 2019.STEP` | The source-bound folding Hero now fits a 235 mm-wide physical housing and source mount poses (see hardware-models.md). The guide lists 235 × 127 mm. The supplied assembly is rotated, so its world-axis bounds cannot be used directly as width/height. The legacy procedural prototypes retain AM02 armor. The source-bound Hero replaces its physical shell and artwork but retains the existing effective detector policy; the AM12 scoring region is not newly certified. |
 | LI01 light bar | `RoboMaster 裁判系统灯条模块说明书（CN&EN）.pdf`, pp.3–5; `LI01 2020 .STEP` | 285 × 50 × 84.75 mm envelope including two legs, main strip and top auxiliary windows, mounted above rear armor. Ten HP segments are a visualization choice. STEP envelope includes cable/connector protrusions. |
 | FI02 field interaction | `RoboMaster 场地交互模块 FI02 2020 说明书.pdf`, pp.3–6; `FI02 2019.STEP` | Drawing dimensions 121.67 × 105.67 × 17.80 mm, four edge indicators and downward-facing detection panel. Mounted beneath the central chassis enclosure with clearance. |
 | SM01 speed monitor | `RoboMaster 测速模块 SM01&SM11 使用说明书-CN&EN.pdf`, pp.3–9; `SM01 2019.STEP` | Infantry muzzle shroud, 109.81 mm long, 41.20 mm high, open projectile channel and two sensor stations. Width is an approximate drawing reading. Cable and connector protrusions are omitted. |
@@ -198,7 +198,7 @@ Chassis and outpost armor now share opaque, nonmetallic, off-white diffuser
 materials. Rounded shallow covers replace box-shaped or flat light strips.
 The existing light-center span and tip-to-tip height remain unchanged.
 Curvature, depth, roughness and reflectance are visual fits; no STEP triangles
-or module geometry are embedded. Both robot prototypes still use small armor.
+or module geometry are embedded. The legacy procedural prototypes use small armor; the optional source-bound Hero now has fitted large physical housings.
 
 When powered, an intensity texture gives the team-colored emission a soft
 center and edge/end falloff, leaving a reflective plastic rim. The emission
@@ -340,3 +340,79 @@ Drone through both ordinary and staged spawn paths. The old Drone is not a
 remain practice prototypes. The bound RMUC 2027 field supports the limited
 live control/base/outpost subset described in [the field guide](rmuc2027-field.md);
 full 2027 equipment and match rules remain incomplete.
+
+### Stair-climbing donor and mechanism tests
+
+The optional `dreamchaser-stair-heavy-v1` package binds DreamChaser's source
+front links, coupler, rear legs, sliding carriage, guide bearings and four wheel
+hubs separately. The profile uses the 2026 Engineer practice slot; it does not
+admit the unfinished RM2027 Heavy gameplay role. Launch with:
+
+```sh
+just run --cad-assets field --robot-assets local-assets/robot-cad-survey/bound-stair-heavy --third-person
+```
+
+T alternates raised-front stance and level travel. Raise the front wheels before
+meeting a step, drive onto it, then return the linkage to travel to lift the rear
+wheels. Repeat for the next step. Motion uses wheel forces and suspension in the
+ordinary physics world, with no chassis pose/height injection. The lower bay
+stays open in collision; the upper rails and rear electronics shelf are solid.
+Moving link proxies stop actuation against external obstacles.
+
+The closed planar linkage follows the source CAD bearings and technical report
+Figures 2–3: front pin 130 mm, front wheel arm 190 mm, coupler 200 mm and rear
+leg 320 mm. Travel is 5.309° absolute front-link angle; the source deployed pose
+is 76.220°. The actuator is prescribed at an assumed 40°/s, with assumed 38 kg
+mass and spring/motor tuning. This is not a calibrated torque/gearbox simulation.
+The upper manipulation arm and auxiliary sensor linkages remain fixed; PIE
+camera/UWB/arm retraction is outside this pass. The folding Hero continues to
+articulate its source arm, camera, muzzle and collision proxies with T.
+
+Reproduce the deterministic contact tests without a GPU:
+
+```sh
+nix develop -c cargo build -p rm-simulator-physics --example robot_mechanisms --locked
+python3 scripts/robot-mechanism-scenarios.py
+```
+
+The course has two 200 mm steps. It verifies a 400 mm rise, four final wheel
+contacts and a returned travel pose. The same drive commands with no linkage
+deployment stop at the first step. A separate Hero script folds and unfolds.
+Unit tests cover closed lengths, invalid closures, mid-climb restore/replay,
+Hero roof blocking and owner-anchor serialization of both mechanisms.
+
+Source assembly export lives in rm-map-tools:
+`benchmarks/2026-10-18-team-robot/bind_stairs.py`, with reviewed membership and
+analytic frames in `python/stair_linkage.py`. It preserves source triangles
+apart from the separately documented approved armor replacement. The package
+retains source credits and terms; it is generated locally, not embedded in code.
+
+Check the app input, loaded source groups, intermediate/end angles and return
+through the real console and host path:
+
+```sh
+python3 scripts/robot-mechanism-console.py --out local-assets/mechanism-console
+```
+
+Run once for each package from a fresh paused session. The script saves travel,
+mid-transform, deployed and returned screenshots plus a result JSON.
+
+For an offline video of the same crossing, save the example's CSV (now including
+body quaternion, all wheel centres and wheel spin), then render with the CAD
+tool environment:
+
+```sh
+target/nix/debug/examples/robot_mechanisms stairs steps COMMANDS.csv > local-assets/stair-motion.csv
+../rm-map-tools/ocpenv/bin/python scripts/render-stair-video.py \
+  --package local-assets/robot-cad-survey/bound-stair-heavy \
+  --motion local-assets/stair-motion.csv --out local-assets/stair-crossing.mp4
+```
+
+The commands are the stair scenario in `scripts/robot-mechanism-scenarios.py`.
+The 32 fps side-following clip replays recorded 128 Hz physics. Source-bound
+shells follow their rigid frames and the wheel centres/spin follow the physics
+snapshot. It is a diffuse CAD inspection render with simplified armor artwork,
+rather than an in-game screen recording. Step geometry matches the physical
+fixture; the camera follows the chassis without changing its motion. Requires
+rm-map-tools' Python environment, its diagnostic C++ rasterizer, clang++ and
+FFmpeg. Video and preview frames stay in ignored local-assets.
