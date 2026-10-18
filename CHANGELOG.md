@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+- Add a source-bound Artisans folding Hero for 2026 practice. T folds/unfolds its
+  arm while the firing stage counter-rotates; camera, muzzle, collision proxies
+  and debug overlays follow its actual joint angle. Check external clearances,
+  preserve mid-transform state through restore/prediction, and retain the fold
+  target on input expiry. Protocol 61 / RM10 / RMI6 carry the new state. Import
+  open CAD shells by source leaf so the camera and housings articulate correctly.
+
 - Give uncolored team robot surfaces and the prototype's uniform pale CAD tint
   a dark graphite presentation material, preserving other source colors and all
   original color metadata.

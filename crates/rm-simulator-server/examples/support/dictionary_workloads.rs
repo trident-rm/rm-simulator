@@ -193,6 +193,7 @@ fn drive(
     };
     let wobble = (rng.next_f64() - 0.5) * 0.12;
     ChassisCommand {
+        folded: false,
         jump: false,
         balance_control: 100,
         forward_m_s,

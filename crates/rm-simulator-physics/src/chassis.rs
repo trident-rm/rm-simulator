@@ -21,6 +21,7 @@ use crate::{
     Pose, Team,
     projectile::{FRICTION, SMALL_ARMOR_HOUSING_HALF_M},
 };
+use rapier3d_f64::parry::bounding_volume::BoundingVolume;
 use rapier3d_f64::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -223,6 +224,9 @@ fn octagon(hx: f64, hy: f64, cut: f64) -> [[f64; 2]; 8] {
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChassisConfig {
+    /// Optional prescribed folding arm; its collider and muzzle geometry share one state.
+    #[serde(default)]
+    pub folding: Option<crate::mechanism::FoldingConfig>,
     /// Source-fitted Zhulong/Hello World Omni prototype; selects its measured mounts.
     #[serde(default)]
     pub team_cad: bool,
@@ -314,6 +318,7 @@ impl Default for ChassisConfig {
     fn default() -> Self {
         let d = 0.245 * std::f64::consts::FRAC_1_SQRT_2;
         Self {
+            folding: None,
             team_cad: false,
             dynamics: ChassisDynamics {
                 suspension_travel_m: 0.12,
@@ -391,6 +396,43 @@ impl ChassisConfig {
             ..Self::default()
         }
     }
+    /// Source-fitted Artisans Hero with mecanum wheels and a counter-rotating folding head.
+    /// Joint centres come from the 2026 source STEP; 127 degrees and 90 degrees/s
+    /// are simulator actuator assumptions. Legs retain effective ray suspension.
+    pub fn folding_hero() -> Self {
+        let reference_z = 0.0775;
+        Self {
+            folding: Some(crate::mechanism::FoldingConfig {
+                yaw_pivot_m: [0., 0., 0.076 - reference_z],
+                lower_pivot_m: [0., 0., 0.122 - reference_z],
+                upper_pivot_m: [-0.0091, 0., 0.23647 - reference_z],
+                arm_center_m: [-0.00455, 0.06, 0.057235],
+                arm_half_m: [0.03, 0.135, 0.07],
+                head_center_m: [0.0755, -0.019, 0.0275],
+                head_half_m: [0.1505, 0.095, 0.069],
+                folded_angle_rad: 127_f64.to_radians(),
+                speed_rad_s: std::f64::consts::FRAC_PI_2,
+                muzzle_offset_m: [0.23582, -0.00141, 0.],
+                camera_offset_m: [0.14243, -0.00676, 0.07753],
+            }),
+            body_half_m: [0.28, 0.235, 0.0775],
+            turret_center_m: [-0.0091, 0., 0.23647 - reference_z],
+            turret_half_m: [0.1505, 0.095, 0.069],
+            wheel_hubs_m: vec![
+                [0.29, 0.27505],
+                [0.29, -0.27505],
+                [-0.244978, 0.27499],
+                [-0.244978, -0.27499],
+            ],
+            wheel_radius_m: 0.077,
+            wheel_width_m: 0.042,
+            hub_drop_m: 0.01293 + reference_z - 0.03,
+            armor_standoff_m: 0.055,
+            armor_height_m: -0.005,
+            ..Self::hero()
+        }
+    }
+
     /// Gun muzzle offset from the pitch pivot in local FLU metres.
     /// The source SM01 front is 206.577 mm ahead of the gimbal pivot.
     ///
@@ -399,7 +441,9 @@ impl ChassisConfig {
     /// assert_eq!(ChassisConfig::team_cad().muzzle_offset_m(), [0.20657673, 0., 0.]);
     /// ```
     pub fn muzzle_offset_m(&self) -> [f64; 3] {
-        if self.team_cad {
+        if let Some(folding) = &self.folding {
+            folding.muzzle_offset_m
+        } else if self.team_cad {
             [0.206_576_73, 0., 0.]
         } else {
             [MUZZLE_FORWARD_M, 0., 0.]
@@ -781,6 +825,9 @@ impl ChassisConfig {
 
     /// Validate dimensions and physical parameters before constructing a chassis.
     pub fn validate(&self) -> Result<(), &'static str> {
+        if let Some(folding) = &self.folding {
+            folding.validate()?;
+        }
         if self.planar_flight && (self.balance_assist || !self.wheel_hubs_m.is_empty()) {
             return Err("planar flight cannot have wheels or balance assist");
         }
@@ -884,6 +931,9 @@ impl ChassisConfig {
 /// the snapshot follows it at once.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChassisCommand {
+    /// Request the folded endpoint. Non-transformable robots ignore it.
+    #[serde(default)]
+    pub folded: bool,
     /// Desired body forward speed, in metres per second.
     pub forward_m_s: f64,
     /// Desired body left speed, in metres per second.
@@ -911,6 +961,7 @@ fn full_balance_control() -> u8 {
 impl Default for ChassisCommand {
     fn default() -> Self {
         Self {
+            folded: false,
             forward_m_s: 0.,
             left_m_s: 0.,
             yaw_rate_rad_s: 0.,
@@ -974,6 +1025,9 @@ pub struct WheelSnapshot {
 /// prediction at a checkpoint.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChassisSnapshot {
+    /// Current folding joint angle in radians; zero for fixed-geometry robots.
+    #[serde(default)]
+    pub fold_angle_rad: f64,
     /// Changes on placement or revival, so clients never interpolate across robot lives.
     pub placement_revision: u64,
     /// Field-assigned identity, stable for the chassis' life.
@@ -1118,6 +1172,8 @@ fn integrate_wheel_drives(
 /// wheel geometry resolved from its configuration, and the drive and gimbal
 /// state carried between ticks.
 pub(crate) struct Chassis {
+    fold_angle_rad: f64,
+    fold_colliders: Vec<ColliderHandle>,
     placement_revision: u64,
     id: u32,
     team: Team,
@@ -1142,6 +1198,13 @@ pub(crate) struct Chassis {
     pub(crate) armor_touching: Vec<ColliderHandle>,
 }
 
+fn pose_of(body: &RigidBody) -> Pose {
+    let p = body.position();
+    Pose {
+        translation_m: p.translation.to_array(),
+        rotation_wxyz: [p.rotation.w, p.rotation.x, p.rotation.y, p.rotation.z],
+    }
+}
 fn vector(v: [f64; 3]) -> Vector {
     Vector::new(v[0], v[1], v[2])
 }
@@ -1179,6 +1242,7 @@ impl ChassisSnapshot {
     /// let config = ChassisConfig::default();
     /// let wheels = config.wheel_hubs_m.len();
     /// let mut snapshot = ChassisSnapshot {
+    ///     fold_angle_rad: 0.,
     ///     placement_revision: 0,
     ///     id: 0,
     ///     team: Team::Red,
@@ -1251,7 +1315,7 @@ impl Chassis {
         // above the body centre, as on a real robot. A flying body keeps all
         // of it centred instead: its roll and pitch locks hold only while
         // the inertia stays axis-aligned, and its gimbal hangs off-centre.
-        let turret_share = if config.planar_flight {
+        let turret_share = if config.planar_flight || config.folding.is_some() {
             0.0
         } else {
             TURRET_MASS_SHARE
@@ -1317,15 +1381,31 @@ impl Chassis {
         };
         let column_top = turret_top.max(hz);
         let column_half = (column_top - column_bottom) * 0.5;
-        world.insert_collider(
-            ColliderBuilder::cuboid(tx, ty, column_half)
-                .translation(Vector::new(cx, cy, column_bottom + column_half))
-                .mass(config.mass_kg * turret_share)
-                .friction(BODY_FRICTION)
-                .restitution(ROBOT_RESTITUTION)
-                .restitution_combine_rule(CoefficientCombineRule::Min),
-            Some(body),
-        );
+        let mut fold_colliders = Vec::new();
+        if let Some(folding) = &config.folding {
+            for (pose, half) in folding.collision_parts(Pose::default(), [0., 0.], 0.) {
+                fold_colliders.push(
+                    world.insert_collider(
+                        ColliderBuilder::cuboid(half[0], half[1], half[2])
+                            .position(rapier_pose(pose))
+                            .density(0.)
+                            .friction(BODY_FRICTION)
+                            .restitution(ROBOT_RESTITUTION),
+                        Some(body),
+                    ),
+                );
+            }
+        } else {
+            world.insert_collider(
+                ColliderBuilder::cuboid(tx, ty, column_half)
+                    .translation(Vector::new(cx, cy, column_bottom + column_half))
+                    .mass(config.mass_kg * turret_share)
+                    .friction(BODY_FRICTION)
+                    .restitution(ROBOT_RESTITUTION)
+                    .restitution_combine_rule(CoefficientCombineRule::Min),
+                Some(body),
+            );
+        }
         // Armor housings ride the body without adding to its mass.
         let [ax, ay, az] = SMALL_ARMOR_HOUSING_HALF_M;
         let armor = config
@@ -1369,6 +1449,8 @@ impl Chassis {
             geometry.len()
         ];
         Ok(Self {
+            fold_angle_rad: 0.,
+            fold_colliders,
             placement_revision: 0,
             id,
             team,
@@ -1410,6 +1492,11 @@ impl Chassis {
     /// Authoritative held turret pose, including the aim frozen by defeat.
     pub(crate) fn turret_pose(&self, world: &PhysicsWorld) -> Pose {
         let body = &world.bodies[self.body];
+        if let Some(folding) = &self.config.folding {
+            return folding
+                .poses(pose_of(body), self.aim_rad, self.fold_angle_rad)
+                .head;
+        }
         Pose {
             translation_m: body
                 .position()
@@ -1545,12 +1632,22 @@ impl Chassis {
         world
             .bodies
             .propagate_modified_body_positions_to_colliders(&mut world.colliders);
+        let max_angle = self
+            .config
+            .folding
+            .as_ref()
+            .map_or(0., |f| f.folded_angle_rad);
+        if !state.fold_angle_rad.is_finite() || !(0. ..=max_angle).contains(&state.fold_angle_rad) {
+            return Err("invalid folding state");
+        }
+        self.fold_angle_rad = state.fold_angle_rad;
         self.placement_revision = state.placement_revision;
         self.set_command(state.command)?;
         self.defeated = state.defeated;
         self.jump_held = state.jump_held;
         self.aim_rad = state.held_aim_rad;
         self.gimbal_velocity_rad_s = state.gimbal_velocity_rad_s;
+        self.sync_fold_colliders(world);
         let body = &mut world.bodies[self.body];
         body.set_linvel(Vector::from_array(state.velocity_m_s), true);
         body.set_angvel(Vector::from_array(state.angular_velocity_rad_s), true);
@@ -1571,6 +1668,7 @@ impl Chassis {
     /// accumulated, so repeated calls over one tick are safe.
     pub(crate) fn apply_forces(&mut self, world: &mut PhysicsWorld, dt_s: f64) {
         self.step_gimbal(dt_s);
+        self.step_fold(world, dt_s);
         let cfg = &self.config;
         let (pose, linvel, angvel, com) = {
             let body = &world.bodies[self.body];
@@ -1775,6 +1873,90 @@ impl Chassis {
             body.add_force_at_point(force, point, true);
         }
     }
+    fn step_fold(&mut self, world: &mut PhysicsWorld, dt_s: f64) {
+        let Some(folding) = &self.config.folding else {
+            return;
+        };
+        let goal = if self.command.folded {
+            folding.folded_angle_rad
+        } else {
+            0.
+        };
+        if !self.defeated {
+            let change = folding.speed_rad_s * dt_s;
+            let next = self.fold_angle_rad + (goal - self.fold_angle_rad).clamp(-change, change);
+            if next == self.fold_angle_rad || self.fold_path_clear(world, next) {
+                self.fold_angle_rad = next;
+            }
+        }
+        self.sync_fold_colliders(world);
+    }
+    fn fold_path_clear(&self, world: &PhysicsWorld, next: f64) -> bool {
+        let folding = self.config.folding.as_ref().unwrap();
+        let body = pose_of(&world.bodies[self.body]);
+        let before = folding.collision_parts(body, self.aim_rad, self.fold_angle_rad);
+        // Bound angular sampling even for a caller-supplied faster actuator.
+        let samples = ((next - self.fold_angle_rad).abs() / 0.25_f64.to_radians())
+            .ceil()
+            .max(2.) as usize;
+        for step in 1..=samples {
+            let angle =
+                self.fold_angle_rad + (next - self.fold_angle_rad) * step as f64 / samples as f64;
+            for ((old_pose, _), (new_pose, half)) in before
+                .into_iter()
+                .zip(folding.collision_parts(body, self.aim_rad, angle))
+            {
+                let shape = Cuboid::new(vector(half));
+                let new_pose = rapier_pose(new_pose);
+                let bounds = shape.compute_aabb(&new_pose);
+                for (_, obstacle) in world.colliders.iter() {
+                    if obstacle.parent() == Some(self.body)
+                        || obstacle.is_sensor()
+                        || !obstacle.is_enabled()
+                        || !bounds.intersects(&obstacle.compute_aabb())
+                    {
+                        continue;
+                    }
+                    let penetration = |pose| {
+                        rapier3d_f64::parry::query::contact(
+                            obstacle.position(),
+                            obstacle.shape(),
+                            &pose,
+                            &shape,
+                            0.,
+                        )
+                        .map(|c| c.map_or(0., |c| (-c.dist).max(0.)))
+                    };
+                    let Ok(new_depth) = penetration(new_pose) else {
+                        return false;
+                    };
+                    if new_depth <= 1e-6 {
+                        continue;
+                    }
+                    let old_depth = penetration(rapier_pose(old_pose)).unwrap_or(0.);
+                    if new_depth > old_depth + 1e-6 {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+    pub(crate) fn sync_fold_colliders(&self, world: &mut PhysicsWorld) {
+        let Some(folding) = &self.config.folding else {
+            return;
+        };
+        let body = pose_of(&world.bodies[self.body]);
+        let inverse = world.bodies[self.body].position().inverse();
+        for (handle, (pose, _)) in self.fold_colliders.iter().zip(folding.collision_parts(
+            body,
+            self.aim_rad,
+            self.fold_angle_rad,
+        )) {
+            world.colliders[*handle].set_position_wrt_parent(inverse * rapier_pose(pose));
+            world.colliders[*handle].set_position(rapier_pose(pose));
+        }
+    }
     fn step_gimbal(&mut self, dt_s: f64) {
         if self.defeated {
             return;
@@ -1812,6 +1994,7 @@ impl Chassis {
         let pose = *body.position();
         let turret = self.turret_pose(world);
         ChassisSnapshot {
+            fold_angle_rad: self.fold_angle_rad,
             placement_revision: self.placement_revision,
             id: self.id,
             team: self.team,
@@ -2892,5 +3075,126 @@ mod team_cad_tests {
                 .iter()
                 .all(|w| w.angular_velocity_rad_s.abs() < 0.01)
         );
+    }
+}
+
+#[cfg(test)]
+mod folding_tests {
+    use super::*;
+    use crate::{TargetFrames, WorldPhysics, tick_ns};
+    fn advance(w: &mut WorldPhysics, tick: &mut u64, count: u64) {
+        for _ in 0..count {
+            w.step(*tick * tick_ns(), &TargetFrames::new(vec![]))
+                .unwrap();
+            *tick += 1;
+        }
+    }
+    fn setup(height: f64) -> (WorldPhysics, u32) {
+        let mut w = WorldPhysics::new(&[], 0.);
+        let id = w
+            .add_chassis(
+                Team::Red,
+                ChassisConfig::folding_hero(),
+                Pose::at([0., 0., height]),
+            )
+            .unwrap();
+        (w, id)
+    }
+    fn height(w: &WorldPhysics) -> f64 {
+        w.dynamic_geometry_snapshot()
+            .shapes
+            .iter()
+            .map(|(p, s)| s.compute_aabb(p).maxs.z)
+            .fold(f64::NEG_INFINITY, f64::max)
+    }
+    #[test]
+    fn folding_changes_physical_envelope_and_stops_unfolding_at_a_roof() {
+        let (mut w, id) = setup(0.17);
+        let mut tick = 0;
+        advance(&mut w, &mut tick, 512);
+        let before = height(&w);
+        assert!(before > 0.40);
+        w.command_chassis(
+            id,
+            ChassisCommand {
+                folded: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        advance(&mut w, &mut tick, 256);
+        let folded = w.chassis_snapshot(id).unwrap();
+        assert!(
+            (folded.fold_angle_rad - folded.config.folding.as_ref().unwrap().folded_angle_rad)
+                .abs()
+                < 1e-12
+        );
+        assert!(height(&w) < 0.25, "{}", height(&w));
+        let muzzle = w.chassis_muzzle_pose(id).unwrap();
+        assert!((muzzle.translation_m[2] - folded.turret.translation_m[2]).abs() < 0.001);
+        w.add_static_box(Pose::at([0., 0., 0.5]), [2., 2., 0.5]);
+        w.command_chassis(id, ChassisCommand::default()).unwrap();
+        advance(&mut w, &mut tick, 256);
+        let blocked = w.chassis_snapshot(id).unwrap();
+        assert!(
+            blocked.fold_angle_rad > 1. && blocked.fold_angle_rad < folded.fold_angle_rad,
+            "blocked={} folded={} height={} pos={:?}",
+            blocked.fold_angle_rad,
+            folded.fold_angle_rad,
+            height(&w),
+            blocked.pose
+        );
+        assert!(height(&w) < 0.251, "{}", height(&w));
+        w.command_chassis(
+            id,
+            ChassisCommand {
+                folded: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        advance(&mut w, &mut tick, 256);
+        assert!(
+            (w.chassis_snapshot(id).unwrap().fold_angle_rad - folded.fold_angle_rad).abs() < 1e-12
+        );
+    }
+    #[test]
+    fn mid_transform_restores_and_replays_at_the_same_rate() {
+        let (mut host, id) = setup(3.);
+        let mut tick = 0;
+        host.command_chassis(
+            id,
+            ChassisCommand {
+                folded: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        advance(&mut host, &mut tick, 40);
+        let saved = host.chassis_snapshot(id).unwrap();
+        assert!(
+            (saved.fold_angle_rad - std::f64::consts::FRAC_PI_2 * 40. / 128.).abs() < 1e-12,
+            "angle={} command={:?}",
+            saved.fold_angle_rad,
+            saved.command
+        );
+        let mut restored = WorldPhysics::new(&[], 0.);
+        restored.restore_chassis(&saved).unwrap();
+        assert_eq!(
+            restored.chassis_snapshot(id).unwrap().fold_angle_rad,
+            saved.fold_angle_rad
+        );
+        let mut replay_tick = tick;
+        advance(&mut host, &mut tick, 30);
+        advance(&mut restored, &mut replay_tick, 30);
+        assert_eq!(
+            host.chassis_snapshot(id).unwrap().fold_angle_rad,
+            restored.chassis_snapshot(id).unwrap().fold_angle_rad
+        );
+        let a = host.chassis_muzzle_pose(id).unwrap();
+        let b = restored.chassis_muzzle_pose(id).unwrap();
+        for i in 0..3 {
+            assert!((a.translation_m[i] - b.translation_m[i]).abs() < 1e-8);
+        }
     }
 }

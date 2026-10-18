@@ -230,6 +230,7 @@ impl InputStream {
     /// zero. Returns `None` when nothing was held.
     fn neutralize(&mut self) -> Option<ChassisCommand> {
         self.held.take().map(|held| ChassisCommand {
+            folded: held.folded,
             aim_yaw_rad: held.aim_yaw_rad,
             aim_pitch_rad: held.aim_pitch_rad,
             ..Default::default()
@@ -254,6 +255,18 @@ impl InputStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn an_expired_input_lease_stops_driving_without_unfolding_the_robot() {
+        let mut stream = InputStream::default();
+        let mut input = frame(1, 2.);
+        input.command.folded = true;
+        input.sampled_time_ns = 0;
+        stream.receive(input, 0, 0).unwrap();
+        stream.advance(0);
+        let neutral = stream.expire(INPUT_LEASE_NS + 1).unwrap();
+        assert_eq!(neutral.forward_m_s, 0.);
+        assert!(neutral.folded);
+    }
     fn frame(sequence: u64, forward_m_s: f64) -> InputFrame {
         InputFrame {
             input_epoch: 0,

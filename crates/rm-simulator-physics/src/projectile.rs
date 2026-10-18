@@ -1533,6 +1533,9 @@ impl WorldPhysics {
                 ));
             }
             self.world.step();
+            for chassis in &self.chassis {
+                chassis.sync_fold_colliders(&mut self.world);
+            }
             contacts
                 .extend(self.capture_contacts(frames, frac_prev, frac_next, substep_s, next_ns));
             self.capture_armor_collisions();

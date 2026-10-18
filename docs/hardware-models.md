@@ -215,9 +215,9 @@ The 797-group Infantry and 216-group Hero hierarchies retain named source
 assemblies. Unclassified non-solid geometry remains present at the root rather
 than being dropped. Packaging verifies unchanged mesh buffers/materials in
 `model.glb`, single attachment of each cooked mesh node and identical placed
-triangle counts. The two candidate packages are visual exports, not admitted by
-the existing `--robot-assets` fitted profile. Their wheel, armor, camera, muzzle
-and folding/pitch bindings remain to be fitted before playable integration.
+triangle counts. These raw candidate packages remain visual exports. A separately
+bound Hero package now supports the runtime folding prototype described below;
+the raw Infantry still requires its own gameplay fit.
 
 Neutral grey previews make unpainted geometry easier to inspect; separate dark
 previews show the graphite display policy. Neither invents source paint. The
@@ -227,3 +227,58 @@ Other reviewed releases: TCR's folding omni has a complete SolidWorks assembly
 but only component STEP files, Climber's directly attached ZIPs are control code
 (the CAD is on Baidu), and Qiqi's directly attached complete tunnel Infantry is
 SLDPRT. These were not presented as complete STEP imports.
+
+
+## Folding Hero runtime prototype
+
+The Artisans Hero can now run in **2026 practice** with its source arm, separate
+firing pitch and four mecanum wheels bound:
+
+```sh
+just run --play --cad-assets field --robot-assets local-assets/robot-cad-survey/bound-hero --third-person
+```
+
+The package selects Hero and its fitted preset automatically. A headless host
+uses `--folding-hero`; clients supply the same optional assets. The 2027 roster
+uses Heavy rather than Hero, so this prototype does not admit a Hero into a 2027
+match. The existing Omni and the fixed-height Future Infantry do not transform.
+
+Press **T** to toggle the transform target. The folding arm moves at an assumed
+90 degrees/s to an assumed 127 degree endpoint. Its upper stage counter-rotates
+while maintaining the requested yaw/pitch; the muzzle and lens move with that
+stage. Geometry is rigidly articulated, not scaled. The source camera is behind
+chassis structure when folded, so its first-person view is obstructed; **V**
+switches to third-person. Firing still follows the authoritative moving muzzle.
+
+`physics::mechanism::FoldingConfig` defines body-relative hinges, two collision
+cuboids and camera/muzzle mounts. `ChassisCommand::folded` is a held endpoint
+request; `ChassisSnapshot::fold_angle_rad` preserves the actual angle. A defeated
+robot freezes its actuator. The transform checks intervening poses at no more
+than 0.25 degree intervals and stops when it would increase penetration into
+external geometry; reversing can retreat. Collision, rendering, debug overlays
+and muzzle computation use the same joint state. A lost input lease stops driving
+while retaining the fold target. Protocol 61, RM10 owner anchors and RMI6 input
+batches carry these values through checkpoints, replay and remote presentation.
+
+This remains a prescribed linkage with simple collision proxies, assumed 30 kg
+mass and effective spring/tyre dynamics. Motor torque, flexible feed-chain motion,
+source leg linkage actuation and self-contact are not simulated. The source wheel
+pose is treated as full droop; under the assumed load/springs, the body settles
+roughly 7 mm lower. The static folded mesh envelope is about 253 mm; the loaded
+prototype is approximately 245 mm high. This is a simulator fit, not hardware
+clearance certification. The firing pivot moved from 319 to 143 mm in the live
+flat-ground exercise.
+
+The original solid-only cook grouped open shells together. The mechanism cook
+uses `audit_source.py --faces` and `prepare_source.py --split-shells --hierarchy`
+to retain their exact leaf memberships, including the camera shell. Its 738
+solids and four non-solid leaf groups produce 206,722 triangles. The original
+review package is retained separately. `bind_hero.py` preserves rest geometry
+and source materials, then creates body/yaw/fold/pitch/wheel groups and review
+poses; the bound package keeps its author notice and source checksum.
+
+Regression coverage checks actual collider height, refusal to unfold through a
+250 mm ceiling, reverse travel, exact joint replay from a mid-fold snapshot,
+owner-anchor endpoints, compact/fixed input round trips and expired input leases.
+The live console exercise presses T, captures mid/end poses and collider overlays,
+fires while folded and unfolds again through ordinary host commands.

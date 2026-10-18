@@ -118,6 +118,8 @@ fn robot(model: RobotModel, y: f64, effect: &str) -> ChassisAppearance {
         pose: pose(0.0, y, z, 0.0),
         body_half_m: [hx as f32, hy as f32, hz as f32],
         body_shell_visible: true,
+        fold_angle_rad: 0.,
+        fold_collision_parts: vec![],
         frame_beam_step_m: 0.0,
         body_outline_m: vec![],
         bumper_prisms_m: vec![],

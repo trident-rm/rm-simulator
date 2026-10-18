@@ -213,6 +213,7 @@ struct ChassisRecord {
 /// pose is normalized.
 #[derive(Serialize, Deserialize)]
 struct ChassisMotion {
+    fold_angle_rad: f64,
     pose: rm_simulator_world::Pose,
     turret: rm_simulator_world::Pose,
     velocity_m_s: [f64; 3],
@@ -401,6 +402,7 @@ impl PlayerSnapshot {
             .chassis
             .iter()
             .map(|chassis| ChassisMotion {
+                fold_angle_rad: chassis.fold_angle_rad,
                 pose: chassis.pose,
                 turret: chassis.turret,
                 velocity_m_s: chassis.velocity_m_s,
@@ -551,6 +553,7 @@ impl PlayerSnapshot {
                 id: record.id,
                 team: record.team,
                 config,
+                fold_angle_rad: motion.fold_angle_rad,
                 pose: motion.pose,
                 turret: motion.turret,
                 velocity_m_s: motion.velocity_m_s,

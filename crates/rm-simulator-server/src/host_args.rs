@@ -27,6 +27,9 @@ use rm_simulator_world::{Caliber, RuneKind, Shot, outpost, projectile::Projectil
 /// accepted by the other.
 #[derive(Args, Debug, Clone)]
 pub struct HostArgs {
+    /// Source-fitted Artisans Hero with a transformable folding launcher.
+    #[arg(long, conflicts_with = "team_cad")]
+    pub folding_hero: bool,
     /// Use the source-fitted team Omni prototype for omni Infantry and Sentry.
     #[arg(long)]
     pub team_cad: bool,

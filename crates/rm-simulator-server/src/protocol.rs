@@ -89,7 +89,7 @@ use serde::{Deserialize, Serialize};
 /// the assisted balance chassis configuration. RMI4 inputs carry the jump
 /// button; RMO7 anchors and checkpoints retain the consumed-press latch.
 /// Version 48 adds planar Drone flight and adjustable balance stabilization.
-/// RMI5/RMO8 carry the stabilization percentage.
+/// RMI6/RMO8 carry the stabilization percentage.
 /// Version 49 adds the live prototype air-support policy and armed Drone preset.
 /// Version 50 adds the Drone's Aerial Safety Rope to the chassis configuration
 /// and the `MapMarker` command.
@@ -100,7 +100,8 @@ use serde::{Deserialize, Serialize};
 /// Version 58 carries adaptive armor selections and per-impact damage regions.
 /// Version 59 carries wheel axle velocity, suspension compression and octagonal frames.
 /// Version 60 carries the source-fitted team robot mount profile.
-pub const PROTOCOL_VERSION: u32 = 60;
+/// Version 61 carries folding input and the restorable geometry joint angle.
+pub const PROTOCOL_VERSION: u32 = 61;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///

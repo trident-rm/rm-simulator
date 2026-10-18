@@ -234,7 +234,9 @@ impl Session {
             let simulation = Simulation::from_cad(
                 cad,
                 &options,
-                Some(if args.host.team_cad {
+                Some(if args.host.folding_hero {
+                    ChassisConfig::folding_hero()
+                } else if args.host.team_cad {
                     ChassisConfig::team_cad()
                 } else {
                     ChassisConfig::default()

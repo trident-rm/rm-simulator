@@ -14,8 +14,8 @@ use rm_simulator_world::{ChassisConfig, ChassisSnapshot};
 use serde::{Deserialize, Serialize};
 use std::io;
 
-/// Anchor magic, `RMO9`, checked before any field is read. The ninth revision
-/// adds independent wheel axle speed and suspension compression.
+/// Anchor magic, `RM10`, checked before any field is read. The tenth revision
+/// adds the held fold request and current folding joint angle.
 /// It keeps the `RMO4` header and configuration reference and quantizes every
 /// dynamic float: translations to millimetres, velocities to 1 cm/s, rates to
 /// 1 mrad/s and aims to 0.1 mrad. Quaternions travel smallest-three in six
@@ -26,7 +26,7 @@ use std::io;
 /// hostile or corrupt anchor still decodes to finite values, and
 /// out-of-range or non-finite dynamics fail at encode time, so the datagram
 /// size stays fixed whatever the motion.
-pub const MAGIC: &[u8; 4] = b"RMO9";
+pub const MAGIC: &[u8; 4] = b"RM10";
 /// Largest accepted anchor datagram in bytes. An encoding past this fails
 /// rather than fragmenting, because one anchor must fit one datagram.
 pub const MAX_BYTES: usize = 1000;
@@ -160,7 +160,16 @@ impl OwnerAnchor {
     /// size. Errors when a dynamic value is non-finite or outside its
     /// quantized range, or when the whole anchor exceeds [`MAX_BYTES`].
     pub fn encode(&self) -> io::Result<Vec<u8>> {
-        if !self.owner.command.is_finite()
+        let max_fold = self
+            .owner
+            .config
+            .folding
+            .as_ref()
+            .map_or(0., |f| f.folded_angle_rad);
+        if !self.owner.fold_angle_rad.is_finite()
+            || self.owner.fold_angle_rad < 0.
+            || self.owner.fold_angle_rad > max_fold
+            || !self.owner.command.is_finite()
             || self
                 .owner
                 .wheels
@@ -204,7 +213,9 @@ impl OwnerAnchor {
         bytes.extend(quantize_i32(c.aim_yaw_rad, AIM_SCALE)?.to_le_bytes());
         bytes.extend(quantize_i32(c.aim_pitch_rad, AIM_SCALE)?.to_le_bytes());
         bytes.push(u8::from(c.jump));
+        bytes.push(u8::from(c.folded));
         bytes.push(c.balance_control);
+        bytes.extend(quantize_i32(self.owner.fold_angle_rad, AIM_SCALE)?.to_le_bytes());
         bytes.push(u8::from(self.owner.jump_held));
         for v in self.owner.held_aim_rad {
             bytes.extend(quantize_i32(v, AIM_SCALE)?.to_le_bytes());
@@ -297,11 +308,18 @@ impl OwnerAnchor {
             aim_yaw_rad: reader.q32(AIM_SCALE)?,
             aim_pitch_rad: reader.q32(AIM_SCALE)?,
             jump: reader.boolean()?,
+            folded: reader.boolean()?,
             balance_control: reader.take::<1>()?[0],
         };
         if !command.is_finite() {
             return Err(invalid());
         }
+        let max_angle = config.folding.as_ref().map_or(0., |f| f.folded_angle_rad);
+        let fold_angle_rad = reader.q32(AIM_SCALE)?;
+        if fold_angle_rad < -0.0001 || fold_angle_rad > max_angle + 0.0001 {
+            return Err(invalid());
+        }
+        let fold_angle_rad = fold_angle_rad.clamp(0., max_angle);
         let jump_held = reader.boolean()?;
         let held_aim_rad = reader.q32_array::<2>(AIM_SCALE)?;
         let gimbal_velocity_rad_s = reader.q16_array::<2>(RATE_SCALE)?;
@@ -332,6 +350,7 @@ impl OwnerAnchor {
             time_ns,
             paused,
             owner: ChassisSnapshot {
+                fold_angle_rad,
                 id,
                 team,
                 config: config.clone(),
@@ -350,7 +369,7 @@ impl OwnerAnchor {
         })
     }
 }
-/// Quantizer scales for the `RMO9` dynamic body, chosen to mirror the
+/// Quantizer scales for the `RM10` dynamic body, chosen to mirror the
 /// checkpoint precisions: millimetre positions, smallest-three quaternions,
 /// centimetre-per-second velocities, milliradian-per-second rates and
 /// 0.1 mrad aims. Wheel roll keeps 0.1 mrad in 32 bits because roll is
@@ -588,6 +607,12 @@ mod tests {
             close(a, b, 0.001);
         }
         assert_eq!(expected.owner.command.jump, actual.owner.command.jump);
+        assert_eq!(expected.owner.command.folded, actual.owner.command.folded);
+        close(
+            expected.owner.fold_angle_rad,
+            actual.owner.fold_angle_rad,
+            0.0001,
+        );
         assert_eq!(
             expected.owner.command.balance_control,
             actual.owner.command.balance_control
@@ -648,6 +673,30 @@ mod tests {
     }
 
     #[test]
+    fn folding_angle_and_request_survive_an_owner_anchor_including_the_endpoint() {
+        let (state, chassis) = anchored(177, 5, 3);
+        let mut anchor = OwnerAnchor::from_state(&state, chassis).unwrap();
+        anchor.owner.config = rm_simulator_world::ChassisConfig::folding_hero();
+        anchor.owner.command.folded = true;
+        let max = anchor
+            .owner
+            .config
+            .folding
+            .as_ref()
+            .unwrap()
+            .folded_angle_rad;
+        for angle in [0.75231, max] {
+            anchor.owner.fold_angle_rad = angle;
+            let bytes = anchor.encode().unwrap();
+            let decoded = OwnerAnchor::decode(&bytes, &anchor.owner.config).unwrap();
+            assert_quantized(&anchor, &decoded);
+            assert!(decoded.owner.fold_angle_rad <= max);
+        }
+        anchor.owner.fold_angle_rad = max + 1.;
+        assert!(anchor.encode().is_err());
+    }
+
+    #[test]
     fn anchor_round_trips_against_its_named_configuration_only() {
         let (state, chassis) = anchored(177, 5, 3);
         let mut anchor = OwnerAnchor::from_state(&state, chassis).unwrap();
@@ -684,8 +733,8 @@ mod tests {
             &OwnerAnchor::decode(&packed, &noisy.owner.config).unwrap(),
         );
         assert!(
-            packed.len() < 230,
-            "the quantized anchor must stay near 226 bytes, not 444"
+            packed.len() < 235,
+            "the fold request and joint add five bytes to the 226-byte anchor"
         );
         // A different configuration must not decode an anchor that names the
         // old one, even when its wheel count happens to agree.

@@ -84,6 +84,7 @@ fn main() -> AppExit {
         );
         app.insert_resource(rm_simulator_render::team_robot::TeamRobotAssets {
             file: "robots://neutral.glb".into(),
+            folding_hero: args.host.folding_hero,
         });
     }
     let mut plugins = DefaultPlugins

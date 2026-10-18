@@ -279,8 +279,11 @@ impl Args {
         self.host.cad_assets = std::path::absolute(&self.host.cad_assets)?;
         if let Some(path) = &mut self.robot_assets {
             *path = std::path::absolute(&*path)?;
-            crate::robot_assets::verify(path)?;
-            self.host.team_cad = true;
+            self.host.folding_hero = crate::robot_assets::verify(path)?;
+            self.host.team_cad = !self.host.folding_hero;
+            if self.host.folding_hero && self.robot == Robot::default() {
+                self.robot = Robot::Hero;
+            }
         }
         Ok(())
     }

@@ -533,10 +533,23 @@ pub(crate) fn chassis_appearance(
     let aim = pose_flu(chassis.turret);
     let (yaw_stage, turret) = gimbal_poses(pose_flu(chassis.pose), aim);
     ChassisAppearance {
+        fold_angle_rad: chassis.fold_angle_rad as f32,
+        fold_collision_parts: config
+            .folding
+            .as_ref()
+            .map(|f| {
+                f.collision_parts(chassis.pose, chassis.held_aim_rad, chassis.fold_angle_rad)
+                    .into_iter()
+                    .map(|(pose, half)| (pose_flu(pose), half.map(|x| x as f32)))
+                    .collect()
+            })
+            .unwrap_or_default(),
         model: {
             use rm_simulator_render::chassis::RobotModel;
             use rm_simulator_server::protocol::Robot;
-            if config.team_cad {
+            if config.folding.is_some() {
+                RobotModel::FoldingHero
+            } else if config.team_cad {
                 RobotModel::TeamCad
             } else {
                 match robot {

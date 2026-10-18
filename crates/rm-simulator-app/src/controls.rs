@@ -99,6 +99,7 @@ pub struct PlayerCamera;
 /// the pilot acts or the robot is placed, so a change here is a transition.
 #[derive(Clone, Copy, PartialEq)]
 struct DriveIntent {
+    folded: bool,
     balance_control: u8,
     jump: bool,
     forward: f64,
@@ -119,6 +120,8 @@ pub struct Drive {
     /// Spin mode, toggled by the `Spin` action: the chassis turns at a fixed
     /// rate instead of following the aim.
     pub spinning: bool,
+    /// Held transform endpoint requested by the pilot.
+    pub folded: bool,
     intent: Option<DriveIntent>,
 }
 impl Drive {
@@ -129,6 +132,7 @@ impl Drive {
             chassis_id,
             third_person,
             spinning: false,
+            folded: false,
             intent: None,
         }
     }
@@ -206,6 +210,7 @@ pub fn drive_command(
             .clamp(-MAX_FOLLOW_RAD_S, MAX_FOLLOW_RAD_S)
     };
     ChassisCommand {
+        folded: false,
         jump: false,
         balance_control: 100,
         forward_m_s: body.x,
@@ -284,7 +289,19 @@ pub fn drive_chassis(
         )))
     };
     let blocked = ui.blocks_input();
+    if drive.intent.is_none() {
+        drive.folded = chassis.command.folded;
+    }
+    if !ui.blocks_input()
+        && chassis.config.folding.is_some()
+        && ui
+            .controls
+            .just_pressed(InputAction::Transform, &keys, buttons.as_deref())
+    {
+        drive.folded = !drive.folded;
+    }
     let intent = DriveIntent {
+        folded: drive.folded,
         balance_control: ui.balance_control,
         jump: !blocked
             && chassis.config.balance_assist
@@ -333,6 +350,7 @@ pub fn drive_chassis(
             yaw_of(chassis.pose),
         )
     };
+    command.folded = intent.folded;
     command.jump = intent.jump;
     command.balance_control = intent.balance_control;
     if chassis.config.balance_assist {
@@ -421,7 +439,9 @@ pub fn drive_camera(
         // with the gimbal on a tilted chassis while looking along the aim.
         player.position = mount.translation
             + mount.rotation
-                * if chassis.config.team_cad {
+                * if let Some(folding) = &chassis.config.folding {
+                    rm_simulator_render::flu_position(folding.camera_offset_m)
+                } else if chassis.config.team_cad {
                     rm_simulator_render::team_robot::camera_eye()
                 } else {
                     rm_simulator_render::chassis::camera_eye(

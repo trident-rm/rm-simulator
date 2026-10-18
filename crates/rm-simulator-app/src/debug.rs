@@ -442,10 +442,18 @@ fn primitive_transforms(
     for chassis in &scene.chassis {
         let body = pose_transform(chassis.pose);
         result.push((false, box_transform(body, chassis.body_half_m, false)));
-        result.push((
-            false,
-            box_transform(pose_transform(chassis.turret), chassis.turret_half_m, false),
-        ));
+        if chassis.fold_collision_parts.is_empty() {
+            result.push((
+                false,
+                box_transform(pose_transform(chassis.turret), chassis.turret_half_m, false),
+            ));
+        } else {
+            result.extend(
+                chassis.fold_collision_parts.iter().map(|(pose, half)| {
+                    (false, box_transform(pose_transform(*pose), *half, false))
+                }),
+            );
+        }
         for armor in &chassis.armor {
             result.push((
                 false,

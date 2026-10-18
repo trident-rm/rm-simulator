@@ -22,6 +22,8 @@ use bevy::prelude::*;
 pub enum RobotModel {
     /// Imported source-derived team Omni model; supplied by the caller.
     TeamCad,
+    /// Imported Artisans Hero with a folding arm and counter-rotating pitch stage.
+    FoldingHero,
     /// Four-wheel omni platform.
     #[default]
     Omni,
@@ -109,6 +111,9 @@ pub struct ChassisYawStage;
 #[derive(Component)]
 #[require(PresentedPose)]
 pub struct ChassisTurret;
+#[derive(Component)]
+#[require(PresentedPose)]
+struct ChassisFoldPart(usize);
 /// VT03 lens position in the pitch cradle, in Bevy metres. Shared with the
 /// caller so the first-person eye sits at the visible lens.
 pub fn camera_eye(turret_half_m: [f32; 3]) -> Vec3 {
@@ -1421,7 +1426,10 @@ fn spawn_chassis(
         .collect();
     let rendering = config.rendering;
     for chassis in &scene.chassis {
-        if chassis.model == RobotModel::TeamCad && team_assets.is_some() {
+        if team_assets
+            .as_ref()
+            .is_some_and(|assets| assets.supports(chassis.model))
+        {
             continue;
         }
         if existing_ids.contains(&chassis.id) {
@@ -1898,6 +1906,19 @@ fn spawn_chassis(
                     }
                 });
         }
+        if chassis.model == RobotModel::FoldingHero {
+            for (index, (_, half)) in chassis.fold_collision_parts.iter().enumerate() {
+                commands.spawn((
+                    id,
+                    ChassisFoldPart(index),
+                    Mesh3d(box_mesh(&mut meshes, *half)),
+                    MeshMaterial3d(graphite.clone()),
+                    Transform::default(),
+                    Visibility::Inherited,
+                ));
+            }
+            continue;
+        }
         // Yaw stage: a turntable on the body top, a pedestal and the fork
         // whose arms hold the pitch axle either side of the cradle.
         if chassis.model == RobotModel::Engineer {
@@ -2058,6 +2079,7 @@ fn ingest_chassis(
         Option<&ChassisWheel>,
         Option<&ChassisYawStage>,
         Option<&ChassisTurret>,
+        Option<&ChassisFoldPart>,
         &mut PresentedPose,
     )>,
     mut armor: Query<(&ChassisArmorLight, &mut ArmorVisualState)>,
@@ -2065,7 +2087,7 @@ fn ingest_chassis(
 ) {
     let Some(scene) = &input.0 else { return };
     let appearance = |id: u32| index.0.get(&id).and_then(|i| scene.chassis.get(*i));
-    for (id, body, wheel, yaw, turret, mut presented) in &mut parts {
+    for (id, body, wheel, yaw, turret, fold, mut presented) in &mut parts {
         let Some(chassis) = appearance(id.0) else {
             continue;
         };
@@ -2077,6 +2099,11 @@ fn ingest_chassis(
             Some(chassis.yaw_stage)
         } else if turret.is_some() {
             Some(chassis.turret)
+        } else if let Some(fold) = fold {
+            chassis
+                .fold_collision_parts
+                .get(fold.0)
+                .map(|(pose, _)| *pose)
         } else {
             continue;
         };
@@ -2165,6 +2192,8 @@ mod tests {
             },
             body_half_m: [0.26, 0.26, 0.05],
             body_shell_visible: true,
+            fold_angle_rad: 0.,
+            fold_collision_parts: vec![],
             frame_beam_step_m: 0.0,
             body_outline_m: vec![],
             bumper_prisms_m: vec![],

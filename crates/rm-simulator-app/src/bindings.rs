@@ -30,6 +30,8 @@ pub enum InputAction {
     Fast,
     /// Toggle spin mode; the pilot's chassis is the only thing that spins.
     Spin,
+    /// Fold or unfold a transformable robot.
+    Transform,
     /// Jump with the balance infantry, once per press while grounded.
     Jump,
     /// Toggle the first- and third-person camera; only a chassis has an eye on it.
@@ -81,7 +83,7 @@ pub enum InputAction {
 }
 impl InputAction {
     /// Every action, in the order the help panel and the controls menu list them.
-    pub const ALL: [Self; 29] = [
+    pub const ALL: [Self; 30] = [
         Self::Forward,
         Self::Backward,
         Self::Left,
@@ -92,6 +94,7 @@ impl InputAction {
         Self::Down,
         Self::Fast,
         Self::Spin,
+        Self::Transform,
         Self::Jump,
         Self::Camera,
         Self::Fire,
@@ -125,6 +128,7 @@ impl InputAction {
             Self::Down => "Fly down",
             Self::Fast => "Move faster",
             Self::Spin => "Toggle spin",
+            Self::Transform => "Transform robot",
             Self::Jump => "Jump (balance)",
             Self::Camera => "Change camera",
             Self::Fire => "Fire",
@@ -150,6 +154,7 @@ impl InputAction {
     fn contexts(self) -> u8 {
         match self {
             Self::Spin
+            | Self::Transform
             | Self::TurnLeft
             | Self::TurnRight
             | Self::Jump
@@ -177,6 +182,7 @@ impl InputAction {
             Self::Down => ShiftLeft,
             Self::Fast => ControlLeft,
             Self::Spin => KeyR,
+            Self::Transform => KeyT,
             Self::Jump => Space,
             Self::Camera => KeyV,
             Self::Fire => return Binding::Mouse(MouseButton::Left),

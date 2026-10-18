@@ -110,6 +110,10 @@ pub struct ArmorAppearance {
 /// by `team`; a defeated robot's lights go dark.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChassisAppearance {
+    /// Current folding joint angle in radians; zero for fixed robots.
+    pub fold_angle_rad: f32,
+    /// Caller-owned world poses/half extents for articulated collision cuboids, in metres.
+    pub fold_collision_parts: Vec<(PoseFlu, [f32; 3])>,
     /// Approximate body model selected by the caller, independent of team.
     pub model: crate::chassis::RobotModel,
     /// Printed identifier on each armor plate.

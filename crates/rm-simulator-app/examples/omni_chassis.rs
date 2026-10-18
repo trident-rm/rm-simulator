@@ -55,6 +55,8 @@ fn appearance(c: &ChassisSnapshot) -> ChassisAppearance {
         pose: pose(c.pose),
         body_half_m: cfg.body_half_m.map(|v| v as f32),
         body_shell_visible: true,
+        fold_angle_rad: 0.,
+        fold_collision_parts: vec![],
         frame_beam_step_m: cfg.frame_beam_step_m() as f32,
         body_outline_m: cfg
             .body_outline_m()

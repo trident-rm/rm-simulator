@@ -15,6 +15,18 @@ use bevy::{prelude::*, world_serialization::WorldInstanceReady};
 pub struct TeamRobotAssets {
     /// glTF path including asset source, without a scene label.
     pub file: String,
+    /// Select the bound folding Hero instead of the original Omni assembly.
+    pub folding_hero: bool,
+}
+impl TeamRobotAssets {
+    pub(crate) fn supports(&self, model: RobotModel) -> bool {
+        model
+            == if self.folding_hero {
+                RobotModel::FoldingHero
+            } else {
+                RobotModel::TeamCad
+            }
+    }
 }
 /// Asynchronous robot loading state, also used by screenshot readiness.
 #[derive(Resource, Default)]
@@ -97,7 +109,7 @@ fn spawn(
         .map(|s| {
             s.chassis
                 .iter()
-                .filter(|c| c.model == RobotModel::TeamCad)
+                .filter(|c| assets.supports(c.model))
                 .collect()
         })
         .unwrap_or_default();
@@ -135,8 +147,16 @@ fn spawn(
                 WorldAssetRoot(
                     server.load(GltfAssetLabel::Scene(0).from_asset(assets.file.clone())),
                 ),
-                Transform::from_xyz(0., -BODY_Y_M, 0.)
-                    .with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
+                Transform::from_xyz(
+                    0.,
+                    -if assets.folding_hero {
+                        0.1684552
+                    } else {
+                        BODY_Y_M
+                    },
+                    0.,
+                )
+                .with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
                 Visibility::Inherited,
             ));
         });
@@ -199,24 +219,28 @@ fn loaded(
             });
         }
     }
-    if [
-        "body",
-        "yaw",
-        "pitch",
-        "pitch-crank",
-        "pitch-rod",
-        "wheel-0",
-        "wheel-1",
-        "wheel-2",
-        "wheel-3",
-    ]
-    .iter()
-    .all(|s| bound.contains(*s))
-    {
+    let required = if bound.contains("fold") {
+        vec![
+            "body", "yaw", "fold", "pitch", "wheel-0", "wheel-1", "wheel-2", "wheel-3",
+        ]
+    } else {
+        vec![
+            "body",
+            "yaw",
+            "pitch",
+            "pitch-crank",
+            "pitch-rod",
+            "wheel-0",
+            "wheel-1",
+            "wheel-2",
+            "wheel-3",
+        ]
+    };
+    if required.iter().all(|s| bound.contains(*s)) {
         commands.entity(root.owner).insert(ReadyRobot);
         info!(
             chassis = root.id,
-            "team robot scene ready: nine motion groups bound"
+            "team robot scene ready: required motion groups bound"
         );
     } else {
         status.failed = Some("team robot asset lacks required motion groups".into());
@@ -243,6 +267,10 @@ fn link_transform(link: &Link, c: &crate::sync::ChassisAppearance) -> Transform 
     let pitch = direction.z.clamp(-1., 1.).asin();
     match link.name.as_str() {
         "yaw" => t.rotation = Quat::from_rotation_y(yaw),
+        "fold" => t.rotation = Quat::from_rotation_x(c.fold_angle_rad),
+        "pitch" if c.model == RobotModel::FoldingHero => {
+            t.rotation = Quat::from_rotation_x(-pitch - c.fold_angle_rad)
+        }
         "pitch" | "pitch-crank" => t.rotation = Quat::from_rotation_x(-pitch),
         "pitch-rod" => t.rotation = Quat::from_rotation_x(pitch),
         name if name.starts_with("wheel-") => {
@@ -256,9 +284,23 @@ fn link_transform(link: &Link, c: &crate::sync::ChassisAppearance) -> Transform 
                     * Vec3::from_array(std::array::from_fn(|i| {
                         (w.pose.translation_m[i] - c.pose.translation_m[i]) as f32
                     }));
-                t.translation = Vec3::new(local.y, local.z + BODY_Y_M, local.x);
+                t.translation = Vec3::new(
+                    local.y,
+                    local.z
+                        + if c.model == RobotModel::FoldingHero {
+                            0.1684552
+                        } else {
+                            BODY_Y_M
+                        },
+                    local.x,
+                );
                 let angle = local.y.atan2(local.x) - std::f32::consts::FRAC_PI_2;
-                let spin = (body.inverse() * q(w.pose)) * Quat::from_rotation_z(-angle);
+                let spin = (body.inverse() * q(w.pose))
+                    * if c.model == RobotModel::FoldingHero {
+                        Quat::IDENTITY
+                    } else {
+                        Quat::from_rotation_z(-angle)
+                    };
                 t.rotation = Quat::from_xyzw(spin.y, spin.z, spin.x, spin.w).normalize();
             }
         }
@@ -308,6 +350,8 @@ mod tests {
             },
             body_half_m: [0.26, 0.26, 0.05],
             body_shell_visible: true,
+            fold_angle_rad: 0.,
+            fold_collision_parts: vec![],
             frame_beam_step_m: 0.0,
             body_outline_m: vec![],
             bumper_prisms_m: vec![],

@@ -74,7 +74,7 @@ config labelled 2027 is rejected. Default `Field::new` uses its explicit config;
 restore selects admission from the native authority carried in `FieldRestore`.
 Mixed-season geometry/referee state is rejected.
 
-Protocol **60** carries the complete optional 2027 authority in confirmations,
+Protocol **61** carries the complete optional 2027 authority in confirmations,
 checkpoints and deltas. Types remain available in every build so the wire shape
 is independent of Cargo feature unification; live admission and restore still
 check the feature. The existing checkpoint ZSTD dictionary is retained unchanged.

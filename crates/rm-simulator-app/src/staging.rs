@@ -660,6 +660,7 @@ fn preview(
         (bevy::math::DVec3::from_array(pose.translation_m) + rotated).to_array()
     };
     let mut snapshot = ChassisSnapshot {
+        fold_angle_rad: 0.,
         // This id is visual only, and cannot be sent back to the host.
         id: u32::MAX,
         placement_revision: 0,

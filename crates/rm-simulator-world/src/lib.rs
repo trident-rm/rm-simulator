@@ -1896,6 +1896,7 @@ mod tests {
         let mut restored = Field::restore(&original.snapshot(), &geometry, floor).unwrap();
         for round in 0..10 {
             let command = ChassisCommand {
+                folded: false,
                 jump: false,
                 balance_control: 100,
                 forward_m_s: if round % 3 == 0 { 1.5 } else { -0.5 },
@@ -1931,6 +1932,7 @@ mod tests {
         let mut worst_projectile = 0.0_f64;
         for round in 0..10 {
             let command = ChassisCommand {
+                folded: false,
                 jump: false,
                 balance_control: 100,
                 forward_m_s: if round % 3 == 0 { 1.5 } else { -0.5 },

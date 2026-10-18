@@ -53,3 +53,11 @@ cargo run -p rm-simulator-physics --example moving_armor --locked
 
 [docs/physics-reuse.md](../../docs/physics-reuse.md) documents the headless
 stepping contract, the restore procedure and optional rendering.
+
+
+`mechanism::FoldingConfig` evaluates a prescribed folding arm and independently
+aimed firing stage. `ChassisConfig::folding_hero()` provides the source-fitted
+2026 prototype; its command holds a folded target and snapshots preserve the
+actual angle. Moving collision proxies, muzzle and drawing poses share that
+state. External-clearance checks stop the actuator without teleporting geometry;
+this is not a motor-torque or source leg-linkage simulation.

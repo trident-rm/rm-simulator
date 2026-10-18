@@ -178,6 +178,7 @@ fn pose(a: Pose, b: Pose, t: f64) -> Pose {
 /// comes from `b`, because only `b` describes the newer lifecycle.
 pub fn blend_chassis(a: &ChassisSnapshot, b: &ChassisSnapshot, t: f64) -> ChassisSnapshot {
     let mut result = b.clone();
+    result.fold_angle_rad = a.fold_angle_rad + (b.fold_angle_rad - a.fold_angle_rad) * t;
     result.pose = pose(a.pose, b.pose, t);
     result.turret = pose(a.turret, b.turret, t);
     for (wheel, old) in result.wheels.iter_mut().zip(&a.wheels) {

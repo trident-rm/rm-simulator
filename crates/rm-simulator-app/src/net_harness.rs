@@ -335,6 +335,7 @@ fn pilot_frame(session: &mut Session, chassis: u32, step: u64, firing: bool) {
     session.poll().expect("session poll");
     let phase = (step / 200) % 4;
     let command = ChassisCommand {
+        folded: false,
         jump: false,
         balance_control: 100,
         forward_m_s: if phase == 0 || phase == 1 { 1.5 } else { 0. },
