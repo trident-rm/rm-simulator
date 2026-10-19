@@ -55,13 +55,16 @@ struct Options {
     /// Source-preserved Engineer arm, Tech Core and Energy Unit workbench package.
     #[arg(long, conflicts_with = "robot_assets")]
     assembly_assets: Option<PathBuf>,
+    /// Verified central-highland terrain extraction, in the source rig frame.
+    #[arg(long, requires = "assembly_assets")]
+    assembly_area: Option<PathBuf>,
     /// Demonstrate the full sequence with rate-limited Cartesian movements.
     #[arg(long)]
     demo: bool,
     /// Run the same demonstration without rendering, print state and exit.
     #[arg(long)]
     headless: bool,
-    /// Save the completed demonstration and exit (implies --demo).
+    /// Save the completed or blocked demonstration and exit (implies --demo).
     #[arg(long)]
     screenshot: Option<PathBuf>,
     /// Write solved source-CAD frames at 32 Hz, including the initial and final poses.
@@ -70,15 +73,103 @@ struct Options {
     /// Reproducible rulebook pose selection; failed CAD/IK checks never resample.
     #[arg(long, requires = "assembly_assets")]
     pose_seed: Option<u64>,
+    /// Explicit rulebook x/y/z metres and theta/phi/alpha degrees for a frozen Core pose.
+    #[arg(
+        long,
+        num_args = 6,
+        allow_hyphen_values = true,
+        requires = "assembly_assets",
+        conflicts_with = "pose_seed"
+    )]
+    core_pose: Option<Vec<f64>>,
+    /// Explicit Q target in degrees, within +/-90 (difficulty three only).
+    #[arg(long, allow_hyphen_values = true, requires = "assembly_assets")]
+    q_deg: Option<f64>,
+    /// Initial relative chassis dx/dy metres and yaw degrees in the workbench frame.
+    #[arg(
+        long,
+        num_args = 3,
+        allow_hyphen_values = true,
+        requires = "assembly_area"
+    )]
+    chassis_offset: Option<Vec<f64>>,
+    /// Completed same-calibration recording used only for IK warm starts.
+    #[arg(long, requires = "assembly_assets")]
+    ik_hints: Option<PathBuf>,
+    /// Prescribed twist increments in degrees: approach, insertion, lift, P flip, Q alignment.
+    #[arg(
+        long,
+        num_args = 5,
+        allow_hyphen_values = true,
+        requires = "assembly_area"
+    )]
+    spin_deltas: Option<Vec<f64>>,
+    /// Keep chassis parking fixed while allowing arm, grasp and axial-spin planning.
+    #[arg(long, requires = "assembly_area")]
+    fixed_chassis: bool,
     /// Explicit pose selection number, frozen throughout the attempt.
     #[arg(long, default_value_t = 0, requires = "pose_seed")]
     pose_index: u64,
     /// Export all four difficulty candidates as JSON, without loading CAD or solving IK.
     #[arg(long, conflicts_with_all = ["assembly_assets", "robot_assets", "record"])]
     generate_poses: Option<u64>,
+    /// Print initial named collision contacts and exit without moving the fixture.
+    #[arg(long, requires = "assembly_assets")]
+    collision_audit: bool,
+    /// Use the original Cartesian guide without offline path selection (diagnostics).
+    #[arg(long, requires = "assembly_assets")]
+    legacy_guide: bool,
+    /// Prepare a staged source-CAD plan and pause between stages (P advances, O runs all).
+    #[arg(long,requires="assembly_assets",conflicts_with_all=["demo","headless","legacy_guide","screenshot"])]
+    assisted: bool,
+    /// Preserve the current fixture; plan a real free-arm approach instead of setup search.
+    #[arg(long, requires = "assembly_assets", conflicts_with = "legacy_guide")]
+    plan_current: bool,
+    /// Maximum guarded transitions tested by the staged planner.
+    #[arg(long, default_value_t=8000, value_parser=clap::value_parser!(u32).range(1..=100000))]
+    plan_budget: u32,
     /// Inspect the gripper and Core front mechanism at closer range.
     #[arg(long)]
     closeup: bool,
+}
+/// Validate explicit Table 5-10 coordinates before invoking any source-CAD solver.
+fn explicit_core_pose(
+    values: &[f64],
+    difficulty: u8,
+) -> Result<rm_simulator_world::gameplay::rmuc_2027::assembly_pose::TargetPose, &'static str> {
+    if values.len() != 6
+        || !values.iter().all(|v| v.is_finite())
+        || !(-0.1..=0.).contains(&values[0])
+        || !(0.1..=0.3).contains(&values[1])
+        || !(0.5..=0.7).contains(&values[2])
+        || !(-90. ..=90.).contains(&values[3])
+        || !(0. ..=90.).contains(&values[4])
+        || !(-45. ..=45.).contains(&values[5])
+        || difficulty == 1 && (values[3] != 0. || values[4] != 90. || values[5] != 0.)
+    {
+        return Err("explicit Core pose is outside the selected Table 5-10 range");
+    }
+    Ok(
+        rm_simulator_world::gameplay::rmuc_2027::assembly_pose::TargetPose {
+            position_m: [values[0], values[1], values[2]],
+            theta_rad: values[3].to_radians(),
+            phi_rad: values[4].to_radians(),
+            alpha_rad: values[5].to_radians(),
+        },
+    )
+}
+/// Reject requested twists for absent stages rather than silently dropping them.
+fn validate_spin_stages(difficulty: u8, q: f64, values: &[f64]) -> Result<(), &'static str> {
+    if values.len() != 5
+        || difficulty < 2 && values[2] != 0.
+        || difficulty < 3 && (values[3] != 0. || values[4] != 0.)
+        || q.abs() <= 1e-9 && values[4] != 0.
+    {
+        return Err(
+            "requested twist requires a moving stage at this difficulty and a nonzero Q target for alignment",
+        );
+    }
+    Ok(())
 }
 const SOCKET: [f64; 3] = [-0.05, 0.2, 0.6];
 const ENTRANCE_X: f64 = 0.05;
@@ -88,6 +179,9 @@ const ARM: Arm = Arm {
     shoulder_m: [0.55, 0., 0.35],
     lengths_m: [0.4, 0.4],
 };
+type PlannedAssembly =
+    Result<(assembly_cad::Rig, assembly_cad::AssemblyPlan), assembly_cad::PlanningFailure>;
+type PendingPlan = Arc<std::sync::Mutex<Option<PlannedAssembly>>>;
 #[derive(Resource)]
 struct Workbench {
     task: Attempt,
@@ -101,6 +195,13 @@ struct Workbench {
     capture_frames: u32,
     confirm_requested: bool,
     cad: Option<assembly_cad::Rig>,
+    plan: Option<assembly_cad::AssemblyPlan>,
+    plan_cursor: usize,
+    automatic: bool,
+    stage_run: bool,
+    guide_detached: bool,
+    planning_report: serde_json::Value,
+    pending_plan: Option<PendingPlan>,
 }
 impl Workbench {
     fn new(d: u8) -> Self {
@@ -116,6 +217,13 @@ impl Workbench {
             capture_frames: 0,
             confirm_requested: false,
             cad: None,
+            plan: None,
+            plan_cursor: 0,
+            automatic: false,
+            stage_run: false,
+            guide_detached: false,
+            planning_report: serde_json::Value::Null,
+            pending_plan: None,
         }
     }
     fn step(&mut self, movement: [f64; 3], rotation: [f64; 3]) {
@@ -123,10 +231,27 @@ impl Workbench {
             return;
         }
         let dt = tick_ns() as f64 * 1e-9;
-        if let Some(cad) = &mut self.cad {
-            cad.step_gripper(self.attached, dt);
+        if self.guide_detached {
+            if let Some(cad) = &mut self.cad {
+                match cad.step_gripper(self.attached, dt) {
+                    Ok(()) => self.unreachable = false,
+                    Err(reason) => {
+                        self.unreachable = true;
+                        self.message = reason.into();
+                        return;
+                    }
+                }
+            }
+            self.tick += 1;
+            self.observe();
+            self.message =
+                "Off guide: O/P to plan a return, or restart; Cartesian guide held".into();
+            return;
         }
         if self.task.failure.is_some() || self.task.completed() {
+            if let Some(cad) = &mut self.cad {
+                self.unreachable = cad.step_gripper(self.attached, dt).is_err();
+            }
             return;
         }
         let mut tool = self.tool;
@@ -141,7 +266,13 @@ impl Workbench {
         tool.rotation_wxyz = [q.w, q.x, q.y, q.z];
         self.unreachable = tool.translation_m[2] < 0.15
             || if let Some(cad) = &mut self.cad {
-                cad.update(tool.translation_m, angles).is_err()
+                match cad.drive(tool.translation_m, angles, self.attached, dt) {
+                    Ok(()) => false,
+                    Err(reason) => {
+                        self.message = reason.into();
+                        true
+                    }
+                }
             } else {
                 ARM.solve(tool).is_err()
             };
@@ -150,6 +281,9 @@ impl Workbench {
             self.angles = angles;
         }
         self.tick += 1;
+        self.observe();
+    }
+    fn observe(&mut self) {
         let [x, y, z] = self.tool.translation_m;
         let s = Sensors {
             attached: self.cad.as_ref().map_or(self.attached, |c| c.gripped()),
@@ -166,6 +300,131 @@ impl Workbench {
             .observe(self.tick * tick_ns(), [s, Sensors::default()], true, true)
             .unwrap();
     }
+    fn start_plan(&mut self, prepare: bool, automatic: bool, budget: usize) {
+        let Some(rig) = &self.cad else {
+            self.message = "Source CAD required for collision-aware planning".into();
+            return;
+        };
+        let result = rig.plan_assembly(
+            self.task.difficulty,
+            self.task.target_q_rad[0],
+            self.tool.translation_m,
+            self.angles,
+            prepare,
+            budget,
+        );
+        self.apply_plan(result, automatic);
+    }
+    fn apply_plan(&mut self, result: PlannedAssembly, automatic: bool) {
+        match result {
+            Ok((start, plan)) => {
+                self.planning_report =
+                    serde_json::json!({"status":"ready","statistics":plan.statistics});
+                self.cad = Some(start);
+                self.plan = Some(plan);
+                self.plan_cursor = 0;
+                self.automatic = automatic;
+                self.stage_run = true;
+                self.unreachable = false;
+                self.message = "Collision-checked plan ready".into();
+            }
+            Err(failure) => {
+                self.message =
+                    format!("Planning failed at {:?}: {}", failure.stage, failure.reason);
+                self.planning_report = serde_json::json!({"status":"failed","failure":failure});
+                self.unreachable = true;
+                self.automatic = false;
+                self.stage_run = false;
+            }
+        }
+    }
+    fn cancel_plan(&mut self) {
+        self.pending_plan = None;
+        self.plan = None;
+        self.automatic = false;
+        self.stage_run = false;
+        self.unreachable = false;
+        if !self.planning_report.is_null() {
+            self.planning_report = serde_json::json!({"status":"cancelled"});
+        }
+        self.message = "Plan cancelled; manual controls".into();
+    }
+    fn request_plan(&mut self, automatic: bool, budget: usize) {
+        if self.pending_plan.is_some() {
+            return;
+        }
+        let Some(rig) = self.cad.clone() else {
+            self.message = "Source CAD required for planning".into();
+            return;
+        };
+        let result = Arc::new(std::sync::Mutex::new(None));
+        self.pending_plan = Some(result.clone());
+        self.automatic = automatic;
+        self.message = "Planning on worker; workbench clock held".into();
+        let (d, q, logical, angles) = (
+            self.task.difficulty,
+            self.task.target_q_rad[0],
+            self.tool.translation_m,
+            self.angles,
+        );
+        std::thread::spawn(move || {
+            let plan = rig.plan_assembly(d, q, logical, angles, false, budget);
+            *result.lock().unwrap() = Some(plan);
+        });
+    }
+    fn planned_step(&mut self) {
+        if self.paused
+            || (!self.automatic && !self.stage_run)
+            || self.task.completed()
+            || self.task.failure.is_some()
+            || self.unreachable
+        {
+            return;
+        }
+        let Some(plan) = &self.plan else {
+            return;
+        };
+        let Some(frame) = plan.frames.get(self.plan_cursor).cloned() else {
+            if self.automatic {
+                self.confirm();
+                self.automatic = false;
+            }
+            self.stage_run = false;
+            return;
+        };
+        match self.cad.as_mut().unwrap().follow_plan(&frame) {
+            Ok(()) => {}
+            Err(reason) => {
+                self.unreachable = true;
+                self.message = reason.into();
+                return;
+            }
+        }
+        self.guide_detached = frame.free;
+        self.tool.translation_m = frame.logical;
+        self.angles = frame.angles;
+        self.plan_cursor += 1;
+        self.tick += 1;
+        self.observe();
+        self.message = format!(
+            "Plan {:?} | {}/{}",
+            frame.stage,
+            self.plan_cursor,
+            self.plan.as_ref().unwrap().frames.len()
+        );
+        if !self.automatic
+            && self
+                .plan
+                .as_ref()
+                .unwrap()
+                .frames
+                .get(self.plan_cursor)
+                .is_none_or(|next| next.stage != frame.stage)
+        {
+            self.stage_run = false;
+            self.message.push_str(" | P: next stage, O: automatic");
+        }
+    }
     fn confirm(&mut self) {
         self.message = match self.task.confirm(0) {
             Ok(()) => "Assembly confirmed".into(),
@@ -173,6 +432,13 @@ impl Workbench {
         };
     }
     fn demo(&mut self) {
+        if self.plan.is_some() {
+            self.planned_step();
+            return;
+        }
+        if self.planning_report["status"] == "failed" {
+            return;
+        }
         if self.cad.as_ref().is_some_and(|c| !c.gripped()) && self.attached {
             self.step([0.; 3], [0.; 3]);
             return;
@@ -250,22 +516,77 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     let mut workbench = Workbench::new(options.difficulty);
+    if let Some(area) = &mut options.assembly_area {
+        *area = area.canonicalize()?;
+    }
     if let Some(path) = &mut options.assembly_assets {
         *path = path.canonicalize()?;
-        workbench.cad = Some(if let Some(seed) = options.pose_seed {
+        let requested = if let Some(values) = &options.core_pose {
+            Some(explicit_core_pose(values, options.difficulty)?)
+        } else if let Some(seed) = options.pose_seed {
             let targets = Targets::sample(seed, options.pose_index, options.difficulty)?;
-            let requested = targets.cores[0];
             workbench.task = Attempt::new(options.difficulty, [targets.q_rad[0]; 2], 0)?;
-            assembly_cad::Rig::load_target(path, requested).map_err(|e| {
-                format!(
-                    "seed {seed}, selection {}, candidate {}: {e}",
-                    options.pose_index,
-                    serde_json::to_string(&requested).unwrap()
-                )
-            })?
+            Some(targets.cores[0])
+        } else if options.assembly_area.is_some() {
+            Some(
+                rm_simulator_world::gameplay::rmuc_2027::assembly_pose::TargetPose {
+                    position_m: [-0.05, 0.2, 0.5],
+                    theta_rad: 0.,
+                    phi_rad: std::f64::consts::FRAC_PI_2,
+                    alpha_rad: 0.,
+                },
+            )
+        } else {
+            None
+        };
+        workbench.cad = Some(if let Some(area) = &options.assembly_area {
+            assembly_cad::Rig::load_in_area(path, requested.unwrap(), area)?
+        } else if let Some(requested) = requested {
+            assembly_cad::Rig::load_target(path, requested)?
         } else {
             assembly_cad::Rig::load(path)?
         });
+    }
+    if let Some(degrees) = options.q_deg {
+        if options.difficulty != 3 || !degrees.is_finite() || degrees.abs() > 90. {
+            return Err(
+                "--q-deg requires difficulty three and a finite angle within +/-90 degrees".into(),
+            );
+        }
+        workbench.task = Attempt::new(options.difficulty, [degrees.to_radians(); 2], 0)?;
+    }
+    if let Some(rig) = &mut workbench.cad {
+        if let Some(path) = &options.ik_hints {
+            rig.load_ik_hints(path)?;
+        }
+        if let Some(values) = &options.spin_deltas {
+            validate_spin_stages(options.difficulty, workbench.task.target_q_rad[0], values)?;
+            rig.configure_spin(std::array::from_fn(|i| values[i].to_radians()))?;
+        }
+        let offset = options.chassis_offset.as_deref().unwrap_or(&[0.; 3]);
+        if options.fixed_chassis || options.chassis_offset.is_some() {
+            rig.configure_parking(
+                [offset[0], offset[1], offset[2].to_radians()],
+                options.fixed_chassis,
+            )?;
+        }
+    }
+    if options.collision_audit {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&workbench.cad.as_ref().unwrap().collision_contacts()?)?
+        );
+        return Ok(());
+    }
+    if workbench.cad.is_some()
+        && !options.legacy_guide
+        && (options.headless || options.demo || options.assisted)
+    {
+        workbench.start_plan(
+            !options.plan_current,
+            !options.assisted,
+            options.plan_budget as usize,
+        );
     }
     if options.headless {
         let mut w = workbench;
@@ -289,9 +610,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "sample_ticks":4,"difficulty":options.difficulty,"manifest":manifest,
                 "case":"insert 100 mm, lift 100 mm, P 90 deg, then requested Q",
                 "pose_seed":options.pose_seed,"pose_index":options.pose_index,
+                "core_pose":options.core_pose,"chassis_offset":options.chassis_offset,"fixed_chassis":options.fixed_chassis,"spin_deltas":options.spin_deltas,
                 "target_q_rad":w.task.target_q_rad,
                 "requested_pose":w.cad.as_ref().unwrap().requested_pose,
-                "mode":"offline prescribed IK; no contact or collision planning"})
+                "area":w.cad.as_ref().unwrap().report()["area"],
+                "mode":if options.legacy_guide { "legacy guide with collision guards" } else { "staged collision-aware IK and free-motion joint planner" },
+                "planner":w.planning_report})
             )?;
             write_frame(&mut file, &w)?;
             Some(file)
@@ -301,11 +625,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for _ in 0..10000 {
             w.demo();
             if let Some(file) = &mut recording
-                && (w.tick.is_multiple_of(4) || w.task.completed())
+                && (w.tick.is_multiple_of(4) || w.task.completed() || w.unreachable)
             {
                 write_frame(file, &w)?;
             }
-            if w.task.completed() || w.unreachable {
+            if w.task.completed() || w.unreachable || w.task.failure.is_some() {
                 break;
             }
         }
@@ -313,7 +637,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::io::Write::flush(file)?;
         }
         let mut report = serde_json::to_value(&w.task)?;
-        report["ik_unreachable"] = w.unreachable.into();
+        report["ik_unreachable"] = (w.unreachable
+            && w.planning_report.is_null()
+            && !w.cad.as_ref().is_some_and(|c| c.last_collision.is_some()))
+        .into();
+        report["motion_blocked"] = w.unreachable.into();
+        report["diagnostic"] = w.message.clone().into();
+        report["planner"] = w.planning_report.clone();
         if let Some(cad) = &w.cad {
             report["cad"] = cad.report();
         }
@@ -361,6 +691,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(root) = &options.assembly_assets {
         assembly_cad::register(&mut app, root.clone());
     }
+    if let Some(root) = &options.assembly_area {
+        use bevy::asset::io::{AssetSourceBuilder, file::FileAssetReader};
+        let root = root.clone();
+        app.register_asset_source(
+            "assembly-area",
+            AssetSourceBuilder::new(move || Box::new(FileAssetReader::new(root.clone()))),
+        );
+    }
     app.init_resource::<CaptureImage>()
         .init_resource::<assembly_cad::BoundGroups>()
         .insert_resource(workbench)
@@ -379,7 +717,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_systems(FixedUpdate, advance)
         .add_systems(
             Update,
-            (actions, hide_source_arm, assembly_cad::sync, draw, capture).chain(),
+            (
+                poll_plan,
+                actions,
+                hide_source_arm,
+                assembly_cad::sync,
+                draw,
+                capture,
+            )
+                .chain(),
         )
         .run();
     Ok(())
@@ -392,7 +738,7 @@ fn write_frame(file: &mut impl std::io::Write, w: &Workbench) -> std::io::Result
         serde_json::json!({"tick":w.tick,
         "step":w.task.cores[0].step,"completed":w.task.completed(),
         "guide_m":w.tool.translation_m,"angles_rad":w.angles,
-        "frames_world_flu":rig.world_frames(),"cad":rig.report()})
+        "frames_world_flu":rig.world_frames(),"cad":rig.report(),"plan_cursor":w.plan_cursor})
     )
 }
 
@@ -475,14 +821,16 @@ fn setup(
         },
         Transform::from_xyz(1., 3., 2.).looking_at(Vec3::ZERO, Vec3::Y),
     ));
-    block(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        [0.7, 0., -0.04],
-        [3., 0.08, 3.],
-        Color::srgb(0.12, 0.14, 0.16),
-    );
+    if options.assembly_area.is_none() {
+        block(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            [0.7, 0., -0.04],
+            [3., 0.08, 3.],
+            Color::srgb(0.12, 0.14, 0.16),
+        );
+    }
     if let Some(rig) = &workbench.cad {
         assembly_cad::spawn(&mut commands, &assets, rig);
     } else {
@@ -627,7 +975,36 @@ fn actions(
         w.paused = !w.paused;
     }
     if keys.just_pressed(KeyCode::KeyG) {
+        w.cancel_plan();
         w.attached = !w.attached;
+    }
+    if keys.just_pressed(KeyCode::KeyO) || keys.just_pressed(KeyCode::KeyP) {
+        let automatic = keys.just_pressed(KeyCode::KeyO);
+        if w.plan.is_some() {
+            w.automatic = automatic;
+            w.stage_run = true;
+        } else {
+            w.request_plan(automatic, options.plan_budget as usize);
+        }
+    }
+    if [
+        KeyCode::KeyW,
+        KeyCode::KeyS,
+        KeyCode::KeyA,
+        KeyCode::KeyD,
+        KeyCode::KeyR,
+        KeyCode::KeyF,
+        KeyCode::KeyZ,
+        KeyCode::KeyX,
+        KeyCode::ArrowUp,
+        KeyCode::ArrowDown,
+        KeyCode::ArrowLeft,
+        KeyCode::ArrowRight,
+    ]
+    .into_iter()
+    .any(|k| keys.just_pressed(k))
+    {
+        w.cancel_plan();
     }
     if keys.just_pressed(KeyCode::KeyE) {
         w.confirm_requested = true;
@@ -636,9 +1013,37 @@ fn actions(
         exit.write(AppExit::Success);
     }
 }
+fn poll_plan(mut w: ResMut<Workbench>) {
+    let result = w
+        .pending_plan
+        .as_ref()
+        .and_then(|pending| pending.lock().unwrap().take());
+    if let Some(result) = result {
+        let automatic = w.automatic;
+        w.pending_plan = None;
+        w.apply_plan(result, automatic);
+    }
+}
 fn advance(keys: Res<ButtonInput<KeyCode>>, options: Res<Options>, mut w: ResMut<Workbench>) {
-    if options.demo {
-        w.demo();
+    if w.pending_plan.is_some() {
+        return;
+    }
+    if w.plan.is_some() {
+        if w.automatic || w.stage_run {
+            w.planned_step();
+        }
+        if !w.paused && std::mem::take(&mut w.confirm_requested) {
+            w.confirm();
+        }
+        return;
+    }
+    if options.demo && w.planning_report["status"] == "failed" {
+        return;
+    }
+    if options.demo && (w.cad.is_none() || w.planning_report.is_null()) {
+        if !w.unreachable {
+            w.demo();
+        }
         return;
     }
     let axis = |positive, negative| {
@@ -725,7 +1130,7 @@ fn draw(
         t.0 = format!(
             "ASSEMBLY WORKBENCH | difficulty {} | {:?} | {:.2}s{}\n\
             WASD: horizontal  R/F: height  Arrows: P/Q  Z/X: off-axis roll\n\
-            E: confirm  G: release/grip  Space: pause  1/2/3: restart difficulty\n\
+            O: automatic  P: next stage  E: confirm  G: grip  Space: pause  1/2/3: restart\n\
             {} [{x:.3}, {y:.3}, {z:.3}] m  P {:.1}°  Q {:.1}° (target {:.1}°)\n\
             {} {} {}\n\
             {}",
@@ -739,12 +1144,34 @@ fn draw(
             w.task.target_q_rad[0].to_degrees(),
             if w.task.completed() {
                 "COMPLETE"
+            } else if w.pending_plan.is_some() {
+                "PLANNING"
+            } else if w.planning_report["status"] == "failed" {
+                "PLANNING FAILED"
+            } else if w.cad.as_ref().is_some_and(|c| c.last_collision.is_some()) {
+                "COLLISION BLOCKED"
             } else if w.unreachable {
                 "UNREACHABLE TARGET"
             } else {
                 ""
             },
-            w.message,
+            w.cad
+                .as_ref()
+                .filter(|_| w.pending_plan.is_none() && w.planning_report["status"] != "failed")
+                .and_then(|c| c.last_collision.as_ref())
+                .map_or_else(
+                    || w.message.clone(),
+                    |h| format!(
+                        "{} / {}{}",
+                        h.first,
+                        h.second,
+                        if h.conservative {
+                            " (sweep budget)"
+                        } else {
+                            ""
+                        }
+                    )
+                ),
             w.task
                 .failure
                 .map_or_else(String::new, |f| format!("Failed: {f:?}")),
@@ -779,7 +1206,7 @@ fn capture(
         return;
     }
     if let Some(path) = &options.screenshot
-        && w.task.completed()
+        && (w.task.completed() || w.unreachable)
     {
         w.capture_frames += 1;
         if w.capture_frames == 60 {
@@ -823,6 +1250,42 @@ mod tests {
         }
         assert!(w.unreachable);
         assert!(ARM.solve(w.tool).is_ok());
+    }
+    #[test]
+    fn explicit_pose_and_parking_arguments_are_bounded_and_unambiguous() {
+        let args = Options::try_parse_from([
+            "workbench",
+            "--assembly-assets",
+            "package",
+            "--assembly-area",
+            "area",
+            "--core-pose",
+            "-0.05",
+            "0.2",
+            "0.5",
+            "10",
+            "80",
+            "20",
+            "--chassis-offset",
+            "-0.1",
+            "-0.15",
+            "15",
+            "--fixed-chassis",
+            "--q-deg",
+            "-30",
+        ])
+        .unwrap();
+        assert!(args.fixed_chassis);
+        assert_eq!(args.q_deg, Some(-30.));
+        let p = explicit_core_pose(args.core_pose.as_ref().unwrap(), 3).unwrap();
+        assert!((p.theta_rad - 10f64.to_radians()).abs() < 1e-12);
+        assert!(explicit_core_pose(&[-0.05, 0.2, 0.5, 10., 80., 20.], 1).is_err());
+        assert!(explicit_core_pose(&[-0.05, 0.2, 0.8, 0., 90., 0.], 3).is_err());
+        assert!(explicit_core_pose(&[f64::NAN; 6], 3).is_err());
+        assert!(Options::try_parse_from(["workbench", "--fixed-chassis"]).is_err());
+        assert!(validate_spin_stages(1, 0., &[0., 0., 1., 0., 0.]).is_err());
+        assert!(validate_spin_stages(3, 0., &[0., 0., 0., 90., 20.]).is_err());
+        assert!(validate_spin_stages(3, -0.5, &[0., 0., 0., 90., 20.]).is_ok());
     }
     #[test]
     fn cartesian_demo_completes_each_interactive_difficulty() {

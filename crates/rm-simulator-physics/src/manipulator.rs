@@ -99,7 +99,7 @@ pub struct SerialArm {
     /// Tool reference in the zero-pose body frame, metres and wxyz unit quaternion.
     pub tool: Pose,
 }
-fn rigid_pose(p: Pose) -> rapier3d_f64::math::Pose {
+pub(crate) fn rigid_pose(p: Pose) -> rapier3d_f64::math::Pose {
     let [w, x, y, z] = p.rotation_wxyz;
     rapier3d_f64::math::Pose::from_parts(
         Vector::from_array(p.translation_m),

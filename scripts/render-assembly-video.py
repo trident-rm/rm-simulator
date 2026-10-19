@@ -4,10 +4,11 @@
 """Render offline workbench IK poses with unchanged source CAD geometry.
 
 Requires rm-map-tools' Python environment, diagnostic rasterizer, clang++ and
-FFmpeg. This renders recorded forward kinematics, not collision-free planning.
+FFmpeg. This renders recorded forward kinematics; planner status comes from the recording.
 """
 import argparse
 import json
+import math
 from pathlib import Path
 import struct
 import subprocess
@@ -34,6 +35,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--tools', type=Path, default=Path('../rm-map-tools'))
     parser.add_argument('--package', type=Path, required=True)
+    parser.add_argument('--area', type=Path, help='Verified terrain extraction required by area recordings')
     parser.add_argument('--motion', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--closeup', action='store_true')
@@ -67,6 +69,21 @@ def main():
             groups.setdefault(name, []).append((local[triangles] @ C.T, np.tile(rgb, (len(triangles), 1))))
     groups = {name: (np.concatenate([v[0] for v in parts]), np.concatenate([v[1] for v in parts]))
               for name, parts in groups.items()}
+    area = header.get('area') or rows[0]['cad'].get('area')
+    if area:
+        if args.area is None:
+            raise ValueError('area recording requires --area; cannot render with missing terrain')
+        evidence = json.loads((args.area/'area.json').read_text())
+        if evidence != area or hashlib.sha256((args.area/'area.glb').read_bytes()).hexdigest() != area['visual_sha256']:
+            raise ValueError('recording/area checksum mismatch')
+        doc, buf = read_glb(args.area/'area.glb')
+        parts = []
+        for _, _, points, triangles, material in mesh_instances(doc, buf):
+            factor = doc['materials'][material].get('pbrMetallicRoughness', {}).get('baseColorFactor', [1., 1., 1., 1.])
+            linear = np.array(factor[:3])
+            rgb = np.where(linear <= .0031308, linear*12.92, 1.055*linear**(1/2.4)-.055)
+            parts.append((points[triangles]@C.T,np.tile(rgb,(len(triangles),1))))
+        groups['area'] = (np.concatenate([p[0] for p in parts]),np.concatenate([p[1] for p in parts]))
     width, height, fps = 1280, 800, 32
     eye, center, scale = ([2.5, -1.65, 1.65], [.68, .1, .5], 470.)
     if args.closeup:
@@ -83,6 +100,8 @@ def main():
     for name, (tri, _) in groups.items():
         if args.mechanism_only and name.startswith('engineer/'):
             continue
+        if name == 'area':
+            continue  # Keep the camera fitted to the robot/task, with terrain as context.
         if args.closeup and name not in {'unit/unit', 'core/q', 'engineer/j6', 'engineer/jaw-left', 'engineer/jaw-right'}:
             continue
         low, high = tri.min(axis=(0, 1)), tri.max(axis=(0, 1))
@@ -119,7 +138,7 @@ def main():
             for name, (tri, rgb) in groups.items():
                 if args.mechanism_only and name.startswith('engineer/'):
                     continue
-                frame = matrix(row['frames_world_flu'][name])
+                frame = np.eye(4) if name == 'area' else matrix(row['frames_world_flu'][name])
                 posed.append(tri @ frame[:3, :3].T + frame[:3, 3]); colors.append(rgb)
             geometry, rgb = np.concatenate(posed), np.concatenate(colors)
             normal = np.cross(geometry[:, 1] - geometry[:, 0], geometry[:, 2] - geometry[:, 0])
@@ -149,10 +168,12 @@ def main():
             draw.text((24, 15), f'PIE Engineer + RMUC 2027 Tech Core | {case} | offline IK', font=font, fill='white')
             p, q, _ = np.degrees(row['angles_rad'])
             grip = 'HELD' if row['cad'].get('gripped') else ('CLOSING' if row['cad'].get('grip_requested') else 'OPEN')
-            draw.text((24, 50), f"{row['tick'] / 128:5.2f} s | {row['step']} | P {p:.1f} deg | Q {q:.1f} deg | {grip}", font=small, fill=(185, 213, 229))
+            spin = row['cad'].get('rod_spin_rad')
+            twist = '' if spin is None else f' | Twist {math.degrees(spin):.1f} deg'
+            draw.text((24, 50), f"{row['tick'] / 128:5.2f} s | {row['step']} | P {p:.1f} deg | Q {q:.1f} deg{twist} | {grip}", font=small, fill=(185, 213, 229))
             draw.rectangle([0, height - 40, width, height], fill=(24, 32, 42))
             note = 'Engineer hidden | ' if args.mechanism_only else ''
-            draw.text((24, height - 30), note + 'Source CAD | 128 Hz prescribed kinematics | no contact / collision-free planning', font=small, fill=(205, 215, 225))
+            draw.text((24, height - 30), note + ('Source CAD | 128 Hz | collision-checked staged plan | no contact forces' if header.get('planner', {}).get('status') == 'ready' else 'Source CAD | 128 Hz prescribed kinematics | no contact / collision-free planning'), font=small, fill=(205, 215, 225))
             encoder.stdin.write(image.tobytes())
             if index in [fps, len(samples) // 2, len(samples) - 1]:
                 image.save(args.out.with_name(args.out.stem + f'-{index:04d}.png'))

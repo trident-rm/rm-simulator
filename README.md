@@ -794,6 +794,9 @@ you practice insertion, lifting and rotation with source-bound Engineer and
 Tech Core CAD, or a generic arm when no CAD package is supplied. It can generate
 seeded rulebook pose candidates and record offline IK animations; source CAD
 reachability is checked separately. It is separate from live match assembly progression.
+Its offline planner can twist the Unit around the rod across all moving stages;
+explicit Core poses, fixed chassis parking and per-stage twist inputs support
+repeatable source-CAD scenario tests.
 
 `just run --robot hero --third-person` drives the mecanum Hero; omit `--robot`
 for the omni Infantry 3, or choose robot then chassis on the title screen.

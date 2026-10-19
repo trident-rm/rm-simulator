@@ -4,6 +4,48 @@
 
 ## Unreleased
 
+- Reuse exact validated assembly transitions and warm-start nearby IK targets
+  from a bounded table or a completed source recording; recheck changed paths.
+
+- Extend assembly axial-twist planning across approach, insertion, lift, flip and
+  alignment; add explicit Core/parking/twist controls and a frozen pose matrix.
+
+- Search seated Energy Unit rotation around the assembly rod during lift and
+  flip, retaining rigid grip, rod alignment and swept collision checks.
+
+- Search coordinated chassis/arm assembly routes during lift and flip; guard
+  chassis sweeps, terrain support and playback cadence, and restore initial
+  parking on restart. Reuse indexed terrain queries for repeated route checks.
+
+- Remove the PIE camera's protruding wire harnesses and connector ends from
+  assembly visuals and collision geometry, clearing their false armor obstruction.
+
+- Preserve rejected assembly milestone poses for source-leaf collision audits;
+  try stowed and source-CAD camera postures during area-mode fixture preparation.
+
+- Attach the PIE shoulder disk to the moving L1 arm instead of the stationary
+  chassis, preserving source geometry and removing false arm/chassis collisions.
+
+- Isolate assembly collisions to source leaves and render pinned collision
+  geometry beside the untouched CAD pose for rigid ownership review.
+
+- Search assembly parking and yaw more broadly, solve Cartesian task segments
+  backwards from alignment or intermediate junctions, and report guarded segment
+  witnesses while requiring a complete collision-checked plan for execution.
+
+- Inspect assembly against verified central-highland terrain, placing the Engineer
+  on the CAD's 250 mm raised deck relative to the Core plinth. Reject unsupported
+  parking, fit rulebook OXYZ to the field base front wall, and preserve terrain
+  provenance in recordings and offline renders.
+
+- Plan source-CAD assembly stages with collision-aware IK branch/grasp selection,
+  bounded joint-space free travel and guarded playback. Add automatic and assisted
+  controls, background planning, deterministic reports and failure budgets.
+
+- Guard source-CAD assembly motion against self, Core, payload and floor
+  collisions; preserve the last valid pose and report named obstructions.
+  Add reusable swept collision queries and checksummed source-link shapes.
+
 - Close the source Engineer jaws onto the Energy Unit body before assembly;
   gate carrying on a fitted grasp and support opening, release and regripping.
 
