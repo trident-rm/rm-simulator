@@ -19,6 +19,8 @@
 pub mod adaptive;
 /// Button-driven assembly progression and shared-core arbitration.
 pub mod assembly;
+/// Seeded equipment-local assembly poses and spherical orientation (Table 5-10).
+pub mod assembly_pose;
 pub mod combat;
 /// Sensor-driven assembly manipulation workbench; separate from virtual match rewards.
 pub mod manipulation;

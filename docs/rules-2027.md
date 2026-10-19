@@ -295,7 +295,14 @@ Its initial pose is `(-200, 200, 800) mm`, `(θ, φ, α) = (0, 90, 0)°`.
 Assembly positions use x ∈ [-100,0], y ∈ [100,300], z ∈ [500,700] mm.
 Difficulty 1 has fixed orientation; levels 2–4 allow θ ∈ [-90,90],
 φ ∈ [0,90], α ∈ [-45,45] degrees. Do not substitute these angles directly for
-world yaw/pitch/roll.
+world yaw/pitch/roll. The standalone workbench now generates seeded candidates
+with normal `(sinφ cosθ, sinφ sinθ, cosφ)` and an explicit roll-zero convention;
+see `docs/assembly-workbench.md` for sampling policies and CAD/IK rejection.
+Figures 5-7/5-15 distinguish the insertion post from Q: Q tilts the raised unit
+sideways. Figure 5-7 places P 208 mm above the original post axis and 15 mm ahead of the
+panel plane (post reach 169 mm); lifting must not translate P. The resulting
+flip sweeps forward/up and reproduces the drawing's 54/15 mm final offsets.
+These source bindings remain workbench calibration, not live match authority.
 
 The required actions are selecting difficulty while activating the assembly
 zone, inserting 100 mm in local −x, translating 100 mm in +z, rotating upward

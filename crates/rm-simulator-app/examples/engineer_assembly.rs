@@ -10,7 +10,10 @@ use bevy::{
 use clap::Parser;
 use rm_simulator_physics::{Pose, manipulator::Arm, tick_ns};
 use rm_simulator_render::{PoseFlu, apply_pose, flu_position};
-use rm_simulator_world::gameplay::rmuc_2027::manipulation::{Attempt, Sensors, Step};
+use rm_simulator_world::gameplay::rmuc_2027::{
+    assembly_pose::Targets,
+    manipulation::{Attempt, Sensors, Step},
+};
 use std::{
     path::PathBuf,
     sync::{
@@ -35,6 +38,7 @@ fn pipeline_ready(cache: Res<PipelineCache>, ready: Res<CaptureReady>) {
         .0
         .store(cache.waiting_pipelines().count() == 0, Ordering::Release);
 }
+mod assembly_cad;
 #[allow(dead_code)]
 #[path = "../src/robot_assets.rs"]
 mod robot_assets;
@@ -48,6 +52,9 @@ struct Options {
     /// Verified PIE source package: chassis/wheels only; arm uses a generic IK proxy.
     #[arg(long)]
     robot_assets: Option<PathBuf>,
+    /// Source-preserved Engineer arm, Tech Core and Energy Unit workbench package.
+    #[arg(long, conflicts_with = "robot_assets")]
+    assembly_assets: Option<PathBuf>,
     /// Demonstrate the full sequence with rate-limited Cartesian movements.
     #[arg(long)]
     demo: bool,
@@ -57,6 +64,21 @@ struct Options {
     /// Save the completed demonstration and exit (implies --demo).
     #[arg(long)]
     screenshot: Option<PathBuf>,
+    /// Write solved source-CAD frames at 32 Hz, including the initial and final poses.
+    #[arg(long, requires_all = ["headless", "assembly_assets"])]
+    record: Option<PathBuf>,
+    /// Reproducible rulebook pose selection; failed CAD/IK checks never resample.
+    #[arg(long, requires = "assembly_assets")]
+    pose_seed: Option<u64>,
+    /// Explicit pose selection number, frozen throughout the attempt.
+    #[arg(long, default_value_t = 0, requires = "pose_seed")]
+    pose_index: u64,
+    /// Export all four difficulty candidates as JSON, without loading CAD or solving IK.
+    #[arg(long, conflicts_with_all = ["assembly_assets", "robot_assets", "record"])]
+    generate_poses: Option<u64>,
+    /// Inspect the gripper and Core front mechanism at closer range.
+    #[arg(long)]
+    closeup: bool,
 }
 const SOCKET: [f64; 3] = [-0.05, 0.2, 0.6];
 const ENTRANCE_X: f64 = 0.05;
@@ -78,6 +100,7 @@ struct Workbench {
     unreachable: bool,
     capture_frames: u32,
     confirm_requested: bool,
+    cad: Option<assembly_cad::Rig>,
 }
 impl Workbench {
     fn new(d: u8) -> Self {
@@ -92,13 +115,20 @@ impl Workbench {
             unreachable: false,
             capture_frames: 0,
             confirm_requested: false,
+            cad: None,
         }
     }
     fn step(&mut self, movement: [f64; 3], rotation: [f64; 3]) {
-        if self.paused || self.task.failure.is_some() || self.task.completed() {
+        if self.paused {
             return;
         }
         let dt = tick_ns() as f64 * 1e-9;
+        if let Some(cad) = &mut self.cad {
+            cad.step_gripper(self.attached, dt);
+        }
+        if self.task.failure.is_some() || self.task.completed() {
+            return;
+        }
         let mut tool = self.tool;
         let angles = std::array::from_fn(|i| self.angles[i] + rotation[i] * RATE * dt);
         for (i, v) in movement.into_iter().enumerate() {
@@ -109,7 +139,12 @@ impl Workbench {
             * Quat::from_rotation_z(angles[2] as f32);
         let q = DQuat::from_xyzw(p.x as f64, p.y as f64, p.z as f64, p.w as f64).normalize();
         tool.rotation_wxyz = [q.w, q.x, q.y, q.z];
-        self.unreachable = ARM.solve(tool).is_err() || tool.translation_m[2] < 0.15;
+        self.unreachable = tool.translation_m[2] < 0.15
+            || if let Some(cad) = &mut self.cad {
+                cad.update(tool.translation_m, angles).is_err()
+            } else {
+                ARM.solve(tool).is_err()
+            };
         if !self.unreachable {
             self.tool = tool;
             self.angles = angles;
@@ -117,13 +152,15 @@ impl Workbench {
         self.tick += 1;
         let [x, y, z] = self.tool.translation_m;
         let s = Sensors {
-            attached: self.attached,
+            attached: self.cad.as_ref().map_or(self.attached, |c| c.gripped()),
             insertion_m: ENTRANCE_X - x,
             lift_m: z - SOCKET[2],
             p_rad: self.angles[0],
             q_rad: self.angles[1],
-            axis_error_rad: self.angles[2].abs(),
-            lateral_error_m: (y - SOCKET[1]).abs(),
+            axis_error_rad: self.angles[2].abs()
+                + self.cad.as_ref().map_or(0., |c| c.angle_error_rad),
+            lateral_error_m: (y - SOCKET[1]).abs()
+                + self.cad.as_ref().map_or(0., |c| c.position_error_m),
         };
         self.task
             .observe(self.tick * tick_ns(), [s, Sensors::default()], true, true)
@@ -136,6 +173,10 @@ impl Workbench {
         };
     }
     fn demo(&mut self) {
+        if self.cad.as_ref().is_some_and(|c| !c.gripped()) && self.attached {
+            self.step([0.; 3], [0.; 3]);
+            return;
+        }
         let mut target = SOCKET;
         let mut angles = [0.; 3];
         match self.task.cores[0].step {
@@ -151,10 +192,34 @@ impl Workbench {
                 angles = [std::f64::consts::FRAC_PI_2, self.task.target_q_rad[0], 0.];
             }
             Step::Ready => {
-                self.confirm();
-                return;
+                if self.task.difficulty >= 2 {
+                    target[2] += 0.1;
+                }
+                if self.task.difficulty >= 3 {
+                    angles = [std::f64::consts::FRAC_PI_2, self.task.target_q_rad[0], 0.];
+                }
             }
             Step::Confirmed => return,
+        }
+        // Finish each exact waypoint before starting the next physical motion.
+        // Referee tolerances may advance the evaluator a few millimetres/degrees
+        // early; they must not blend lifting with flipping or P with Q.
+        if target[2] > SOCKET[2] && (self.tool.translation_m[0] - SOCKET[0]).abs() > 1e-9 {
+            target[2] = SOCKET[2];
+            angles = [0.; 3];
+        } else if angles[0] > 0. && (self.tool.translation_m[2] - target[2]).abs() > 1e-9 {
+            angles = [0.; 3];
+        } else if angles[1] != 0. && (self.angles[0] - angles[0]).abs() > 1e-9 {
+            angles[1] = 0.;
+        }
+        if self.task.cores[0].step == Step::Ready
+            && (0..3).all(|i| {
+                (self.tool.translation_m[i] - target[i]).abs() < 1e-9
+                    && (self.angles[i] - angles[i]).abs() < 1e-9
+            })
+        {
+            self.confirm();
+            return;
         }
         let dt = tick_ns() as f64 * 1e-9;
         let movement = std::array::from_fn(|i| {
@@ -177,15 +242,82 @@ struct Status;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut options = Options::parse();
     options.demo |= options.screenshot.is_some();
+    if let Some(seed) = options.generate_poses {
+        let targets: Vec<_> = (1..=4)
+            .map(|d| Targets::sample(seed, 0, d).unwrap())
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&targets)?);
+        return Ok(());
+    }
+    let mut workbench = Workbench::new(options.difficulty);
+    if let Some(path) = &mut options.assembly_assets {
+        *path = path.canonicalize()?;
+        workbench.cad = Some(if let Some(seed) = options.pose_seed {
+            let targets = Targets::sample(seed, options.pose_index, options.difficulty)?;
+            let requested = targets.cores[0];
+            workbench.task = Attempt::new(options.difficulty, [targets.q_rad[0]; 2], 0)?;
+            assembly_cad::Rig::load_target(path, requested).map_err(|e| {
+                format!(
+                    "seed {seed}, selection {}, candidate {}: {e}",
+                    options.pose_index,
+                    serde_json::to_string(&requested).unwrap()
+                )
+            })?
+        } else {
+            assembly_cad::Rig::load(path)?
+        });
+    }
     if options.headless {
-        let mut w = Workbench::new(options.difficulty);
+        let mut w = workbench;
+        let mut recording = if let Some(path) = &options.record {
+            use std::io::Write;
+            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut file = std::io::BufWriter::new(std::fs::File::create(path)?);
+            let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(
+                options
+                    .assembly_assets
+                    .as_ref()
+                    .unwrap()
+                    .join("manifest.json"),
+            )?)?;
+            writeln!(
+                file,
+                "{}",
+                serde_json::json!({"schema":1,"tick_ns":tick_ns(),
+                "sample_ticks":4,"difficulty":options.difficulty,"manifest":manifest,
+                "case":"insert 100 mm, lift 100 mm, P 90 deg, then requested Q",
+                "pose_seed":options.pose_seed,"pose_index":options.pose_index,
+                "target_q_rad":w.task.target_q_rad,
+                "requested_pose":w.cad.as_ref().unwrap().requested_pose,
+                "mode":"offline prescribed IK; no contact or collision planning"})
+            )?;
+            write_frame(&mut file, &w)?;
+            Some(file)
+        } else {
+            None
+        };
         for _ in 0..10000 {
             w.demo();
-            if w.task.completed() {
+            if let Some(file) = &mut recording
+                && (w.tick.is_multiple_of(4) || w.task.completed())
+            {
+                write_frame(file, &w)?;
+            }
+            if w.task.completed() || w.unreachable {
                 break;
             }
         }
-        println!("{}", serde_json::to_string_pretty(&w.task)?);
+        if let Some(file) = &mut recording {
+            std::io::Write::flush(file)?;
+        }
+        let mut report = serde_json::to_value(&w.task)?;
+        report["ik_unreachable"] = w.unreachable.into();
+        if let Some(cad) = &w.cad {
+            report["cad"] = cad.report();
+        }
+        println!("{}", serde_json::to_string_pretty(&report)?);
         if !w.task.completed() {
             return Err("assembly demonstration did not complete".into());
         }
@@ -226,8 +358,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         plugins = plugins.disable::<bevy::winit::WinitPlugin>();
     }
     let mut app = App::new();
+    if let Some(root) = &options.assembly_assets {
+        assembly_cad::register(&mut app, root.clone());
+    }
     app.init_resource::<CaptureImage>()
-        .insert_resource(Workbench::new(options.difficulty))
+        .init_resource::<assembly_cad::BoundGroups>()
+        .insert_resource(workbench)
         .insert_resource(options)
         .add_plugins(plugins);
     if offscreen {
@@ -241,10 +377,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .insert_resource(ClearColor(Color::srgb(0.035, 0.045, 0.055)))
         .add_systems(Startup, setup)
         .add_systems(FixedUpdate, advance)
-        .add_systems(Update, (actions, hide_source_arm, draw, capture).chain())
+        .add_systems(
+            Update,
+            (actions, hide_source_arm, assembly_cad::sync, draw, capture).chain(),
+        )
         .run();
     Ok(())
 }
+fn write_frame(file: &mut impl std::io::Write, w: &Workbench) -> std::io::Result<()> {
+    let rig = w.cad.as_ref().expect("record requires source CAD");
+    writeln!(
+        file,
+        "{}",
+        serde_json::json!({"tick":w.tick,
+        "step":w.task.cores[0].step,"completed":w.task.completed(),
+        "guide_m":w.tool.translation_m,"angles_rad":w.angles,
+        "frames_world_flu":rig.world_frames(),"cad":rig.report()})
+    )
+}
+
 fn block(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -265,12 +416,14 @@ fn block(
         ))
         .id()
 }
+#[allow(clippy::too_many_arguments)] // Independent Bevy resources, matching the scene setup boundary.
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     assets: Res<AssetServer>,
     options: Res<Options>,
+    workbench: Res<Workbench>,
     mut images: ResMut<Assets<Image>>,
     mut capture: ResMut<CaptureImage>,
 ) {
@@ -286,14 +439,33 @@ fn setup(
     } else {
         default()
     };
+    let (eye, look) = if options.closeup && workbench.cad.is_some() {
+        ([1.5, 0.35, 1.12], [0.77, -0.51, 0.75])
+    } else if workbench.cad.is_some() {
+        ([2.5, 1.65, 1.65], [0.68, -0.1, 0.5])
+    } else {
+        ([1.45, 1.65, 1.4], [0.25, 0.1, 0.42])
+    };
     commands.spawn((
         target,
         Camera3d::default(),
         bevy::camera::Hdr,
         bevy::camera::Exposure { ev100: 9. },
         IsDefaultUiCamera,
-        Transform::from_translation(flu_position([1.45, 1.65, 1.4]))
-            .looking_at(flu_position([0.25, 0.1, 0.42]), Vec3::Y),
+        Transform::from_translation(flu_position(eye)).looking_at(flu_position(look), Vec3::Y),
+    ));
+    commands.insert_resource(GlobalAmbientLight {
+        brightness: 90.,
+        color: Color::WHITE,
+        ..default()
+    });
+    commands.spawn((
+        DirectionalLight {
+            illuminance: 2200.,
+            ..default()
+        },
+        Transform::from_translation(flu_position([3., 2., 2.]))
+            .looking_at(flu_position([0.7, -0.5, 0.5]), Vec3::Y),
     ));
     commands.spawn((
         DirectionalLight {
@@ -307,87 +479,91 @@ fn setup(
         &mut commands,
         &mut meshes,
         &mut materials,
-        [0.2, 0., -0.04],
-        [2.4, 0.08, 2.4],
+        [0.7, 0., -0.04],
+        [3., 0.08, 3.],
         Color::srgb(0.12, 0.14, 0.16),
     );
-    // Fixture is intentionally schematic: source Tech Core motion is not bound yet.
-    block(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        [-0.24, 0.2, 0.35],
-        [0.22, 0.7, 0.18],
-        Color::srgb(0.2, 0.23, 0.27),
-    );
-    block(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        [-0.05, 0.2, 0.6],
-        [0.02, 0.04, 0.02],
-        Color::srgb(0.1, 0.8, 0.8),
-    );
-    if options.robot_assets.is_some() {
-        commands.spawn((
-            WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset("neutral.glb"))),
-            Transform::from_translation(flu_position([0.55, 0., 0.132]))
-                .with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
-        ));
-        // Package armor was removed for runtime replacement; add simple workbench housings.
-        for p in [
-            [0.88, 0., 0.16],
-            [0.22, 0., 0.16],
-            [0.55, 0.29, 0.16],
-            [0.55, -0.29, 0.16],
-        ] {
-            block(
-                &mut commands,
-                &mut meshes,
-                &mut materials,
-                p,
-                [0.08, 0.08, 0.08],
-                Color::srgb(0.45, 0.05, 0.04),
-            );
-        }
+    if let Some(rig) = &workbench.cad {
+        assembly_cad::spawn(&mut commands, &assets, rig);
     } else {
+        // Schematic fallback remains available without source CAD.
         block(
             &mut commands,
             &mut meshes,
             &mut materials,
-            [0.55, 0., 0.14],
-            [0.5, 0.22, 0.55],
-            Color::srgb(0.16, 0.18, 0.2),
+            [-0.24, 0.2, 0.35],
+            [0.22, 0.7, 0.18],
+            Color::srgb(0.2, 0.23, 0.27),
         );
-    }
-    block(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        [0.55, 0., 0.275],
-        [0.08, 0.15, 0.08],
-        Color::srgb(0.25, 0.28, 0.3),
-    );
-    for i in 0..2 {
-        let e = block(
+        block(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            [-0.05, 0.2, 0.6],
+            [0.02, 0.04, 0.02],
+            Color::srgb(0.1, 0.8, 0.8),
+        );
+        if options.robot_assets.is_some() {
+            commands.spawn((
+                WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset("neutral.glb"))),
+                Transform::from_translation(flu_position([0.55, 0., 0.132]))
+                    .with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
+            ));
+            // Package armor was removed for runtime replacement; add simple workbench housings.
+            for p in [
+                [0.88, 0., 0.16],
+                [0.22, 0., 0.16],
+                [0.55, 0.29, 0.16],
+                [0.55, -0.29, 0.16],
+            ] {
+                block(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    p,
+                    [0.08, 0.08, 0.08],
+                    Color::srgb(0.45, 0.05, 0.04),
+                );
+            }
+        } else {
+            block(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                [0.55, 0., 0.14],
+                [0.5, 0.22, 0.55],
+                Color::srgb(0.16, 0.18, 0.2),
+            );
+        }
+        block(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            [0.55, 0., 0.275],
+            [0.08, 0.15, 0.08],
+            Color::srgb(0.25, 0.28, 0.3),
+        );
+        for i in 0..2 {
+            let e = block(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                [0.; 3],
+                [0.035, 1., 0.035],
+                Color::srgb(0.55, 0.59, 0.63),
+            );
+            commands.entity(e).insert(Segment(i));
+        }
+        let tool = block(
             &mut commands,
             &mut meshes,
             &mut materials,
             [0.; 3],
-            [0.035, 1., 0.035],
-            Color::srgb(0.55, 0.59, 0.63),
+            [0.065, 0.065, 0.065],
+            Color::srgb(0.9, 0.57, 0.08),
         );
-        commands.entity(e).insert(Segment(i));
+        commands.entity(tool).insert(Tool);
     }
-    let tool = block(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        [0.; 3],
-        [0.065, 0.065, 0.065],
-        Color::srgb(0.9, 0.57, 0.08),
-    );
-    commands.entity(tool).insert(Tool);
     commands.spawn((
         Text::new(""),
         TextFont {
@@ -418,6 +594,7 @@ fn hide_source_arm(mut q: Query<(&Name, &mut Visibility), Added<Name>>) {
     }
 }
 fn actions(
+    options: Res<Options>,
     keys: Res<ButtonInput<KeyCode>>,
     mut w: ResMut<Workbench>,
     mut exit: MessageWriter<AppExit>,
@@ -428,7 +605,22 @@ fn actions(
         (KeyCode::Digit3, 3),
     ] {
         if keys.just_pressed(key) {
-            *w = Workbench::new(d);
+            if options.pose_seed.is_some() && d != w.task.difficulty {
+                w.message =
+                    "Seeded poses depend on difficulty; launch with the requested --difficulty"
+                        .into();
+                continue;
+            }
+            let target_q = w.task.target_q_rad;
+            let mut cad = w.cad.take();
+            if let Some(rig) = &mut cad {
+                rig.restart();
+            }
+            *w = Workbench {
+                task: Attempt::new(d, target_q, 0).unwrap(),
+                cad,
+                ..Workbench::new(d)
+            };
         }
     }
     if keys.just_pressed(KeyCode::Space) {
@@ -475,54 +667,73 @@ fn draw(
     mut text: Query<&mut Text, With<Status>>,
     mut gizmos: Gizmos,
 ) {
-    let arm = ARM.solve(w.tool).unwrap();
-    let points = [arm.shoulder_m, arm.elbow_m, arm.tool.translation_m];
-    for (segment, mut t) in &mut segments {
-        let i = usize::from(segment.0);
-        let a = flu_position(points[i]);
-        let b = flu_position(points[i + 1]);
-        t.translation = (a + b) * 0.5;
-        t.rotation = Quat::from_rotation_arc(Vec3::Y, (b - a).normalize());
-        t.scale.y = (b - a).length();
-    }
-    for mut t in &mut tool {
-        apply_pose(
-            &mut t,
-            PoseFlu {
-                translation_m: w.tool.translation_m,
-                rotation_wxyz: w.tool.rotation_wxyz,
-            },
-        );
+    if w.cad.is_none() {
+        let arm = ARM.solve(w.tool).unwrap();
+        let points = [arm.shoulder_m, arm.elbow_m, arm.tool.translation_m];
+        for (segment, mut t) in &mut segments {
+            let i = usize::from(segment.0);
+            let a = flu_position(points[i]);
+            let b = flu_position(points[i + 1]);
+            t.translation = (a + b) * 0.5;
+            t.rotation = Quat::from_rotation_arc(Vec3::Y, (b - a).normalize());
+            t.scale.y = (b - a).length();
+        }
+        for mut t in &mut tool {
+            apply_pose(
+                &mut t,
+                PoseFlu {
+                    translation_m: w.tool.translation_m,
+                    rotation_wxyz: w.tool.rotation_wxyz,
+                },
+            );
+        }
     }
     let color = if w.task.completed() {
         Color::srgb(0.1, 1., 0.3)
     } else {
         Color::srgb(0.1, 0.8, 0.9)
     };
-    gizmos.line(
-        flu_position([ENTRANCE_X, 0.2, 0.6]),
-        flu_position(SOCKET),
-        color,
-    );
-    gizmos.line(flu_position(SOCKET), flu_position([-0.05, 0.2, 0.7]), color);
-    gizmos.sphere(
-        Isometry3d::from_translation(flu_position(SOCKET)),
-        0.012,
-        color,
-    );
+    if let Some(cad) = &w.cad {
+        let [qw, qx, qy, qz] = cad.socket.rotation_wxyz;
+        let q = DQuat::from_xyzw(qx, qy, qz, qw);
+        let p = bevy::math::DVec3::from_array(cad.socket.translation_m);
+        gizmos.line(
+            flu_position(p.to_array()),
+            flu_position((p + q * bevy::math::DVec3::X * 0.1).to_array()),
+            color,
+        );
+        gizmos.sphere(
+            Isometry3d::from_translation(flu_position(p.to_array())),
+            0.012,
+            color,
+        );
+    } else {
+        gizmos.line(
+            flu_position([ENTRANCE_X, 0.2, 0.6]),
+            flu_position(SOCKET),
+            color,
+        );
+        gizmos.line(flu_position(SOCKET), flu_position([-0.05, 0.2, 0.7]), color);
+        gizmos.sphere(
+            Isometry3d::from_translation(flu_position(SOCKET)),
+            0.012,
+            color,
+        );
+    }
     let [x, y, z] = w.tool.translation_m;
     for mut t in &mut text {
         t.0 = format!(
             "ASSEMBLY WORKBENCH | difficulty {} | {:?} | {:.2}s{}\n\
             WASD: horizontal  R/F: height  Arrows: P/Q  Z/X: off-axis roll\n\
             E: confirm  G: release/grip  Space: pause  1/2/3: restart difficulty\n\
-            Tool [{x:.3}, {y:.3}, {z:.3}] m  P {:.1}°  Q {:.1}° (target {:.1}°)\n\
+            {} [{x:.3}, {y:.3}, {z:.3}] m  P {:.1}°  Q {:.1}° (target {:.1}°)\n\
             {} {} {}\n\
-            Generic position-controlled arm + schematic socket; no match rewards",
+            {}",
             w.task.difficulty,
             w.task.cores[0].step,
             w.tick as f64 / 128.,
             if w.paused { " PAUSED" } else { "" },
+            if w.cad.is_some() { "Guide" } else { "Tool" },
             w.angles[0].to_degrees(),
             w.angles[1].to_degrees(),
             w.task.target_q_rad[0].to_degrees(),
@@ -536,18 +747,34 @@ fn draw(
             w.message,
             w.task
                 .failure
-                .map_or_else(String::new, |f| format!("Failed: {f:?}"))
+                .map_or_else(String::new, |f| format!("Failed: {f:?}")),
+            if w.cad.is_some() {
+                if w.cad.as_ref().is_some_and(|c| c.gripped()) {
+                    "Source CAD | GRIPPED | constrained assembly guide | no match rewards"
+                } else if w.attached {
+                    "Source CAD | CLOSING / NO GRASP | no match rewards"
+                } else {
+                    "Source CAD | OPEN / RELEASED | no match rewards"
+                }
+            } else {
+                "Generic position-controlled arm + schematic socket; no match rewards"
+            }
         );
     }
 }
 fn capture(
     image: Res<CaptureImage>,
+    groups: Res<assembly_cad::BoundGroups>,
     options: Res<Options>,
     ready: Res<CaptureReady>,
     mut w: ResMut<Workbench>,
     mut commands: Commands,
 ) {
     if !ready.0.load(Ordering::Acquire) {
+        w.capture_frames = 0;
+        return;
+    }
+    if w.cad.is_some() && !groups.ready() {
         w.capture_frames = 0;
         return;
     }
@@ -602,13 +829,29 @@ mod tests {
         for d in 1..=3 {
             let mut w = Workbench::new(d);
             for _ in 0..1280 {
+                let prior_p = w.angles[0];
+                let prior_q = w.angles[1];
+                let prior_z = w.tool.translation_m[2];
                 w.demo();
+                if w.angles[0] != prior_p {
+                    assert!((prior_z - SOCKET[2] - 0.1).abs() < 1e-9);
+                }
+                if w.angles[1] != prior_q {
+                    assert!((prior_p - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
+                }
                 if w.task.completed() {
                     break;
                 }
             }
             assert!(w.task.completed(), "difficulty {d}: {:?}", w.task);
             assert_eq!(w.task.failure, None);
+            assert!((w.tool.translation_m[0] - SOCKET[0]).abs() < 1e-9);
+            if d >= 2 {
+                assert!((w.tool.translation_m[2] - SOCKET[2] - 0.1).abs() < 1e-9);
+            }
+            if d >= 3 {
+                assert!((w.angles[0] - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
+            }
             assert!(ARM.solve(w.tool).is_ok());
         }
     }

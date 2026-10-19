@@ -4,6 +4,26 @@
 
 ## Unreleased
 
+- Close the source Engineer jaws onto the Energy Unit body before assembly;
+  gate carrying on a fitted grasp and support opening, release and regripping.
+
+
+- Correct the assembly workbench's P hinge, lift order and Q tilt axis against
+  the RMUC 2027 diagrams, and finish each demo waypoint before the next motion.
+- Generate reproducible equipment-local assembly pose candidates for all four
+  difficulties; report source-head overhang and IK failures without resampling.
+
+
+- Record offline source-CAD assembly IK trajectories and render complete overview
+  or gripper close-up animations with pinned source meshes and timing.
+
+
+- Bind the PIE Engineer's six-axis arm and gripper, RMUC2027 Tech Core arm,
+  carriage/P/Q groups and complete Energy Unit into the Cartesian workbench.
+  Preserve source geometry/material buffers, audit bearing lines, validate asset
+  hashes and reject unreachable poses with serial IK. Exercise difficulties 1–3
+  without changing live Heavy admission or adding torque/contact enforcement.
+
 - Add a standalone Cartesian Engineer assembly workbench with a rate-limited
   gripper, serial-arm inverse kinematics, difficulties 1–3 and optional PIE
   source chassis. Add a deterministic sensor evaluator for all four difficulties,
