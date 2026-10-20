@@ -97,6 +97,8 @@ pub struct Session {
     /// Newest authoritative field state from the host. The app only reads it;
     /// it never steps this field.
     pub snapshot: FieldSnapshot,
+    /// Newest 64 accepted team map intents; no autonomous execution is inferred.
+    pub map_interactions: std::collections::VecDeque<rm_simulator_server::map_interaction::Event>,
     /// Interpolation delay for peer motion, automatic or set by hand in the
     /// F3 menu.
     pub remote_buffer: crate::interpolation::Buffer,
@@ -500,6 +502,7 @@ impl Session {
             host: None,
             singleplayer: args.connect.is_none() && args.host.listen.is_none(),
             snapshot,
+            map_interactions: Default::default(),
             paused,
             team,
             client_id,
@@ -713,6 +716,22 @@ impl Session {
             return Err(format!("embedded server failed: {error}"));
         }
         self.client.poll();
+        for event in self.client.take_map_interactions() {
+            if self
+                .map_interactions
+                .back()
+                .is_some_and(|old| event.id <= old.id)
+            {
+                continue;
+            }
+            if self.map_interactions.len() == 64 {
+                self.map_interactions.pop_front();
+            }
+            if event.client_id == self.client.welcome().client_id {
+                self.notices.push_back((self.snapshot.time_ns, format!("Map intent #{} accepted ({} deployed receiver(s)); no autonomous execution", event.id, event.recipients.len())));
+            }
+            self.map_interactions.push_back(event);
+        }
         // Deployment updates this connection's ownership, before consuming the
         // confirmation snapshot or an owner anchor for the newly assigned chassis.
         let welcome = self.client.welcome();

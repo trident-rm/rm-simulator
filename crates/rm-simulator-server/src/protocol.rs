@@ -110,7 +110,8 @@ use serde::{Deserialize, Serialize};
 /// Version 68 carries post-flip Q reveal and the separate attached twist search.
 /// Version 69 carries persistent physical Energy Units and owned gripper/jog commands.
 /// Version 72 adds native Heavy conversion and historical launcher permission.
-pub const PROTOCOL_VERSION: u32 = 72;
+/// Version 73 adds authenticated team map interaction events.
+pub const PROTOCOL_VERSION: u32 = 73;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///
@@ -803,6 +804,8 @@ pub fn check_map_marker(kind: MapMarkerKind, position_m: [f64; 2]) -> Result<(),
 /// Anything that changes the simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Command {
+    /// Send a typed map intent through the authenticated team command interface.
+    MapInteraction(crate::map_interaction::Interaction),
     /// Convert an unlocked native Heavy to the Hero gameplay approximation.
     ConvertHeavy {
         /// Requesting pilot's stable chassis identity; checked by the host.
@@ -1277,6 +1280,8 @@ pub struct ShotResult {
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ServerMessage {
+    /// Team-only accepted map intent; delivery does not mean autonomous execution.
+    MapInteraction(crate::map_interaction::Event),
     /// Reliable weapon defaults/caps after an in-place robot conversion.
     WeaponChanged {
         /// Current host-selected launcher settings.

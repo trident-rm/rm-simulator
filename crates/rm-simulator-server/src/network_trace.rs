@@ -383,6 +383,7 @@ impl Observer {
                 event.queue_age_ms = Some(stats.oldest_age_ms);
                 event.encoding = stats.encoding.clone();
             }
+            ServerMessage::MapInteraction(_) => event.kind = "map_interaction",
             ServerMessage::WeaponChanged { .. } => event.kind = "weapon_changed",
             ServerMessage::Telemetry(_) => event.kind = "telemetry",
         }

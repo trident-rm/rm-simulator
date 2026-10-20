@@ -423,6 +423,7 @@ fn record_loopback_frame(inbox: &ClientInbox, payload: &[u8]) {
 /// Latest replaceable state and ordered discrete events from the reader.
 #[derive(Default)]
 struct Incoming {
+    map_interactions: std::collections::VecDeque<crate::map_interaction::Event>,
     weapon_changed: Option<(crate::protocol::WeaponConfig, crate::protocol::WeaponLimits)>,
     deployment: Option<Box<crate::protocol::DeploymentReceipt>>,
     transport_stats: Option<crate::network_stats::TransportStats>,
@@ -486,6 +487,13 @@ impl ClientInbox {
             ));
         }
         let replaced = match message {
+            ServerMessage::MapInteraction(event) => {
+                if data.map_interactions.len() == 64 {
+                    data.map_interactions.pop_front();
+                }
+                data.map_interactions.push_back(event);
+                None
+            }
             ServerMessage::WeaponChanged { weapon, limits } => {
                 data.weapon_changed = Some((weapon, limits));
                 None
@@ -797,6 +805,13 @@ impl Client {
         if let Some(sample) = time_sample {
             self.timing.sample(sample);
         }
+    }
+    /// Drain accepted own-team map intents in order, at most the newest 64.
+    /// These are intents rather than execution results; deduplicate using event ids.
+    pub fn take_map_interactions(&self) -> Vec<crate::map_interaction::Event> {
+        self.inbox.try_data().map_or_else(Vec::new, |mut data| {
+            data.map_interactions.drain(..).collect()
+        })
     }
     /// Drain scheduled shot receipts as `(shooter chassis id, shot id)`, oldest
     /// first. A receipt means admitted, not executed.
@@ -1170,6 +1185,54 @@ mod tests {
         RefereeConfig,
     };
 
+    #[test]
+    fn map_intents_roundtrip_over_loopback_and_native_udp_without_actuation() {
+        let _serial = NATIVE_TEST.lock().unwrap_or_else(|p| p.into_inner());
+        use crate::map_interaction::{Interaction, Recipient, Target};
+        for remote in [false, true] {
+            let (server, handle) = host();
+            let mut client = if remote {
+                Client::connect_udp(
+                    server.local_addr(),
+                    "map pilot",
+                    Some(Team::Red),
+                    Role::Pilot,
+                )
+                .unwrap()
+            } else {
+                server
+                    .connect_owner(
+                        "map pilot",
+                        Team::Red,
+                        Role::Pilot,
+                        Robot::default(),
+                        [0.; 3],
+                        0.,
+                    )
+                    .unwrap()
+            };
+            let before = handle.snapshot().unwrap();
+            let interaction = Interaction {
+                recipient: Recipient::Sentry,
+                target: Target::Position([2., 1.]),
+                kind: crate::protocol::MapMarkerKind::Alert,
+                key_code: 0,
+            };
+            client
+                .send_confirmed(Command::MapInteraction(interaction))
+                .unwrap();
+            wait_until("map intent confirmation", || {
+                client.poll();
+                client.commands_confirmed()
+            });
+            let events = client.take_map_interactions();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].interaction, interaction);
+            assert_eq!(events, handle.map_interactions().unwrap());
+            assert_eq!(handle.snapshot().unwrap(), before);
+            assert!(client.take_map_interactions().is_empty());
+        }
+    }
     #[test]
     fn link_client_reports_gns_transport() {
         let time = crate::clock::ManualTime::new();

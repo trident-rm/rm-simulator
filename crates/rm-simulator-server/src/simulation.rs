@@ -1084,6 +1084,9 @@ impl Simulation {
         observer: &mut dyn FnMut(&rm_simulator_world::ArmorHit),
     ) -> Result<(), String> {
         match command {
+            Command::MapInteraction(_) => {
+                Err("map interactions require a connected team pilot".into())
+            }
             Command::ConvertHeavy { chassis } => {
                 self.field
                     .convert_heavy_to_hero(*chassis)

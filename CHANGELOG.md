@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Add a map-click choice for local markers or typed Sentry/team intents, optional
+  key bytes, team-only reliable delivery and a bounded controller inbox. Validate
+  targets, recipients and protocol transmission intervals without enabling
+  autonomous driving (protocol 73).
+
 - Let native 2027 Heavy pilots convert in place to the folding Hero approximation
   from the J panel after L3 or the historical-deficit launcher timer unlocks.
   Keep identity/team, add 42 mm heat/ammo/direct damage and preserve conversion

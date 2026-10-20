@@ -236,6 +236,11 @@ not a refactor.
   "which screen is up". The HUD is not a screen: its panels and display
   preferences are independent flags on `HudState`, and its entities are spawned
   once and mutated from simulation data.
+- **Map intent boundary.** `server::map_interaction` models 2026 §1.3.1 and
+  MapClickCmd recipient/marker intent. The host derives source/team and routes
+  bounded numbered events; this is not a Sentry controller or world rule state.
+  Transport-clock rate limits continue while paused. World FLU/chassis identities
+  require explicit conversion before a future referee UART/MQTT bridge.
 - **Renderer is passive.** It applies caller-owned `SceneState` and never
   advances rules or reads the physics/world crates. Chassis ingestion resolves
   caller state into pose and light components before applying changes. Keep

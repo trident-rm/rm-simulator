@@ -28,6 +28,7 @@ pub mod host_args;
 pub mod http;
 pub mod layout;
 mod lifecycle;
+pub mod map_interaction;
 pub mod math;
 pub mod net;
 pub mod protocol;

@@ -9,7 +9,9 @@ use bevy_flair::prelude::{ClassList, Styled};
 
 mod controls_menu;
 mod heat_ring;
+mod map_interaction;
 mod menus;
+pub(crate) use map_interaction::sync as sync_map_interaction;
 mod team_status;
 /// The HUD plugin and the two input systems, re-exported from `menus` so
 /// `main.rs` wires the overlay through one `hud` path.
@@ -17,7 +19,7 @@ pub use menus::{HudPlugin, menu_input, sync_menus};
 /// Markers for the settings shade and the toolbar, so match teardown can despawn
 /// both without naming the menus module.
 pub(crate) use menus::{Settings, Toolbar};
-use rm_simulator_server::protocol::{Command, MapMarkerKind};
+use rm_simulator_server::protocol::MapMarkerKind;
 use rm_simulator_world::{Caliber, MatchPhase, Team};
 
 use crate::controls::{Drive, Gun, Player};
@@ -78,6 +80,8 @@ pub struct HudState {
     pub map_marker: MapMarkerKind,
     /// The last marker this client sent and where, drawn on the map.
     pub last_marker: Option<(MapMarkerKind, [f64; 2])>,
+    /// Pending clicked FLU point and optional protocol key; not sent until confirmed.
+    pub pending_map: Option<([f64; 2], u8)>,
 }
 impl Default for HudState {
     fn default() -> Self {
@@ -103,13 +107,15 @@ impl Default for HudState {
             closed_with_escape: false,
             map_marker: MapMarkerKind::Attack,
             last_marker: None,
+            pending_map: None,
         }
     }
 }
 impl HudState {
     /// True while an open panel or a running capture must swallow gameplay input.
     pub fn blocks_input(&self) -> bool {
-        self.unfocused
+        self.pending_map.is_some()
+            || self.unfocused
             || self.assembly
             || self.rebinding
             || self.respawn
@@ -201,7 +207,8 @@ pub fn panel_input(
 impl HudState {
     /// True while a panel is open that Escape closes before the match is paused.
     pub fn modal_open(&self) -> bool {
-        self.assembly
+        self.pending_map.is_some()
+            || self.assembly
             || self.pause_menu
             || self.quit_confirm
             || self.respawn
@@ -223,6 +230,7 @@ impl HudState {
     /// Close every dismissible panel and swallow this frame's remaining input.
     /// The respawn prompt follows defeat instead and stays open.
     pub fn close(&mut self) {
+        self.pending_map = None;
         self.assembly = false;
         self.pause_menu = false;
         self.quit_confirm = false;
@@ -295,6 +303,7 @@ enum MapItem {
     Outpost(usize),
     Rune(usize),
     Marker,
+    Interaction(u64),
 }
 const MARKER: Color = Color::srgb(1.0, 0.82, 0.25);
 /// Up to three characters for a marker on the map.
@@ -524,14 +533,7 @@ pub fn spawn_hud(commands: &mut Commands) {
             BackgroundColor(INK),
             BorderColor::all(Color::srgba(0.6, 0.75, 0.8, 0.5)),
         ))
-        .observe(
-            |_: On<Pointer<Press>>, player: Res<Player>, mut ui: ResMut<HudState>| {
-                if !player.captured && !ui.modal_open() {
-                    ui.close();
-                    ui.large_map = true;
-                }
-            },
-        )
+        .observe(map_interaction::press)
         .with_children(|p| {
             p.spawn((
                 Node {
@@ -1364,7 +1366,7 @@ pub fn update_hud(
             Hud::MapLabel => {
                 if ui.large_map {
                     format!(
-                        "CLICK TO MARK: {}   |   A attack   B defend   I alert   other letters custom   |   Green: you   O: outpost   R: rune",
+                        "CLICK FOR MARKER / SENTRY: {}   |   A attack   B defend   I alert   other letters custom   |   Green: you   O: outpost   R: rune",
                         ui.map_marker.label().to_uppercase()
                     )
                 } else {
@@ -1517,6 +1519,17 @@ pub fn update_map(
             "R".into(),
         ));
     }
+    if let Some(event) = session.map_interactions.back()
+        && let rm_simulator_server::map_interaction::Target::Position([x, y]) =
+            event.interaction.target
+    {
+        items.push((
+            MapItem::Interaction(event.id),
+            [x, y, 0.],
+            Color::srgb(0.2, 0.9, 1.),
+            marker_glyph(event.interaction.kind),
+        ));
+    }
     if let Some((kind, [x, y])) = ui.last_marker {
         items.push((MapItem::Marker, [x, y, 0.], MARKER, marker_glyph(kind)));
     }
@@ -1570,8 +1583,7 @@ pub(crate) fn cursor_on_map(map: &(&bevy::ui::RelativeCursorPosition, &Node)) ->
 
 /// Map clicks: on the large map a letter key picks the marker (A attack,
 /// B defend, I alert, any other letter a custom one, except the keys bound to
-/// the map and settings panels), and a left click on either map sends it to
-/// the host as a [`Command::MapMarker`] at the point under the cursor. The
+/// the map and settings panels). A left click opens a marker/Sentry intent choice. The
 /// small map takes clicks only while the mouse is free, so aiming never marks.
 #[allow(clippy::too_many_arguments)]
 pub fn click_map(
@@ -1581,7 +1593,7 @@ pub fn click_map(
     player: Res<Player>,
     map: Single<(&bevy::ui::RelativeCursorPosition, &Node), With<FieldMap>>,
     artwork: Option<Res<crate::minimap::Minimap>>,
-    mut session: ResMut<Session>,
+    session: Res<Session>,
 ) {
     if ui.large_map && !ui.consumed {
         let reserved = |key: KeyCode| {
@@ -1605,7 +1617,13 @@ pub fn click_map(
         .as_ref()
         .is_some_and(|b| b.just_pressed(MouseButton::Left));
     let open = ui.large_map || !ui.blocks_input();
-    if !clicked || !open || player.captured || ui.consumed || !cursor_on_map(&map) {
+    if !clicked
+        || !open
+        || player.captured
+        || ui.consumed
+        || ui.pending_map.is_some()
+        || !cursor_on_map(&map)
+    {
         return;
     }
     let Some(normalized) = map.0.normalized else {
@@ -1615,9 +1633,12 @@ pub fn click_map(
         .as_ref()
         .map_or([-15., -9., 15., 9.], |map| map.bounds_m);
     let position_m = crate::minimap::point(normalized, bounds);
-    let kind = ui.map_marker;
-    ui.last_marker = Some((kind, position_m));
-    session.apply(Command::MapMarker { kind, position_m });
+    if session.chassis_id.is_none() || session.role != rm_simulator_server::protocol::Role::Pilot {
+        return;
+    }
+    ui.pending_map = Some((position_m, 0));
+    ui.large_map = true;
+    ui.consumed = true;
 }
 /// The letter a key types on a US layout, for picking a map marker.
 fn key_letter(key: KeyCode) -> Option<char> {
@@ -1663,6 +1684,13 @@ mod tests {
             .resource_mut::<ButtonInput<MouseButton>>()
             .press(MouseButton::Left);
         app.update();
+        assert!(app.world().resource::<HudState>().last_marker.is_none());
+        assert!(app.world().resource::<HudState>().pending_map.is_some());
+        app.world_mut()
+            .resource_scope(|world, mut ui: Mut<HudState>| {
+                let mut session = world.resource_mut::<Session>();
+                map_interaction::choose(map_interaction::Action::Marker, &mut ui, &mut session);
+            });
         let (kind, position_m) = app.world().resource::<HudState>().last_marker.unwrap();
         assert_eq!(kind, MapMarkerKind::Defend);
         // The left edge of the drawing is red's end of the field.

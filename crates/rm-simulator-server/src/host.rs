@@ -158,6 +158,7 @@ enum Request {
     FireRecords(Reply<Vec<crate::simulation::FireRecord>>),
     Roster(Reply<Vec<PlayerInfo>>),
     MapMarkers(Reply<Vec<MapMarkerRecord>>),
+    MapInteractions(Reply<Vec<crate::map_interaction::Event>>),
     Join(PeerRegistration, Reply<Result<Welcome, String>>),
     Leave(u32),
     Client(u32, ClientMessage),
@@ -260,6 +261,11 @@ impl HostHandle {
     /// The map markers accepted so far, oldest first, at most the newest 64.
     pub fn map_markers(&self) -> Result<Vec<MapMarkerRecord>, String> {
         self.request(Request::MapMarkers)
+    }
+    /// Accepted map intents, oldest first, bounded to the newest 64 for controller inspection.
+    /// A controller must deduplicate event ids and decide whether to act on an intent.
+    pub fn map_interactions(&self) -> Result<Vec<crate::map_interaction::Event>, String> {
+        self.request(Request::MapInteractions)
     }
     /// How many peers are connected, counted from a roster capture in order.
     pub fn peer_count(&self) -> Result<usize, String> {
@@ -368,6 +374,9 @@ impl Host {
                     simulation,
                     peers: Vec::new(),
                     map_markers: Default::default(),
+                    map_interactions: Default::default(),
+                    last_map_interaction: Default::default(),
+                    next_map_interaction: 1,
                     next_id: 1,
                     next_sequence: 0,
                     next_snapshot_id: 1,
@@ -461,6 +470,9 @@ struct Owner {
     simulation: Simulation,
     peers: Vec<Peer>,
     map_markers: std::collections::VecDeque<MapMarkerRecord>,
+    map_interactions: std::collections::VecDeque<crate::map_interaction::Event>,
+    last_map_interaction: std::collections::BTreeMap<u32, Instant>,
+    next_map_interaction: u64,
     next_id: u32,
     next_sequence: u64,
     next_snapshot_id: u64,
@@ -544,6 +556,9 @@ impl Owner {
             Request::Roster(reply) => {
                 let _ = reply.send(self.roster());
             }
+            Request::MapInteractions(reply) => {
+                let _ = reply.send(self.map_interactions.iter().cloned().collect());
+            }
             Request::MapMarkers(reply) => {
                 let _ = reply.send(self.map_markers.iter().copied().collect());
             }
@@ -606,6 +621,125 @@ impl Owner {
                 }
             }
         }
+    }
+    fn accept_map_interaction(
+        &mut self,
+        client_id: u32,
+        interaction: crate::map_interaction::Interaction,
+    ) -> Result<(), String> {
+        use crate::map_interaction::{Event, Recipient, Source, Target};
+        interaction.validate()?;
+        let peer = self
+            .peers
+            .iter()
+            .find(|p| p.info.client_id == client_id)
+            .ok_or("unknown sender")?;
+        let team = peer.info.team.ok_or("sender has no team")?;
+        let robot = peer.info.robot.ok_or("sender has no robot")?;
+        let source = if robot == Robot::Sentry {
+            Source::SentryOperator
+        } else {
+            Source::TeamOperator
+        };
+        let own_id = peer.info.chassis.ok_or("sender has no chassis")?;
+        if source == Source::SentryOperator
+            && interaction.recipient != Recipient::Sentry
+            && interaction.recipient != Recipient::Robot(own_id)
+        {
+            return Err("Sentry operator may address only its own Sentry".into());
+        }
+        let now = self.time.now();
+        if self
+            .last_map_interaction
+            .get(&client_id)
+            .is_some_and(|last| {
+                now.saturating_duration_since(*last).as_nanos() < u128::from(source.interval_ns())
+            })
+        {
+            return Err("map interaction transmission interval has not elapsed".into());
+        }
+        let world = self.simulation.snapshot();
+        let recipients = world
+            .chassis
+            .iter()
+            .filter(|c| c.team == team && (source != Source::SentryOperator || c.id == own_id))
+            .filter(|c| match interaction.recipient {
+                Recipient::Sentry => self.simulation.robot(c.id) == Some(Robot::Sentry),
+                Recipient::Robot(id) => c.id == id,
+                Recipient::Selected(ids) => ids.contains(&Some(c.id)),
+                Recipient::Team { include_sentry } => {
+                    include_sentry || self.simulation.robot(c.id) != Some(Robot::Sentry)
+                }
+            })
+            .map(|c| c.id)
+            .collect::<Vec<_>>();
+        if matches!(interaction.recipient, Recipient::Robot(_)) && recipients.is_empty() {
+            return Err("recipient is not a deployed own-team robot".into());
+        }
+        if let Recipient::Selected(ids) = interaction.recipient
+            && ids.iter().flatten().any(|id| !recipients.contains(id))
+        {
+            return Err("selected recipient is not a deployed own-team robot".into());
+        }
+        let opponent_robot_id = if let Target::Opponent(id) = interaction.target {
+            let target = world
+                .chassis
+                .iter()
+                .find(|c| c.id == id && c.team != team)
+                .ok_or("target is not a deployed opponent")?;
+            let legacy_id = Some(
+                self.simulation
+                    .robot(id)
+                    .ok_or("opponent has no competition robot identity")?
+                    .number()
+                    + if target.team == Team::Blue { 100 } else { 0 },
+            );
+            if self.simulation.field().rmuc_2027().is_some() {
+                None
+            } else {
+                legacy_id
+            }
+        } else {
+            None
+        };
+        let source_id = if robot == Robot::Sentry || self.simulation.field().rmuc_2027().is_some() {
+            None
+        } else {
+            Some(0x100 + u16::from(robot.number()) + if team == Team::Blue { 100 } else { 0 })
+        };
+        let event = Event {
+            id: self.next_map_interaction,
+            client_id,
+            team,
+            source,
+            source_id,
+            interaction,
+            recipients,
+            opponent_robot_id,
+            time_ns: self.simulation.field().time_ns(),
+        };
+        self.next_map_interaction = self
+            .next_map_interaction
+            .checked_add(1)
+            .ok_or("map event id exhausted")?;
+        self.last_map_interaction.insert(client_id, now);
+        if self.map_interactions.len() == 64 {
+            self.map_interactions.pop_front();
+        }
+        self.map_interactions.push_back(event.clone());
+        for peer in self.peers.iter().filter(|p| {
+            p.info.team == Some(team)
+                && (p.info.client_id == client_id
+                    || p.info
+                        .chassis
+                        .is_some_and(|id| event.recipients.contains(&id)))
+        }) {
+            self.send_to(
+                peer.info.client_id,
+                ServerMessage::MapInteraction(event.clone()),
+            );
+        }
+        Ok(())
     }
     fn apply(&mut self, command: Command) -> Result<CommandReceipt, String> {
         let next_sequence = self
@@ -830,6 +964,7 @@ impl Owner {
             return;
         };
         let peer = self.peers.remove(index);
+        self.last_map_interaction.remove(&id);
         peer.stream.request();
         if let Some(chassis) = peer.info.chassis {
             let _ = self.simulation.remove_chassis(chassis);
@@ -943,6 +1078,9 @@ impl Owner {
                 let own_chassis = peer.info.chassis;
                 let team = peer.info.team;
                 let refused = match command {
+                    Command::MapInteraction(_) if team.is_none() || own_chassis.is_none() => {
+                        Some("only a team pilot sends map interactions")
+                    }
                     _ if !self.control.ready.load(Ordering::Acquire) => {
                         Some("host is still loading")
                     }
@@ -1038,7 +1176,13 @@ impl Owner {
                 }
                 let authorized = refused.is_none();
                 let result = refused.map_or_else(
-                    || self.apply(command).map(|_| ()),
+                    || {
+                        if let Command::MapInteraction(interaction) = command {
+                            self.accept_map_interaction(id, interaction)
+                        } else {
+                            self.apply(command).map(|_| ())
+                        }
+                    },
                     |reason| Err(reason.into()),
                 );
                 if result.is_ok()
@@ -1128,14 +1272,22 @@ mod tests {
         handle.roster().unwrap();
     }
     fn peer(handle: &HostHandle, role: Role) -> (Welcome, crate::net::outbox::Receiver) {
+        robot_peer(handle, role, None, Robot::default())
+    }
+    fn robot_peer(
+        handle: &HostHandle,
+        role: Role,
+        team: Option<Team>,
+        robot: Robot,
+    ) -> (Welcome, crate::net::outbox::Receiver) {
         let (outbox, messages) = crate::net::outbox::channel(64);
         let welcome = handle
             .join(PeerRegistration {
                 password: String::new(),
                 name: "test".into(),
-                team: None,
+                team,
                 role,
-                robot: Robot::default(),
+                robot,
                 chassis: Default::default(),
                 owner_spawn: None,
                 outbox,
@@ -1148,6 +1300,110 @@ mod tests {
         messages.recv().unwrap()
     }
 
+    #[test]
+    fn map_interactions_validate_route_rate_limit_and_do_not_drive_robots() {
+        use crate::map_interaction::{Interaction, Recipient, Source, Target};
+        let time = crate::clock::ManualTime::new();
+        let host = timed_host(time.source());
+        let h = host.handle();
+        let (red, red_rx) = robot_peer(&h, Role::Pilot, Some(Team::Red), Robot::Infantry3);
+        let (sentry, sentry_rx) = robot_peer(&h, Role::Pilot, Some(Team::Red), Robot::Sentry);
+        let (blue, blue_rx) = robot_peer(&h, Role::Pilot, Some(Team::Blue), Robot::Infantry3);
+        let (spectator, spectator_rx) = peer(&h, Role::Spectator);
+        for rx in [&red_rx, &sentry_rx, &blue_rx, &spectator_rx] {
+            while rx.try_recv().is_some() {}
+        }
+        let before = h.snapshot().unwrap();
+        let intent = Interaction {
+            recipient: Recipient::Sentry,
+            target: Target::Position([2., -1.]),
+            key_code: b'G',
+            kind: crate::protocol::MapMarkerKind::Attack,
+        };
+        let send = |id, i| {
+            h.message(id, ClientMessage::Command(Command::MapInteraction(i)))
+                .unwrap()
+        };
+        send(red.client_id, intent);
+        let events = h.map_interactions().unwrap();
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(event.id, 1);
+        assert_eq!(event.client_id, red.client_id);
+        assert_eq!(event.source, Source::TeamOperator);
+        assert_eq!(event.source_id, Some(0x103));
+        assert_eq!(event.recipients, vec![sentry.chassis.as_ref().unwrap().id]);
+        for rx in [&red_rx, &sentry_rx] {
+            assert!(
+                matches!(rx.try_recv().unwrap().message(), ServerMessage::MapInteraction(e) if e == event)
+            );
+        }
+        assert!(blue_rx.try_recv().is_none());
+        assert!(spectator_rx.try_recv().is_none());
+        send(red.client_id, intent);
+        assert_eq!(h.map_interactions().unwrap().len(), 1);
+        time.advance_ms(499);
+        send(red.client_id, intent);
+        assert_eq!(h.map_interactions().unwrap().len(), 1);
+        time.advance_ms(1);
+        let own = red.chassis.as_ref().unwrap().id;
+        send(
+            red.client_id,
+            Interaction {
+                target: Target::Opponent(own),
+                ..intent
+            },
+        );
+        send(
+            red.client_id,
+            Interaction {
+                target: Target::Position([f64::NAN, 0.]),
+                ..intent
+            },
+        );
+        send(
+            red.client_id,
+            Interaction {
+                recipient: Recipient::Robot(blue.chassis.as_ref().unwrap().id),
+                ..intent
+            },
+        );
+        send(spectator.client_id, intent);
+        assert_eq!(h.map_interactions().unwrap().len(), 1); // failures do not consume the interval
+        send(
+            red.client_id,
+            Interaction {
+                target: Target::Opponent(blue.chassis.as_ref().unwrap().id),
+                ..intent
+            },
+        );
+        let events = h.map_interactions().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].opponent_robot_id, Some(103));
+        send(sentry.client_id, intent);
+        assert_eq!(
+            h.map_interactions().unwrap().last().unwrap().source,
+            Source::SentryOperator
+        );
+        time.advance_ms(2999);
+        send(sentry.client_id, intent);
+        assert_eq!(h.map_interactions().unwrap().len(), 3);
+        time.advance_ms(1);
+        send(sentry.client_id, intent);
+        assert_eq!(h.map_interactions().unwrap().len(), 4);
+        assert_eq!(before, h.snapshot().unwrap());
+        h.leave(sentry.client_id).unwrap();
+        time.advance_ms(500);
+        send(red.client_id, intent);
+        assert!(
+            h.map_interactions()
+                .unwrap()
+                .last()
+                .unwrap()
+                .recipients
+                .is_empty()
+        );
+    }
     #[test]
     #[cfg(feature = "season-2027")]
     fn native_rune_activation_checks_team_seat_and_living_pilot() {

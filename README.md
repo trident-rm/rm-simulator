@@ -114,8 +114,8 @@ The essentials, for driving and for match control:
 | F | Activate the rune for your team when it has an opportunity (local world or referee) |
 | Tab (hold) | Show team robot status |
 | P | Toggle settings; 1 toggles reticle, 2 toggles minimap, - / = adjusts mouse sensitivity |
-| M | Toggle the large team map; click it to place a marker, A / B / I pick attack / defend / alert and other letters a custom marker |
-| Left Alt (hold) | Free the cursor, for example to click a marker on the small map |
+| M | Open the team map; click for a local marker or Sentry/team interaction. A / B / I choose attack / defend / alert |
+| Left Alt (hold) | Free the cursor; clicking the small map opens the interaction choice |
 | F12 (hold) | Show controls |
 | Escape | Close the current panel or open Pause; in staging, go back a step or leave; in Multiplayer, return to the main menu; otherwise open or cancel quit confirmation |
 
@@ -535,7 +535,7 @@ does not acknowledge its execution by the host.
 | 50 | Adds the Drone's Aerial Safety Rope to the chassis configuration and the `MapMarker` command. |
 | 52 | Adds connected deployment and the reliable ownership receipt. |
 
-The current protocol version is 72, defined by `PROTOCOL_VERSION` in
+The current protocol version is 73, defined by `PROTOCOL_VERSION` in
 `crates/rm-simulator-server/src/protocol.rs`. GNS sends redundant controls
 and retried shot intents unreliably; scheduling receipts and terminal shot results
 remain reliable. There is no shooter-view fire path or input-acknowledgement

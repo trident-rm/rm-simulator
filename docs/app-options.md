@@ -225,13 +225,18 @@ Singleplayer pauses until you resume; multiplayer keeps running, including when
 you host. Settings opened from Pause return to that menu. A match that was
 already paused stays paused when you resume. On the title screen, Escape opens
 a quit confirmation with Cancel and Quit.
-Clicking the large map (M) places a marker at the clicked point; hold Left
-Alt to free the cursor and click the small map the same way. A, B and I select
+Clicking the large map (M) opens a choice at the selected point; hold Left
+Alt to free the cursor and click the small map the same way (it expands first).
+Choose **Place local marker**, **Send to Sentry**, **Send to team (except Sentry)**,
+or **Send to team + Sentry**. Cancel or Escape sends nothing. Optional key data
+starts at zero; **Use selected map letter** includes the current A/B/I/custom
+letter as an uninterpreted byte. A, B and I select
 the attack, defend and alert markers while the large map is open, and other
 letters a custom lettered marker, following pages 24–25 of the competitor client
-manual. The newest marker is drawn on the map and sent to the host, which
-records it for team members; spectators and referees cannot mark. Markers
-are not shown to teammates or acted on yet.
+manual. A local marker is drawn and recorded at the host. Accepted interaction events
+are delivered only to selected own-team clients (and acknowledged to the sender);
+the latest location intent is drawn in cyan. Spectators and referees cannot send.
+These events do not move, aim or fire a Sentry.
 Clicking the small minimap without Left Alt still opens its expanded view. Settings, the expanded map, and toolbar-opened panels stop driving,
 aiming and firing and release the cursor. Hold Tab for both teams' players and HP;
 hold F12 for controls. Scroll the wheel to see longer lists while holding the key.
@@ -283,7 +288,7 @@ an NVIDIA laptop GPU; Mac performance still needs separate measurements.
 | F | Activate your team’s available Rune opportunity (2027 Infantry/Sentry pilot or referee; 2026 referee) |
 | Tab (hold) | Show team robot status |
 | P | Toggle settings; 1 toggles reticle, 2 toggles minimap, - / = adjusts mouse sensitivity |
-| M | Toggle the large team map; click it to place a marker, A / B / I pick attack / defend / alert and other letters a custom marker |
+| M | Toggle the team map; click for marker/Sentry/team choices. A / B / I pick attack / defend / alert |
 | Left Alt (hold) | Free the cursor, for example to click a marker on the small map |
 | F12 (hold) | Show controls |
 | Toolbar | Mouse-driven Settings, Map, Team, Help, Close and Leave match; appears with the cursor released |
@@ -302,3 +307,48 @@ primary package, `bound-hero-armored/` is discovered automatically. The J panel
 shows **Convert to Hero**; the host requires launcher permission, a stopped live
 Heavy and finished assembly recovery. This keeps the Heavy slot and swaps its
 model, physics and launcher. See [the approximation policy](assembly-workbench.md#temporary-hero-conversion-for-heavy).
+
+## Map interaction controller interface
+
+Source: the supplied *RoboMaster 2026 University Series Communication Protocol
+V2.0.0 (2026-06-30)*, §1.3.1/Table 1-35 (`0x0303`), §§2.2.17–2.2.18
+(`MapClickInfo`/`MapClickCmd`), and Appendix II robot/client identities.
+
+`Command::MapInteraction(Interaction)` carries a logical recipient, attack/defend/
+alert/custom marker, a position **or** opponent chassis id, and an optional key
+byte. Recipient choices are Sentry, one chassis, up to seven selected chassis ids,
+or team broadcast including/excluding Sentry. Empty/duplicate selected lists,
+non-finite/out-of-field positions, opposing recipients and non-opponent targets
+are rejected. The custom marker subset follows MapClickCmd (C–L, N, O, Q–Z,
+with A/B/I represented by their predefined kinds); general key bytes are data,
+not commands that the simulator interprets. Opponent-id targeting is available
+through the typed API/console; this first map card selects locations.
+
+The host authenticates sender/team and creates a monotonic event id, simulation
+acceptance timestamp, source category and resolved recipients. A logical Sentry
+intent is accepted even before a Sentry deploys; an empty receiver list means
+recorded intent, not execution or guaranteed replay to a later deployment.
+The current simulator has no separate Gimbal Operator seat: other team pilots
+may use its team-command path (simulator policy, 500 ms minimum interval).
+A Sentry pilot uses the corresponding-operator path, may address only itself,
+and has a 3 s interval. Both are enforced on the injected **host transport clock**,
+so pausing the world does not freeze the communication cooldown.
+
+A future controller hosted beside the simulation can read
+`HostHandle::map_interactions()`; a client/controller can drain
+`Client::take_map_interactions()`. These are bounded to the newest 64 events;
+consumers must track event ids, tolerate duplicates, and decide when an intent
+is stale. The app keeps a bounded received history exposed as `map_interactions`
+in console state; `pending_map` exposes an unsent choice. Controllers still send
+ordinary owned chassis commands through the host. No controller, path planner,
+Sentry mode change or execution acknowledgement is implemented by this inbox.
+
+This implements semantic simulator messages, not UART frames or MQTT topics.
+Coordinates stay in world FLU metres, and chassis ids stay simulator ids.
+Legacy source/opponent wire ids are supplied only when the 2026 mapping is known;
+Sentry client ids absent from Appendix II and 2027 mappings remain unspecified.
+A future hardware bridge must perform explicit referee-frame/identity conversion.
+The protocol's initial five serial copies at 100 ms intervals and subsequent
+1 Hz refresh are not generated over the simulator's reliable transport; event
+identity separates an intent from transport repeats. The host journal and its
+rate-limit state last for the host session, not a world checkpoint.
