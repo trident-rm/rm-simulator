@@ -15,9 +15,6 @@ name = "rm-simulator"
 path = "src/main.rs"
 
 [features]
-default = ["season-2026", "season-2027"]
-season-2026 = ["rm-simulator-world/season-2026", "rm-simulator-server/season-2026"]
-season-2027 = ["rm-simulator-world/season-2027", "rm-simulator-server/season-2027"]
 steam = ["dep:steamworks"]
 # Opt-in MQTT referee link for testing custom clients (`--referee-link`).
 referee-link = ["dep:rumqttd", "dep:prost"]
@@ -27,9 +24,9 @@ sha2.workspace = true
 
 [dependencies]
 glam.workspace = true
-rm-simulator-world = { version = "0.1.0", path = "../rm-simulator-world", default-features = false }
+rm-simulator-world = { version = "0.1.0", path = "../rm-simulator-world" }
 rm-simulator-render = { version = "0.1.0", path = "../rm-simulator-render" }
-rm-simulator-server = { version = "0.1.0", path = "../rm-simulator-server", default-features = false }
+rm-simulator-server = { version = "0.1.0", path = "../rm-simulator-server" }
 anyhow.workspace = true
 bevy = { workspace = true, features = ["bevy_feathers", "bevy_ui_widgets", "serialize"] }
 bevy_flair = "0.9.0"

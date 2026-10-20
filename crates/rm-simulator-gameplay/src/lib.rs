@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! Deterministic RMUC 2026 gameplay and the native RMUC 2027 control/structure subset.
+//! Native RMUC 2027 gameplay and retained historical rule kernels.
 //! Independent of physics, CAD and Bevy.
 //!
 //! Call [`Game::command`] with authoritative observations and [`Game::step`]

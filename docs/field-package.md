@@ -2,21 +2,19 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Field package
 
-Normal app/server builds now use the reviewed, bound `field-2027/` package.
-The `field/` package below remains the 2026 option (`--cad-assets field`). Both
-are shipped through Git LFS and staged by `scripts/stage-release-field.py --all`.
-Their inventories are `scripts/release-field-2027.json` and
-`scripts/release-field.json`. See [2027 integration](rmuc2027-field.md#default-bound-repaired-low-package).
+The application and headless host use only the reviewed, bound `field-2027/`
+package. Discovery checks beside installed `bin/` and then the checkout;
+`--cad-assets` overrides that location. Live matches require native bindings.
+See [2027 integration](rmuc2027-field.md#default-bound-repaired-low-package).
 
-Composition, deployment, collision contracts and loading of the RMUC 2026 field
-package. The [project README](../README.md) carries the user-facing summary;
-the [documentation index](README.md) lists every guide.
+The directory and collision contracts below remain shared with historical
+`field/` fixtures. The 2026 composition/discovery notes are historical: current
+sessions reject 2026 packages, and release staging defaults to
+`scripts/release-field-2027.json`. `--all --verify-only` verifies both the active
+package and historical fixture inventory. Use Git tag `rm2026-final` for the old
+playable runtime. See [runtime admission](seasons.md).
 
-The [RMUC 2027 runtime field](rmuc2027-field.md) uses this same directory
-contract through a source-partition adapter. It remains a separate rest-pose
-physics sandbox while 2027 joint/scoring bindings are reviewed.
-
-## Composition
+## Historical 2026 composition
 
 The default package is built by the sibling `rm-map-tools` project
 (`python/export_field_package.py`) from DJI's RMUC2026 V1.2.0 STEP, the

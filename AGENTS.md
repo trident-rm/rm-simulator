@@ -3,7 +3,7 @@
 # rm-simulator
 
 A first-person RoboMaster field simulator in Rust with Bevy. It loads the
-RMUC 2026 field from the extracted competition CAD, runs the rune, outpost and
+RMUC 2027 field from the extracted competition CAD, runs native gameplay and
 projectile rules on an explicit 128 Hz clock, referees a match on top of them, and
 lets you drive an omni chassis over the terrain (or fly a free camera) and shoot
 at armor. Workspace crates keep gameplay rules, physics, rendering, the headless
@@ -23,7 +23,7 @@ source file.
 | Build, test, release and commit workflow | `docs/development.md`, `CONTRIBUTING.md` |
 | RM2026 rulebook clauses the referee implements | `docs/referee-rules.md` |
 | RM2027 manuals, interpretation and unresolved requirements | `docs/rules-2027.md` |
-| Season build features and admission boundaries | `docs/seasons.md` |
+| Current runtime, archived seasons and admission | `docs/seasons.md` |
 | Standalone gameplay engine and its live integration | `docs/gameplay.md` |
 | Crate ownership, ticks, restore, ECS | `docs/architecture-refactor.md` |
 | Physics reuse without a match or server | `docs/physics-reuse.md` |
@@ -35,18 +35,17 @@ two disagree, this file wins.
 
 ## Context
 
-- **Season scope.** Existing gameplay and checkpoints implement the documented
-  RMUC 2026 subset. App/server defaults enable both seasons and prefer the bound
-  repaired Low `field-2027/`; standalone gameplay/world defaults retain 2026.
-  Additive `season-2027` enables
-  infrastructure and isolated gameplay components, including RMUC territory
-  control, but must not admit a match using 2026 mechanics. The
-  supplied 2027 V1.0.0 manuals (2026-10-15) are interpreted separately in
-  `docs/rules-2027.md`; RMUC, RMUL 3v3 and RMUL Infantry require distinct
-  competition/revision identities before playable 2027 support. See
-  `docs/seasons.md` for the feature matrix and remaining integration.
+- **Season scope.** The app and headless CAD host target RMUC 2027 V1.0.0
+  exclusively, using the bound repaired Low `field-2027/`. There are no season
+  Cargo features. The final dual-season revision is tagged `rm2026-final`.
+  Retained 2026 rule kernels and CAD fixtures serve standalone tools and tests;
+  they must not admit a 2026 application session. The supplied 2027 manuals
+  (2026-10-15) are interpreted in `docs/rules-2027.md`; RMUC and RMUL require
+  distinct competition/revision identities. See `docs/seasons.md` for runtime
+  admission, archive instructions and retained internal boundaries.
 - **Rules source.** The RoboMaster 2026 University Championship Rule Manual
-  (V2.1.0, 2026-07-17) is the main rules baseline. The live base damage
+  (V2.1.0, 2026-07-17) is the historical kernel baseline; current live rules use the supplied 2027
+  manuals. The historical base damage
   table was checked against V2.2.0; see `docs/referee-rules.md` for that
   limited exception. Cite section, table or figure numbers in doc comments
   when a constant comes from it (for example Table 5-1 detection speeds,
@@ -67,7 +66,9 @@ two disagree, this file wins.
   cream, with flush cream markings; the renderer's scenery override
   recolours that cream only (`is_unpainted`), never white or painted
   materials. A re-export of V2.0.0 cannot add colour the STEP lacks.
-- **Chassis per player, a referee, two teams.** Every pilot gets its own
+- **Chassis per player, a referee, two teams.** The legacy referee details in
+  this paragraph describe retained regression internals; the active native
+  2027 authority is described below under Assets. Every pilot gets its own
   four-wheel chassis with a stabilised gun pivot (omni Infantry or mecanum
   Hero preset, documented in `crates/rm-simulator-physics/src/chassis.rs`), added to the field when the player
   arrives and removed when they leave; spectators and the free-flying
@@ -114,21 +115,18 @@ loader and the licensing rules depend on the split.
 | `assets/` | yes | Build input embedded with `include_bytes!`: armor-atlas artwork masks, the outpost mask and their sources. Small and CAD-free. |
 | `crates/rm-simulator-server/assets/` | yes | Build input embedded with `include_bytes!`: the protocol 32 checkpoint ZSTD dictionary. |
 | `local-assets/` | no | Gitignored development scratch: extracted `field` package, dated `field.before-*` backups, coarse/preview exports, harness reports. Never source; not referenced from committed code. |
-| `~/dev/RM/assets/` | outside the repo | Home-directory field install and the legacy V2.0.0 extraction the loader falls back to. Not this repository's `assets/`. |
+| `~/dev/RM/assets/` | outside the repo | Historical home-directory field installs for offline tools; no runtime fallback. Not this repository's `assets/`. |
 
-The exported runtime field packages are versioned in `field-2027/` (current
-default when enabled) and `field/` (2026) through Git LFS with
-its upstream ownership notice retained. It is selected by `--cad-assets` when
-supplied; otherwise a 2027-enabled build prefers `field-2027/` beside `bin/` or
-in the checkout. Legacy discovery prefers `field/` beside an installed `bin/`
-directory, then the build checkout's `local-assets/field`, then the checkout's
-LFS `field/`, then `~/dev/RM/assets/rm2026-field`. The earlier V2.0.0 package at
-`~/dev/RM/assets/rm2026-extracted` still loads. Files are verified against the
-SHA-256 in `manifest.json` and `equipment/manifest.json`. The manifest's
-`floor_top_source_z_m` is the slab top in the arena frame; when absent the
-V2.0.0 pad height applies. Keep original STEP files and intermediate exports
-outside Git; only the approved runtime package belongs in LFS. Record package
-updates in `scripts/release-field.json` and verify with `inspect_assets`.
+The runtime field is versioned in `field-2027/` through Git LFS with its
+upstream ownership notice retained. `--cad-assets` overrides discovery;
+otherwise the loader checks `field-2027/` beside `bin/` and in the checkout.
+App/server sessions reject 2026 CAD. Historical `field/` remains pinned data for
+offline tools and fixtures, and is omitted from new release archives. Files are
+verified against SHA-256 in both manifests. The manifest's
+`floor_top_source_z_m` is the slab top in the arena frame. Keep original STEP
+files and intermediate exports outside Git; only approved packages belong in
+LFS. Record runtime package updates in `scripts/release-field-2027.json` and
+verify with `inspect_assets`; `scripts/release-field.json` pins historical data.
 Never bake geometry into code beyond the fitted physics and world constants.
 See `docs/field-package.md` for composition, collision contracts and deployment.
 

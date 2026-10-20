@@ -1,56 +1,38 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! Build-time season availability, separate from implemented gameplay rules.
+//! Source season identity and the application's single supported season.
 //!
-//! Features are additive: enabling both seasons keeps both identities. Enabling
-//! a season does not imply its match engine is implemented. Existing gameplay and
-//! standalone Game constructors use RM2026. A native 2027 world subset has its
-//! own explicit source-bound configuration and feature admission.
+//! Historical identities remain readable for asset diagnostics. They are not
+//! Cargo features and do not select a live gameplay implementation.
 
 use serde::{Deserialize, Serialize};
 
-/// Competition season identity, independent of Cargo feature selection.
-///
-/// This identifies the year, not a tournament format. The current gameplay
-/// implementation covers the documented RMUC 2026 subset only; RMUL variants
-/// will need their own format selection rather than an alias of RMUC rules.
+/// Source year recorded by field manifests; tournament and revision are bound separately.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Season {
-    /// RoboMaster 2026; current rules implement the documented RMUC subset.
+    /// Archived RMUC 2026 source data, retained for offline tools and fixtures.
     #[serde(rename = "2026")]
     Rm2026,
-    /// RoboMaster 2027; the native control/structure world subset uses explicit
-    /// RMUC source bindings. The legacy Game API does not implement this season.
+    /// Active RMUC 2027 source data; live matches also require verified bindings.
     #[serde(rename = "2027")]
     Rm2027,
 }
 
-/// Why a requested season cannot start a game in this build.
+/// A source belongs to an archived runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SeasonError {
-    /// The season's Cargo feature was not enabled.
-    #[error("RM{0} is disabled in this build; enable Cargo feature season-{0}")]
-    Disabled(u16),
-    /// The season is enabled, but its match engine is not ready.
+    /// The source year is no longer supported by application sessions.
     #[error(
-        "RM{0} is not implemented by the legacy Game API; select an explicit supported world ruleset"
+        "RM{0} runtime is archived; use Git tag rm2026-final for 2026, or load a bound RMUC 2027 field"
     )]
-    Unimplemented(u16),
+    Archived(u16),
 }
 
 impl Season {
-    /// Seasons enabled by Cargo features, in chronological order.
-    ///
-    /// An entry here can still fail [`Self::require_playable`]. A build with
-    /// neither feature has an empty list and cannot create a game or field.
-    pub const ENABLED: &'static [Self] = &[
-        #[cfg(feature = "season-2026")]
-        Self::Rm2026,
-        #[cfg(feature = "season-2027")]
-        Self::Rm2027,
-    ];
+    /// The only season admitted by the application and headless CAD host.
+    pub const CURRENT: Self = Self::Rm2027;
 
-    /// Calendar year used for diagnostics and future season selection.
+    /// Source calendar year, for diagnostics.
     pub const fn year(self) -> u16 {
         match self {
             Self::Rm2026 => 2026,
@@ -58,42 +40,17 @@ impl Season {
         }
     }
 
-    /// Whether this build enables the season's infrastructure feature.
-    pub const fn is_enabled(self) -> bool {
+    /// Reject archived sources before creating a session or reading its geometry.
+    ///
+    /// ```
+    /// use rm_simulator_gameplay::season::Season;
+    /// assert!(Season::Rm2026.require_current().is_err());
+    /// assert!(Season::CURRENT.require_current().is_ok());
+    /// ```
+    pub const fn require_current(self) -> Result<(), SeasonError> {
         match self {
-            Self::Rm2026 => cfg!(feature = "season-2026"),
-            Self::Rm2027 => cfg!(feature = "season-2027"),
-        }
-    }
-
-    /// Whether a match engine exists, independently of feature selection.
-    ///
-    /// `true` means the standalone legacy `Game` implements its documented
-    /// subset. The native 2027 world's explicit source-bound admission is
-    /// separate from this legacy API.
-    /// See `docs/gameplay.md` for the integration boundary.
-    pub const fn has_gameplay(self) -> bool {
-        matches!(self, Self::Rm2026)
-    }
-
-    /// Reject a disabled season or one without gameplay before creating state.
-    ///
-    /// ```
-    /// use rm_simulator_gameplay::season::{Season, SeasonError};
-    /// let expected = if Season::Rm2027.is_enabled() {
-    ///     SeasonError::Unimplemented(2027)
-    /// } else {
-    ///     SeasonError::Disabled(2027)
-    /// };
-    /// assert_eq!(Season::Rm2027.require_playable(), Err(expected));
-    /// ```
-    pub const fn require_playable(self) -> Result<(), SeasonError> {
-        if !self.is_enabled() {
-            Err(SeasonError::Disabled(self.year()))
-        } else if !self.has_gameplay() {
-            Err(SeasonError::Unimplemented(self.year()))
-        } else {
-            Ok(())
+            Self::Rm2027 => Ok(()),
+            Self::Rm2026 => Err(SeasonError::Archived(2026)),
         }
     }
 }
@@ -101,45 +58,22 @@ impl Season {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Config, Error, Game};
 
     #[test]
-    fn season_feature_membership_and_admission() {
-        for (season, enabled, implemented) in [
-            (Season::Rm2026, cfg!(feature = "season-2026"), true),
-            (Season::Rm2027, cfg!(feature = "season-2027"), false),
-        ] {
-            assert_eq!(Season::ENABLED.contains(&season), enabled);
-            assert_eq!(season.is_enabled(), enabled);
-            assert_eq!(season.has_gameplay(), implemented);
-            let expected = if !enabled {
-                Err(SeasonError::Disabled(season.year()))
-            } else if !implemented {
-                Err(SeasonError::Unimplemented(season.year()))
-            } else {
-                Ok(())
-            };
-            assert_eq!(season.require_playable(), expected);
-            assert_eq!(
-                Game::new_for_season(season, Config::default()).map(|_| ()),
-                expected.map_err(Error::Season),
-            );
-        }
+    fn only_current_runtime_is_admitted() {
+        assert_eq!(Season::CURRENT, Season::Rm2027);
+        assert_eq!(Season::Rm2027.require_current(), Ok(()));
+        assert_eq!(
+            Season::Rm2026.require_current(),
+            Err(SeasonError::Archived(2026))
+        );
     }
 
     #[test]
-    fn season_identity_survives_serialization_without_feature_aliasing() {
+    fn archived_source_identity_remains_readable() {
         for (season, json) in [(Season::Rm2026, "\"2026\""), (Season::Rm2027, "\"2027\"")] {
             assert_eq!(serde_json::to_string(&season).unwrap(), json);
             assert_eq!(serde_json::from_str::<Season>(json).unwrap(), season);
         }
-    }
-
-    #[test]
-    fn legacy_game_constructor_explicitly_requires_2026() {
-        assert_eq!(
-            Game::new(Config::default()).map(|_| ()),
-            Season::Rm2026.require_playable().map_err(Error::Season),
-        );
     }
 }

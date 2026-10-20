@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Consolidate the application and headless CAD host on RMUC 2027: remove season
+  feature switches and the build matrix, reject 2026 sessions with an archive
+  hint, and ship/discover only the 2027 runtime field. The final 2026-capable
+  revision is preserved at annotated Git tag `rm2026-final`.
+
 - Refresh the HUD, title and pause menus, settings and map actions with shared
   colors, typography and surface styles. Compact team cards and robot telemetry,
   separate ammunition, stack notices and show detailed control data contextually.

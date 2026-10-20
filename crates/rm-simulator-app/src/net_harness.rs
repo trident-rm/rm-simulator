@@ -375,7 +375,19 @@ mod tests {
             },
         );
         let snapshot = trace.handle.snapshot().unwrap();
-        let plate = snapshot.outposts[0].armors[0].pose;
+        // Contact feedback is independent of map targets. Hit the deployed
+        // chassis armor rather than relying on a legacy Outpost in bare practice.
+        let chassis = &snapshot.chassis[0];
+        let local_plate = chassis.config.armor_faces()[0];
+        let body_rotation = crate::frames::dquat(chassis.pose.rotation_wxyz);
+        let plate = rm_simulator_world::Pose {
+            translation_m: (bevy::math::DVec3::from_array(chassis.pose.translation_m)
+                + body_rotation * bevy::math::DVec3::from_array(local_plate.translation_m))
+            .to_array(),
+            rotation_wxyz: crate::frames::wxyz(
+                body_rotation * crate::frames::dquat(local_plate.rotation_wxyz),
+            ),
+        };
         let rotation = crate::frames::dquat(plate.rotation_wxyz);
         let muzzle = rm_simulator_world::Pose {
             translation_m: (bevy::math::DVec3::from_array(plate.translation_m)

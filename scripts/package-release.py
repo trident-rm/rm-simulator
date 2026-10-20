@@ -132,8 +132,6 @@ def main():
             shutil.copy2(build / (binary + suffix), bin_dir / (binary + suffix))
         for artifact in ("README.md", "NOTICE.md", "LICENSE-MIT", "LICENSE-APACHE", "LICENSES/MPL-2.0.txt"):
             shutil.copy2(ROOT / artifact, stage / artifact)
-        shutil.copytree(dist / "field", stage / "field")
-        shutil.copy2(ROOT / "scripts/release-field.json", stage / "field-source.json")
         shutil.copytree(dist / "field-2027", stage / "field-2027")
         shutil.copy2(ROOT / "scripts/release-field-2027.json", stage / "field-2027-source.json")
         # Include the exact dependency lockfile used to compile the release.
@@ -153,7 +151,7 @@ def main():
             f"rm-simulator {args.version} ({args.target})\n\n"
             "Extract the entire ZIP. Run bin/rm-simulator (Windows: bin/rm-simulator.exe).\n"
             "Run bin/rm-simulator-server for a headless host.\n"
-            "The default is field-2027/. Use --cad-assets field for the retained 2026 map.\n"
+            "The runtime field is field-2027/. For RMUC 2026 use Git tag rm2026-final.\n"
             "This is the standalone build; Steam integration is disabled.\n"
             "Linux requires glibc 2.39+ and graphics/display drivers.\n"
             "macOS binaries are ad-hoc signed, not notarized.\n"

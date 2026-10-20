@@ -45,11 +45,9 @@ ocpenv/bin/python python/guard_repaired_game.py
 ### Default bound repaired Low package
 
 The approved export is committed separately from the following integration.
-Normal app/server builds enable both seasons and select the LFS `field-2027/`
-package by default. `--cad-assets field` selects the retained 2026 package;
-`--no-default-features --features season-2026` also retains 2026-only discovery.
-Installed binaries prefer a sibling `field-2027/` when 2027 is enabled. Release
-staging and archives now include both field packages and their inventories.
+App/server builds target RMUC 2027 and select the LFS `field-2027/` package.
+Installed binaries look for a sibling `field-2027/`. Release archives contain
+only this runtime field; use Git tag `rm2026-final` for 2026 sessions.
 
 This package enables the existing native 2027 match subset, not just exploration.
 Binding schema two exposes 386 source-owned Base/Outpost part records with
@@ -124,14 +122,14 @@ equipment instances must have identical mesh references and relative poses.
 The package uses original CAD numeric Z-up coordinates; the inspection-only
 camera's Y-up/rebasing transform is removed exactly once.
 
-Inspect or explore with a combined-season build (rest-pose hosting retains its
-existing practice admission):
+Inspect the export directly, or explore an unbound rest-pose export with
+`--no-referee`:
 
 ```sh
 nix develop -c cargo run --locked -p rm-simulator-server \
-  --features season-2027 --example inspect_assets -- local-assets/field-2027-low
-nix develop -c cargo run --locked -p rm-simulator-app --features season-2027 -- \
-  --cad-assets local-assets/field-2027-low --fly --start-paused
+  --example inspect_assets -- local-assets/field-2027-low
+nix develop -c cargo run --locked -p rm-simulator-app -- \
+  --cad-assets local-assets/field-2027-low --no-referee --fly --start-paused
 ```
 
 The sections below retain the earlier adapter/optimization history and its
@@ -260,15 +258,14 @@ simulator's 48 perimeter triangles in addition to the source collision count.
 
 ## Run and inspect
 
-Loading 2027 CAD requires `season-2027`. The unbound rest-pose package still uses
-the legacy practice host and needs a combined build. A bound package selects
-its explicit 2027 ruleset and supports a 2027-only or combined build.
+Native 2027 support is always built. Unbound rest-pose packages may be
+inspected with `--no-referee`; live matches require source-bound native rules.
 
 ```sh
 nix develop -c cargo run --locked -p rm-simulator-server \
-  --features season-2027 --example inspect_assets -- local-assets/field-2027
+  --example inspect_assets -- local-assets/field-2027
 
-nix develop -c cargo run --locked -p rm-simulator-app --features season-2027 -- \
+nix develop -c cargo run --locked -p rm-simulator-app -- \
   --cad-assets local-assets/field-2027 --fly --start-paused
 ```
 
@@ -295,12 +292,12 @@ The map selects the complete [2027 equipment roster](robot-equipment.md#seasonal
 Run the sandbox with inspection overlays:
 
 ```sh
-cargo run -p rm-simulator-app --features season-2027 -- --cad-assets local-assets/field-2027 --fly --zones --rfid-zones --zone-labels
+cargo run -p rm-simulator-app -- --cad-assets local-assets/field-2027 --fly --zones --rfid-zones --zone-labels
 ```
 
 F3 exposes **Buff-zone volumes**, **RFID detection areas**, and **Zone
 names / traversal order**. The console `inspect` command accepts `zones`,
-`rfid_zones` and `zone_labels` booleans. Overlays work in both seasons and are
+`rfid_zones` and `zone_labels` booleans. Overlays work in the current runtime and are
 client-only: they send no referee commands.
 
 The 2027 catalog covers supply, base, Fortress, vantage, assembly, outpost,
@@ -335,7 +332,7 @@ sandbox intact; the command refuses an existing output directory:
   --split ../rm-map-tools/out/rm2027/RMUC2027_V1.0.0/split \
   --map-tools ../rm-map-tools --out local-assets/field-2027-live
 
-nix develop -c cargo run --locked -p rm-simulator-app --features season-2027 -- \
+nix develop -c cargo run --locked -p rm-simulator-app -- \
   --cad-assets local-assets/field-2027-live --zones --rfid-zones
 ```
 
@@ -345,8 +342,7 @@ referee permission checks. Start again after Finish resets the round. Operator
 `ReviveRobot`/`SetRobotHp` remain available; normal respawn now runs automatically.
 Practice recovery/reset commands cannot bypass a running round's respawn rules. Use `--fly` for a referee camera or omit it to drive Infantry 3/4
 or the manual Sentry. Both hosts and clients must use the same bound package.
-A 2027-only build uses `--no-default-features --features season-2027` before
-Cargo's `--` separator.
+No season Cargo features are required; see [runtime admission](seasons.md).
 
 The binding sidecar is named and SHA-256-pinned by `manifest.json`; it identifies
 **RMUC 2027 V1.0.0**, not RMUL or an unspecified season. Loading validates its
@@ -434,9 +430,9 @@ Use the existing rm-map-tools meshoptimizer pipeline after source-body binding:
   --settings scripts/field-detail-rmuc2027.json
 
 nix develop -c cargo run --locked -p rm-simulator-server \
-  --features season-2027 --example inspect_assets -- local-assets/field-2027-optimized
+  --example inspect_assets -- local-assets/field-2027-optimized
 nix develop -c cargo run --locked -p rm-simulator-server \
-  --features season-2027 --example compare_asset_ground -- \
+  --example compare_asset_ground -- \
   local-assets/field-2027-live local-assets/field-2027-optimized
 ```
 
@@ -562,9 +558,9 @@ Validate and install with a rollback copy:
 
 ```sh
 nix develop -c cargo run --locked -p rm-simulator-server \
-  --features season-2027 --example inspect_assets -- local-assets/field-2027-detail-ready
+  --example inspect_assets -- local-assets/field-2027-detail-ready
 nix develop -c cargo run --locked -p rm-simulator-server \
-  --features season-2027 --example compare_asset_ground -- \
+  --example compare_asset_ground -- \
   local-assets/field-2027-live.before-20261016-geometry local-assets/field-2027-detail-ready
 python3 scripts/install-field-detail.py \
   --candidate local-assets/field-2027-detail-ready \
@@ -1019,7 +1015,7 @@ Rebuild from the saved predecessor, never from the already modified live package
 ../rm-map-tools/ocpenv/bin/python scripts/build-rmuc2027-solid-walls.py \
   --input local-assets/field-2027-live.before-solid-walls-20261016 \
   --output local-assets/field-2027-solid-walls-rebuilt --map-tools ../rm-map-tools
-nix develop -c cargo run -q -p rm-simulator-server --features season-2027 \
+nix develop -c cargo run -q -p rm-simulator-server \
   --example inspect_assets -- local-assets/field-2027-solid-walls-rebuilt
 ```
 

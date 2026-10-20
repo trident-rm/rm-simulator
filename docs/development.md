@@ -40,7 +40,7 @@ The shell sets `CARGO_TARGET_DIR="$PWD/target/nix"`, so Nix builds land in
 | `just verify` | The full pre-PR gate; see below |
 | `just run <args>` / `just server <args>` | Interactive app / headless server |
 | `just world-test` | Renderer-independent world tests |
-| `just season-test` | Season admission and isolated rules with neither, each and both features |
+| `just runtime-test` | Native 2027 rules and admission without optional integrations |
 | `just gameplay-test` / `just gameplay-demo` | Gameplay tests / headless `match` example |
 | `just control-test` | Native 2027 control, physical RFID and console automation tests, without rendering |
 | `just network-test` / `just network-trial <scenario>` | Harness tests with real UDP / one scenario against built binaries |
@@ -60,7 +60,7 @@ and the LFS `field/` and `field-2027/` packages. Clippy remains in `just verify`
 3. `cargo check --workspace --all-targets --all-features --locked`
 4. `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
 5. `cargo test --workspace --all-features --locked`
-6. `python3 scripts/check-season-features.py`, season admission and feature matrix
+6. `python3 scripts/check-runtime.py`, current runtime admission and native rules
 7. `python3 scripts/check-module-dependencies.py`
 8. `python3 scripts/check-mpl-compliance.py`
 9. `python3 scripts/stage-release-field.py --all --verify-only --allow-lfs-pointers`, the field inventory CI checks (also `just field-check`)

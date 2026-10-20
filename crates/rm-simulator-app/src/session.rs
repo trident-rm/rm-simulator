@@ -207,11 +207,7 @@ impl Session {
         progress: impl Fn(f32, &str),
     ) -> anyhow::Result<Opened> {
         // Admission follows the loaded package; native rules need source bindings.
-        if !cad.season.is_enabled() {
-            return Err(
-                rm_simulator_world::season::SeasonError::Disabled(cad.season.year()).into(),
-            );
-        }
+        cad.season.require_current()?;
         let role = if args.staging && !args.referee {
             Role::Spectator
         } else {
@@ -343,6 +339,7 @@ impl Session {
         spawn: [f64; 3],
         progress: impl Fn(f32, &str),
     ) -> anyhow::Result<Opened> {
+        cad.season.require_current()?;
         client.set_time_source(time.clone());
         let flash = FlashSettings {
             hit_flash_ns: args.hit_flash_ms * 1_000_000,
@@ -377,6 +374,14 @@ impl Session {
             .ok_or_else(|| anyhow::anyhow!("the host sent no initial state"))?
             .clone();
         let snapshot = state.field;
+        anyhow::ensure!(
+            snapshot.rmuc_2027.is_some()
+                || (snapshot.referee.is_none()
+                    && snapshot.runes.is_empty()
+                    && snapshot.outposts.is_empty()
+                    && snapshot.bases.is_empty()),
+            "host runs archived 2026 rules; use Git tag rm2026-final or connect to an RMUC 2027 host"
+        );
         if snapshot
             .restore
             .as_ref()
@@ -1446,8 +1451,8 @@ pub(crate) fn test_cad_assets() -> CadAssets {
     };
     CadAssets {
         rmuc_2027: None,
-        season: rm_simulator_world::season::Season::Rm2026,
-        rest_pose_only: false,
+        season: rm_simulator_world::season::Season::Rm2027,
+        rest_pose_only: true,
         root: "unused".into(),
         floor_top_cad_m: 0.0,
         collision_solids: false,
@@ -1489,6 +1494,52 @@ pub(crate) fn wait_for_session(session: &mut Session, done: impl Fn(&Session) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn runtime_admission_rejects_2026_before_connecting_to_a_host() {
+        use clap::Parser;
+        let args = Args::try_parse_from(["rm-simulator", "--connect", "127.0.0.1:1"]).unwrap();
+        let mut cad = test_cad_assets();
+        cad.season = rm_simulator_world::season::Season::Rm2026;
+        let error = Session::open(&args, &cad, [0.; 3], 0., |_, _| {
+            panic!("must reject before connecting")
+        })
+        .err()
+        .expect("archived field must be rejected");
+        assert!(error.to_string().contains("rm2026-final"));
+    }
+
+    #[test]
+    fn runtime_admission_rejects_legacy_authority_from_a_connected_host() {
+        use clap::Parser;
+        let args = Args::try_parse_from(["rm-simulator"]).unwrap();
+        let field =
+            rm_simulator_world::Field::new(&rm_simulator_world::FieldConfig::default()).unwrap();
+        let server = Server::in_process(Simulation::new(field, true), false).unwrap();
+        server.spawn_clock().unwrap();
+        let client = server
+            .connect_owner_with_chassis(
+                "archive-check",
+                Team::Red,
+                Role::Spectator,
+                args.robot,
+                args.chassis,
+                [0.; 3],
+                0.,
+            )
+            .unwrap();
+        let error = Session::from_client(
+            client,
+            TimeSource::system(),
+            &args,
+            &test_cad_assets(),
+            [0.; 3],
+            |_, _| {},
+        )
+        .err()
+        .expect("old targets cannot enter a current session");
+        assert!(error.to_string().contains("rm2026-final"), "{error}");
+    }
+
     #[test]
     fn completed_prediction_survives_new_anchor_without_rewinding_or_crossing_reset() {
         use rm_simulator_server::prediction::PredictionProof;

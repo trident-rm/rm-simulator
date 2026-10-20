@@ -1446,7 +1446,6 @@ pub fn decode_checkpoint_with(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "season-2027")]
     #[test]
     fn canonical_unit_geometry_roundtrips_and_does_not_change_with_motion() {
         use rm_simulator_world::{

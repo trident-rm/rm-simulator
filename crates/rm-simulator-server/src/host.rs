@@ -1407,7 +1407,6 @@ mod tests {
         );
     }
     #[test]
-    #[cfg(feature = "season-2027")]
     fn native_rune_activation_checks_team_seat_and_living_pilot() {
         use rm_simulator_world::rmuc_2027::{Config, Detector, RuneGeometry, Tower};
         use rm_simulator_world::{Pose, RefereeCommand};

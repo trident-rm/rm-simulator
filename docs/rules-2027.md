@@ -6,8 +6,8 @@ Engineering interpretation of the three Chinese V1.0.0 manuals released on
 2026-10-15. This is a reference for implementation, not a claim that the simulator
 implements the full 2027 season. The [control component](gameplay.md#rmuc-2027-control-component) now drives a
 [source-bound RMUC 2027 control/structure subset](rmuc2027-field.md#enable-the-live-controlstructure-subset)
-behind `season-2027`. Existing 2026 gameplay remains the documented baseline in [referee rules](referee-rules.md) and [gameplay](gameplay.md).
-[Season builds](seasons.md) describes the build infrastructure and its limits.
+in every build. Historical 2026 kernels are documented in [referee rules](referee-rules.md) and [gameplay](gameplay.md); they do not select the active runtime.
+[Runtime admission](seasons.md) describes the 2027 application and 2026 archive.
 
 The largest changes are the merger of Hero and Engineer into 重装机器人,
 adaptive armor, outpost ownership and battlefield control, assembly-driven

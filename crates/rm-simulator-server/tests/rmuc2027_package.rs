@@ -2,13 +2,10 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Hydrated-package integration: native admission, disjoint motion and restore.
 use rm_simulator_server::{cad_assets, layout};
-use rm_simulator_world::{Field, referee::RefereeCommand, season::Season};
+use rm_simulator_world::{Field, referee::RefereeCommand};
 
 #[test]
 fn reviewed_field_has_live_motion_native_rules_and_restorable_authority() -> anyhow::Result<()> {
-    if !cfg!(feature = "season-2027") {
-        return Ok(());
-    }
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../field-2027");
     let manifest = std::fs::read(root.join("manifest.json"))?;
     if manifest.starts_with(b"version https://git-lfs.github.com/spec/") {
@@ -47,7 +44,7 @@ fn reviewed_field_has_live_motion_native_rules_and_restorable_authority() -> any
         545_599 + 48
     );
     let config = layout::field_config(&cad, &layout::LayoutOptions::default());
-    let mut field = Field::new_for_season(Season::Rm2027, &config)?;
+    let mut field = Field::new(&config)?;
     layout::add_terrain(&mut field, &terrain)?;
     assert_eq!(
         field

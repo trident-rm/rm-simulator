@@ -154,7 +154,6 @@ pub struct FireRecord {
 /// whole fixed 128 Hz ticks.
 pub struct Simulation {
     navigation: Option<crate::navigation::Service>,
-    #[cfg(feature = "season-2027")]
     assembly: Option<crate::assembly::Service>,
     roster_season: rm_simulator_world::season::Season,
     /// Lobby password every remote seat must present. The embedded owner seat
@@ -199,13 +198,25 @@ impl Simulation {
         options: &LayoutOptions,
         chassis: Option<ChassisConfig>,
         paused: bool,
+        progress: impl FnMut(BuildProgress),
+    ) -> anyhow::Result<Self> {
+        cad.season.require_current()?;
+        anyhow::ensure!(
+            !options.referee || cad.rmuc_2027.is_some(),
+            "RMUC 2027 matches require a bound field package; use --no-referee for rest-pose practice"
+        );
+        Self::build_cad(cad, options, chassis, paused, progress)
+    }
+
+    // Geometry construction is shared with historical regression fixtures. Only
+    // from_cad is public and admits application sessions.
+    fn build_cad(
+        cad: &CadAssets,
+        options: &LayoutOptions,
+        chassis: Option<ChassisConfig>,
+        paused: bool,
         mut progress: impl FnMut(BuildProgress),
     ) -> anyhow::Result<Self> {
-        if !cad.season.is_enabled() {
-            return Err(
-                rm_simulator_world::season::SeasonError::Disabled(cad.season.year()).into(),
-            );
-        }
         let terrain = if options.terrain {
             progress(BuildProgress::ReadingTerrain);
             Some(load_terrain(cad)?)
@@ -242,7 +253,6 @@ impl Simulation {
     pub fn new(field: Field, paused: bool) -> Self {
         Self {
             navigation: None,
-            #[cfg(feature = "season-2027")]
             assembly: None,
             roster_season: rm_simulator_world::season::Season::Rm2026,
             password: String::new(),
@@ -850,7 +860,6 @@ impl Simulation {
         delta_ns: u64,
         observer: &mut dyn FnMut(&rm_simulator_world::ArmorHit),
     ) -> Result<u64, FieldError> {
-        #[cfg(feature = "season-2027")]
         if let Some(service) = &mut self.assembly {
             service.poll(&mut self.field);
         }
@@ -875,7 +884,6 @@ impl Simulation {
         ticks: u64,
         observer: &mut dyn FnMut(&rm_simulator_world::ArmorHit),
     ) -> Result<(), FieldError> {
-        #[cfg(feature = "season-2027")]
         if let Some(service) = &mut self.assembly {
             service.poll(&mut self.field);
         }
@@ -1248,20 +1256,11 @@ impl Simulation {
                 chassis,
                 translation_m,
                 rotation_rad,
-            } => {
-                #[cfg(feature = "season-2027")]
-                {
-                    self.assembly
-                        .as_ref()
-                        .ok_or("No source assembly assets installed")?
-                        .jog(&mut self.field, *chassis, *translation_m, *rotation_rad)
-                }
-                #[cfg(not(feature = "season-2027"))]
-                {
-                    let _ = (chassis, translation_m, rotation_rad);
-                    Err("Energy Unit controls require season-2027".into())
-                }
-            }
+            } => self
+                .assembly
+                .as_ref()
+                .ok_or("No source assembly assets installed")?
+                .jog(&mut self.field, *chassis, *translation_m, *rotation_rad),
             Command::AutoAssembly {
                 chassis,
                 difficulty,
@@ -1514,6 +1513,43 @@ mod tests {
     }
 
     #[test]
+    fn runtime_admission_rejects_archived_fields_before_geometry() {
+        for referee in [false, true] {
+            let mut options = build_options();
+            options.referee = referee;
+            options.terrain = true;
+            let mut events = Vec::new();
+            let error =
+                Simulation::from_cad(&cad_without_files(), &options, None, false, |event| {
+                    events.push(event)
+                })
+                .err()
+                .expect("2026 must be archived");
+            assert!(error.to_string().contains("rm2026-final"));
+            assert!(events.is_empty());
+        }
+    }
+
+    #[test]
+    fn runtime_admission_requires_bindings_for_matches_but_allows_bare_practice() {
+        let mut cad = cad_without_files();
+        cad.season = rm_simulator_world::season::Season::CURRENT;
+        cad.rest_pose_only = true;
+        let mut options = build_options();
+        let mut events = Vec::new();
+        let error = Simulation::from_cad(&cad, &options, None, false, |event| events.push(event))
+            .err()
+            .expect("matches need native bindings");
+        assert!(error.to_string().contains("bound field package"));
+        assert!(events.is_empty());
+        options.referee = false;
+        let simulation = Simulation::from_cad(&cad, &options, None, false, |_| {}).unwrap();
+        let snapshot = simulation.snapshot();
+        assert!(snapshot.referee.is_none());
+        assert!(snapshot.runes.is_empty() && snapshot.outposts.is_empty());
+    }
+
+    #[test]
     fn rest_pose_cad_has_no_old_referee_targets_or_zones() {
         let mut cad = cad_without_files();
         cad.season = rm_simulator_world::season::Season::Rm2027;
@@ -1523,7 +1559,7 @@ mod tests {
         assert!(config.runes.is_empty() && config.outposts.is_empty());
         assert!(config.bases.is_empty() && config.zones.is_empty());
         assert!(config.referee.is_none());
-        let mut simulation = Simulation::from_cad(&cad, &options, None, true, |_| {}).unwrap();
+        let mut simulation = Simulation::build_cad(&cad, &options, None, true, |_| {}).unwrap();
         let snapshot = simulation.snapshot();
         assert!(snapshot.runes.is_empty() && snapshot.outposts.is_empty());
         assert!(snapshot.referee.is_none());
@@ -1536,7 +1572,7 @@ mod tests {
 
     #[test]
     fn placement_preserves_identity_and_hp_and_clears_velocity() {
-        let mut simulation = Simulation::from_cad(
+        let mut simulation = Simulation::build_cad(
             &cad_without_files(),
             &build_options(),
             Some(ChassisConfig::default()),
@@ -1589,7 +1625,7 @@ mod tests {
     fn cad_construction_preserves_pause_and_rules_without_creating_a_pilot() {
         let mut events = Vec::new();
         let config = ChassisConfig::default();
-        let mut simulation = Simulation::from_cad(
+        let mut simulation = Simulation::build_cad(
             &cad_without_files(),
             &build_options(),
             Some(config.clone()),
@@ -1647,7 +1683,7 @@ mod tests {
         options.rune = None;
         options.referee = false;
         let mut simulation =
-            Simulation::from_cad(&cad_without_files(), &options, None, false, |_| {}).unwrap();
+            Simulation::build_cad(&cad_without_files(), &options, None, false, |_| {}).unwrap();
         assert!(!simulation.paused());
         assert!(simulation.spawner_config().is_none());
         assert!(simulation.spawn_chassis(Team::Red).is_err());
@@ -1667,14 +1703,16 @@ mod tests {
         let mut options = build_options();
         options.terrain = true;
         let mut events = Vec::new();
-        let result = Simulation::from_cad(&cad_without_files(), &options, None, false, |event| {
+        let result = Simulation::build_cad(&cad_without_files(), &options, None, false, |event| {
             events.push(event)
         });
         assert!(result.is_err());
         assert_eq!(events, [BuildProgress::ReadingTerrain]);
         options.terrain = false;
         options.outpost_speed_rad_s = f64::NAN;
-        assert!(Simulation::from_cad(&cad_without_files(), &options, None, false, |_| {}).is_err());
+        assert!(
+            Simulation::build_cad(&cad_without_files(), &options, None, false, |_| {}).is_err()
+        );
     }
 
     fn simulation() -> Simulation {
@@ -3069,7 +3107,6 @@ impl Simulation {
             return Ok(self);
         };
         let area = area.ok_or("--assembly-assets requires --assembly-area")?;
-        #[cfg(feature = "season-2027")]
         {
             self.assembly = Some(crate::assembly::Service::load(
                 package,
@@ -3079,19 +3116,8 @@ impl Simulation {
             )?);
             Ok(self)
         }
-        #[cfg(not(feature = "season-2027"))]
-        {
-            let _ = (package, area, hints, floor_top_cad_m);
-            Err("automatic assembly requires season-2027".into())
-        }
     }
     fn start_auto_assembly(&mut self, owner: u32, difficulty: u8) -> Result<(), String> {
-        #[cfg(not(feature = "season-2027"))]
-        {
-            let _ = (owner, difficulty);
-            return Err("automatic assembly requires season-2027".into());
-        }
-        #[cfg(feature = "season-2027")]
         {
             if self.robot(owner) != Some(Robot::Engineer) {
                 return Err("Automatic assembly requires the Engineer/Heavy pilot".into());

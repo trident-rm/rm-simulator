@@ -2,17 +2,11 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # rm-simulator
 
-A first-person RoboMaster field simulator written in Rust with Bevy. It loads
-the reviewed RMUC 2027 field by default; the RMUC 2026 field remains available
-with `--cad-assets field`. The retained 2026 field has both faces of the
-rune, both rotating outposts, the bases and the tech cores placed where the CAD
-puts them, and steps the rune and outpost rules on an explicit clock — 7.8125 ms
-per tick (128 Hz) — and drives the CAD rune faces and outpost rotors. You drive a
-four-wheel omni
-chassis over the CAD terrain (plateaus, undulating roads, ramps, highlands,
-tunnels) with a mouse-aimed gun, or fly a free camera with `--fly`. A referee
-runs an RMUC 2026 match on the same clock, and a headless server can host the
-world for connected windows.
+A first-person RMUC 2027 field simulator written in Rust with Bevy. It loads
+our reviewed CAD field, runs native combat, territory control, Rune and assembly
+mechanics on an explicit 128 Hz clock, and supports local and network play.
+Drive a chassis over the terrain with a mouse-aimed gun, or explore with `--fly`.
+The final 2026-capable source is preserved at Git tag `rm2026-final`.
 
 Physics and motion, gameplay rules, Bevy rendering, the server and the
 interactive application are separate Rust crates. Rune rules, outpost geometry,
@@ -20,13 +14,10 @@ the CAD scene handling, and the armor artwork masks were reused from the sibling
 `../Vision/rm-vision-sim` repository; see `NOTICE.md`. The
 [documentation index](docs/README.md) lists the current guides.
 
-The [2027 rules reference](docs/rules-2027.md) interprets the new season manuals.
-[Season build features](docs/seasons.md) support separate and combined builds;
-RM2027 has an isolated [control component](docs/gameplay.md#rmuc-2027-control-component);
-a bound map also enables the [2027 control/structure match subset](docs/rmuc2027-field.md#enable-the-live-controlstructure-subset).
-Normal app/server builds enable both seasons and select the bound, repaired Low
-2027 map. Its Base shields, Outpost modules and detector lights follow native
-2027 state. Rune, Dart and other unsupported 2027 systems remain static scenery.
+The [2027 rules reference](docs/rules-2027.md) interprets the supplied manuals;
+[gameplay coverage](docs/rmuc2027-field.md) distinguishes supported mechanics
+from remaining gaps. Builds target RMUC 2027 without season feature switches.
+See [the archived runtime guide](docs/seasons.md) for 2026 and shared internals.
 
 ## Contents
 
@@ -102,7 +93,7 @@ The essentials, for driving and for match control:
 | Q / E | Rotate the Drone's body left/right; the mouse aims its gimbal separately |
 | Left Ctrl | Fast: 5 m/s drive command, 8 m/s flight |
 | R | Toggle chassis spin (6 rad/s) while driving |
-| T | Toggle mechanism: Hero fold / stair Heavy wheel linkage / PIE tunnel stow (2026 practice) |
+| T | Toggle mechanism: the active robot’s supported fold, stair linkage or tunnel stow |
 | J | Open Heavy assembly controls and unlocked Hero conversion (2027) |
 | V | Toggle first- and third-person view while driving |
 | C | Cycle physics colliders: Off / Overlay / Only |
@@ -252,25 +243,24 @@ Crate ownership, tick order, restore and ECS boundaries are documented in
 
 ## Field assets
 
-[RMUC 2027 map support](docs/rmuc2027-field.md) adapts the new source export
-to the existing runtime layout. Normal builds enable both seasons and use
-`field-2027/`; select `--cad-assets field` for 2026. A checksummed
-structure binding enables live RFID capture, scoring, base/outpost HP and
-ownership transfers. See the guide for coverage and geometry approximations.
+[RMUC 2027 map support](docs/rmuc2027-field.md) describes the bound `field-2027/`
+package. Its checksummed bindings enable native rules, source motion and detector
+contacts. The package is versioned through Git LFS:
 
+```sh
+git lfs install
+git lfs pull --include='field-2027/**'
+```
 
-The exported maps are versioned in `field-2027/` and `field/` through Git LFS.
-After cloning, run `git lfs install` and
-`git lfs pull --include='field/**,field-2027/**'` to download them.
-It is read at start-up from a field package directory. `--cad-assets` overrides discovery; otherwise the loader
-prefers `field-2027/` beside an installed `bin/` directory or in the checkout
-when the 2027 feature is enabled, then tries `field/` beside `bin/`, the checkout's
-`local-assets/field`, the checkout's LFS `field/`, then
-`~/dev/RM/assets/rm2026-field`. The selected directory
-must contain `manifest.json`, the `*.glb`
-visuals and `*-collision.glb` proxies it lists, and `equipment/manifest.json`
-with `base.glb` and `tech-core.glb`. Every file is checked against the
-SHA-256 recorded in its manifest during loading.
+`--cad-assets` overrides discovery; otherwise the loader checks `field-2027/`
+beside an installed `bin/` directory and then in the checkout. Application
+sessions reject 2026 packages. Live matches require native bindings; unbound
+2027 geometry can be inspected with `--no-referee`. The loader verifies listed
+assets against their recorded SHA-256 checksums.
+
+The following source geometry notes describe the retained offline 2026 fixtures,
+which remain useful to CAD tools and regression tests. For the playable 2026
+runtime use Git tag `rm2026-final`.
 
 The retained 2026 package is built by the sibling `rm-map-tools` project from DJI's
 RMUC 2026 V1.2.0 STEP and keeps that release's arena face colours; its manifest
@@ -278,7 +268,7 @@ records the slab top as `floor_top_source_z_m` so the simulator puts it at
 height zero. The rune and the outposts come from the earlier V2.0.0 extraction,
 while the bases and tech cores are exported from the V1.2.0 equipment package.
 The older extraction at `~/dev/RM/assets/rm2026-extracted`
-still loads with `--cad-assets`.
+can still be read by offline CAD inspection tools.
 
 The V1.2.0 floor slab is flat at height zero and the terrain plates (the
 centre-line plateaus at x ≈ ±6.3..8.5 m, the 起伏路段 undulating roads near the
@@ -595,220 +585,29 @@ fails regressions beyond a relative tolerance, and the run reports `passed`,
 
 ## Match rules and scoring
 
-Projectiles follow RMUC 2026 rules: 17 mm balls (16.8 mm, 3.2 g) and 42 mm balls
-(42.5 mm, 44.5 g) fly under gravity and quadratic drag, bounce off the floor,
-the field CAD and the armor housings, and expire after four seconds. Outpost
-armor registers strikes on its 101 × 94 mm effective detection area (Figure
-5-16, most of the plate face but not the bezel) above 12 m/s (17 mm) or 10 m/s
-(42 mm) normal speed, at most once per 50 ms (17 mm) or 200 ms (42 mm) per
-module, and loses 20 or 200 HP from 1500 (×1.5 in the 10 mm centre square); the
-rotor stops when destroyed. Chassis armor detects the same way and costs its
-robot 10 or 100 HP (Table 5-2).
-Rune targets register only 17 mm strikes above 12 m/s inside the 300 mm
-effective disk. A struck module's lights turn grey for 50 ms after confirmed feedback arrives
-(`--hit-flash-ms`). Bullet trails and contact-point markers are not displayed.
+The bound field runs the native RMUC 2027 V1.0.0 authority. It covers territory
+capture and scoring, mutable Outpost ownership, Base/Outpost damage, combat heat
+and allowance, healing and respawn, performance and experience, field buffs,
+terrain traversal, Rune opportunities, virtual assembly and adaptive armor.
+Source-bound structures and lights follow that authority. All world state and
+actuation advance on the explicit 128 Hz clock and travel through authoritative
+snapshots and restore.
 
-### Referee and match clock
+The Heavy has an experimental physical assembly path: manual parking, Cartesian
+controls, collision-aware automatic L1–L3 planning, rate-limited arm playback,
+Unit release and recovery. Successful virtual assembly can unlock the current
+Hero approximation for Heavy combat. These simulator approximations and remaining
+rules gaps are documented in the [field guide](docs/rmuc2027-field.md),
+[assembly workbench](docs/assembly-workbench.md) and
+[2027 interpretation](docs/rules-2027.md). RMUL formats are not implemented.
 
-By default the field carries a referee that runs a match under the RMUC 2026
-rules on the same fixed 128 Hz clock: a 5 s countdown, a 7 min round, and two teams,
-red and blue. The CAD paints its red markings on the +x half of the field
-and its blue markings on the −x half, so red owns the outpost standing at
-x > 0 and the rune face that looks towards +x, and blue the other pair
-(section 4.3.2.2: one side of the rune is red's, the other blue's). Rune
-targets and outpost light bars glow in their owner's colour. Each team gets a small rune
-opportunity at 0:00 and 1:30 and a big rune opportunity at 3:00, 4:15 and
-5:30 (sections 5.5.2 and 6.6); `F` (or a panel command) spends one and puts
-the rune into Activating for that team, which expires after 20 s. Until
-3:00 the rune is the Small Rune, afterwards the Big Rune. A small
-activation grants 25 % defense for 45 s (section 5.5.2); a big activation is
-scored from the average ring of the recorded hits (5 to 10 arms lit), using
-the lit-arm count to pick the buff (Tables 5-16 and 5-17).
-grants the defense, attack and cooling buff of Tables 5-16 and 5-17; all three
-apply. After one big activation the rune only detects rings 4 to 10,
-after two rings 7 to 10 (Figure 5-18; rings are 15 mm wide, ring 10 the
-centre). The referee runs the `rm-simulator-gameplay` match engine: robot
-HP, levels and performance types, heat, allowance, gold, respawn, outpost
-rebuild and the round result follow the manual (see
-[referee rules](docs/referee-rules.md)). It can be driven from the HTTP panel:
-start, finish or reset the match, skip to a time (buffs and activation
-windows age with the round clock), grant or activate rune opportunities,
-damage, revive or respawn robots, and decide a round the rules leave open. The
-rulebook does not say how an activated rune looks beyond its arms being lit;
-the three 2 Hz blinks are this simulator's choice (`--rune-flash-hz 0`
-disables them, `--rune-flashes` changes the count).
-Without a referee (`--no-referee`) the rune is active from the start and
-restarts itself, as before.
-The separate `rm-simulator-gameplay` crate provides a deterministic, headless
-match engine and an inventory of supported and unsupported gameplay rules.
-Run `just gameplay-test` for rule tests or `just gameplay-demo` for a complete
-BO3 scenario. See [the gameplay guide](docs/gameplay.md) for its command API,
-rule coverage and manual ambiguities. The live resource component now tracks
-projectiles and economy through the existing app/server referee clock. Its full
-standalone match engine remains separate.
+Use `--start-paused`, referee controls and the [automation console](docs/console.md)
+to inspect a scenario. Unbound 2027 CAD exports support rest-pose practice with
+`--no-referee`. They cannot start a match using a legacy referee.
 
-`docs/referee-rules.md` digests the rulebook clauses the referee follows,
-with their section and table numbers.
-
-### Referee panel controls
-
-The referee panel has per-team Open/Close controls for the dart door and base
-shields. The same overrides accept JSON at `POST /api/referee`:
-
-```json
-{"SetDartDoorOpen":{"team":"Red","open":false}}
-{"SetBaseOpen":{"team":"Blue","open":true}}
-```
-
-Send each object as a separate request. Both `Red` and `Blue` accept either
-boolean. These controls move the visual and collision triangles immediately
-between the package's joint endpoints. Travel is illustrative in rm-map-tools,
-not a calibrated actuator stroke. They require a package with the corresponding
-semantic joints; older packages retain their fixed geometry. Match start/reset
-closes the base shields and opens the dart doors, matching the exported rest pose.
-Destroying an outpost opens its base shields. Base damage and training controls
-are described in the training section below.
-The base's upper dart target rests in the middle of its rail by default. The
-referee panel's **Sweep dart targets** makes both sweep from there along their
-rails every four seconds, using simulation time and moving their collision meshes
-with them; **Rest dart targets** returns them. Projectile hits on it score as a
-training override (20 HP per 17 mm round, 200 per 42 mm round). The period is an
-illustrative app setting. It requires the `base.dart_target.slide` asset binding;
-see [the reproducible asset build](docs/semantic-assets.md).
-
-Destroyed outposts stop rotating and use disabled armor: light bars are
-fully off while the printed pattern stays white, and further contacts cannot score or trigger flashes. The housing
-still collides. Restoring HP enables the armor again. In a match the rotor
-rests until the round starts, spins up, and stops for good at its first
-destruction, at 3:00 or when the other team's base armor expands. A robot
-that stands 10 s on its team's destroyed Outpost Buff Point rebuilds it at
-750 HP when the team has a rebuild opportunity (one per 1000 base HP lost,
-before 5:00).
-
-On the loaded arena the section 5.5.3 buff points are live: base, trapezoid,
-central highland, outpost and Fortress defense; resupply healing; the Road,
-Elevated Ground, Launch Ramp and Tunnel crossings; and the Fortress capture
-that expands the opponent's base armor. Their areas were read off Figure 5-24;
-see `docs/referee-rules.md`. The HUD's ZONE line shows the points a pilot
-occupies, a crossing in progress, crossing defense, tunnel cooling and
-Fortress capture time. A banner above the reticle counts down to 3:00 while
-a team's outpost is down, then shows each Fortress capture's seconds until
-the base opens; the team card marks an expanded base `OPEN`.
-
-The HTTP panel also sets the rule policy (allowance enforcement, off by
-default; zone-only exchanges, off), team gold, a robot's allowance and
-performance type, and buys exchanges, clears weakness or pays an instant
-respawn for a robot. Heat, allowance, income and experience count only while
-Running; Idle is free practice. The competitor HUD shows level, heat,
-weakened and invincible states, the respawn progress, ammunition allowance,
-team gold and the round result.
-
-Equipment overrides set outpost HP, rune opportunities and timed rune buffs.
-Zero HP destroys an outpost. Start/reset restores all outposts to 1500 HP.
-Base armor hits update shared base HP and shield; the panel can edit both.
-All edits use referee commands, so network pilots and spectators cannot apply
-them. The HTTP panel retains the host's existing referee authority.
-
-### Base armor and training bots
-
-In singleplayer, Escape opens buttons to **Spawn spinning enemy** and **Remove
-bots**. Bots occupy their team's free spawn slots and use ordinary chassis
-physics, armor and HP. They spin at 3 rad/s and do not fire. The referee web
-panel supports either team, a signed spin speed from -20 to 20 rad/s, individual
-removal and clearing all bots. Up to 32 bots may exist; remote pilots cannot
-manage them. Pause freezes their motion.
-
-Each base has three lower scoring plates, three upper plates, and a moving dart
-plate. Their team-colored lights flash on registered hits and dim on destruction.
-Base HP and shield appear beside each team's outpost HP and in the referee panel,
-which also supports setting HP/shield. Bases start with 5,000 HP and a separate
-150-point shield, spent first. Starting or resetting a match restores both.
-During a match, a surviving defending outpost prevents base damage. Idle practice
-allows damage; use the referee's **Open base** control to expose the lower plates.
-Destroying a base during Running ends the match.
-
-The six ordinary plates follow Table 5-2: 17 mm causes 5 damage to the upper
-front plate and 20 to the other five; 42 mm causes 200. The central 10 mm square
-has a 150% multiplier. These values were checked against the local V2.2.0 manual;
-this does not migrate unrelated rules. As a training override, the dart plate
-also accepts ordinary projectiles at 20/200 damage, without a centre bonus.
-This does not implement dart launch detection or the rulebook's dart target modes.
-
-Scoring poses are fitted at startup from the verified rm-map-tools package,
-including its reconstructed lower armor. No field meshes are modified. Older
-packages without the reconstruction retain scenery-only bases. Reproduce the fit
-and exercise all fourteen scoring faces against the CAD collision geometry with:
-
-```sh
-cargo run -p rm-simulator-server --example base_targets -- local-assets/field --check
-```
-
-The check fires close to each exposed face; normal gameplay still respects rail,
-shield and other scenery occlusion. The dart fit mirrors the CAD's single red
-light bar about the carriage centre to recover the paired optical plane.
-
-### Training shortcuts and ammunition
-
-Outside a match, defeated pilots choose **Respawn here - restore HP** in the
-defeat menu. The button restores full HP in place, keeping position, identity,
-ammunition and team gold. During a match the host refuses it: a defeated
-robot respawns in place on the section 5.2.2 timer, weakened and briefly
-invincible, and the HUD shows its progress. The F3 **Reset robot to spawn**
-button also restores the original upright spawn pose outside a match. O buys
-ten 17 mm rounds and I buys one 42 mm round for 10 gold during Running, when
-the robot's class fires that caliber.
-
-### Ground-truth aim assist
-
-Hold right mouse while driving to acquire an enemy robot, enemy outpost, enemy base, or your
-team's active rune near the crosshair. The assist predicts linear movement and
-rotation from snapshots, leads a scoring face, and compensates for gravity and
-projectile drag. Both small and big rune motion use their transmitted phase and
-motion model. Rune targeting requires 17 mm ammunition.
-
-Controls contains separate **Hold auto aim** and **Hold auto fire** actions.
-They may share a binding and both default to right mouse. Clear Auto Fire for
-assisted aiming with manual left-click shooting, or assign different buttons.
-Auto Fire by itself checks your current barrel alignment without steering it.
-The HUD reports searching, aim only, waiting, or firing.
-By default auto aim picks any target near the crosshair. Set **Auto-aim
-target** in Controls to Manual to choose the class yourself: **Switch auto-aim
-mode** (G) toggles between ARMOR (robots, outposts and bases) and RUNE, and the
-HUD shows the class. A chosen class gets a wide 40° yaw window and no pitch
-limit, so an overhead rune at close range still locks; the automatic window is
-15° of yaw and 12° of pitch beyond the target's own size.
-Rune auto-fire is limited to two shots per second and waits for flight time plus
-confirmation before another shot. An unchanged blade gets a slower retry after
-at least 1.2 seconds; releasing and repressing the button does not bypass this.
-
-Automatic shots wait for the actual motor pose to align with a predicted scoring
-area, sufficient normal impact speed, and a clear shot path. The host still
-checks fire cadence, ammo, heat, and match rules through the normal fire command.
-Auto Fire also holds any shot that would take the barrel past its heat limit
-(the HUD shows `heat limit`), counting shots the host has not confirmed yet;
-manual fire can still overheat. Once the barrel is over its limit the
-client fires nothing until the host reports it cooled, so a refused shot
-never appears as a ball.
-Releasing the actions, opening a menu, defeat, or stale observations stop the
-assist. Manual fire remains independent.
-
-Auto-aim runs locally. Acquisition follows displayed robot poses, while the impact
-solution uses the latest timestamped motion. Auto-fire requires an observation
-no more than 150 ms old at presentation time; tracking stops at 300 ms, both
-measured against the snapshot the client has actually shown rather than the
-predicted execution instant. Its HUD
-reports stale observations, motor alignment, blocked paths, weapon cadence and
-rune confirmation. Every shot samples current controls even between normal
-16 ms input refreshes.
-
-This is a simple game-data aid, inspired by Vision2027's selection, prediction,
-ballistics, and fire-control stages. It uses exact snapshot velocities instead
-of image detection or an EKF. Acquisition prioritizes targets near the crosshair
-without a line-of-sight check, falling back to the closest
-visible enemy robot within 40 m (including outside the view cone);
-constant-velocity robot prediction cannot anticipate collisions or a change of
-input. Scenery rays and conservative bounds for intervening robots can withhold
-shots near cover. No Vision2027 dependency or copied implementation is required.
+The old RMUC 2026 match description remains in
+[the historical referee guide](docs/referee-rules.md). Run Git tag
+`rm2026-final` to use that season in the app; there is no season feature switch.
 
 ## Robot equipment
 
@@ -935,8 +734,8 @@ name with a new random suffix for each launch. The scripts resolve assets from
 the extracted folder, so no working-directory setup is needed.
 
 Local play in a distributed Windows package uses `Play Local.cmd`. It launches
-`bin/rm-simulator.exe --cad-assets field` without `--connect`. Keep the complete
-`field/` directory beside `bin/`; the executable also discovers that layout when
+`bin/rm-simulator.exe --cad-assets field-2027` without `--connect`. Keep the complete
+`field-2027/` directory beside `bin/`; the executable also discovers that layout when
 launched directly. The embedded host starts automatically.
 
 GameNetworkingSockets itself is linked into the executable. Release packagers must

@@ -32,7 +32,7 @@ try {
     if ([string]::IsNullOrWhiteSpace($computer)) { $computer = 'pilot' }
     $name = $computer + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
     Write-Host "Joining $Server on $Team as $name"
-    & (Join-Path $PSScriptRoot 'bin\rm-simulator.exe') --cad-assets (Join-Path $PSScriptRoot 'field') --connect $Server --team $Team --name $name
+    & (Join-Path $PSScriptRoot 'bin\rm-simulator.exe') --cad-assets (Join-Path $PSScriptRoot 'field-2027') --connect $Server --team $Team --name $name
     if ($LASTEXITCODE -ne 0) { throw "Simulator exited with code $LASTEXITCODE" }
 } catch {
     Write-Host $_ -ForegroundColor Red

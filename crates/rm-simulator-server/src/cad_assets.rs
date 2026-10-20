@@ -18,40 +18,17 @@ pub fn default_cad_assets() -> PathBuf {
     {
         return local;
     }
-    if cfg!(feature = "season-2027") {
-        let field = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../field-2027");
-        if field.join("manifest.json").is_file() {
-            return field;
-        }
-    }
-    let local = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../local-assets/field");
-    if local.join("manifest.json").is_file() {
-        return local;
-    }
-    let versioned = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../field");
-    if versioned.join("manifest.json").is_file() {
-        return versioned;
-    }
-    let home = std::env::var_os("HOME").unwrap_or_default();
-    PathBuf::from(home).join("dev/RM/assets/rm2026-field")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../field-2027")
 }
 
-/// A package beside an installed binary, preferring `field-2027` when its
-/// season is enabled, then `field`, when the executable is inside `bin`.
-/// Returns `None` otherwise, so a build-tree binary falls through to the other
-/// search paths.
+/// A 2027 package beside an executable installed in `bin`.
+/// No historical home-directory or 2026 package fallback is performed.
 fn bundled_cad_assets(executable: &Path) -> Option<PathBuf> {
     let bin = executable.parent()?;
     if bin.file_name()? != "bin" {
         return None;
     }
-    if cfg!(feature = "season-2027") {
-        let field = bin.parent()?.join("field-2027");
-        if field.join("manifest.json").is_file() {
-            return Some(field);
-        }
-    }
-    let field = bin.parent()?.join("field");
+    let field = bin.parent()?.join("field-2027");
     field.join("manifest.json").is_file().then_some(field)
 }
 
@@ -381,10 +358,6 @@ pub fn load(root: &Path) -> anyhow::Result<CadAssets> {
     );
     if season == rm_simulator_world::season::Season::Rm2027 {
         ensure!(
-            season.is_enabled(),
-            "RM2027 CAD requires the season-2027 Cargo feature"
-        );
-        ensure!(
             arena.rest_pose_only,
             "RM2027 CAD currently requires rest_pose_only; match bindings are unavailable"
         );
@@ -663,23 +636,16 @@ mod tests {
         let root = std::env::temp_dir().join(format!("rm-bundled-assets-{}", std::process::id()));
         std::fs::create_dir_all(root.join("field")).unwrap();
         std::fs::write(root.join("field/manifest.json"), "{}").unwrap();
+        // An installed 2026 package must never silently become the live field.
+        assert_eq!(bundled_cad_assets(&root.join("bin/rm-simulator")), None);
+        std::fs::create_dir_all(root.join("field-2027")).unwrap();
+        std::fs::write(root.join("field-2027/manifest.json"), "{}").unwrap();
         for binary in ["rm-simulator", "rm-simulator-server"] {
             assert_eq!(
                 bundled_cad_assets(&root.join("bin").join(binary)),
-                Some(root.join("field"))
+                Some(root.join("field-2027"))
             );
         }
-        std::fs::create_dir_all(root.join("field-2027")).unwrap();
-        std::fs::write(root.join("field-2027/manifest.json"), "{}").unwrap();
-        let preferred = if cfg!(feature = "season-2027") {
-            "field-2027"
-        } else {
-            "field"
-        };
-        assert_eq!(
-            bundled_cad_assets(&root.join("bin/rm-simulator")),
-            Some(root.join(preferred))
-        );
         assert_eq!(bundled_cad_assets(&root.join("debug/rm-simulator")), None);
         std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(bundled_cad_assets(&root.join("bin/rm-simulator")), None);
@@ -915,20 +881,16 @@ mod tests {
             assert!(load(&dir).is_err());
         }
         // A 2027 runtime package must agree across manifests, be explicitly
-        // rest-pose-only and be enabled by the build; never inherit 2026 rules.
+        // rest-pose-only and must never inherit 2026 rules.
         manifest["static_assets"] = serde_json::json!([]);
         manifest["season"] = serde_json::json!("2027");
         manifest["rest_pose_only"] = serde_json::json!(true);
         save(&manifest);
         assert!(load(&dir).is_err()); // Equipment still identifies the legacy season.
         std::fs::write(dir.join("equipment/manifest.json"), manifest.to_string()).unwrap();
-        if cfg!(feature = "season-2027") {
-            let cad = load(&dir).unwrap();
-            assert_eq!(cad.season, rm_simulator_world::season::Season::Rm2027);
-            assert!(cad.rest_pose_only);
-        } else {
-            assert!(load(&dir).unwrap_err().to_string().contains("season-2027"));
-        }
+        let cad = load(&dir).unwrap();
+        assert_eq!(cad.season, rm_simulator_world::season::Season::Rm2027);
+        assert!(cad.rest_pose_only);
         manifest["rest_pose_only"] = serde_json::json!(false);
         save(&manifest);
         std::fs::write(dir.join("equipment/manifest.json"), manifest.to_string()).unwrap();

@@ -434,7 +434,7 @@ impl crate::FieldSnapshot {
     }
 }
 
-#[cfg(all(test, feature = "season-2027"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
@@ -609,7 +609,6 @@ mod tests {
             game.validate().unwrap();
         }
         assert_eq!(f.snapshot().rmuc_2027, restored.snapshot().rmuc_2027);
-        #[cfg(feature = "season-2026")]
         {
             let mut legacy = Field::new(&FieldConfig::default()).unwrap();
             assert!(

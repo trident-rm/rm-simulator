@@ -17,9 +17,9 @@ Git history.
 | Crate ownership, ticks, restore and ECS | [Simulation architecture](architecture-refactor.md) |
 | Standalone physics and optional rendering | [Physics reuse](physics-reuse.md) |
 | Standalone gameplay and its live integration | [Gameplay](gameplay.md) |
-| Implemented RM2026 live rules and assumptions | [Referee rules](referee-rules.md) |
+| Historical RM2026 rule kernels and assumptions | [Referee rules](referee-rules.md) |
 | RM2027 manuals, changes and implementation decisions | [2027 rules reference](rules-2027.md) |
-| RM2026 and RM2027 build features and admission | [Season builds](seasons.md) |
+| Current runtime, 2026 archive and admission | [Runtime and archive](seasons.md) |
 | Command-line options, controls and interface | [App options](app-options.md) |
 | App automation, headless rendering and screenshots | [Console](console.md) |
 | Testing a custom client over the referee protocol | [Referee link](referee-link.md) |

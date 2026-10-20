@@ -29,9 +29,9 @@ hooks:
 module-deps:
     python3 scripts/check-module-dependencies.py
 
-# Feature availability and refusal of unimplemented seasons, without rendering.
-season-test:
-    python3 scripts/check-season-features.py
+# Current runtime admission and native rules without optional app integrations.
+runtime-test:
+    python3 scripts/check-runtime.py
 
 mpl:
     python3 scripts/check-mpl-compliance.py
@@ -42,7 +42,7 @@ verify:
     cargo check --workspace --all-targets --all-features --locked
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
     cargo test --workspace --all-features --locked
-    python3 scripts/check-season-features.py
+    python3 scripts/check-runtime.py
     python3 scripts/check-module-dependencies.py
     python3 scripts/check-mpl-compliance.py
     python3 scripts/stage-release-field.py --all --verify-only --allow-lfs-pointers
@@ -68,16 +68,16 @@ gameplay-test:
 
 # Native 2027 control rules, physical RFID and console scenario tooling, without a GPU.
 control-test:
-    cargo test -p rm-simulator-gameplay --locked --no-default-features --features season-2027 --lib rmuc_2027::
-    cargo test -p rm-simulator-gameplay --locked --no-default-features --features season-2027 --test control_2027
-    cargo test -p rm-simulator-gameplay --locked --no-default-features --features season-2027 --test field_buffs_2027
-    cargo test -p rm-simulator-gameplay --locked --no-default-features --features season-2027 --test terrain_2027 --test rune_2027 --test assembly_2027 --test adaptive_2027
-    cargo test -p rm-simulator-world --locked --no-default-features --features season-2027 --lib rmuc_2027::tests
+    cargo test -p rm-simulator-gameplay --locked --lib rmuc_2027::
+    cargo test -p rm-simulator-gameplay --locked --test control_2027
+    cargo test -p rm-simulator-gameplay --locked --test field_buffs_2027
+    cargo test -p rm-simulator-gameplay --locked --test terrain_2027 --test rune_2027 --test assembly_2027 --test adaptive_2027
+    cargo test -p rm-simulator-world --locked --lib rmuc_2027::tests
     python3 -m unittest discover -s scripts/tests -p test_console.py -v
     python3 -m unittest discover -s scripts/tests -p test_control_field_scenarios.py -v
     python3 -m unittest discover -s scripts/tests -p test_terrain_rune_scenarios.py -v
 
-# A complete headless gameplay scenario.
+# A native RMUC 2027 capture/scoring/result scenario.
 gameplay-demo:
     cargo run -p rm-simulator-gameplay --example match --locked
 

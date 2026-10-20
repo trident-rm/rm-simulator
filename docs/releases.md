@@ -168,22 +168,23 @@ MIT/Apache-licensed simulator code. Original STEP inputs are not imported.
 The initial import is byte-for-byte from the former rm-map-tools release archive,
 verified against its pinned SHA-256. `scripts/release-field.json` retains that URL
 and archive hash as historical provenance; CI no longer downloads that release.
-The same file pins every runtime package file by SHA-256. The source commit fixes
+`scripts/release-field-2027.json` pins the active runtime package by SHA-256.
+New archives ship only `field-2027/`; `rm2026-final` preserves the old runtime. The source commit fixes
 both that inventory and the corresponding LFS object IDs.
 
 ```sh
 git lfs install
-git lfs pull --include='field/**'
+git lfs pull --include='field-2027/**'
 python3 scripts/stage-release-field.py --verify-only
 ```
 
 Lightweight CI checks pointer object IDs against the inventory without fetching
 LFS content. Test/package checkouts use `lfs: true`. Release staging verifies all
 hydrated files, refuses pointer placeholders and symlinks, and copies the package
-to `dist/field` before the real Rust loader verifies its manifests. An existing
-`dist/field` is not overwritten. Users installing release ZIPs do not need LFS.
+to `dist/field-2027` before the real Rust loader verifies its manifests. An existing
+`dist/field-2027` is not overwritten. Users installing release ZIPs do not need LFS.
 
-For an intentional field update, replace the approved files under `field/`,
+For an intentional field update, replace the approved files under `field-2027/`,
 preserve the ownership notice and exporter provenance, then run:
 
 ```sh

@@ -2,16 +2,14 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # rm-simulator-gameplay
 
-`rm-simulator-gameplay` owns the deterministic RMUC 2026 match engine that the
-world referee runs as its live rules authority. It runs a match
-without physics, Rapier, CAD, networking, rendering or host time, and is pinned to
-the English RoboMaster 2026 University Championship Rule Manual V2.1.0
-(2026-07-17). It sits at the bottom of the layering: the world crate depends on
-it, and it depends on no other simulator crate.
+`rm-simulator-gameplay` owns native RMUC 2027 rules, independent of physics,
+CAD, networking, rendering and host time. Live matches use
+`rmuc_2027::match_rules::Match`, with native control, combat, traversal, Rune,
+virtual assembly and adaptive armor. See [gameplay](../../docs/gameplay.md).
 
-An optional `season-2027` feature adds the independent RMUC 2027
-[`rmuc_2027::Control`](../../docs/gameplay.md#rmuc-2027-control-component)
-territory component. Full 2027 match creation remains unavailable.
+The legacy `Game` and its 2026 tables remain shared internals and regression
+fixtures. They are not a selectable application season. No season Cargo features
+are needed; see [the runtime and archive guide](../../docs/seasons.md).
 
 ## Modules
 
@@ -21,7 +19,7 @@ territory component. Full 2027 match creation remains unavailable.
 | `src/state.rs` | The state model: `Team`, `RobotKind`, `Caliber`, `Config`, `Phase`, `Snapshot`, `Event`, rounds, deliveries and zone contacts. |
 | `src/zones.rs` | Section 5.5.3 buff point constants, terrain crossing courses and the Fortress cooling and reserve formulas. |
 | `src/performance.rs` | `Performance`, `Stats` and the Hero and Infantry types: HP, chassis power, heat limit and cooling by level (Tables 5-12 to 5-14). |
-| `src/rmuc_2027.rs` | Feature-gated UC 2027 territory capture, recovery, scoring, outpost ownership transfer and restorable component state. |
+| `src/rmuc_2027.rs` | Native UC 2027 territory capture, recovery, scoring, outpost ownership transfer and restorable component state. |
 | `src/coverage.rs` | `RULES`, the inventory of sections 5.1-5.8 and 6-9, with each group's section, `Support` status and remaining work. |
 | `src/policy.rs` | Internal allowance and income policies. |
 
@@ -51,8 +49,8 @@ Doctests live in `engine.rs`, `state.rs`, `performance.rs` and `coverage.rs`, in
 the `coverage::RULES` assertions that every mechanic group appears exactly once
 and carries its section.
 
-`just gameplay-demo` runs `examples/match.rs`, a complete headless BO3 match that
-ends in base destruction and result confirmation. `examples/benchmark.rs` is a
+`just gameplay-demo` runs `examples/match.rs`, a native 2027 round with RFID
+capture, control scoring and a result after Base destruction. `examples/benchmark.rs` is a
 standard-library microbenchmark for coarse stepping and command transaction cost:
 
 ```sh

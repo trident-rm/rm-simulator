@@ -27,8 +27,8 @@ joined with `--connect` takes those from the server.
 | `--assembly-assets DIR` / `--assembly-area DIR` | Verified in-game Engineer/Core rig and matching station terrain; see [assembly workbench](assembly-workbench.md#in-game-automatic-assembly) |
 | `--assembly-hints FILE` | Optional completed source recording for warm IK seeds; every new path is validated |
 | `--robot-assets DIR` | Optional verified source-derived Omni, folding Hero, stair Heavy or tunnel package; selects its fitted local physics and validated replacement armor when supplied |
-| `--stair-heavy` | Host selects the DreamChaser stair linkage; pilot with `--robot engineer` on a 2026 field |
-| `--folding-hero` | Host selects the source-bound folding Hero preset; use a 2026 field |
+| `--stair-heavy` | Host selects the DreamChaser stair linkage; pilot with `--robot engineer` |
+| `--folding-hero` | Host selects the reference folding Hero preset; live 2027 deployment uses Heavy |
 | `--team-cad` | Host option selecting the fitted team Omni dimensions without requiring visual assets |
 | `--cad-assets DIR` | Extracted RMUC CAD directory; relative paths start at the working directory for both manifests and meshes |
 | `--big-rune` / `--no-rune` | Big Rune motion and two-target groups for training (a match always starts with the Small Rune and converts at 3:00), or no rune rules |
@@ -284,7 +284,7 @@ an NVIDIA laptop GPU; Mac performance still needs separate measurements.
 | Q / E | Rotate the Drone's body left/right; the mouse aims its gimbal separately |
 | Left Ctrl | Fast: 5 m/s drive command, 8 m/s flight |
 | R | Toggle chassis spin (6 rad/s) while driving |
-| T | Toggle mechanism: Hero fold / stair Heavy wheel linkage / PIE tunnel stow (2026 practice) |
+| T | Toggle mechanism: the active robot’s supported fold, stair linkage or tunnel stow |
 | J | Open automatic L1–L3 assembly controls for the source PIE Heavy (manual parking) |
 | V | Toggle first- and third-person view while driving |
 | C | Cycle physics colliders: Off / Overlay / Only |
@@ -294,7 +294,7 @@ an NVIDIA laptop GPU; Mac performance still needs separate measurements.
 | F7 | Step the world one manual step (three 128 Hz ticks, 23.4375 ms) while paused (local world or referee) |
 | O / I | Buy one 17 mm / 42 mm round using team gold, at default prices of 1 / 10 gold during a running match |
 | F5 | Start the match (or reset a finished one) (local world or referee) |
-| F | Activate your team’s available Rune opportunity (2027 Infantry/Sentry pilot or referee; 2026 referee) |
+| F | Activate your team’s available Rune opportunity (Infantry/Sentry pilot or referee) |
 | Tab (hold) | Show team robot status |
 | P | Toggle settings; 1 toggles reticle, 2 toggles minimap, - / = adjusts mouse sensitivity |
 | M | Toggle the team map; click for marker/Sentry/team choices. A / B / I pick attack / defend / alert |

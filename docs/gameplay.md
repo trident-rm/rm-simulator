@@ -1,22 +1,26 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
-# Standalone gameplay engine
+# Gameplay engines
+
+The application now targets RMUC 2027 only. The native sections below describe
+its live authority; the remaining 2026 `Game` sections document retained shared
+kernels and regression scenarios, not another playable application season.
 
 `rm-simulator-gameplay` runs a match without Bevy, Rapier, CAD, networking or
 host time. It is pinned to the English RoboMaster 2026 University Championship
 Rule Manual V2.1.0, dated 2026-07-17. It does not silently adopt later releases.
 The [2027 rules reference](rules-2027.md) is a separate implementation baseline.
 The [live 2027 control/structure subset](rmuc2027-field.md#enable-the-live-controlstructure-subset)
-uses `rmuc_2027::match_rules::Match`, not the 2026 `Game`; [season builds](seasons.md) explains feature availability and admission.
+uses `rmuc_2027::match_rules::Match`, not the 2026 `Game`; [runtime admission](seasons.md) describes the single-season application and retained kernels.
 
 ```sh
 just gameplay-test
 just gameplay-demo
 ```
 
-The demo completes a BO3 match, including setup, initialization, countdown,
-base destruction, result confirmation and the next round. Tests cover timed
-purchases, income, respawns, rebuilding, heat, eligibility and tick partitioning.
+The demo runs a native 2027 round: countdown, Outpost destruction, RFID capture,
+control scoring and Base destruction. The historical `Game` tests below also
+cover timed purchases, income, respawns, rebuilding, heat and tick partitioning.
 
 Read this guide before changing either gameplay integration.
 
@@ -34,7 +38,7 @@ Read this guide before changing either gameplay integration.
 
 `rm_simulator_gameplay::rmuc_2027::Control` implements the UC V1.0.0 territory
 state machine separately from the legacy `Game`. The native 2027 match adapter
-now consumes it; live world admission requires `season-2027` and source bindings. The 2026 rule
+now consumes it; live world admission requires native source bindings. The 2026 rule
 inventory and engine below retain their existing meaning.
 
 The component implements UC §5.6.2, Tables 5-20–5-21, and the ownership-transfer
@@ -90,8 +94,8 @@ of how elapsed time is partitioned, including 128 Hz caller steps.
 
 ```sh
 # Component unit tests and examples without enabling the 2026 engine.
-cargo test --locked -p rm-simulator-gameplay --no-default-features --features season-2027 --lib rmuc_2027
-cargo test --locked -p rm-simulator-gameplay --no-default-features --features season-2027 --doc rmuc_2027
+cargo test --locked -p rm-simulator-gameplay --lib rmuc_2027
+cargo test --locked -p rm-simulator-gameplay --doc rmuc_2027
 ```
 
 `just control-test` runs the native 2027 unit suite, the additional
@@ -360,9 +364,9 @@ height-aware polygon contacts, with the whole state in `FieldRestore`.
 
 The [field guide](rmuc2027-field.md#enable-the-live-controlstructure-subset)
 documents startup, approximations, tie ordering and intentionally unsupported
-mechanics. Existing 2026 `Game` admission, balance tables and referee behavior
-remain unchanged. 2027 component types always compile for a stable protocol
-schema; the world checks `season-2027` before creation or restore.
+mechanics. Historical 2026 balance tables and referee kernels remain for shared
+fixtures. 2027 component types always compile for a stable protocol
+schema; native creation and restore validate the complete 2027 authority.
 
 The native `FieldSnapshot.rmuc_2027` presentation state remains available when a
 viewer drops `restore`. Checkpoints encode the authority once and reconstruct

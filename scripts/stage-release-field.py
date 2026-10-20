@@ -39,7 +39,7 @@ def verify(source, files, allow_pointers=False):
         data = field_file(source, name).read_bytes()
         if data.startswith(POINTER):
             if not allow_pointers:
-                raise ValueError(f"{name} is an LFS pointer; run git lfs pull --include='field/**'")
+                raise ValueError(f"{name} is an LFS pointer; run git lfs pull --include='{source.name}/**'")
             match = re.fullmatch(POINTER + rb"oid sha256:([0-9a-f]{64})\nsize [0-9]+\n", data)
             digest = match[1].decode() if match else None
         else:
@@ -67,12 +67,12 @@ def stage(source, destination, files):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--destination", type=Path, default=ROOT / "dist/field")
+    parser.add_argument("--destination", type=Path, default=ROOT / "dist/field-2027")
     parser.add_argument("--verify-only", action="store_true")
     parser.add_argument("--allow-lfs-pointers", action="store_true", help="only with --verify-only")
     parser.add_argument("--update-checksums", action="store_true", help="record an intentional field update")
-    parser.add_argument("--inventory", type=Path, default=ROOT / "scripts/release-field.json")
-    parser.add_argument("--all", action="store_true", help="verify/stage both supported field packages")
+    parser.add_argument("--inventory", type=Path, default=ROOT / "scripts/release-field-2027.json")
+    parser.add_argument("--all", action="store_true", help="verify/stage all pinned field data, including historical fixtures")
     args = parser.parse_args()
     if args.allow_lfs_pointers and not args.verify_only:
         parser.error("--allow-lfs-pointers requires --verify-only")

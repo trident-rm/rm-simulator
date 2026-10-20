@@ -355,9 +355,6 @@ impl Command {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    /// The requested season is disabled or its gameplay is not implemented.
-    #[error(transparent)]
-    Season(#[from] season::SeasonError),
     /// The command is not valid in the current phase.
     #[error("command is invalid in this phase")]
     Phase,
@@ -420,7 +417,8 @@ pub struct Game {
     state: Snapshot,
 }
 impl Game {
-    /// Build an RM2026 game from an initial roster. Requires `season-2026`.
+    /// Build the retained legacy rule kernel from an initial roster.
+    /// Live RMUC 2027 matches use [`crate::rmuc_2027::match_rules::Match`].
     /// Returns [`Error::Invalid`] when an
     /// id repeats or a robot's performance does not fit its kind.
     ///
@@ -441,23 +439,6 @@ impl Game {
     /// assert_eq!(Game::new(roster), Err(Error::Invalid));
     /// ```
     pub fn new(config: Config) -> Result<Self, Error> {
-        Self::new_for_season(season::Season::Rm2026, config)
-    }
-
-    /// Build a game only when the season is enabled and has implemented rules.
-    ///
-    /// RM2027 is reserved and returns [`Error::Season`] even when its feature
-    /// is enabled. This never substitutes RM2026 rules for another season.
-    ///
-    /// ```
-    /// use rm_simulator_gameplay::{Config, Error, Game, season::Season};
-    /// assert!(matches!(
-    ///     Game::new_for_season(Season::Rm2027, Config::default()),
-    ///     Err(Error::Season(_)),
-    /// ));
-    /// ```
-    pub fn new_for_season(season: season::Season, config: Config) -> Result<Self, Error> {
-        season.require_playable()?;
         let mut ids = std::collections::BTreeSet::new();
         if config
             .robots
