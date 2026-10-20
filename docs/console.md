@@ -25,7 +25,12 @@ just run --console --window-mode headless
 | `headless` | No OS window or window event loop; the gameplay camera renders to an image |
 
 All modes render and process commands while unfocused. Headless rendering still
-requires a working GPU backend. The default headless image is 1280 × 720.
+requires a working GPU backend. The default headless image is 1280 × 720. Use
+`{"type":"resize","width":960,"height":540}` to resize the native window or
+headless render target for layout checks. Sizes are bounded to 640–3840 ×
+360–2160 logical pixels. Resize works before joining; screenshot and UI key,
+cursor and mouse-button commands also work on the title screen. `ready` still
+waits for a running match.
 Whether a visible window can start unfocused depends on the operating system and
 window manager. `--window-mode unfocused` sets the native window's initial focus
 request; it does not keep forcing focus away later.
@@ -357,3 +362,18 @@ chosen. A selected null area means undefined statistics froze default armor.
 Each `impacts` entry includes historical `region`: `Default`, `Reinforced` or
 `Unreinforced`. Selection never changes when subsequent statistics change;
 spend another opportunity to update it. See [adaptive armor](gameplay.md#rmuc-2027-adaptive-armor).
+
+## Responsive UI review
+
+Start a fresh paused match with `--console --start-paused --window-mode headless`,
+then capture the real GPU-rendered HUD and settings at four window sizes:
+
+~~~sh
+python3 scripts/render-ui-review.py --output local-assets/ui-review
+~~~
+
+The output directory must be new. `--port` selects another console;
+`--sizes 1280x720 960x540` selects sizes. The script checks PNG dimensions and
+settings opening/closing, leaves the match paused and returns to 1280 × 720.
+Review the images for clipping, contrast and overlap. Headless rendering uses
+scale 1; native high-DPI captures have physical rather than logical dimensions.

@@ -792,6 +792,7 @@ impl Plugin for TitlePlugin {
                     show_page,
                     sync_page_navigation.run_if(state_changed::<Page>),
                     fit_columns,
+                    fit_shell,
                     fit_scrollbars,
                     prefill,
                     preview_camera,
@@ -804,6 +805,24 @@ impl Plugin for TitlePlugin {
     }
 }
 
+/// Keep the main menu compact; configuration pages use the available viewport.
+fn fit_shell(page: Res<State<Page>>, mut cards: Query<&mut Node, With<TitleCard>>) {
+    for mut node in &mut cards {
+        let main = *page.get() == Page::Main;
+        let width = px(if main { 480. } else { 1100. });
+        let height = if main { px(300.) } else { percent(76.) };
+        if node.max_width != width {
+            node.max_width = width;
+        }
+        if node.height != height {
+            node.height = height;
+        }
+        if node.max_height != percent(76.) {
+            node.max_height = percent(76.);
+        }
+    }
+}
+
 fn button(commands: &mut Commands, parent: Entity, title: &str, choice: Choice) -> Entity {
     let title = title.to_owned();
     let caption = title.clone();
@@ -812,7 +831,7 @@ fn button(commands: &mut Commands, parent: Entity, title: &str, choice: Choice) 
             @FeathersButton { @caption: bsn! { Text(caption) ThemedText } }
             ActivateOnPress
             AccessibleLabel(title)
-            Node { height: px(38), flex_shrink: 0.0, padding: UiRect::horizontal(px(18)) }
+            Node { min_height: px(crate::ui_theme::CONTROL_HEIGHT_PX), flex_shrink: 0.0, padding: UiRect::horizontal(px(18)) }
             on(move |_: On<Activate>, mut state: ResMut<TitleState>| { state.actions.push(choice); })
         })
         .insert((ChildOf(parent), TitleButton))
@@ -841,7 +860,7 @@ fn field(
             font_size: FontSize::Px(14.0),
             ..default()
         },
-        TextColor(Color::srgb(0.55, 0.65, 0.72)),
+        TextColor(crate::ui_theme::MUTED),
     ));
     let container = commands
         .spawn_scene(bsn! {
@@ -941,10 +960,10 @@ fn spawn_title(mut commands: Commands, base: Res<BaseArgs>, mut state: ResMut<Ti
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                row_gap: px(12),
+                row_gap: px(16),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.035, 0.05, 0.075, 0.25)),
+            BackgroundColor(Color::srgba(0.025, 0.04, 0.065, 0.55)),
         ))
         .id();
     commands.spawn((
@@ -994,11 +1013,11 @@ fn spawn_title(mut commands: Commands, base: Res<BaseArgs>, mut state: ResMut<Ti
                 min_height: px(0),
                 padding: UiRect::right(px(12)),
                 border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(8)),
+                border_radius: BorderRadius::all(px(crate::ui_theme::RADIUS_PX)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.035, 0.05, 0.065, 0.90)),
-            BorderColor::all(Color::srgb(0.19, 0.52, 0.56)),
+            BackgroundColor(crate::ui_theme::PANEL),
+            BorderColor::all(crate::ui_theme::BORDER),
         ))
         .id();
     let viewport = commands
@@ -1055,11 +1074,24 @@ fn spawn_title(mut commands: Commands, base: Res<BaseArgs>, mut state: ResMut<Ti
             },
         ))
         .id();
+    commands.spawn((
+        ChildOf(row),
+        Text::new("Practice solo or join your team."),
+        TextFont {
+            font_size: FontSize::Px(16.),
+            ..default()
+        },
+        TextColor(crate::ui_theme::MUTED),
+        Node {
+            margin: UiRect::bottom(px(8)),
+            ..default()
+        },
+    ));
     button(&mut commands, row, "Single Player", Choice::Practice);
     button(&mut commands, row, "Multiplayer", Choice::Multiplayer);
     commands.spawn_scene(bsn! {
         @FeathersButton { @caption: bsn! { Text("Settings") ThemedText } }
-        Node { height: px(38), flex_shrink: 0.0, padding: UiRect::horizontal(px(18)) }
+        Node { min_height: px(crate::ui_theme::CONTROL_HEIGHT_PX), flex_shrink: 0.0, padding: UiRect::horizontal(px(18)) }
         AccessibleLabel("Settings")
         ActivateOnPress
         on(|_: On<Activate>, mut ui: ResMut<crate::hud::HudState>, mut focus: ResMut<bevy::input_focus::InputFocus>| {
@@ -1403,7 +1435,7 @@ fn spawn_title(mut commands: Commands, base: Res<BaseArgs>, mut state: ResMut<Ti
             font_size: FontSize::Px(14.0),
             ..default()
         },
-        TextColor(Color::srgb(0.55, 0.65, 0.72)),
+        TextColor(crate::ui_theme::MUTED),
     ));
 }
 

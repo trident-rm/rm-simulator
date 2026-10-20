@@ -193,10 +193,9 @@ before background loading finishes. Match physics and connections still start
 on join. The active graphics preset also applies to the menu backdrop.
 
 The HUD follows the July 2026 RMUC competitor client manual: red/blue team
-status and clock across the top, robot HP below left, ammunition beside the
-reticle, and a top-down teammate map below right. The ring around the
+status and clock across the top, robot HP below left, a separate ammunition readout along the bottom, and a top-down teammate map below right. The ring around the
 reticle fills clockwise with barrel heat, including shots not yet confirmed
-by the host, turning amber past 60 % and red past 85 % of the heat limit. Green marks your robot;
+by the host, turning amber past 60 % and red past 85 % of the heat limit. Teal marks your robot;
 defeated robots fade. Referees see both teams on the map. The map uses optional
 CAD-derived artwork and live positions, without radar
 detection. The local status readout includes base HP and shield; ammunition and team gold
@@ -217,8 +216,17 @@ UI assets work with any `--cad-assets` location. It follows the July 2026 studen
 manual's main interface and panels 1, 3, 5 and 6. Mirrored robot slots across the
 top show each team's individual robot HP. Empty slots are dimmed; defeated
 robots show DOWN. Duplicate types get extra slots so every robot remains visible.
-Slot numbers follow the manual; # labels identify simulator chassis. Base HP
-is not represented by an aggregate robot health bar. Feathers retains its own theme in a separate subtree.
+Slot numbers follow the manual; simulator chassis ids remain in the Team panel.
+Base HP is not represented by an aggregate robot health bar. The shared
+`ui_theme.rs` palette and sans-serif typography apply to menus, Feathers controls
+and contextual panels; the HUD uses the matching embedded Flair stylesheet.
+Notices flow above the robot card. The normal 2027 HUD shows a quiet territory
+summary; Team and F3 views expand capture, RFID and Rune diagnostics. XP and
+purchase costs appear in the robot card while using the cursor.
+
+Settings keep navigation and footer actions visible while the selected page
+scrolls. A sidebar becomes horizontal tabs below 900 logical pixels. The main
+menu uses a compact card; multiplayer forms keep the wider responsive layout.
 
 Press Escape to open the Pause menu with Resume, Settings, and Exit Match.
 Singleplayer pauses until you resume; multiplayer keeps running, including when

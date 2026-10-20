@@ -1,62 +1,73 @@
 /* SPDX-License-Identifier: MIT OR Apache-2.0 */
 /* Copyright (c) 2026 hxyulin <hxyulin@proton.me> */
-/* July 2026 competitor manual: main interface and panels 1, 3, 5, 6. */
+/* HUD counterparts of ui_theme.rs: 8 px rhythm, restrained surfaces, clear hierarchy. */
 @font-face { font-family: "Hud"; src: url("embedded://bevy_feathers/assets/fonts/FiraSans-Regular.ttf"); }
-.hud { font-family: "Hud"; width: 100%; height: 100%; color: #e2f3f4; font-size: 16px; }
-.scoreboard { position: absolute; top: 18px; left: 2%; width: 96%; display: flex; gap: 14px; align-items: start; }
-.team-card { flex-grow: 1; flex-basis: 0px; min-width: 0px; padding: 12px 16px; gap: 10px; flex-direction: column; background-color: #091820dd; border-radius: 6px; border: 1px solid #324650; }
-.red { border-top: 3px solid #f34b52; }
-.blue { border-top: 3px solid #36b8ee; }
-.team-status { font-size: 16px; }
-.clock-card { width: 160px; flex-shrink: 0; padding: 8px 12px; justify-content: center; background-color: #10272deb; border: 1px solid #53868b; border-radius: 8px; }
-.clock { font-size: 26px; color: #b9f6ef; }
-.bar-track { height: 6px; width: 100%; background-color: #324650; border-radius: 3px; overflow: hidden; }
-.robot-card { position: absolute; left: 2%; bottom: 76px; width: 300px; padding: 16px; gap: 12px; flex-direction: column; background-color: #091820dd; border-left: 3px solid #4aefac; border-radius: 6px; }
-.robot-status { font-size: 18px; }
-.ammo { position: absolute; left: 62%; top: 47%; font-size: 14px; padding: 10px; color: #d7edee; background-color: #09182099; border-left: 2px solid #53868b; }
-.notices { position: absolute; left: 2%; bottom: 230px; width: 290px; padding: 12px; font-size: 13px; background-color: #091820ba; border-left: 2px solid #53868b; }
-.hint { position: absolute; bottom: 62px; left: 36%; width: 28%; font-size: 12px; color: #b6cccf; }
-.peek-panel { flex-direction: column; gap: 16px; position: absolute; left: 15%; top: 22%; width: 70%; max-height: 62%; padding: 24px; font-size: 17px; background-color: #091820f5; border: 1px solid #53868b; border-radius: 8px; overflow: scroll; }
+.hud { font-family: "Hud"; width: 100%; height: 100%; color: #e8eff7; font-size: 14px; }
+.scoreboard { position: absolute; top: 16px; left: 2%; width: 96%; display: flex; gap: 12px; align-items: start; }
+.team-card { flex-grow: 1; flex-basis: 0px; min-width: 0px; padding: 10px 14px; gap: 8px; flex-direction: column; background-color: #0c1016e8; border-radius: 10px; border: 1px solid #293645; }
+.red { border-top: 2px solid #f36a76; }
+.blue { border-top: 2px solid #5ab9ec; }
+.team-status { font-size: 14px; color: #e8eff7; }
+.clock-card { width: 116px; flex-shrink: 0; padding: 10px 12px; justify-content: center; background-color: #0c1016ed; border: 1px solid #293645; border-radius: 10px; }
+.clock { font-size: 23px; color: #e8eff7; }
+.bar-track { height: 4px; width: 100%; background-color: #293645; border-radius: 2px; overflow: hidden; }
+.pilot-stack { position: absolute; left: 2%; bottom: 24px; width: 280px; flex-direction: column; gap: 8px; }
+.robot-card { padding: 16px; gap: 10px; flex-direction: column; background-color: #0c1016e8; border: 1px solid #293645; border-left: 3px solid #40c9c2; border-radius: 10px; }
+.robot-status { font-size: 17px; }
+.ammo { position: absolute; left: 330px; bottom: 24px; font-size: 18px; padding: 12px 16px; color: #e8eff7; background-color: #0c1016e8; border-radius: 10px; border: 1px solid #293645; }
+.notices { padding: 10px 14px; font-size: 13px; color: #c0cedb; background-color: #0c1016db; border-left: 2px solid #40c9c2; border-radius: 6px; }
+.hint { position: absolute; bottom: 12px; left: 40%; width: 20%; font-size: 12px; color: #93a6ba; }
+.peek-panel { flex-direction: column; gap: 16px; position: absolute; left: 16%; top: 20%; width: 68%; max-height: 65%; padding: 24px; font-size: 16px; background-color: #0c1016f8; border: 1px solid #293645; border-radius: 12px; overflow: scroll; }
+.panel-title { font-size: 22px; color: #e8eff7; }
+.panel-rows { flex-direction: column; gap: 6px; }
+.panel-row { padding: 10px 12px; column-gap: 12px; background-color: #16212c; border-radius: 6px; flex-shrink: 0; }
+.row-key { width: 26%; font-size: 14px; color: #91a6b9; }
+.row-value { width: 35%; font-size: 14px; }
+.map-label { font-size: 11px; color: #93a6ba; }
+.map-dot-label { font-size: 11px; color: #0c1016; }
+.connection-toast { position: absolute; right: 2%; top: 128px; padding: 8px 12px; font-size: 13px; background-color: #0c1016f0; color: #f1c77b; border-radius: 6px; }
+/* Complete official roster, mirrored about the clock; ids remain in the team panel. */
+.robot-slots { width: 100%; display: flex; gap: 6px; }
+.red-slots { flex-direction: row-reverse; }
+.team-robot { flex-grow: 1; flex-basis: 0px; min-width: 0px; padding: 5px 3px; gap: 6px; flex-direction: column; background-color: #19232d80; border-radius: 4px; }
+.team-robot-text { font-size: 11px; }
+.auto-aim { position: absolute; top: 57%; left: 33%; width: 34%; font-size: 13px; color: #72d9bc; }
+.fortress { position: absolute; top: 30%; left: 25%; width: 50%; font-size: 17px; color: #f1c77b; }
+.control-2027 { position: absolute; top: 134px; left: 2%; max-width: 46%; font-size: 12px; color: #aebfce; background-color: #0c1016bd; border-radius: 6px; padding: 8px 12px; }
 @media (max-width: 1000px) {
- .team-status { font-size: 13px; }
- .team-card { padding: 8px; }
  .scoreboard { gap: 8px; top: 12px; }
- .clock-card { width: 120px; }
- .clock { font-size: 21px; }
- .robot-card { width: 230px; padding: 10px; }
+ .team-status { font-size: 12px; }
+ .team-card { padding: 8px; gap: 6px; }
+ .clock-card { width: 88px; padding: 8px; }
+ .clock { font-size: 19px; }
+ .team-robot-text { font-size: 10px; }
+ .robot-slots { gap: 3px; }
+ .team-robot { padding: 4px 2px; }
+ .pilot-stack { width: 230px; }
+ .robot-card { padding: 12px; }
  .robot-status { font-size: 15px; }
- .notices { width: 230px; font-size: 12px; }
- .peek-panel { flex-direction: column; gap: 16px; left: 8%; width: 84%; font-size: 14px; }
+ .ammo { left: 265px; font-size: 16px; padding: 10px; }
+ .peek-panel { left: 5%; width: 90%; padding: 16px; }
+ .control-2027 { top: 126px; font-size: 11px; }
+}
+@media (max-width: 720px) {
+ .team-status { font-size: 11px; }
+ .team-card { padding: 6px; }
+ .team-robot-text { font-size: 9px; }
+ .clock-card { width: 72px; }
+ .clock { font-size: 17px; }
+ .robot-slots { gap: 2px; }
+ .team-robot { padding: 3px 1px; }
+ .pilot-stack { width: 200px; }
+ .robot-status { font-size: 14px; }
+ .ammo { left: 225px; font-size: 14px; }
+ .hint { left: 34%; width: 32%; }
 }
 @media (max-height: 620px) {
- .robot-card { bottom: 66px; }
- .notices { bottom: 195px; }
- .peek-panel { flex-direction: column; gap: 16px; top: 20%; max-height: 65%; }
+ .pilot-stack { bottom: 12px; }
+ .robot-card { padding: 10px; gap: 6px; }
+ .notices { font-size: 11px; padding: 6px 10px; }
+ .ammo { bottom: 12px; }
+ .control-2027 { top: 120px; padding: 6px 10px; }
+ .peek-panel { top: 16%; max-height: 74%; }
 }
-
-.panel-title { font-size: 22px; color: #b9f6ef; }
-.panel-rows { flex-direction: column; gap: 6px; }
-.panel-row { padding: 10px; column-gap: 12px; background-color: #132730; flex-shrink: 0; }
-.row-key { width: 26%; font-size: 14px; color: #82d5d4; }
-.row-value { width: 35%; font-size: 14px; }
-
-.map-label { font-size: 12px; color: #b6cccf; }
-.map-dot-label { font-size: 12px; color: #081820; }
-
-.connection-toast { position: absolute; right: 2%; top: 120px; padding: 7px 12px; font-size: 12px; background-color: #091820dd; color: #f5ce83; border-radius: 5px; }
-
-/* Manual pp. 1, 3: robot slots mirrored around the match clock. */
-.robot-slots { width: 100%; display: flex; flex-wrap: wrap; gap: 6px; }
-.red-slots { flex-direction: row-reverse; }
-.team-robot { flex-grow: 1; flex-basis: 0px; min-width: 0px; padding: 6px 4px; gap: 6px; flex-direction: column; background-color: #111b23c9; border-radius: 3px; }
-.team-robot-text { font-size: 10px; }
-@media (max-width: 1000px) {
- .team-robot { flex-basis: 0px; min-width: 0px; padding: 4px 2px; }
- .team-robot-text { font-size: 9px; }
- .robot-slots { gap: 3px; }
-}
-
-.auto-aim { position: absolute; top: 57%; left: 36%; width: 28%; font-size: 13px; color: #a6f0d2; }
-.fortress { position: absolute; top: 30%; left: 25%; width: 50%; font-size: 17px; color: #f5ce83; }
-
-.control-2027 { position: absolute; top: 155px; left: 2%; font-size: 12px; color: #b9f6ef; background-color: #091820cc; padding: 6px; }

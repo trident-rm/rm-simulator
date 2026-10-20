@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+- Refresh the HUD, title and pause menus, settings and map actions with shared
+  colors, typography and surface styles. Compact team cards and robot telemetry,
+  separate ammunition, stack notices and show detailed control data contextually.
+  Keep settings navigation/footer fixed with responsive tabs and scrolling pages.
+  Add bounded console resizing, headless target resizing and title-screen captures
+  for responsive UI inspection.
+
 - Migrate rendering and UI to Bevy 0.20, Flair 0.9 and shared wgpu 30, preparing
   the graphics foundation for rxui embedding. Update pointer events, controlled
   sliders, the heat-ring WESL shader and benchmark timestamp readbacks.

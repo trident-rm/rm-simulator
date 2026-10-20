@@ -113,7 +113,7 @@ pub(crate) fn press(
 pub(crate) fn sync(
     mut commands: Commands,
     ui: Res<HudState>,
-    map: Query<Entity, With<FieldMap>>,
+    root: Query<Entity, With<super::HudRoot>>,
     popups: Query<Entity, With<Popup>>,
     mut summaries: Query<&mut Text, With<Summary>>,
 ) {
@@ -124,7 +124,7 @@ pub(crate) fn sync(
         return;
     };
     let text = format!(
-        "Map point: {:.2}, {:.2} m\nInteraction key: {}\nLocation navigation only; no automatic firing.",
+        "Map destination: {:.2}, {:.2} m\nInteraction key: {}   ·   Esc to cancel\nNavigation only; no automatic firing.",
         position[0],
         position[1],
         if key == 0 {
@@ -134,25 +134,29 @@ pub(crate) fn sync(
         }
     );
     if popups.is_empty() {
-        let Ok(parent) = map.single() else {
+        let Ok(parent) = root.single() else {
             return;
         };
         commands
             .spawn((
                 Popup,
+                bevy::ui_widgets::ScrollArea,
+                super::menus::SettingsScroll,
                 ChildOf(parent),
                 GlobalZIndex(90),
                 Node {
                     position_type: PositionType::Absolute,
-                    left: px(12),
-                    top: px(12),
-                    width: px(310),
-                    padding: UiRect::all(px(12)),
-                    row_gap: px(8),
-                    flex_direction: FlexDirection::Column,
-                    ..default()
+                    left: percent(50),
+                    top: percent(50),
+                    width: px(360),
+                    max_width: percent(92.),
+                    max_height: percent(86.),
+                    overflow: Overflow::scroll_y(),
+                    ..crate::ui_theme::panel_node()
                 },
-                BackgroundColor(Color::srgba(0.025, 0.04, 0.055, 0.98)),
+                UiTransform::from_translation(Val2::new(percent(-50), percent(-50))),
+                BackgroundColor(crate::ui_theme::PANEL),
+                BorderColor::all(crate::ui_theme::BORDER),
             ))
             .with_children(|p| {
                 p.spawn((
@@ -177,10 +181,10 @@ pub(crate) fn sync(
                         bevy::ui_widgets::Button,
                         bevy::ui_widgets::ActivateOnPress,
                         Node {
-                            padding: UiRect::axes(px(10), px(6)),
-                            ..default()
+                            justify_content: JustifyContent::Center,
+                            ..crate::ui_theme::button_node()
                         },
-                        BackgroundColor(Color::srgb(0.15, 0.22, 0.28)),
+                        BackgroundColor(Color::srgb(0.11, 0.15, 0.20)),
                     ))
                     .observe(
                         move |_: On<bevy::ui_widgets::Activate>,

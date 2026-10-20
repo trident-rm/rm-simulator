@@ -68,13 +68,13 @@ pub(super) struct SaveLabel;
 pub(super) fn spawn(commands: &mut Commands, parent: Entity, shade: Entity) {
     commands.spawn((
         ChildOf(parent),
-        Text::new("Controls"),
+        Text::new("Key bindings"),
         TextFont {
             font_size: FontSize::Px(20.),
             ..default()
         },
     ));
-    commands.spawn((ChildOf(parent), Text::new("Two bindings per action. Choose one, then press a key or mouse button. Esc cancels.\nAuto Aim and Auto Fire may share a binding. Both default to right mouse. Clear Auto Fire for aim only."), TextFont { font_size: FontSize::Px(13.), ..default() }));
+    commands.spawn((ChildOf(parent), Text::new("Select a binding, then press a key or mouse button. Esc cancels.\nAuto Aim and Auto Fire can share a binding."), TextFont { font_size: FontSize::Px(13.), ..default() }));
     commands.spawn_scene(bsn! {
         @FeathersButton { @caption: bsn! { Text("Invert mouse Y: Off") ThemedText InvertLabel } }
         ActivateOnPress

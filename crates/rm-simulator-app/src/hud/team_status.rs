@@ -128,7 +128,7 @@ fn presentation(
         let slot = slots
             .get(index)
             .map_or_else(|| "+".into(), |slot| slot.number.to_string());
-        let text = format!("{slot} {status}\n#{}\n{health}", robot.id);
+        let text = format!("{slot} {status}\n{health}");
         let fraction = robot.hp.map_or(0., |(hp, max)| {
             (hp as f32 / max.max(1) as f32).clamp(0., 1.)
         });
@@ -164,7 +164,7 @@ fn presentation(
         } else {
             "EMPTY"
         };
-        (format!("{title}\n{status}\n--"), 0., DIM)
+        (format!("{title}\n{status}"), 0., DIM)
     }
 }
 
@@ -342,11 +342,17 @@ mod tests {
             .iter(app.world())
             .map(|t| t.0.clone())
             .collect();
+        let occupants: Vec<_> = app
+            .world_mut()
+            .query::<&TeamSlots>()
+            .iter(app.world())
+            .flat_map(|r| r.occupants.iter().flatten().copied())
+            .collect();
         for id in 0..5 {
-            assert!(texts.iter().any(|t| t.contains(&format!("#{id}\n"))));
+            assert!(occupants.contains(&id));
         }
-        assert!(texts.iter().any(|t| t.contains("DOWN\n#2")));
-        assert!(texts.iter().any(|t| t.contains("#0\n150/200")));
+        assert!(texts.iter().any(|t| t.contains("DOWN")));
+        assert!(texts.iter().any(|t| t.contains("150/200")));
         {
             let mut session = app.world_mut().resource_mut::<Session>();
             session.snapshot.chassis.retain(|c| c.id != 0);
@@ -368,8 +374,13 @@ mod tests {
             .iter(app.world())
             .map(|t| t.0.clone())
             .collect();
-        assert!(!texts.iter().any(|t| t.contains("#0\n")));
-        assert!(texts.iter().any(|t| t.contains("#3\n10/200")));
+        assert!(
+            !app.world_mut()
+                .query::<&TeamSlots>()
+                .iter(app.world())
+                .any(|r| r.occupants.contains(&Some(0)))
+        );
+        assert!(texts.iter().any(|t| t.contains("10/200")));
     }
 
     #[test]
@@ -541,7 +552,7 @@ mod tests {
             slots(Season::Rm2026),
         );
         assert!(dead.contains("DOWN"));
-        assert!(dead.contains("#4"));
+        assert!(dead.starts_with("1 DOWN"));
         assert_eq!(fill, 0.);
         assert_eq!(color, DIM);
         let (_, fill, color) = presentation(

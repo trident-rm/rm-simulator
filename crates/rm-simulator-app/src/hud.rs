@@ -25,9 +25,9 @@ use rm_simulator_world::{Caliber, MatchPhase, Team};
 use crate::controls::{Drive, Gun, Player};
 use crate::session::Session;
 
-const INK: Color = Color::srgba(0.025, 0.045, 0.065, 0.88);
-const WHITE: Color = Color::srgb(0.88, 0.94, 0.96);
-const GREEN: Color = Color::srgb(0.25, 0.95, 0.65);
+const INK: Color = crate::ui_theme::PANEL;
+const WHITE: Color = crate::ui_theme::TEXT;
+const GREEN: Color = crate::ui_theme::ACCENT;
 fn team_color(team: Team) -> Color {
     match team {
         Team::Red => Color::srgb(0.95, 0.22, 0.22),
@@ -275,6 +275,9 @@ pub enum Hud {
 /// Fill node whose width tracks the local robot's HP fraction.
 #[derive(Component)]
 pub struct HealthBar;
+/// Local telemetry stack, hidden to make room for the expanded map on small windows.
+#[derive(Component)]
+pub struct PilotStack;
 /// Aiming reticle root, hidden while a panel owns the input.
 #[derive(Component)]
 pub struct Reticle;
@@ -434,14 +437,16 @@ pub fn spawn_hud(commands: &mut Commands) {
         label(commands, card, Hud::Team(team), "team-status");
         team_status::spawn(commands, card, team);
     }
-    let bottom = container(commands, root, "robot-card");
+    let stack = container(commands, root, "pilot-stack");
+    commands.entity(stack).insert(PilotStack);
+    label(commands, stack, Hud::Notice, "notices");
+    let bottom = container(commands, stack, "robot-card");
     label(commands, bottom, Hud::Robot, "robot-status");
     bar(commands, bottom, HealthBar, GREEN);
     label(commands, root, Hud::Ammo, "ammo");
     label(commands, root, Hud::AutoAim, "auto-aim");
     label(commands, root, Hud::Fortress, "fortress");
     label(commands, root, Hud::Control, "control-2027");
-    label(commands, root, Hud::Notice, "notices");
     label(commands, root, Hud::Connection, "connection-toast");
     label(commands, root, Hud::Hint, "hint");
     // Hold-to-peek panels retain their keyboard behavior.
@@ -887,6 +892,29 @@ fn control_2027_text(session: &Session) -> String {
     lines.join("\n")
 }
 
+/// Quiet overview; detailed RFID and Rune diagnostics remain in Team/F3 views.
+fn control_summary(session: &Session) -> String {
+    let Some(state) = session.rmuc_2027() else {
+        return String::new();
+    };
+    let control = state.game.control.snapshot();
+    let mut owned = [0; 2];
+    for territory in &control.territories {
+        owned[territory.control.team().index()] += 1;
+    }
+    let mut text = format!("TERRITORIES   RED {}   /   BLUE {}", owned[0], owned[1]);
+    for (i, territory) in control.territories.iter().enumerate() {
+        if territory.progress_ns > 0 {
+            text.push_str(&format!(
+                "\n{} capture  {:.1} / 5 s",
+                ["Red outpost", "Blue outpost", "Red base", "Blue base"][i],
+                territory.progress_ns as f64 * 1e-9
+            ));
+        }
+    }
+    text
+}
+
 fn team_text(session: &Session, team: Team) -> String {
     let mut text = team.name().to_uppercase();
     if let Some(state) = session.rmuc_2027() {
@@ -903,16 +931,16 @@ fn team_text(session: &Session, team: Team) -> String {
             .map(|(_, hp)| hp)
             .sum();
         return format!(
-            "{text}  CTRL {}  BASE {}{}{}  OUTPOST {outpost}  GOLD {}",
+            "{text}   ·   {} PTS   ·   {} GOLD\nBASE {}{}{}    /    OUTPOST {outpost}",
             g.control.snapshot().points[i],
+            g.gold[i],
             g.base_hp[i],
             if g.control.base_protected(owner) {
                 " PROTECTED"
             } else {
                 ""
             },
-            if g.base_open[i] { " OPEN" } else { "" },
-            g.gold[i]
+            if g.base_open[i] { " OPEN" } else { "" }
         );
     }
     if let Some(base) = session
@@ -1138,6 +1166,7 @@ pub fn update_hud(
     heat_ring: Query<&MaterialNode<heat_ring::HeatRingMaterial>, With<HeatRing>>,
     mut materials: Option<ResMut<Assets<heat_ring::HeatRingMaterial>>>,
     assist: Option<Res<crate::auto_aim::AutoAim>>,
+    window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
 ) {
     let robot = session
         .referee()
@@ -1179,7 +1208,13 @@ pub fn update_hud(
             }),
             Hud::Team(team) => team_text(&session, *team),
             Hud::Fortress => session.referee().map_or_else(String::new, fortress_text),
-            Hud::Control => control_2027_text(&session),
+            Hud::Control => {
+                if ui.debug || ui.roster {
+                    control_2027_text(&session)
+                } else {
+                    control_summary(&session)
+                }
+            }
             Hud::Clock => clock_text(&session),
             Hud::Robot => {
                 let speed = session
@@ -1205,15 +1240,14 @@ pub fn update_hud(
                 }) {
                     let now = native.unwrap().game.elapsed_ns();
                     value = format!(
-                        "#{} {:?} L{}  {} / {} HP\nHEAT {:.1}/{}  XP {:.1}",
-                        r.id,
+                        "{:?}  ·  L{}  ·  #{}\n{} / {} HP    |    HEAT {:.0}/{}",
                         r.role,
                         r.combat.level,
+                        r.id,
                         r.hp,
                         r.max_hp,
                         r.combat.heat_tenths as f64 / 10.,
-                        r.stats(now).heat_limit,
-                        r.combat.experience_tenths as f64 / 10.
+                        r.stats(now).heat_limit
                     );
                     if r.combat.launcher_locked(now) {
                         value.push_str("  LOCKED");
@@ -1240,12 +1274,15 @@ pub fn update_hud(
                             due.saturating_sub(now) as f64 * 1e-9
                         ));
                     }
-                    value.push_str(&format!(
-                        "\nGOLD {}\nBUY HP {} | PAID RESPAWN {}",
-                        native.unwrap().game.gold[r.team.index()],
-                        50 + (now * 20).div_ceil(60_000_000_000),
-                        now.div_ceil(60_000_000_000) * 80 + u64::from(r.combat.level) * 20
-                    ));
+                    if !player.captured {
+                        value.push_str(&format!(
+                            "\nXP {:.1}   ·   {} GOLD\nHP {}  /  RESPAWN {}",
+                            r.combat.experience_tenths as f64 / 10.,
+                            native.unwrap().game.gold[r.team.index()],
+                            50 + (now * 20).div_ceil(60_000_000_000),
+                            now.div_ceil(60_000_000_000) * 80 + u64::from(r.combat.level) * 20
+                        ));
+                    }
                 }
                 if let Some(drive) = &drive {
                     let tether = session
@@ -1325,12 +1362,12 @@ pub fn update_hud(
                     "TRACKED"
                 };
                 format!(
-                    "{}\n{} mm   {allowance} {mode}",
+                    "{allowance}  {mode}   ·   {} mm\n{}",
+                    if index == 0 { 17 } else { 42 },
                     session
                         .last_bullet_speed_m_s()
-                        .map(|speed| format!("{speed:.2} m/s"))
-                        .unwrap_or_else(|| "-- m/s".into()),
-                    if index == 0 { 17 } else { 42 }
+                        .map(|speed| format!("Last shot  {speed:.1} m/s"))
+                        .unwrap_or_else(|| "No shot recorded".into())
                 )
             }
             Hud::Connection => session.connection_toast.unwrap_or_default().into(),
@@ -1351,6 +1388,8 @@ pub fn update_hud(
                         ),
                         None => "ROBOT DEFEATED\nWaiting for revival".into(),
                     }
+                } else if ui.modal_open() || window.as_ref().is_some_and(|w| w.height() <= 480.) {
+                    String::new()
                 } else if !player.captured {
                     "CLICK FIELD TO CONTROL".into()
                 } else {
@@ -1367,19 +1406,33 @@ pub fn update_hud(
             Hud::MapLabel => {
                 if ui.large_map {
                     format!(
-                        "CLICK FOR MARKER / SENTRY: {}   |   A attack   B defend   I alert   other letters custom   |   Green: you   O: outpost   R: rune",
+                        "MAP · {} · Click for actions",
                         ui.map_marker.label().to_uppercase()
                     )
                 } else {
                     format!(
-                        "FIELD / TEAM POSITIONS   |   {} + click: mark {}",
+                        "TEAM MAP   ·   {} + click: {}",
                         ui.controls.label(InputAction::FreeCursor),
                         ui.map_marker.label()
                     )
                 }
             }
         };
-        let display = if value.is_empty() {
+        if matches!(kind, Hud::MapLabel) {
+            let top = if ui.large_map { px(8) } else { Val::Auto };
+            let bottom = if ui.large_map {
+                Val::Auto
+            } else {
+                percent(103.)
+            };
+            if node.top != top {
+                node.top = top;
+            }
+            if node.bottom != bottom {
+                node.bottom = bottom;
+            }
+        }
+        let display = if value.is_empty() || (ui.modal_open() && matches!(kind, Hud::Ammo)) {
             Display::None
         } else {
             Display::Flex
@@ -1442,6 +1495,7 @@ pub fn update_map(
     artwork: Option<Res<crate::minimap::Minimap>>,
     window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
     images: Query<&ImageNode, With<FieldMap>>,
+    mut pilot: Query<&mut Visibility, With<PilotStack>>,
 ) {
     let (map_entity, node) = &mut *map;
     node.display = if ui.large_map || ui.show_map {
@@ -1450,7 +1504,7 @@ pub fn update_map(
         Display::None
     };
     node.right = percent(if ui.large_map { 18. } else { 2. });
-    node.bottom = percent(if ui.large_map { 19. } else { 9. });
+    node.bottom = if ui.large_map { percent(19.) } else { px(24.) };
     let bounds = artwork
         .as_ref()
         .map_or([-15., -9., 15., 9.], |map| map.bounds_m);
@@ -1465,13 +1519,29 @@ pub fn update_map(
     let (width, height) = window
         .as_ref()
         .map_or((1280., 720.), |w| (w.width(), w.height()));
-    let map_width = (width * if ui.large_map { 0.64 } else { 0.23 })
-        .min(height * if ui.large_map { 0.62 } else { 0.24 } * aspect);
+    // Reserve the scoreboard and footer even in short windows.
+    for mut visibility in &mut pilot {
+        let next = if ui.large_map && width < 900. {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+        if *visibility != next {
+            *visibility = next;
+        }
+    }
+    let available_height = (height - 208.).max(112.);
+    let map_height_limit = if ui.large_map {
+        (height * 0.62).min(available_height)
+    } else {
+        height * 0.24
+    };
+    let map_width = (width * if ui.large_map { 0.64 } else { 0.23 }).min(map_height_limit * aspect);
     node.width = percent(map_width / width * 100.);
     node.height = percent(map_width / aspect / height * 100.);
     if ui.large_map {
         node.right = percent((1. - map_width / width) * 50.);
-        node.bottom = percent((1. - map_width / aspect / height) * 50.);
+        node.bottom = px(72. + (available_height - map_width / aspect) * 0.5);
     }
     let mut items = Vec::new();
     for c in session

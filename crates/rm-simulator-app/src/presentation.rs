@@ -21,7 +21,8 @@ impl Plugin for PresentationPlugin {
             app.add_plugins(bevy::app::ScheduleRunnerPlugin::run_loop(
                 std::time::Duration::from_secs_f64(1.0 / 60.0),
             ))
-            .add_systems(Startup, setup_headless.after(crate::scene::setup_camera));
+            .add_systems(Startup, setup_headless.after(crate::scene::setup_camera))
+            .add_systems(Update, resize_headless);
         }
     }
 }
@@ -43,4 +44,23 @@ fn setup_headless(
         .entity(*camera)
         .insert(bevy::camera::RenderTarget::Image(image.clone().into()));
     target.0 = Some(image);
+}
+
+/// Follow logical window resizes in automation just as a native surface would.
+fn resize_headless(
+    window: Single<&Window, With<bevy::window::PrimaryWindow>>,
+    target: Res<CaptureTarget>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let Some(mut image) = target.0.as_ref().and_then(|handle| images.get_mut(handle)) else {
+        return;
+    };
+    let size = bevy::render::render_resource::Extent3d {
+        width: window.physical_width(),
+        height: window.physical_height(),
+        depth_or_array_layers: 1,
+    };
+    if image.texture_descriptor.size != size {
+        image.resize(size);
+    }
 }

@@ -5,9 +5,8 @@ use super::HudState;
 use bevy::{
     feathers::{
         FeathersPlugins,
-        controls::{FeathersButton, FeathersCheckbox, FeathersSlider},
-        dark_theme::create_dark_theme,
-        theme::{ThemedText, UiTheme},
+        controls::{FeathersButton, FeathersCheckbox, FeathersScrollbar, FeathersSlider},
+        theme::ThemedText,
     },
     input_focus::InputFocus,
     picking::hover::Hovered,
@@ -24,7 +23,8 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((bevy_flair::FlairPlugin, FeathersPlugins))
-            .insert_resource(UiTheme(create_dark_theme()))
+            .insert_resource(crate::ui_theme::theme())
+            .add_systems(Update, crate::ui_theme::typography)
             .init_resource::<SettingsTab>()
             .init_resource::<MenuActions>()
             .init_resource::<super::controls_menu::RebindState>()
@@ -48,6 +48,7 @@ impl Plugin for HudPlugin {
                         .before(crate::session::advance_world),
                     sync_sections,
                     sync_settings_navigation,
+                    fit_settings,
                     sync_weapon_controls,
                     super::controls_menu::sync_overlay,
                     super::controls_menu::capture_input.before(super::panel_input),
@@ -122,7 +123,7 @@ fn button(commands: &mut Commands, parent: Entity, title: &'static str, action: 
             @FeathersButton { @caption: bsn! { Text(title) ThemedText } }
         ActivateOnPress
         AccessibleLabel(title)
-            Node { height: px(34), padding: UiRect::horizontal(px(14)) }
+            Node { min_height: px(crate::ui_theme::CONTROL_HEIGHT_PX), padding: UiRect::horizontal(px(16)), flex_shrink: 0.0 }
             on(move |_: On<Activate>, mut actions: ResMut<MenuActions>| { actions.0.push(action); })
         })
         .insert((ChildOf(parent), MenuButton))
@@ -148,9 +149,13 @@ fn spawn_menus(
             GlobalZIndex(20),
             Node {
                 position_type: PositionType::Absolute,
-                bottom: px(14),
+                bottom: px(12),
                 left: percent(50),
-                column_gap: px(6),
+                max_width: percent(96),
+                flex_wrap: FlexWrap::Wrap,
+                justify_content: JustifyContent::Center,
+                row_gap: px(4),
+                column_gap: px(4),
                 ..default()
             },
             UiTransform::from_translation(Val2::new(percent(-50), px(0))),
@@ -174,9 +179,10 @@ fn spawn_menus(
             GlobalZIndex(20),
             Node {
                 position_type: PositionType::Absolute,
-                left: px(350),
-                bottom: px(60),
+                left: percent(27),
+                bottom: px(64),
                 width: percent(46),
+                justify_content: JustifyContent::Center,
                 flex_wrap: FlexWrap::Wrap,
                 row_gap: px(6),
                 column_gap: px(6),
@@ -212,10 +218,10 @@ fn spawn_menus(
         .id();
     commands.spawn((
         ChildOf(shade),
-        Text::new("Scroll for more settings • Changes are saved automatically"),
+        Text::new("Scroll for more options   ·   Changes save automatically   ·   Esc to close"),
         Node {
             position_type: PositionType::Absolute,
-            bottom: percent(8.),
+            bottom: percent(3.),
             ..default()
         },
         text_font(13.),
@@ -225,33 +231,45 @@ fn spawn_menus(
         .spawn((
             ChildOf(shade),
             Node {
-                width: percent(90),
-                max_width: px(920),
-                max_height: percent(76),
-                padding: UiRect::all(px(20)),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(14),
-                border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(8)),
-                ..default()
+                width: percent(92),
+                max_width: px(1040),
+                height: percent(86),
+                min_height: px(0),
+                ..crate::ui_theme::panel_node()
             },
-            BackgroundColor(Color::srgb(0.035, 0.05, 0.065)),
-            BorderColor::all(Color::srgb(0.19, 0.52, 0.56)),
+            BackgroundColor(crate::ui_theme::PANEL),
+            BorderColor::all(crate::ui_theme::BORDER),
         ))
         .id();
     commands.spawn((
         ChildOf(card),
-        Text::new("SETTINGS"),
+        Text::new("Settings"),
         text_font(24.),
         TextColor(super::WHITE),
     ));
-    let tabs = commands
+    let content = commands
         .spawn((
             ChildOf(card),
+            SettingsContent,
             Node {
-                column_gap: px(10.),
-                row_gap: px(6.),
-                flex_wrap: FlexWrap::Wrap,
+                min_height: px(0),
+                flex_grow: 1.,
+                flex_basis: px(0),
+                column_gap: px(24),
+                row_gap: px(12),
+                ..default()
+            },
+        ))
+        .id();
+    let tabs = commands
+        .spawn((
+            ChildOf(content),
+            SettingsNavigation,
+            Node {
+                width: px(148),
+                flex_direction: FlexDirection::Column,
+                column_gap: px(8.),
+                row_gap: px(8.),
                 flex_shrink: 0.0,
                 ..default()
             },
@@ -279,24 +297,46 @@ fn spawn_menus(
             @FeathersButton { @caption: bsn! { Text(title) ThemedText } }
             ActivateOnPress
             AccessibleLabel(title)
+            Node { min_height: px(36), padding: UiRect::horizontal(px(12)) }
             on(move |_: On<Activate>, mut selected: ResMut<SettingsTab>, mut ui: ResMut<HudState>| { *selected = tab; ui.consumed = true; })
         }).insert(ChildOf(frame));
     }
+    let viewport = commands
+        .spawn((
+            ChildOf(content),
+            Node {
+                min_height: px(0),
+                min_width: px(0),
+                flex_grow: 1.,
+                flex_basis: px(0),
+                ..default()
+            },
+        ))
+        .id();
     let body = commands
         .spawn((
-            ChildOf(card),
+            ChildOf(viewport),
             SettingsScroll,
             bevy::ui_widgets::ScrollArea,
             Node {
+                width: percent(100),
+                height: percent(100),
                 min_height: px(0),
+                min_width: px(0),
+                flex_grow: 1.,
+                flex_basis: px(0),
                 overflow: Overflow::scroll_y(),
                 flex_direction: FlexDirection::Column,
-                row_gap: px(14),
+                row_gap: px(20),
                 padding: UiRect::right(px(12)),
                 ..default()
             },
         ))
         .id();
+    commands.spawn_scene(bsn! {
+        @FeathersScrollbar { @target: body, @orientation: {bevy::ui_widgets::ControlOrientation::Vertical} }
+        Node { position_type: PositionType::Absolute, right: px(0), top: px(0), bottom: px(0), width: px(6) }
+    }).insert(ChildOf(viewport));
     let display = section(&mut commands, body, SettingsTab::Display);
     let controls = section(&mut commands, body, SettingsTab::Controls);
     let graphics = section(&mut commands, body, SettingsTab::Graphics);
@@ -346,7 +386,7 @@ fn spawn_menus(
         .insert((ChildOf(controls), Sensitivity));
     commands.spawn((
         ChildOf(controls),
-        Text::new("Balance stabilization (%) — 0 unassisted / 100 full assist"),
+        Text::new("Balance assistance (%)"),
         text_font(16.),
         TextColor(super::WHITE),
     ));
@@ -365,8 +405,12 @@ fn spawn_menus(
         .insert((ChildOf(controls), BalanceControl));
     super::controls_menu::spawn(&mut commands, controls, shade);
     crate::graphics::spawn_graphics_controls(&mut commands, graphics, &preferences.graphics);
-    commands.spawn((ChildOf(body), Text::new("Drive, aim and fire are suspended while a panel is open.\nEsc closes settings. Click the field to resume control."),
-        text_font(13.), TextColor(Color::srgb(0.6, 0.7, 0.74))));
+    commands.spawn((
+        ChildOf(body),
+        Text::new("Gameplay input is suspended while settings are open."),
+        text_font(13.),
+        TextColor(Color::srgb(0.6, 0.7, 0.74)),
+    ));
     let footer = commands
         .spawn((
             ChildOf(card),
@@ -380,7 +424,7 @@ fn spawn_menus(
             },
         ))
         .id();
-    button(&mut commands, footer, "Reset all settings", Action::Reset);
+    button(&mut commands, footer, "Restore defaults", Action::Reset);
     button(&mut commands, footer, "Close", Action::Close);
 }
 
@@ -549,11 +593,13 @@ pub fn sync_menus(
         };
     }
     for (mut node, combat) in &mut toolbar {
-        node.display = if (combat
-            && !session
-                .as_ref()
-                .is_some_and(|s| s.rmuc_2027().is_some() && s.chassis_id.is_some()))
+        node.display = if (combat && ui.modal_open())
+            || (combat
+                && !session
+                    .as_ref()
+                    .is_some_and(|s| s.rmuc_2027().is_some() && s.chassis_id.is_some()))
             || ui.pause_menu
+            || ui.settings
             || ui.quit_confirm
             || !screen
                 .as_deref()
@@ -675,6 +721,45 @@ enum SettingsTab {
 /// Persistent underline for the active settings page.
 #[derive(Component)]
 struct SettingsTabIndicator(SettingsTab);
+#[derive(Component)]
+struct SettingsContent;
+#[derive(Component)]
+struct SettingsNavigation;
+/// Horizontal tabs on small windows; a steady sidebar when space permits.
+fn fit_settings(
+    window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
+    mut content: Query<&mut Node, (With<SettingsContent>, Without<SettingsNavigation>)>,
+    mut navigation: Query<&mut Node, With<SettingsNavigation>>,
+) {
+    let compact = window.is_some_and(|w| w.width() < 900.);
+    let direction = if compact {
+        FlexDirection::Column
+    } else {
+        FlexDirection::Row
+    };
+    for mut node in &mut content {
+        if node.flex_direction != direction {
+            node.flex_direction = direction;
+        }
+    }
+    let direction = if compact {
+        FlexDirection::Row
+    } else {
+        FlexDirection::Column
+    };
+    let width = if compact { percent(100) } else { px(148) };
+    for mut node in &mut navigation {
+        if node.flex_direction != direction {
+            node.flex_direction = direction;
+        }
+        if node.flex_wrap != FlexWrap::Wrap {
+            node.flex_wrap = FlexWrap::Wrap;
+        }
+        if node.width != width {
+            node.width = width;
+        }
+    }
+}
 fn sync_settings_navigation(
     selected: Res<SettingsTab>,
     mut indicators: Query<(&SettingsTabIndicator, &mut BorderColor)>,
@@ -706,7 +791,8 @@ fn section(commands: &mut Commands, parent: Entity, tab: SettingsTab) -> Entity 
             SettingsSection(tab),
             Node {
                 flex_direction: FlexDirection::Column,
-                row_gap: px(14.),
+                row_gap: px(16.),
+                flex_shrink: 0.,
                 ..default()
             },
         ))
@@ -846,7 +932,7 @@ mod section_tests {
 /// Bevy's ScrollArea observer checks the original target. A wheel event
 /// over a button must be retargeted to the containing settings card once.
 #[derive(Component)]
-struct SettingsScroll;
+pub(super) struct SettingsScroll;
 #[allow(clippy::type_complexity)]
 fn forward_settings_scroll(
     mut event: On<PointerScroll>,
@@ -967,16 +1053,17 @@ fn spawn_dialog(commands: &mut Commands, quit: bool) {
     let card = commands
         .spawn((
             ChildOf(shade),
+            bevy::ui_widgets::ScrollArea,
+            SettingsScroll,
             Node {
-                width: px(380),
+                width: px(400),
                 max_width: percent(90),
-                padding: UiRect::all(px(28)),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(16),
-                border_radius: BorderRadius::all(px(8)),
-                ..default()
+                max_height: percent(90),
+                overflow: Overflow::scroll_y(),
+                ..crate::ui_theme::panel_node()
             },
-            BackgroundColor(Color::srgb(0.035, 0.05, 0.065)),
+            BackgroundColor(crate::ui_theme::PANEL),
+            BorderColor::all(crate::ui_theme::BORDER),
         ))
         .id();
     commands.spawn((
@@ -992,7 +1079,7 @@ fn spawn_dialog(commands: &mut Commands, quit: bool) {
         Text::new(if quit {
             "Are you sure you want to quit?"
         } else {
-            "Singleplayer pauses here. Multiplayer keeps running."
+            "Take a break. A local match pauses here; an online match keeps running."
         }),
         TextFont {
             font_size: 16.0.into(),

@@ -254,7 +254,7 @@ struct Link {
 #[derive(Resource, Default)]
 pub(crate) struct VisualOwners(pub BTreeSet<u32>);
 fn panel(mut commands: Commands) {
-    commands.spawn((Panel,Node{position_type:PositionType::Absolute,right:px(18),top:px(160),width:px(330),padding:UiRect::all(px(12)),flex_direction:FlexDirection::Column,row_gap:px(8),..default()},BackgroundColor(Color::srgba(0.025,0.04,0.055,0.94)),Visibility::Hidden,GlobalZIndex(4)))
+    commands.spawn((Panel,Node{position_type:PositionType::Absolute,right:px(18),top:px(160),width:px(330),padding:UiRect::all(px(12)),flex_direction:FlexDirection::Column,row_gap:px(8),..default()},BackgroundColor(crate::ui_theme::PANEL),Visibility::Hidden,GlobalZIndex(4)))
         .with_children(|p| {
             p.spawn((Text::new("Automatic assembly"),TextFont{font_size:FontSize::Px(18.),..default()}));
             p.spawn((Status,Text::new("Park the Heavy manually and stop.\nChoose level 1, 2 or 3."),TextFont{font_size:FontSize::Px(15.),..default()}));

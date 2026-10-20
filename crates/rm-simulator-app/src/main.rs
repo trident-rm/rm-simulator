@@ -45,6 +45,7 @@ mod staging;
 #[cfg(feature = "steam")]
 mod steam_support;
 mod title;
+mod ui_theme;
 mod zone_debug;
 
 use bevy::prelude::*;
@@ -258,7 +259,9 @@ fn main() -> AppExit {
                 .after(SceneSyncSet)
                 .run_if(resource_exists::<ScreenshotRequest>)
                 .run_if(
-                    in_state(loading::Screen::InMatch).or_else(in_state(loading::Screen::Staging)),
+                    in_state(loading::Screen::InMatch)
+                        .or_else(in_state(loading::Screen::Staging))
+                        .or_else(in_state(loading::Screen::Title)),
                 ),
         );
     if let Some(path) = &args.screenshot {

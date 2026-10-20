@@ -45,6 +45,13 @@ pub enum ConsoleCommand {
     Ready {},
     /// Reports tick, clock, role, chassis, camera, UI and network state; accepted during loading.
     State {},
+    /// Sets the window or headless target size in logical pixels, bounded to 640–3840 × 360–2160.
+    Resize {
+        /// Logical width in pixels.
+        width: u32,
+        /// Logical height in pixels.
+        height: u32,
+    },
     /// Counts loaded mesh geometry and instances before view culling or render passes.
     Geometry {},
     /// Sets the free-camera pose, or the local pilot's aim yaw and pitch.
@@ -407,7 +414,30 @@ pub(crate) fn execute(world: &mut World, command: ConsoleCommand) -> Result<Wait
         // Handled as immediate queries by the completion stage, including during loading.
         return Ok(Wait::Applied(0));
     }
-    if !crate::loading::in_match(world) {
+    if let ConsoleCommand::Resize { width, height } = command {
+        if !(640..=3840).contains(&width) || !(360..=2160).contains(&height) {
+            return Err("resize requires 640..3840 by 360..2160 pixels".into());
+        }
+        let mut windows = world.query_filtered::<&mut Window, With<bevy::window::PrimaryWindow>>();
+        windows
+            .single_mut(world)
+            .map_err(|e| e.to_string())?
+            .resolution
+            .set(width as f32, height as f32);
+        return Ok(Wait::Applied(3));
+    }
+    let title_input = world
+        .get_resource::<State<crate::loading::Screen>>()
+        .is_some_and(|s| *s.get() == crate::loading::Screen::Title)
+        && matches!(
+            command,
+            ConsoleCommand::Screenshot { .. }
+                | ConsoleCommand::Key { .. }
+                | ConsoleCommand::MouseButton { .. }
+                | ConsoleCommand::Cursor { .. }
+                | ConsoleCommand::ReleaseInputs { .. }
+        );
+    if !crate::loading::in_match(world) && !title_input {
         return Err(crate::loading::failure(world)
             .unwrap_or_else(|| "scene is still loading; use ready".into()));
     }
@@ -608,7 +638,8 @@ pub(crate) fn execute(world: &mut World, command: ConsoleCommand) -> Result<Wait
                     .stats = stats;
             }
         }
-        ConsoleCommand::Help { .. }
+        ConsoleCommand::Resize { .. }
+        | ConsoleCommand::Help { .. }
         | ConsoleCommand::Ready { .. }
         | ConsoleCommand::State { .. }
         | ConsoleCommand::Geometry { .. }
@@ -773,9 +804,9 @@ fn state(world: &mut World) -> Value {
             "captured":p.captured,
             "third_person":world.get_resource::<Drive>().is_some_and(|d| d.third_person),
         })),
-        "ui": world.get_resource::<crate::hud::HudState>().map(|ui| json!({"debug_panel":ui.debug, "settings":ui.settings, "blocks_input":ui.blocks_input(), "unfocused":ui.unfocused, "consumed":ui.consumed})),
+        "ui": world.get_resource::<crate::hud::HudState>().map(|ui| json!({"debug_panel":ui.debug, "settings":ui.settings, "show_reticle":ui.show_reticle, "show_map":ui.show_map, "sensitivity_percent":(ui.sensitivity / 0.000025).round(), "blocks_input":ui.blocks_input(), "unfocused":ui.unfocused, "consumed":ui.consumed})),
         "referee_link": referee_link_status(world),
-        "commands":["help","ready","state","geometry","camera","spawn","pause","step","screenshot","key",
+        "commands":["help","ready","state","resize","geometry","camera","spawn","pause","step","screenshot","key",
             "mouse_button","mouse_motion","cursor","capture","release_inputs","inspect","world","quit"],
     })
 }
@@ -975,6 +1006,36 @@ fn pointer_button(world: &mut World, button: MouseButton, pressed: bool) -> Resu
 mod tests {
     use super::*;
 
+    #[test]
+    fn resize_is_bounded_and_does_not_require_a_running_match() {
+        let mut world = World::new();
+        let window = world
+            .spawn((Window::default(), bevy::window::PrimaryWindow))
+            .id();
+        assert!(matches!(
+            execute(
+                &mut world,
+                ConsoleCommand::Resize {
+                    width: 960,
+                    height: 540
+                }
+            ),
+            Ok(Wait::Applied(3))
+        ));
+        assert_eq!(world.get::<Window>(window).unwrap().width(), 960.);
+        assert_eq!(world.get::<Window>(window).unwrap().height(), 540.);
+        assert!(
+            execute(
+                &mut world,
+                ConsoleCommand::Resize {
+                    width: 100_000,
+                    height: 540
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(world.get::<Window>(window).unwrap().width(), 960.);
+    }
     #[test]
     fn geometry_counts_shared_instances_and_excludes_line_primitives() {
         use bevy::{
