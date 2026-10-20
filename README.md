@@ -103,7 +103,7 @@ The essentials, for driving and for match control:
 | Left Ctrl | Fast: 5 m/s drive command, 8 m/s flight |
 | R | Toggle chassis spin (6 rad/s) while driving |
 | T | Toggle mechanism: Hero fold / stair Heavy wheel linkage / PIE tunnel stow (2026 practice) |
-| J | Open automatic L1–L3 assembly controls for the source PIE Heavy (manual parking) |
+| J | Open Heavy assembly controls and unlocked Hero conversion (2027) |
 | V | Toggle first- and third-person view while driving |
 | C | Cycle physics colliders: Off / Overlay / Only |
 | F3 | Open / close debug panel: collider Off / Overlay / Only, visual wireframe, buff/RFID zones and labels, rendering statistics, remote motion buffering, reset own robot to spawn |
@@ -232,6 +232,12 @@ that same object through a collision-checked approach and inserts it before lift
 The J panel provides grip/release and 1 cm / 5° wrist jog controls. Released Units
 fall and collide with robots and terrain; pickup requires nearby aligned pads.
 Starting assembly requires a held Unit and never creates a replacement.
+After L3 completion or the native launcher catch-up timer, **J → Convert to Hero**
+switches a stopped Heavy to the folding Hero approximation with a 42 mm gun.
+Use `--hero-assets PATH` for its verified CAD package; sibling
+`bound-hero-armored/` is discovered automatically. Buy shells with the existing
+42 mm purchase control; conversion does not grant ammunition. See
+[the approximation and remaining limits](docs/assembly-workbench.md#temporary-hero-conversion-for-heavy).
 It holds its last pose when finished. T folds it for tunnels or returns it toward neutral;
 joint and jaw motion is limited to 1 rad/s.
 
@@ -529,7 +535,7 @@ does not acknowledge its execution by the host.
 | 50 | Adds the Drone's Aerial Safety Rope to the chassis configuration and the `MapMarker` command. |
 | 52 | Adds connected deployment and the reliable ownership receipt. |
 
-The current protocol version is 71, defined by `PROTOCOL_VERSION` in
+The current protocol version is 72, defined by `PROTOCOL_VERSION` in
 `crates/rm-simulator-server/src/protocol.rs`. GNS sends redundant controls
 and retried shot intents unreliably; scheduling receipts and terminal shot results
 remain reliable. There is no shooter-view fire path or input-acknowledgement

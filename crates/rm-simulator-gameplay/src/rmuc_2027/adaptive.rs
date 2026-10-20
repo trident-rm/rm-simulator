@@ -300,6 +300,9 @@ impl super::match_rules::Match {
         impact.attacker =
             shooter.and_then(|id| self.robots.iter().find(|r| r.id == id).map(|r| r.team));
         impact.time_ns = self.elapsed_ns();
+        if caliber == crate::Caliber::Mm42 {
+            return self.hit_with_region(impact.target, shooter, caliber, Region::Default);
+        }
         impact.region = self
             .adaptive
             .region(impact.victim, impact.position_um, impact.size_um);

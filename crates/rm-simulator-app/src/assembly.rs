@@ -295,6 +295,9 @@ fn panel(mut commands: Commands) {
             p.spawn((bevy::ui_widgets::Button,bevy::ui_widgets::ActivateOnPress,Node{padding:UiRect::axes(px(10),px(6)),..default()},BackgroundColor(Color::srgb(0.15,0.22,0.28))))
                 .observe(|_:On<bevy::ui_widgets::Activate>,mut session:ResMut<Session>| {if let Some(chassis)=session.chassis_id {session.apply(Command::EnergyGrip{chassis});}})
                 .with_child((Text::new("Grip / release Unit"),TextFont{font_size:FontSize::Px(14.),..default()},Pickable::IGNORE));
+            p.spawn((bevy::ui_widgets::Button,bevy::ui_widgets::ActivateOnPress,Node{padding:UiRect::axes(px(10),px(6)),..default()},BackgroundColor(Color::srgb(0.15,0.22,0.28))))
+                .observe(|_:On<bevy::ui_widgets::Activate>,mut session:ResMut<Session>| {if let Some(chassis)=session.chassis_id {session.apply(Command::ConvertHeavy{chassis});}})
+                .with_child((Text::new("Convert to Hero (when unlocked)"),TextFont{font_size:FontSize::Px(14.),..default()},Pickable::IGNORE));
             p.spawn((Text::new("Driving cancels arm work; Core recovery continues.\nSearch is asynchronous; motion uses game time."),TextFont{font_size:FontSize::Px(12.),..default()}));
         });
 }
@@ -308,12 +311,17 @@ fn toggle(
         .controls
         .just_pressed(crate::bindings::InputAction::Assembly, &keys, Some(&mouse))
         && !hud.rebinding
-        && session.own_chassis().is_some_and(|c| {
+        && (session.snapshot.rmuc_2027.as_ref().is_some_and(|s| {
+            s.game.robots.iter().any(|r| {
+                Some(r.id) == session.chassis_id
+                    && r.role == rm_simulator_world::rmuc_2027::match_rules::GroundRole::Heavy
+            })
+        }) || session.own_chassis().is_some_and(|c| {
             c.config
                 .articulation
                 .as_ref()
                 .is_some_and(|a| a.profile == "pie-tunnel-heavy-v1")
-        })
+        }))
     {
         hud.assembly = !hud.assembly;
         hud.consumed = true;
@@ -468,6 +476,20 @@ fn update_panel(
             "\nUnit: held"
         } else {
             "\nUnit: not held"
+        });
+    }
+    if let Some(state) = &session.snapshot.rmuc_2027
+        && let Some(robot) = state.game.robots.iter().find(|r| {
+            Some(r.id) == session.chassis_id
+                && r.role == rm_simulator_world::rmuc_2027::match_rules::GroundRole::Heavy
+        })
+    {
+        message.push_str(if robot.combat.heavy_installed {
+            "\nHero approximation active (42 mm)."
+        } else if state.game.heavy_unlocked(robot.team) {
+            "\nHero conversion ready. Stop, then convert."
+        } else {
+            "\nHero conversion locked: L3 or catch-up timer."
         });
     }
     for mut t in &mut text {

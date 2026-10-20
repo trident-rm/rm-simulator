@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Let native 2027 Heavy pilots convert in place to the folding Hero approximation
+  from the J panel after L3 or the historical-deficit launcher timer unlocks.
+  Keep identity/team, add 42 mm heat/ammo/direct damage and preserve conversion
+  geometry through checkpoints (protocol 72).
+
 - Recover successfully assembled Units automatically: retract and tip the Core
   over its collection opening, release under gravity, then reset to idle. Keep
   consumed Units physical and prevent their reuse under UC R60.

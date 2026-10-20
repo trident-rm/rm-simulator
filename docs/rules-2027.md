@@ -404,7 +404,7 @@ recovery delay, contact loss, attached-Heavy death or zone invincibility is
 modeled. Income is paid on round-aligned ten-second boundaries before 7:00;
 a completion submitted on a boundary affects later payments. UC unlocks,
 prerequisites, shared-core priority, one-time level 4, income, Infantry caps and
-strongest permanent defense are implemented. Heavy level/HP and launcher
+strongest permanent defense are implemented. Full Heavy level/HP and launcher
 installation are deferred. See [gameplay](gameplay.md#rmuc-2027-virtual-assembly).
 
 ### Launcher installation and Heavy properties
@@ -921,3 +921,30 @@ independent launcher lock causes, logistics degradation, weak respawn benefits,
 Sentry posture budgets, Radar mark history and UL lifesteal ties. Partitioning
 elapsed time into different tick batches must continue to produce identical
 results. Build availability alone is not evidence of any of those rules passing.
+
+## Temporary Hero conversion for Heavy
+
+In an RMUC 2027 running round, **J → Convert to Hero** replaces the parked
+Engineer's chassis and visual model with the source folding Hero. The player
+keeps its id, team and Heavy roster slot. Launcher permission follows UC §5.7.1:
+L3 completion or `300 - M/50 - 2N/3` elapsed seconds, with historical maxima
+of opponent-minus-own Base HP and control. Negative thresholds unlock immediately
+(simulator policy); the exact fractional boundary is inclusive. No conversion
+is allowed during an unfinished assembly/Core recovery, while moving, defeated
+or offline. Conversion releases existing held cargo rather than deleting it.
+
+This is an explicit gameplay approximation: conversion is available wherever
+parked, without workbench installation or the confirmation shot. It installs a
+600-HP Heavy (existing damage preserved), 300 heat limit, 100/s cooling, a
+100-heat 42 mm launch, and the Hero's configured weapon speed/rate within host
+caps. Initial ammunition remains zero. Buy 42 mm ammunition through the existing
+controls: one shell for 10 gold at a service zone, or ten for 150 gold remotely
+with six-second delivery; the team cap is 100. Direct hits use the native
+200-HP damage table; **42 mm idle/death/link suppression remains deferred**.
+Adaptive accuracy statistics continue to count only 17 mm launches/hits.
+
+The swap is immediate, with collision geometry rebuilt and placement revision
+incremented so prediction does not interpolate between shapes. Source arm meshes
+are removed; the Unit remains a physical object. There is no reverse conversion.
+Starting a new round retains the chosen Hero shape but clears installation,
+ammunition and unlock history; use the same button after unlocking again.

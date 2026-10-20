@@ -423,6 +423,7 @@ fn record_loopback_frame(inbox: &ClientInbox, payload: &[u8]) {
 /// Latest replaceable state and ordered discrete events from the reader.
 #[derive(Default)]
 struct Incoming {
+    weapon_changed: Option<(crate::protocol::WeaponConfig, crate::protocol::WeaponLimits)>,
     deployment: Option<Box<crate::protocol::DeploymentReceipt>>,
     transport_stats: Option<crate::network_stats::TransportStats>,
     host_telemetry: Option<crate::network_stats::HostTelemetry>,
@@ -485,6 +486,10 @@ impl ClientInbox {
             ));
         }
         let replaced = match message {
+            ServerMessage::WeaponChanged { weapon, limits } => {
+                data.weapon_changed = Some((weapon, limits));
+                None
+            }
             ServerMessage::Deployed(receipt) => data
                 .deployment
                 .replace(receipt)
@@ -739,6 +744,10 @@ impl Client {
             self.welcome.chassis = Some(receipt.chassis);
             self.welcome.weapon = receipt.weapon;
             self.welcome.weapon_limits = receipt.weapon_limits;
+        }
+        if let Some((weapon, limits)) = data.weapon_changed.take() {
+            self.welcome.weapon = weapon;
+            self.welcome.weapon_limits = limits;
         }
         if let Some(stats) = data.delivery_stats.take() {
             self.delivery_stats = Some(stats);

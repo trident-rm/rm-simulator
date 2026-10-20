@@ -56,8 +56,11 @@ pub struct Combat {
     pub overspeed_locked_for_round: bool,
     /// Speed-monitor link state; reconnection clears only this lock cause.
     pub speed_module_online: bool,
-    /// Remaining 17 mm allowance (§5.4.2); Heavy/42 mm remains unavailable.
+    /// Remaining rounds for this robot’s caliber (§5.4.2).
     pub allowance: u32,
+    /// Simulator Hero conversion has installed the Heavy launcher; reset each round.
+    #[serde(default)]
+    pub heavy_installed: bool,
     /// Time of last launch or actual HP loss; None means initially out of combat.
     pub last_combat_ns: Option<u64>,
     /// Own supply RFID expiry, including detection while defeated.
@@ -103,6 +106,7 @@ impl Default for Combat {
             overspeed_locked_for_round: false,
             speed_module_online: true,
             allowance: 0,
+            heavy_installed: false,
             last_combat_ns: None,
             supply_expires_ns: None,
             vantage_expires_ns: None,
@@ -198,13 +202,25 @@ impl Robot {
         } else {
             Stats {
                 max_hp: if self.role == GroundRole::Heavy {
-                    400
+                    if c.heavy_installed { 600 } else { 400 }
                 } else {
                     200
                 },
-                chassis_power_w: 60,
-                heat_limit: 100,
-                cooling_per_s: 10,
+                chassis_power_w: if self.role == GroundRole::Heavy {
+                    50
+                } else {
+                    60
+                },
+                heat_limit: if self.role == GroundRole::Heavy && c.heavy_installed {
+                    300
+                } else {
+                    100
+                },
+                cooling_per_s: if self.role == GroundRole::Heavy && c.heavy_installed {
+                    100
+                } else {
+                    10
+                },
             }
         };
         if now_ns < c.double_power_until_ns {

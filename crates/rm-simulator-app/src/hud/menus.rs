@@ -186,7 +186,7 @@ fn spawn_menus(
         ))
         .id();
     for (title, action) in [
-        ("Ammo (10 zone / 100 remote)", Action::BuyAmmo2027),
+        ("Buy ammunition", Action::BuyAmmo2027),
         ("Remote HP", Action::BuyHp2027),
         ("Paid respawn", Action::Respawn2027),
     ] {
@@ -410,7 +410,7 @@ pub fn menu_input(
                         let command = match action {
                             Action::BuyAmmo2027 => Command::BuyAmmo {
                                 chassis,
-                                caliber: rm_simulator_world::Caliber::Mm17,
+                                caliber: session.weapon.shot.caliber,
                             },
                             Action::BuyHp2027 => Command::BuyHp { chassis },
                             _ => Command::InstantRespawn { chassis },

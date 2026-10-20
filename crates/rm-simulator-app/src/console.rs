@@ -739,6 +739,7 @@ fn state(world: &mut World) -> Value {
         "tick": session.snapshot.tick, "paused":session.paused,
         "presentation_time_ns": session.presentation_time_ns(),
         "role":session.role, "chassis_id":session.chassis_id,
+        "weapon":session.weapon, "weapon_limits":session.weapon_limits,
         "chassis":session.own_chassis(),
         "rmuc_2027":session.rmuc_2027().map(|state|&state.game),
         "rmuc_2027_config":session.rmuc_2027().map(|state|&state.config),

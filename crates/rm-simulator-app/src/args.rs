@@ -79,6 +79,9 @@ pub struct Args {
     /// Directory containing the approved team robot neutral.glb and manifest.json.
     #[arg(long)]
     pub robot_assets: Option<std::path::PathBuf>,
+    /// Additional verified folding Hero package for Heavy conversion visuals.
+    #[arg(long, requires = "robot_assets")]
+    pub hero_assets: Option<std::path::PathBuf>,
     #[command(flatten)]
     pub host: HostArgs,
     /// Lobby directory as HOST:PORT.
@@ -298,6 +301,23 @@ impl Args {
             }
             if self.host.folding_hero && self.robot == Robot::default() {
                 self.robot = Robot::Hero;
+            }
+        }
+        if self.hero_assets.is_none()
+            && let Some(root) = &self.robot_assets
+        {
+            let sibling = root.parent().unwrap_or(root).join("bound-hero-armored");
+            if sibling.join("manifest.json").is_file() {
+                self.hero_assets = Some(sibling);
+            }
+        }
+        if let Some(path) = &mut self.hero_assets {
+            *path = std::path::absolute(&*path)?;
+            if !crate::robot_assets::verify(path)? || !crate::robot_assets::replacement_armor(path)?
+            {
+                return Err(std::io::Error::other(
+                    "Hero conversion requires a verified folding Hero with replacement armor",
+                ));
             }
         }
         Ok(())

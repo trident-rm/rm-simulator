@@ -662,8 +662,17 @@ impl Simulation {
     /// The caliber a chassis' gun fires: its robot's, or the host default
     /// weapon's for a chassis that is no particular robot.
     pub fn caliber(&self, chassis: u32) -> rm_simulator_world::Caliber {
-        self.robot(chassis)
-            .map_or(self.weapon.shot.caliber, Robot::caliber)
+        if self
+            .field
+            .chassis_config(chassis)
+            .is_some_and(|c| c.folding.is_some())
+            && self.robot(chassis) == Some(Robot::Engineer)
+        {
+            rm_simulator_world::Caliber::Mm42
+        } else {
+            self.robot(chassis)
+                .map_or(self.weapon.shot.caliber, Robot::caliber)
+        }
     }
     /// The weapon a chassis fires with: the pilot's admitted settings, else
     /// the host defaults for its caliber (the Hero's for 42 mm), always at the
@@ -1020,7 +1029,9 @@ impl Simulation {
     /// or behind a newer one, still fires, but it neither pushes the cooldown
     /// onto the correctly spaced shot behind it nor forms a burst.
     fn fire_now(&mut self, shooter: u32, intended_ns: u64) -> Result<u64, String> {
-        if matches!(self.robot(shooter), Some(Robot::Engineer)) {
+        if matches!(self.robot(shooter), Some(Robot::Engineer))
+            && self.caliber(shooter) != rm_simulator_world::Caliber::Mm42
+        {
             return Err("this robot has no launcher".into());
         }
         let weapon = self.weapon_for(shooter);
@@ -1073,6 +1084,15 @@ impl Simulation {
         observer: &mut dyn FnMut(&rm_simulator_world::ArmorHit),
     ) -> Result<(), String> {
         match command {
+            Command::ConvertHeavy { chassis } => {
+                self.field
+                    .convert_heavy_to_hero(*chassis)
+                    .map_err(|e| e.to_string())?;
+                self.pilot_weapons.remove(chassis);
+                self.input_streams.remove(chassis);
+                self.cancel_pending_shots(Some(*chassis), "Heavy converted");
+                Ok(())
+            }
             Command::EnergyGrip { chassis } => self
                 .field
                 .toggle_energy_grip(*chassis)

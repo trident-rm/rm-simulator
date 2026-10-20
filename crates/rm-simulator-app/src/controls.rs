@@ -515,6 +515,14 @@ pub fn fire_gun(
     mut session: ResMut<Session>,
     mut assist: Option<ResMut<crate::auto_aim::AutoAim>>,
 ) {
+    if gun.shot != session.weapon.shot || gun.interval_ns != session.weapon.interval_ns {
+        if gun.shot.caliber != session.weapon.shot.caliber {
+            gun.next_shot_ns = 0;
+            gun.trigger_held = false;
+        }
+        gun.shot = session.weapon.shot;
+        gun.interval_ns = session.weapon.interval_ns;
+    }
     let empty_keys = ButtonInput::default();
     let keys = keys.as_deref().unwrap_or(&empty_keys);
     if ui

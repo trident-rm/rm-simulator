@@ -511,6 +511,7 @@ fn armor_pattern(
     use rm_simulator_server::protocol::Robot;
     match robot {
         Some(Robot::Hero) => ArmorPattern::One,
+        Some(Robot::Engineer) if chassis.config.folding.is_some() => ArmorPattern::One,
         Some(Robot::Engineer) => ArmorPattern::Two,
         Some(Robot::Sentry) => ArmorPattern::GuardSmall,
         Some(Robot::Drone) => ArmorPattern::Three,

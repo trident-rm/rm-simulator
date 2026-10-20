@@ -295,3 +295,10 @@ the combat toolbar's ammunition, remote HP and paid-respawn controls. Gold and
 purchase costs appear with HP; heat, XP, level, weakness, invincibility and
 respawn progress reflect native rules. A heat video cut covers only the
 first-person scene, preserving HUD and minimap. See [the lifecycle guide](rmuc2027-field.md#combat-lifecycle-and-adaptive-armor-infrastructure).
+
+`--hero-assets PATH` supplies an additional verified folding Hero CAD package for
+2027 Heavy conversion, alongside `--robot-assets PATH`. When present beside the
+primary package, `bound-hero-armored/` is discovered automatically. The J panel
+shows **Convert to Hero**; the host requires launcher permission, a stopped live
+Heavy and finished assembly recovery. This keeps the Heavy slot and swaps its
+model, physics and launcher. See [the approximation policy](assembly-workbench.md#temporary-hero-conversion-for-heavy).

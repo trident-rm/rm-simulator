@@ -711,12 +711,26 @@ impl Field {
         shooter: Option<u32>,
     ) -> Result<u64, FieldError> {
         if let Some(state) = &self.rmuc_2027 {
-            if shot.caliber != Caliber::Mm17 {
-                return Err(FieldError::Referee(
-                    "2027 Heavy launcher suppression is not implemented",
-                ));
+            if shot.caliber == Caliber::Mm42
+                && !shooter.is_some_and(|id| {
+                    state.game.robots.iter().any(|r| {
+                        r.id == id
+                            && r.role == rmuc_2027::match_rules::GroundRole::Heavy
+                            && r.combat.heavy_installed
+                    })
+                })
+            {
+                return Err(FieldError::Referee("42 mm requires a converted Heavy"));
             }
             if let Some(id) = shooter {
+                let heavy = state
+                    .game
+                    .robots
+                    .iter()
+                    .any(|r| r.id == id && r.role == rmuc_2027::match_rules::GroundRole::Heavy);
+                if (shot.caliber == Caliber::Mm42) != heavy {
+                    return Err(FieldError::Referee("wrong robot caliber"));
+                }
                 state.game.check_launch(id).map_err(FieldError::Referee)?;
             } else if !matches!(
                 state.game.phase,
@@ -749,10 +763,20 @@ impl Field {
     /// 100 remote rounds with six-second delivery (Tables 5-7–5-9).
     pub fn buy_ammo(&mut self, chassis: u32, caliber: Caliber) -> Result<(), FieldError> {
         if let Some(state) = &mut self.rmuc_2027 {
-            if caliber != Caliber::Mm17 {
-                return Err(FieldError::Referee("2027 Heavy is unavailable"));
+            let heavy =
+                state.game.robots.iter().any(|r| {
+                    r.id == chassis && r.role == rmuc_2027::match_rules::GroundRole::Heavy
+                });
+            if (caliber == Caliber::Mm42) != heavy {
+                return Err(FieldError::Referee("wrong robot caliber"));
             }
-            let amount = if state.game.zone_exchange_available(chassis) {
+            let amount = if heavy {
+                if state.game.zone_exchange_available(chassis) {
+                    1
+                } else {
+                    10
+                }
+            } else if state.game.zone_exchange_available(chassis) {
                 10
             } else {
                 100
@@ -826,12 +850,11 @@ impl Field {
             .physics
             .add_chassis(placement.team, placement.config.clone(), placement.spawn)
             .map_err(FieldError::Chassis)?;
-        if let Some(state) = &mut self.rmuc_2027
-            && placement.kind != RobotKind::Engineer
-        {
+        if let Some(state) = &mut self.rmuc_2027 {
             let role = match placement.kind {
                 RobotKind::Infantry => rmuc_2027::match_rules::GroundRole::Infantry,
                 RobotKind::Sentry => rmuc_2027::match_rules::GroundRole::Sentry,
+                RobotKind::Engineer => rmuc_2027::match_rules::GroundRole::Heavy,
                 _ => return Err(FieldError::Referee("unsupported 2027 ground role")),
             };
             state
@@ -974,6 +997,68 @@ impl Field {
         self.physics
             .command_chassis(id, command)
             .map_err(FieldError::Chassis)
+    }
+    /// Convert an eligible native Heavy to a source Hero chassis in place.
+    /// Simulator approximation: no workbench installation or confirmation shot.
+    pub fn convert_heavy_to_hero(&mut self, id: u32) -> Result<(), FieldError> {
+        let state = self
+            .rmuc_2027
+            .as_ref()
+            .ok_or(FieldError::Referee("conversion requires RMUC 2027"))?;
+        let robot = state
+            .game
+            .robots
+            .iter()
+            .find(|r| r.id == id && r.role == rmuc_2027::match_rules::GroundRole::Heavy)
+            .ok_or(FieldError::Referee("only Heavy can convert"))?;
+        if !state.game.heavy_unlocked(robot.team) || robot.hp == 0 || !robot.online {
+            return Err(FieldError::Referee(
+                "Heavy launcher permission is locked or robot unavailable",
+            ));
+        }
+        if robot.combat.heavy_installed {
+            return Err(FieldError::Referee("Heavy already converted"));
+        }
+        if self
+            .assemblies
+            .iter()
+            .any(|r| r.owner == id && r.station_busy())
+        {
+            return Err(FieldError::Referee(
+                "finish assembly and Core recovery before converting",
+            ));
+        }
+        let mut body = self
+            .physics
+            .chassis_snapshot(id)
+            .ok_or(FieldError::Chassis("unknown chassis"))?;
+        if body.velocity_m_s.iter().any(|v| v.abs() > 0.1)
+            || body.angular_velocity_rad_s.iter().any(|v| v.abs() > 0.1)
+        {
+            return Err(FieldError::Referee("stop before converting Heavy"));
+        }
+        let config = ChassisConfig::folding_hero();
+        body.pose.translation_m[2] += config.rest_height_m() - body.config.rest_height_m();
+        body.config = config;
+        body.fold_angle_rad = 0.;
+        body.command = ChassisCommand::default();
+        for wheel in &mut body.wheels {
+            wheel.contact = None;
+            wheel.angular_velocity_rad_s = 0.;
+        }
+        body.placement_revision = body.placement_revision.saturating_add(1);
+        self.physics
+            .replace_chassis(&body)
+            .map_err(FieldError::Chassis)?;
+        self.cancel_assembly(id, "Converted to Hero approximation");
+        self.release_energy_units(id);
+        self.arms.retain(|a| a.owner != id);
+        let state = self.rmuc_2027.as_mut().unwrap();
+        let robot = state.game.robots.iter_mut().find(|r| r.id == id).unwrap();
+        robot.combat.heavy_installed = true;
+        robot.hp = robot.hp.saturating_add(600 - robot.max_hp).min(600);
+        robot.max_hp = 600;
+        Ok(())
     }
     /// The preset a chassis id was placed with; `None` for an unknown id.
     pub fn chassis_config(&self, id: u32) -> Option<&ChassisConfig> {

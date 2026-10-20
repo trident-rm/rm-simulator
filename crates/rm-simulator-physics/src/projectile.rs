@@ -1332,6 +1332,19 @@ impl WorldPhysics {
         self.next_chassis_id = self.next_chassis_id.max(state.id.saturating_add(1));
         Ok(())
     }
+    /// Replace chassis geometry under its existing id, preserving captured motion.
+    /// Validates the replacement in an isolated world before removing live geometry.
+    pub fn replace_chassis(&mut self, state: &ChassisSnapshot) -> Result<(), &'static str> {
+        if self.chassis_config(state.id).is_none() {
+            return Err("unknown chassis");
+        }
+        let mut validation = Self::new(&[], 0.);
+        validation.restore_chassis(state)?;
+        self.remove_chassis(state.id)?;
+        self.restore_chassis(state)?;
+        self.chassis.sort_by_key(Chassis::id);
+        Ok(())
+    }
     /// Put an existing chassis back on a captured state. Prediction only: the
     /// authoritative field never rewinds a body this way.
     pub fn reset_chassis(&mut self, state: &ChassisSnapshot) -> Result<(), &'static str> {

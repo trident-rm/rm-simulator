@@ -181,7 +181,8 @@ def capture(client, args, temporary):
     local=_grip_helpers.compose(_grip_helpers.inverse(job['world_from_rig']),final_unit['physical']['pose'])['translation_m']
     rim=job['model']['assembly_frame']['translation_m']
     assert local[2]<rim[2], ('Unit did not fall below the collection opening',local,rim)
-    assert abs(local[0]-(rim[0]-.45))<.2 and abs(local[1]-rim[1])<.25, ('Unit missed collection opening',local,rim)
+    # Test the source bay interior: a dropped Unit may roll away from its release point.
+    assert rim[0]-.8<local[0]<rim[0]-.1 and abs(local[1]-rim[1])<.65, ('Unit missed collection bay',local,rim)
     screenshot(1.5)
     listing = temporary / 'frames.txt'
     # TemporaryDirectory gives plain generated basenames, without shell quoting.

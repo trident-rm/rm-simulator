@@ -109,7 +109,8 @@ use serde::{Deserialize, Serialize};
 /// Version 67 carries the pre-planning Core positioning phase and its restorable motion.
 /// Version 68 carries post-flip Q reveal and the separate attached twist search.
 /// Version 69 carries persistent physical Energy Units and owned gripper/jog commands.
-pub const PROTOCOL_VERSION: u32 = 71;
+/// Version 72 adds native Heavy conversion and historical launcher permission.
+pub const PROTOCOL_VERSION: u32 = 72;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///
@@ -802,6 +803,11 @@ pub fn check_map_marker(kind: MapMarkerKind, position_m: [f64; 2]) -> Result<(),
 /// Anything that changes the simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Command {
+    /// Convert an unlocked native Heavy to the Hero gameplay approximation.
+    ConvertHeavy {
+        /// Requesting pilot's stable chassis identity; checked by the host.
+        chassis: u32,
+    },
     /// Open/release or close/pick up an existing nearby Energy Unit.
     EnergyGrip {
         /// Requesting pilot's chassis; checked by the host.
@@ -1271,6 +1277,13 @@ pub struct ShotResult {
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ServerMessage {
+    /// Reliable weapon defaults/caps after an in-place robot conversion.
+    WeaponChanged {
+        /// Current host-selected launcher settings.
+        weapon: WeaponConfig,
+        /// Current host-enforced configuration caps.
+        limits: WeaponLimits,
+    },
     /// Reliable deployment acknowledgement, ordered before its confirmation snapshot.
     Deployed(Box<DeploymentReceipt>),
     /// Host downstream application queues sampled independently of input execution.

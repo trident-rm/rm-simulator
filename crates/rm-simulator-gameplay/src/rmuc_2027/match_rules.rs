@@ -130,10 +130,19 @@ pub struct Match {
     pub gold: [u32; 2],
     /// Rounds bought for gold by team, capped at 1,000 (Table 5-7).
     pub purchased_rounds: [u32; 2],
+    /// Purchased 42 mm rounds, capped at 100 per team (UC Table 5-7).
+    #[serde(default)]
+    pub purchased_heavy_rounds: [u32; 2],
     /// Assembly-controlled Infantry level caps; initially five (Table 5-12).
     pub level_caps: [u8; 2],
     /// Button-driven assembly attempts and permanent progression, Red then Blue.
     pub assembly: [super::assembly::Assembly; 2],
+    /// Historical opponent-minus-own Base HP deficits, UC §5.7.1.
+    #[serde(default)]
+    pub heavy_hp_deficit: [u32; 2],
+    /// Historical opponent-minus-own control deficits, UC §5.7.1.
+    #[serde(default)]
+    pub heavy_control_deficit: [u32; 2],
     /// Adaptive-armor observations, selection-time areas and opportunities.
     pub adaptive: super::adaptive::Adaptive,
     /// Native team Rune authority, Red then Blue, independent of the 2026 engine.
@@ -180,8 +189,11 @@ impl Match {
             attack_damage: [0; 2],
             gold: [0; 2],
             purchased_rounds: [0; 2],
+            purchased_heavy_rounds: [0; 2],
             level_caps: [5; 2],
             assembly: std::array::from_fn(|_| Default::default()),
+            heavy_hp_deficit: [0; 2],
+            heavy_control_deficit: [0; 2],
             adaptive: super::adaptive::Adaptive::default(),
             runes: std::array::from_fn(|i| super::rune::Rune::new(direction, i as u64 + 1)),
             robots: vec![],
@@ -215,6 +227,36 @@ impl Match {
             terrain: super::terrain::Terrain::default(),
         });
         self.robots.sort_by_key(|r| r.id);
+    }
+    /// UC §5.7.1 launcher permission. Negative calculated times unlock immediately.
+    /// Historical deficits survive repairs and control catch-up until the next round.
+    ///
+    /// ```
+    /// use rm_simulator_gameplay::{Team, rmuc_2027::match_rules::{Match, COUNTDOWN_NS}};
+    /// let mut game = Match::new(1);
+    /// game.start(1);
+    /// game.advance_ns(COUNTDOWN_NS + 300_000_000_000);
+    /// assert!(game.heavy_unlocked(Team::Red));
+    /// ```
+    pub fn heavy_unlocked(&self, team: Team) -> bool {
+        let i = team.index();
+        self.phase == Phase::Running
+            && (self.assembly[i].highest() >= 3
+                || i128::from(self.elapsed_ns()) * 150
+                    >= (45_000i128
+                        - i128::from(self.heavy_hp_deficit[i]) * 3
+                        - i128::from(self.heavy_control_deficit[i]) * 100)
+                        * 1_000_000_000)
+    }
+    fn observe_heavy_deficits(&mut self) {
+        let points = self.control.snapshot().points;
+        for team in Team::BOTH {
+            let (i, j) = (team.index(), team.other().index());
+            self.heavy_hp_deficit[i] =
+                self.heavy_hp_deficit[i].max(self.base_hp[j].saturating_sub(self.base_hp[i]));
+            self.heavy_control_deficit[i] =
+                self.heavy_control_deficit[i].max(points[j].saturating_sub(points[i]));
+        }
     }
     /// Start a new countdown; clear stale RFID, progress, damage and results.
     pub fn start(&mut self, direction: i8) {
@@ -253,6 +295,8 @@ impl Match {
                 .all(|a| a.outcome == super::assembly::Outcome::Active)
                 && self.assembly.iter().any(|a| a.difficulty == 4))
             || self.purchased_rounds.iter().any(|&v| v > 1000)
+            || self.purchased_heavy_rounds.iter().any(|&v| v > 100)
+            || self.heavy_hp_deficit.iter().any(|&v| v > BASE_HP)
             || Team::BOTH
                 .into_iter()
                 .any(|t| self.level_caps[t.index()] != self.assembly[t.index()].level_cap())
@@ -282,7 +326,14 @@ impl Match {
                         > u64::from(r.stats(self.elapsed_ns()).heat_limit) * 10
                         && !r.combat.overheated)
                     || (r.combat.heat_tenths
-                        >= u64::from(r.stats(self.elapsed_ns()).heat_limit + 100) * 10
+                        >= u64::from(
+                            r.stats(self.elapsed_ns()).heat_limit
+                                + if r.role == GroundRole::Heavy {
+                                    200
+                                } else {
+                                    100
+                                },
+                        ) * 10
                         && !r.combat.heat_locked_for_round)
                     || (r.hp > 0 && r.combat.respawn.is_some())
                     || r.combat
@@ -515,6 +566,7 @@ impl Match {
             }
             let events = self.control.advance_ns(dt);
             self.apply_events(events);
+            self.observe_heavy_deficits();
             let at = self.elapsed_ns();
             for side in Team::BOTH {
                 if self.runes[side.index()].settle(at) {
@@ -614,8 +666,7 @@ impl Match {
     /// Apply Table 5-2 structure and field-adjusted robot projectile damage. The caller
     /// supplies the target and caliber. With no coordinates this API uses default
     /// armor; physical callers use [`Match::armor_hit`] for adaptive regions.
-    /// 42 mm remains disabled
-    /// in this subset until a Heavy launcher can report its suppression state.
+    /// Proxy Heavy supports direct 42 mm damage; suppression remains deferred.
     pub fn hit(
         &mut self,
         target: crate::Target,
@@ -633,10 +684,28 @@ impl Match {
         caliber: crate::Caliber,
         region: super::adaptive::Region,
     ) -> u32 {
-        if self.phase != Phase::Running || caliber != crate::Caliber::Mm17 {
+        if self.phase != Phase::Running {
             return 0;
         }
-        let raw = 10 * region.half_units();
+        if caliber == crate::Caliber::Mm42
+            && !shooter.is_some_and(|id| {
+                self.robots.iter().any(|r| {
+                    r.id == id
+                        && r.role == GroundRole::Heavy
+                        && r.combat.heavy_installed
+                        && r.hp > 0
+                        && r.online
+                })
+            })
+        {
+            return 0;
+        }
+        // Proxy Heavy: direct 42 mm damage; suppression/buffer are deferred.
+        let raw = if caliber == crate::Caliber::Mm42 {
+            100
+        } else {
+            10
+        } * region.half_units();
         let attack = shooter.and_then(|id| self.robots.iter().find(|r| r.id == id).map(|r| r.team));
         let attack_pct = attack
             .and_then(|t| self.runes[t.index()].buff.as_ref())
@@ -689,6 +758,7 @@ impl Match {
         {
             self.attack_damage[attacker.index()] += u64::from(applied);
         }
+        self.observe_heavy_deficits();
         self.reward_attack(target, shooter, team, applied);
         // A lethal contact revokes activation in this same event, even when
         // a caller publishes or pauses before the next simulation advance.
@@ -719,6 +789,9 @@ impl Match {
     pub fn set_base_hp(&mut self, team: Team, hp: u32) {
         self.base_hp[team.index()] = hp.min(BASE_HP);
         self.base_lowest_hp[team.index()] = self.base_lowest_hp[team.index()].min(hp.min(BASE_HP));
+        if self.phase == Phase::Running {
+            self.observe_heavy_deficits();
+        }
         if self.phase == Phase::Running && hp == 0 {
             self.finish();
         }
@@ -1103,5 +1176,47 @@ mod tests {
         let mut g = running();
         g.advance_ns(ROUND_NS * 2);
         assert_eq!(g.elapsed_ns(), ROUND_NS);
+    }
+}
+
+#[cfg(test)]
+mod heavy_proxy_tests {
+    use super::*;
+    #[test]
+    fn unlock_uses_historical_deficits_and_inclusive_fractional_time() {
+        let mut g = Match::new(1);
+        g.start(1);
+        g.advance_ns(COUNTDOWN_NS);
+        g.base_hp[0] -= 500;
+        g.observe_heavy_deficits();
+        g.base_hp[0] = BASE_HP;
+        assert_eq!(g.heavy_hp_deficit[0], 500);
+        assert!(!g.heavy_unlocked(Team::Red));
+        g.advance_ns(290_000_000_000 - 1);
+        assert!(!g.heavy_unlocked(Team::Red));
+        g.advance_ns(1);
+        assert!(g.heavy_unlocked(Team::Red));
+        assert!(!g.heavy_unlocked(Team::Blue));
+        g.start(1);
+        assert_eq!(g.heavy_hp_deficit, [0; 2]);
+        g.advance_ns(COUNTDOWN_NS);
+        g.heavy_control_deficit[0] = 451;
+        assert!(g.heavy_unlocked(Team::Red)); // negative threshold: immediate policy
+    }
+    #[test]
+    fn l3_unlock_does_not_require_time_gate() {
+        let mut g = Match::new(1);
+        g.start(1);
+        g.advance_ns(COUNTDOWN_NS);
+        g.start_assembly(Team::Red, 1).unwrap();
+        g.finish_assembly(Team::Red).unwrap();
+        g.advance_ns(60_000_000_000);
+        g.start_assembly(Team::Red, 2).unwrap();
+        g.finish_assembly(Team::Red).unwrap();
+        g.advance_ns(60_000_000_000);
+        g.start_assembly(Team::Red, 3).unwrap();
+        g.finish_assembly(Team::Red).unwrap();
+        assert!(g.heavy_unlocked(Team::Red));
+        assert!(!g.heavy_unlocked(Team::Blue));
     }
 }

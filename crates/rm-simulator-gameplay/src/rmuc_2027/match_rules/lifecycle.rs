@@ -23,9 +23,12 @@ impl Match {
             return Err("2027 robot is defeated or offline");
         }
         if self.phase == Phase::Running
-            && (r.role == GroundRole::Heavy
+            && ((r.role == GroundRole::Heavy
+                && (!r.combat.heavy_installed || !self.heavy_unlocked(r.team)))
                 || r.combat.launcher_locked(self.elapsed_ns())
-                || (r.combat.allowance == 0 && self.field_effects(id).fortress_reserve == 0))
+                || (r.combat.allowance == 0
+                    && self.field_effects(id).fortress_reserve
+                        < if r.role == GroundRole::Heavy { 10 } else { 1 }))
         {
             return Err("2027 launcher locked or allowance exhausted");
         }
@@ -39,23 +42,54 @@ impl Match {
         }
         let now = self.elapsed_ns();
         self.resolve();
-        let reserve = self.field_effects(id).fortress_reserve > 0;
+        let reserve_cost = if self
+            .robots
+            .iter()
+            .any(|r| r.id == id && r.role == GroundRole::Heavy)
+        {
+            10
+        } else {
+            1
+        };
+        let reserve = self.field_effects(id).fortress_reserve >= reserve_cost;
         let Some(r) = self.robots.iter_mut().find(|r| r.id == id) else {
             return;
         };
         let stats = r.stats(now);
         if reserve {
-            self.fortress_reserve_used[r.team.index()] += 1;
+            self.fortress_reserve_used[r.team.index()] += reserve_cost;
         } else {
             r.combat.allowance = r.combat.allowance.saturating_sub(1);
         }
         r.combat.last_combat_ns = Some(now);
-        r.combat.heat_tenths += 100;
+        r.combat.heat_tenths += if r.role == GroundRole::Heavy {
+            1000
+        } else {
+            100
+        };
         r.combat.overheated |= r.combat.heat_tenths > u64::from(stats.heat_limit) * 10;
-        r.combat.heat_locked_for_round |=
-            r.combat.heat_tenths >= u64::from(stats.heat_limit + 100) * 10;
-        let overspeed = speed_m_s - 25.;
-        if overspeed >= 10. {
+        r.combat.heat_locked_for_round |= r.combat.heat_tenths
+            >= u64::from(
+                stats.heat_limit
+                    + if r.role == GroundRole::Heavy {
+                        200
+                    } else {
+                        100
+                    },
+            ) * 10;
+        let overspeed = speed_m_s
+            - if r.role == GroundRole::Heavy {
+                16.5
+            } else {
+                25.
+            };
+        if r.role == GroundRole::Heavy && overspeed > 0. {
+            if speed_m_s > 18. {
+                r.combat.overspeed_locked_for_round = true;
+            } else {
+                r.combat.overspeed_until_ns = r.combat.overspeed_until_ns.max(now + 15 * SECOND);
+            }
+        } else if overspeed >= 10. {
             r.combat.overspeed_locked_for_round = true;
         } else if overspeed > 0. {
             r.combat.overspeed_until_ns = r.combat.overspeed_until_ns.max(
@@ -65,6 +99,9 @@ impl Match {
                     15 * SECOND
                 },
             );
+        }
+        if r.role == GroundRole::Heavy {
+            return;
         }
         self.adaptive.launches[r.team.index()] =
             self.adaptive.launches[r.team.index()].saturating_add(1);
@@ -200,11 +237,18 @@ impl Match {
             .iter()
             .find(|r| r.id == id)
             .ok_or("unknown 2027 robot")?;
-        if r.hp == 0 || !r.online || r.role == GroundRole::Heavy {
+        if r.hp == 0 || !r.online || (r.role == GroundRole::Heavy && !r.combat.heavy_installed) {
             return Err("2027 robot cannot exchange ammunition");
         }
         let zone = self.zone_exchange_available(id);
-        let unit = if zone { 10 } else { 100 };
+        let heavy = r.role == GroundRole::Heavy;
+        let unit = if heavy {
+            if zone { 1 } else { 10 }
+        } else if zone {
+            10
+        } else {
+            100
+        };
         if rounds == 0
             || rounds > 1000
             || !rounds.is_multiple_of(unit)
@@ -214,11 +258,17 @@ impl Match {
         }
         let cost = rounds / unit * if zone { 10 } else { 150 };
         let team = r.team.index();
-        if rounds > 1000 - self.purchased_rounds[team] || cost > self.gold[team] {
+        let purchased = if heavy {
+            &mut self.purchased_heavy_rounds[team]
+        } else {
+            &mut self.purchased_rounds[team]
+        };
+        let cap = if heavy { 100 } else { 1000 };
+        if rounds > cap - *purchased || cost > self.gold[team] {
             return Err("2027 purchase cap or insufficient gold");
         }
         self.gold[team] -= cost;
-        self.purchased_rounds[team] += rounds;
+        *purchased += rounds;
         let r = self.robots.iter_mut().find(|r| r.id == id).unwrap();
         if zone {
             r.combat.allowance = r.combat.allowance.saturating_add(rounds);

@@ -1455,3 +1455,30 @@ The discharge point is centred over the verified source bay, with a 250 ms
 stationary hold before gravity release and a 500 ms clearance dwell before the
 Core returns upright. Source positioning/recovery remain prescribed; no Core-arm
 collision avoidance or overload response is added by this animation.
+
+## Temporary Hero conversion for Heavy
+
+In an RMUC 2027 running round, **J → Convert to Hero** replaces the parked
+Engineer's chassis and visual model with the source folding Hero. The player
+keeps its id, team and Heavy roster slot. Launcher permission follows UC §5.7.1:
+L3 completion or `300 - M/50 - 2N/3` elapsed seconds, with historical maxima
+of opponent-minus-own Base HP and control. Negative thresholds unlock immediately
+(simulator policy); the exact fractional boundary is inclusive. No conversion
+is allowed during an unfinished assembly/Core recovery, while moving, defeated
+or offline. Conversion releases existing held cargo rather than deleting it.
+
+This is an explicit gameplay approximation: conversion is available wherever
+parked, without workbench installation or the confirmation shot. It installs a
+600-HP Heavy (existing damage preserved), 300 heat limit, 100/s cooling, a
+100-heat 42 mm launch, and the Hero's configured weapon speed/rate within host
+caps. Initial ammunition remains zero. Buy 42 mm ammunition through the existing
+controls: one shell for 10 gold at a service zone, or ten for 150 gold remotely
+with six-second delivery; the team cap is 100. Direct hits use the native
+200-HP damage table; **42 mm idle/death/link suppression remains deferred**.
+Adaptive accuracy statistics continue to count only 17 mm launches/hits.
+
+The swap is immediate, with collision geometry rebuilt and placement revision
+incremented so prediction does not interpolate between shapes. Source arm meshes
+are removed; the Unit remains a physical object. There is no reverse conversion.
+Starting a new round retains the chosen Hero shape but clears installation,
+ammunition and unlock history; use the same button after unlocking again.

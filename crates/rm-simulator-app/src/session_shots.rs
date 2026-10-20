@@ -363,7 +363,8 @@ impl Session {
                 .find(|r| Some(r.id) == self.chassis_id)?;
             let pending =
                 if s.game.phase == rm_simulator_world::rmuc_2027::match_rules::Phase::Running {
-                    u64::from(self.reserved_ammo(Caliber::Mm17)) * 100
+                    u64::from(self.reserved_ammo(self.weapon.shot.caliber))
+                        * game_caliber(self.weapon.shot.caliber).launch_heat_tenths()
                 } else {
                     0
                 };
@@ -389,12 +390,13 @@ impl Session {
     /// to the host is already past the limit. The snapshot's heat predates
     /// its cooling since, so under lag this errs toward holding a shot.
     pub fn barrel_blocked(&self) -> bool {
-        if self
-            .client
-            .welcome()
-            .chassis
-            .as_ref()
-            .is_some_and(|c| matches!(c.robot, rm_simulator_server::protocol::Robot::Engineer))
+        if self.rmuc_2027().is_none()
+            && self
+                .client
+                .welcome()
+                .chassis
+                .as_ref()
+                .is_some_and(|c| matches!(c.robot, rm_simulator_server::protocol::Robot::Engineer))
         {
             return true;
         }
@@ -404,11 +406,14 @@ impl Session {
             };
             return s.game.check_launch(r.id).is_err()
                 || (s.game.phase == rm_simulator_world::rmuc_2027::match_rules::Phase::Running
-                    && (r
-                        .combat
-                        .allowance
-                        .saturating_add(s.game.field_effects(r.id).fortress_reserve)
-                        <= self.reserved_ammo(rm_simulator_world::Caliber::Mm17)
+                    && (r.combat.allowance.saturating_add(
+                        s.game.field_effects(r.id).fortress_reserve
+                            / if self.weapon.shot.caliber == rm_simulator_world::Caliber::Mm42 {
+                                10
+                            } else {
+                                1
+                            },
+                    ) <= self.reserved_ammo(self.weapon.shot.caliber)
                         || self
                             .predicted_heat()
                             .is_some_and(|(heat, limit)| heat > u64::from(limit) * 10)));

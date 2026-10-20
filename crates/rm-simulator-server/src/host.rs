@@ -617,6 +617,15 @@ impl Owner {
             tick: self.simulation.field().tick(),
         };
         self.observe_simulation(|simulation, hits| simulation.apply_observed(&command, hits))?;
+        if let Command::ConvertHeavy { chassis } = command {
+            let message = ServerMessage::WeaponChanged {
+                weapon: self.simulation.weapon_for(chassis),
+                limits: self.simulation.weapon_limits_for(chassis),
+            };
+            if let Some(peer) = self.peers.iter().find(|p| p.info.chassis == Some(chassis)) {
+                self.send_to(peer.info.client_id, message);
+            }
+        }
         self.next_sequence = next_sequence;
         Ok(receipt)
     }
@@ -965,7 +974,8 @@ impl Owner {
                     Command::PlaceChassis { .. } if !peer.owner => {
                         Some("only the embedded owner places a chassis")
                     }
-                    Command::EnergyGrip { chassis }
+                    Command::ConvertHeavy { chassis }
+                    | Command::EnergyGrip { chassis }
                     | Command::EnergyArmJog { chassis, .. }
                     | Command::AutoAssembly { chassis, .. }
                     | Command::CancelAutoAssembly { chassis }
@@ -1440,6 +1450,9 @@ mod tests {
         }
         let chassis = welcome.chassis.unwrap().id;
         for command in [
+            Command::ConvertHeavy {
+                chassis: chassis + 1,
+            },
             Command::BuyHp {
                 chassis: chassis + 1,
             },

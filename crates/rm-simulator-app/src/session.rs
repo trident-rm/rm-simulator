@@ -717,7 +717,9 @@ impl Session {
         // confirmation snapshot or an owner anchor for the newly assigned chassis.
         let welcome = self.client.welcome();
         let assigned = welcome.chassis.as_ref().map(|c| c.id);
-        if self.chassis_id != assigned {
+        if self.chassis_id != assigned
+            || self.weapon_defaults.shot.caliber != welcome.weapon.shot.caliber
+        {
             self.chassis_id = assigned;
             self.team = welcome.team.unwrap_or(self.team);
             self.role = welcome.role;

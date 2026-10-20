@@ -76,6 +76,14 @@ fn main() -> AppExit {
     let mut app = App::new();
     #[cfg(feature = "steam")]
     steam_support::install(&mut app, steam_runtime);
+    if let Some(path) = &args.hero_assets {
+        use bevy::asset::io::{AssetSourceBuilder, file::FileAssetReader};
+        let root = path.clone();
+        app.register_asset_source(
+            "hero-robot",
+            AssetSourceBuilder::new(move || Box::new(FileAssetReader::new(root.clone()))),
+        );
+    }
     if let Some(path) = &args.robot_assets {
         use bevy::asset::io::{AssetSourceBuilder, file::FileAssetReader};
         let root = std::path::absolute(path).expect("robot asset path");
@@ -85,6 +93,10 @@ fn main() -> AppExit {
         );
         app.insert_resource(rm_simulator_render::team_robot::TeamRobotAssets {
             file: "robots://neutral.glb".into(),
+            hero_file: args
+                .hero_assets
+                .as_ref()
+                .map(|_| "hero-robot://neutral.glb".into()),
             folding_hero: args.host.folding_hero,
             stair_heavy: args.host.stair_heavy,
             articulated: args.host.source_chassis.is_some(),

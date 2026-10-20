@@ -193,7 +193,7 @@ The app also offers manually driven Engineer and Sentry chassis prototypes;
 the Sentry radar remains decorative. A source PIE Engineer/Heavy additionally
 supports [automatic L1–L3 assembly](assembly-workbench.md#in-game-automatic-assembly)
 on the bound 2027 field, with manual parking and measured manipulation completion.
-Heavy combat progression remains outside that prototype.
+An optional [Hero conversion](#temporary-hero-conversion-for-heavy) supplies approximate Heavy combat after launcher permission unlocks.
 There is no referee robot. `AddRobot` and `RemoveRobot` admit and drop robots
 at any phase; the live referee uses them as pilots join and leave.
 
@@ -396,8 +396,8 @@ RFID, attachment, paired-step, recovery or invincibility requirement in this mod
 Successful attempts grant Table 5-12 recurring income, Infantry caps and strongest
 25%/50% permanent robot/Base/owned-Outpost defense. Income settles on round-aligned
 ten-second boundaries, with no terminal 7:00 payment. Completion submitted at a
-settlement timestamp affects future payments. Heavy level/HP changes and launcher
-permission remain deferred with Heavy equipment support. Assembly can be exercised
+settlement timestamp affects future payments. Full Heavy upgrades and physical launcher installation remain deferred; the
+[temporary Hero conversion](#temporary-hero-conversion-for-heavy) supports unlocked combat. Assembly can be exercised
 without any deployed robots; buttons remain referee-only rather than granting
 pilots a way to certify real physical completion. The separate source-bound
 pilot prototype now certifies L1–L3 through the manipulation evaluator; it starts
@@ -433,3 +433,30 @@ reselection, clipping/boundaries, damage/defense, respawn, Outpost transfer and
 malformed restore. A physical world test shoots through native source detectors
 inside/outside the selected region, then repeats after restore; the wire codec
 checks frozen authority without floating-point checkpoint fields.
+
+## Temporary Hero conversion for Heavy
+
+In an RMUC 2027 running round, **J → Convert to Hero** replaces the parked
+Engineer's chassis and visual model with the source folding Hero. The player
+keeps its id, team and Heavy roster slot. Launcher permission follows UC §5.7.1:
+L3 completion or `300 - M/50 - 2N/3` elapsed seconds, with historical maxima
+of opponent-minus-own Base HP and control. Negative thresholds unlock immediately
+(simulator policy); the exact fractional boundary is inclusive. No conversion
+is allowed during an unfinished assembly/Core recovery, while moving, defeated
+or offline. Conversion releases existing held cargo rather than deleting it.
+
+This is an explicit gameplay approximation: conversion is available wherever
+parked, without workbench installation or the confirmation shot. It installs a
+600-HP Heavy (existing damage preserved), 300 heat limit, 100/s cooling, a
+100-heat 42 mm launch, and the Hero's configured weapon speed/rate within host
+caps. Initial ammunition remains zero. Buy 42 mm ammunition through the existing
+controls: one shell for 10 gold at a service zone, or ten for 150 gold remotely
+with six-second delivery; the team cap is 100. Direct hits use the native
+200-HP damage table; **42 mm idle/death/link suppression remains deferred**.
+Adaptive accuracy statistics continue to count only 17 mm launches/hits.
+
+The swap is immediate, with collision geometry rebuilt and placement revision
+incremented so prediction does not interpolate between shapes. Source arm meshes
+are removed; the Unit remains a physical object. There is no reverse conversion.
+Starting a new round retains the chosen Hero shape but clears installation,
+ammunition and unlock history; use the same button after unlocking again.

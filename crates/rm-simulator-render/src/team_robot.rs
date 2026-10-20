@@ -19,6 +19,8 @@ pub struct TeamRobotAssets {
     pub articulated: bool,
     /// glTF path including asset source, without a scene label.
     pub file: String,
+    /// Optional verified folding Hero package, for in-place Heavy conversion.
+    pub hero_file: Option<String>,
     /// Select the bound folding Hero instead of the original Omni assembly.
     pub folding_hero: bool,
     /// Select the source-bound stair Engineer instead of the Omni/Hero package.
@@ -28,16 +30,17 @@ pub struct TeamRobotAssets {
 }
 impl TeamRobotAssets {
     pub(crate) fn supports(&self, model: RobotModel) -> bool {
-        model
-            == if self.articulated {
-                RobotModel::Articulated
-            } else if self.stair_heavy {
-                RobotModel::StairHeavy
-            } else if self.folding_hero {
-                RobotModel::FoldingHero
-            } else {
-                RobotModel::TeamCad
-            }
+        (model == RobotModel::FoldingHero && self.hero_file.is_some())
+            || model
+                == if self.articulated {
+                    RobotModel::Articulated
+                } else if self.stair_heavy {
+                    RobotModel::StairHeavy
+                } else if self.folding_hero {
+                    RobotModel::FoldingHero
+                } else {
+                    RobotModel::TeamCad
+                }
     }
 }
 /// Asynchronous robot loading state, also used by screenshot readiness.
@@ -83,13 +86,14 @@ impl Plugin for TeamRobotVisualsPlugin {
     }
 }
 #[derive(Component)]
-struct RobotRoot(u32);
+struct RobotRoot(u32, RobotModel);
 #[derive(Component)]
 struct ReadyRobot;
 #[derive(Component)]
 struct AssetRoot {
     id: u32,
     owner: Entity,
+    required_groups: Vec<String>,
 }
 #[derive(Component)]
 struct Link {
@@ -142,43 +146,57 @@ fn spawn(
     status.requested = wanted.len();
     status.ready = roots
         .iter()
-        .filter(|(_, r, ready)| ready.is_some() && wanted.iter().any(|c| c.id == r.0))
+        .filter(|(_, r, ready)| {
+            ready.is_some() && wanted.iter().any(|c| c.id == r.0 && c.model == r.1)
+        })
         .count();
     for (e, r, _) in &roots {
-        if !wanted.iter().any(|c| c.id == r.0) {
+        if !wanted.iter().any(|c| c.id == r.0 && c.model == r.1) {
             commands.entity(e).despawn();
         }
     }
     for c in wanted {
-        if roots.iter().any(|(_, r, _)| r.0 == c.id) {
+        if roots.iter().any(|(_, r, _)| r.0 == c.id && r.1 == c.model) {
             continue;
         }
+        let alternate_hero = c.model == RobotModel::FoldingHero && !assets.folding_hero;
+        let file = if alternate_hero {
+            assets.hero_file.as_ref().unwrap()
+        } else {
+            &assets.file
+        };
         let mut transform = Transform::default();
         apply_pose(&mut transform, c.pose);
         let owner = commands
-            .spawn((RobotRoot(c.id), transform, Visibility::Inherited))
+            .spawn((RobotRoot(c.id, c.model), transform, Visibility::Inherited))
             .id();
         commands.entity(owner).with_children(|parent| {
             crate::chassis::imported_armor(
                 parent,
                 c,
                 &config,
-                assets.replace_armor,
+                alternate_hero || assets.replace_armor,
                 &atlas,
                 &diffuser,
                 &mut meshes,
                 &mut materials,
             );
             parent.spawn((
-                AssetRoot { id: c.id, owner },
-                WorldAssetRoot(
-                    server.load(GltfAssetLabel::Scene(0).from_asset(assets.file.clone())),
-                ),
+                AssetRoot {
+                    id: c.id,
+                    owner,
+                    required_groups: if alternate_hero {
+                        vec![]
+                    } else {
+                        assets.required_groups.clone()
+                    },
+                },
+                WorldAssetRoot(server.load(GltfAssetLabel::Scene(0).from_asset(file.clone()))),
                 Transform::from_xyz(
                     0.,
-                    -if assets.stair_heavy || assets.articulated {
+                    -if !alternate_hero && (assets.stair_heavy || assets.articulated) {
                         0.
-                    } else if assets.folding_hero {
+                    } else if c.model == RobotModel::FoldingHero {
                         0.1684552
                     } else {
                         BODY_Y_M
@@ -208,7 +226,6 @@ fn use_graphite(extras: &str) -> bool {
 fn loaded(
     event: On<WorldInstanceReady>,
     roots: Query<&AssetRoot>,
-    assets: Option<Res<TeamRobotAssets>>,
     children: Query<&Children>,
     names: Query<(&Name, &Transform)>,
     mut commands: Commands,
@@ -256,8 +273,8 @@ fn loaded(
             });
         }
     }
-    let required = if let Some(a) = assets.as_ref().filter(|a| a.articulated) {
-        a.required_groups.iter().map(String::as_str).collect()
+    let required = if !root.required_groups.is_empty() {
+        root.required_groups.iter().map(String::as_str).collect()
     } else if bound.contains("source-body") {
         vec![
             "source-body",

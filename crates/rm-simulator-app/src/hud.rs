@@ -1294,9 +1294,14 @@ pub fn update_hud(
                     .map(|r| {
                         r.combat
                             .allowance
-                            .saturating_add(
-                                native.map_or(0, |s| s.game.field_effects(r.id).fortress_reserve),
-                            )
+                            .saturating_add(native.map_or(0, |s| {
+                                s.game.field_effects(r.id).fortress_reserve
+                                    / if gun.shot.caliber == Caliber::Mm42 {
+                                        10
+                                    } else {
+                                        1
+                                    }
+                            }))
                             .saturating_sub(session.reserved_ammo(gun.shot.caliber))
                             .to_string()
                     })

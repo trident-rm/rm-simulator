@@ -141,8 +141,8 @@ into the 2026 referee. `gameplay::rmuc_2027::match_rules` owns the live 2027
 combat/control subset, including native heat, allowance, healing, respawn and
 combat XP and continuous Base/Vantage/Highland/Fortress field benefits. Virtual
 assembly supports referee Start/Finish/Cancel, automatic 45-second timeouts,
-shared-core exclusion, income, Infantry caps and permanent defense; physical
-Heavy combat progression remains unavailable. Source PIE Heavy automatic L1–L3
+shared-core exclusion, income, Infantry caps and permanent defense; Heavy can use an explicitly approximate folding-Hero conversion after launcher
+permission unlocks; direct 42 mm combat is supported, suppression remains deferred. Source PIE Heavy automatic L1–L3
 manipulation carries a persistent deployment-preloaded Unit from the actual gripper through
 approach and insertion, with manually parked chassis and bounded restorable Core positioning
 before host worker planning, and restorable 128 Hz playback from persistent actual joints with 1 rad/s joint/jaw limits and

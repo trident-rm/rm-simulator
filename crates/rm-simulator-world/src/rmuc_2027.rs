@@ -484,6 +484,87 @@ mod tests {
         .unwrap()
     }
     #[test]
+    fn heavy_conversion_keeps_identity_ammunition_damage_and_restore() {
+        use crate::gameplay::rmuc_2027::match_rules::{COUNTDOWN_NS, GroundRole};
+        let mut f = field();
+        let config = ChassisConfig::hero();
+        let id = f
+            .add_chassis(&ChassisPlacement {
+                config: config.clone(),
+                spawn: Pose::at([0., 0., config.rest_height_m()]),
+                team: Team::Red,
+                kind: RobotKind::Engineer,
+                performance: None,
+            })
+            .unwrap();
+        let victim = f
+            .add_chassis(&ChassisPlacement {
+                config: config.clone(),
+                spawn: Pose::at([3., 0., config.rest_height_m()]),
+                team: Team::Blue,
+                kind: RobotKind::Infantry,
+                performance: None,
+            })
+            .unwrap();
+        assert_eq!(
+            f.rmuc_2027().unwrap().game.robots[0].role,
+            GroundRole::Heavy
+        );
+        assert!(f.convert_heavy_to_hero(id).is_err());
+        f.referee_command(RefereeCommand::StartMatch).unwrap();
+        // Advance only rules here: physics parking remains fixed for the conversion check.
+        let g = &mut f.rmuc_2027.as_mut().unwrap().game;
+        g.advance_ns(COUNTDOWN_NS + 299_000_000_000);
+        assert!(!g.heavy_unlocked(crate::gameplay::Team::Red));
+        g.advance_ns(1_000_000_000);
+        let before = f.snapshot().chassis[0].clone();
+        f.convert_heavy_to_hero(id).unwrap();
+        assert!(f.convert_heavy_to_hero(id).is_err());
+        let after = f.snapshot().chassis[0].clone();
+        assert_eq!((after.id, after.team), (before.id, before.team));
+        assert_eq!(
+            after.pose.translation_m[..2],
+            before.pose.translation_m[..2]
+        );
+        assert!(after.config.folding.is_some());
+        assert!(after.placement_revision > before.placement_revision);
+        assert_eq!(f.rmuc_2027().unwrap().game.robots[0].max_hp, 600);
+        assert!(
+            f.fire(
+                Pose::at([0., 0., 2.]),
+                Shot::at_limit(Caliber::Mm42),
+                Some(id)
+            )
+            .is_err()
+        );
+        f.buy_ammo(id, Caliber::Mm42).unwrap(); // ten remote shells
+        f.rmuc_2027.as_mut().unwrap().game.advance_ns(6_000_000_000);
+        f.fire(
+            Pose::at([0., 0., 2.]),
+            Shot {
+                speed_m_s: 16.,
+                ..Shot::at_limit(Caliber::Mm42)
+            },
+            Some(id),
+        )
+        .unwrap();
+        let game = &mut f.rmuc_2027.as_mut().unwrap().game;
+        assert_eq!(game.robots[0].combat.allowance, 9);
+        assert_eq!(game.robots[0].combat.heat_tenths, 1000);
+        assert_eq!(
+            game.hit(
+                crate::gameplay::Target::Robot(victim),
+                Some(id),
+                crate::gameplay::Caliber::Mm42
+            ),
+            200
+        );
+        let snapshot = f.snapshot();
+        let restored = Field::restore(&snapshot, &f.static_geometry_snapshot(), 0.).unwrap();
+        assert_eq!(restored.chassis_config(id), f.chassis_config(id));
+        assert_eq!(restored.rmuc_2027(), f.rmuc_2027());
+    }
+    #[test]
     fn antenna_band_rejects_floor_below_deck_and_aerial_positions() {
         let zone = &config().zones[0];
         assert!(zone.contains([0., 0., 0.15]));
