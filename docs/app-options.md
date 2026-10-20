@@ -236,7 +236,8 @@ letters a custom lettered marker, following pages 24–25 of the competitor clie
 manual. A local marker is drawn and recorded at the host. Accepted interaction events
 are delivered only to selected own-team clients (and acknowledged to the sender);
 the latest location intent is drawn in cyan. Spectators and referees cannot send.
-These events do not move, aim or fire a Sentry.
+Only a console-spawned navigation Sentry consumes location intents; manual
+Sentry pilots remain manual. No intent automatically aims or fires.
 Clicking the small minimap without Left Alt still opens its expanded view. Settings, the expanded map, and toolbar-opened panels stop driving,
 aiming and firing and release the cursor. Hold Tab for both teams' players and HP;
 hold F12 for controls. Scroll the wheel to see longer lists while holding the key.
@@ -340,8 +341,8 @@ A future controller hosted beside the simulation can read
 consumers must track event ids, tolerate duplicates, and decide when an intent
 is stale. The app keeps a bounded received history exposed as `map_interactions`
 in console state; `pending_map` exposes an unsent choice. Controllers still send
-ordinary owned chassis commands through the host. No controller, path planner,
-Sentry mode change or execution acknowledgement is implemented by this inbox.
+ordinary owned chassis commands through the host. The inbox itself does not execute actions. The optional navigation prototype
+below consumes location intents; Sentry combat modes remain unimplemented.
 
 This implements semantic simulator messages, not UART frames or MQTT topics.
 Coordinates stay in world FLU metres, and chassis ids stay simulator ids.
@@ -352,3 +353,86 @@ The protocol's initial five serial copies at 100 ms intervals and subsequent
 1 Hz refresh are not generated over the simulator's reliable transport; event
 identity separates an intent from transport repeats. The host journal and its
 rate-limit state last for the host session, not a world checkpoint.
+
+## Console-spawned navigation Sentry
+
+Start the usual bound 2027 map with `--console --start-paused`. Submit these
+JSON console commands (through `scripts/console.py`, or `ConsoleClient`):
+
+```json
+{"type":"world","command":{"SpawnSentry":{"team":"Red","position_m":[4,-3,1],"yaw_deg":0}}}
+```
+
+The ordinary terrain lookup resolves spawn height. Spawn rejects occupied or
+obstructed positions and existing team Sentries. It creates a host-owned Sentry
+under the normal Sentry rule/HP record, with the current omni navigation profile.
+It is a training bot for lifecycle management, without a peer or fake pilot.
+`navigation` in console state reports its id, bake summary, phase, target,
+waypoints and message; source rules identify it as Sentry 7. Operators may use
+`PlaceBot`, `RemoveBot` and `ClearBots`; placement stops its current route.
+
+After spawning, **M → click → Send to Sentry** sends a destination. The exact
+location is retained; blocked targets are rejected by the planner rather than
+silently moved across a wall. Optional marker/key data stays uninterpreted by
+this movement-only controller. Its route appears as a green ground line and map
+waypoints; blocked routes turn orange. Phase changes produce HUD notices.
+The following operator-only commands permit repeatable console tests:
+
+```json
+{"type":"world","command":{"NavigateSentry":{"chassis":1,"position_m":[10,0]}}}
+{"type":"world","command":{"StopSentry":{"chassis":1}}}
+```
+
+Use the actual id returned in `navigation`, rather than assuming 1. A remote
+ordinary pilot cannot spawn, directly steer or remove these bots; it may submit
+own-team map intents. A manually piloted Sentry is never taken over. With pause
+active, planning can finish without movement; `step` advances its ordinary wheel
+physics, or unpause to drive in real time. Example verified on the loaded 2027
+map: `[4,-3] → [10,0]` completes through three smoothed path points. This is a
+fixture location, not a route hard-coded into the planner.
+
+The first spawn starts one background bake shared by the host's Sentries. It
+uses the loaded, verified CAD collision geometry and indexed ground, sampled on
+a 25 cm XY grid with height candidates through 1.45 m. Unsupported footprints,
+missing support, abrupt surface changes, steep slopes and obstructed headroom
+are excluded. Edges sweep a vertical cylinder against mesh BVHs; A* uses travel
+and elevation costs, followed by support- and collision-checked shortcuts.
+The navigation profile assumes a 37 cm radius and adds 12 cm for tracking during
+planning. Its body clearance band is 16–64 cm above support, with a conservative 12°
+slope limit and 4 mm seam tolerance. Ground height is sampled every 3 cm along
+nine tracks across the inflated footprint, including diagonal wheel locations.
+The 2027 Road card envelope, enlarged by 15 cm for diagram uncertainty and then
+by the robot planning radius, is explicitly unavailable: this omni profile does
+not attempt the bumpy road. This approximate navigation mask is not a rule zone.
+These are simulator settings, not rulebook constants or a full swept source-CAD
+robot model.
+
+Current geometry and other robot footprints are checked during search and ahead
+of motion. The follower requests at most 0.65 m/s through ordinary chassis
+commands at 16 Hz, inside the explicit 128 Hz simulation loop. Defeat stops the
+controller. Obstruction or a three-second stall brakes the wheels and triggers a worker
+replan from the actual position, up to three recovery attempts per goal. A stall
+adds an inflated avoidance region 75 cm ahead of the failed approach. Each
+Sentry remembers at most 64 such regions for its lifetime (including across new
+goals); removing the bot clears them. These are conservative learned exclusions,
+not proof that the underlying terrain is impossible. Transient robot blockages
+are replanned from current positions without learning a permanent region. If no
+safe route exists or recovery is exhausted, it stays stopped; a new goal resets
+the recovery budget. No teleport or prescribed chassis movement is used.
+Low bumpers, curbs, wheel slip and complex terrain may still invalidate an
+approximate route. Stair/tunnel mechanisms, target pursuit, aiming, firing,
+strategic decisions and coordinated traffic recovery are not included.
+
+Arena regression checks now complete `[4,-3] → [12,3]`, `[4,-3] → [10,3]`
+and the mirrored `[-4,3] → [-12,-3]`, in addition to the open route and its
+reverse. The curb destination `[10,-3]`, cross-arena `[10,0] → [-10,0]`
+and sampled perimeter crossings are rejected by this conservative profile;
+full-arena connectivity is not yet supported.
+
+The bake is cached in memory for the current loaded scene; no generated field
+asset is committed or written. Map processing/search run on one bounded worker,
+with latest-goal generations discarding stale results. Pose, command and path
+presentation travel through the existing multiplayer codec (protocol 74).
+Controller state is host-side external input, like a remote pilot; `Field::restore`
+continues to restore the complete physical/rule world, while a new host must
+recreate the controller and bake. There is no portable on-disk bake yet.

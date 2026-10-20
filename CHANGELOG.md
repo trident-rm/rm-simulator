@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+- Spawn host-owned Sentries through the console, bake a shared terrain/clearance
+  graph from the loaded CAD, and follow team map goals through A*, checked
+  shortcuts and ordinary wheel commands. Add route/status overlays and safe
+  inflated footprint/terrain checks, 2027 bumpy-road exclusions and bounded
+  replanning around blocked or learned failed approaches; no autonomous combat
+  (protocol 74).
+
 - Add a map-click choice for local markers or typed Sentry/team intents, optional
   key bytes, team-only reliable delivery and a bounded controller inbox. Validate
   targets, recipients and protocol transmission intervals without enabling

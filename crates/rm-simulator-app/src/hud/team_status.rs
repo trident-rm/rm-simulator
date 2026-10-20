@@ -203,6 +203,20 @@ pub(super) fn update(
                 let health: Option<&RobotSnapshot> = session
                     .referee()
                     .and_then(|r| r.robots.iter().find(|r| r.id == c.id && r.team == row.team));
+                let native_kind = session
+                    .rmuc_2027()
+                    .and_then(|s| s.game.robots.iter().find(|r| r.id == c.id))
+                    .map(|r| match r.role {
+                        rm_simulator_world::rmuc_2027::match_rules::GroundRole::Heavy => {
+                            RobotKind::Engineer
+                        }
+                        rm_simulator_world::rmuc_2027::match_rules::GroundRole::Infantry => {
+                            RobotKind::Infantry
+                        }
+                        rm_simulator_world::rmuc_2027::match_rules::GroundRole::Sentry => {
+                            RobotKind::Sentry
+                        }
+                    });
                 RobotStatus {
                     id: c.id,
                     kind: health.map_or_else(
@@ -212,7 +226,7 @@ pub(super) fn update(
                                 .iter()
                                 .find(|p| p.chassis == Some(c.id))
                                 .and_then(|p| p.robot)
-                                .map_or(RobotKind::Infantry, |r| r.kind())
+                                .map_or(native_kind.unwrap_or(RobotKind::Infantry), |r| r.kind())
                         },
                         |r| r.kind,
                     ),

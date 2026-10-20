@@ -111,7 +111,8 @@ use serde::{Deserialize, Serialize};
 /// Version 69 carries persistent physical Energy Units and owned gripper/jog commands.
 /// Version 72 adds native Heavy conversion and historical launcher permission.
 /// Version 73 adds authenticated team map interaction events.
-pub const PROTOCOL_VERSION: u32 = 73;
+/// Version 74 adds host-owned Sentry navigation commands and path diagnostics.
+pub const PROTOCOL_VERSION: u32 = 74;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///
@@ -804,6 +805,27 @@ pub fn check_map_marker(kind: MapMarkerKind, position_m: [f64; 2]) -> Result<(),
 /// Anything that changes the simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Command {
+    /// Operator-only spawn of a host-owned navigation prototype Sentry.
+    SpawnSentry {
+        /// Team whose map intents it may consume.
+        team: rm_simulator_world::Team,
+        /// Requested world FLU location; the ordinary spawner resolves terrain height.
+        position_m: [f64; 3],
+        /// Initial counterclockwise world heading, degrees.
+        yaw_deg: f64,
+    },
+    /// Operator-only direct navigation goal, also available through team map intents.
+    NavigateSentry {
+        /// Host-owned navigation Sentry id.
+        chassis: u32,
+        /// Exact requested world FLU XY point in metres.
+        position_m: [f64; 2],
+    },
+    /// Operator-only cancel and brake for a navigation Sentry.
+    StopSentry {
+        /// Host-owned navigation Sentry id.
+        chassis: u32,
+    },
     /// Send a typed map intent through the authenticated team command interface.
     MapInteraction(crate::map_interaction::Interaction),
     /// Convert an unlocked native Heavy to the Hero gameplay approximation.
@@ -1057,7 +1079,10 @@ impl Command {
     pub fn is_match_control(&self) -> bool {
         matches!(
             self,
-            Command::Referee(_)
+            Command::SpawnSentry { .. }
+                | Command::NavigateSentry { .. }
+                | Command::StopSentry { .. }
+                | Command::Referee(_)
                 | Command::Pause { .. }
                 | Command::Step { .. }
                 | Command::SpawnBot { .. }
@@ -1378,6 +1403,7 @@ mod tests {
         field.step(200).unwrap();
         let state = SimulationState {
             bots: vec![],
+            navigation: Vec::new(),
             input_epoch: 0,
             shot_results: Vec::new(),
             snapshot_id: 0,

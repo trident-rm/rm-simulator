@@ -124,7 +124,7 @@ pub(crate) fn sync(
         return;
     };
     let text = format!(
-        "Map point: {:.2}, {:.2} m\nInteraction key: {}\nDelivery sends intent; autonomy is not enabled.",
+        "Map point: {:.2}, {:.2} m\nInteraction key: {}\nLocation navigation only; no automatic firing.",
         position[0],
         position[1],
         if key == 0 {

@@ -91,6 +91,7 @@ struct Header {
     shots_fired: u64,
     hits_detected: u64,
     bots: Vec<u32>,
+    navigation: Vec<crate::navigation::View>,
     /// Nonzero remainders of the stamps whose code marks one, in the order
     /// [`PlayerSnapshot::for_each_field_stamp`] and the referee's round clock
     /// visit them.
@@ -747,6 +748,7 @@ impl PlayerSnapshot {
                 shots_fired: field.shots_fired,
                 hits_detected: field.hits_detected,
                 bots: state.bots.clone(),
+                navigation: state.navigation.clone(),
                 sub_tick_ns: Vec::new(),
             }),
             shot_results: Aligned(state.shot_results.iter().cloned().map(Aligned).collect()),
@@ -905,8 +907,12 @@ impl PlayerSnapshot {
             })
             .collect();
         let header = header.0;
+        if header.navigation.len() > 32 || header.navigation.iter().any(|view| !view.valid()) {
+            return Err(invalid("invalid navigation diagnostics"));
+        }
         Ok(SimulationState {
             bots: header.bots,
+            navigation: header.navigation,
             snapshot_id: header.snapshot_id,
             input_epoch: header.input_epoch,
             shot_results: shot_results.0.into_iter().map(|result| result.0).collect(),
@@ -1602,6 +1608,7 @@ mod tests {
         assert_rules_round_trip(&mut field, 700);
         let mut state = SimulationState {
             bots: vec![],
+            navigation: Vec::new(),
             input_epoch: 0,
             shot_results: vec![],
             snapshot_id: 0,
@@ -1688,6 +1695,7 @@ mod tests {
     fn simulation() -> SimulationState {
         SimulationState {
             bots: vec![],
+            navigation: Vec::new(),
             input_epoch: 0,
             shot_results: Vec::new(),
             snapshot_id: 0,

@@ -800,7 +800,14 @@ pub fn publish_scene(
                 .roster
                 .iter()
                 .find(|p| p.chassis == Some(chassis.id))
-                .and_then(|p| p.robot);
+                .and_then(|p| p.robot)
+                .or_else(|| {
+                    session
+                        .navigation
+                        .iter()
+                        .any(|n| n.chassis == chassis.id)
+                        .then_some(rm_simulator_server::protocol::Robot::Sentry)
+                });
             let mut appearance = chassis_appearance(
                 if mine && live_presentation {
                     session.presented_chassis().unwrap_or(chassis)

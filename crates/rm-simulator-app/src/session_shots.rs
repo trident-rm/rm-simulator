@@ -581,6 +581,7 @@ mod tests {
         assert_eq!(session.last_bullet_speed_m_s(), Some(24.87));
         let state = rm_simulator_server::simulation::SimulationState {
             bots: vec![],
+            navigation: Vec::new(),
             snapshot_id: session.snapshot_id,
             input_epoch: session.input_epoch,
             shot_results: vec![result],

@@ -486,6 +486,7 @@ impl Owner {
     fn run(&mut self, requests: Receiver<Request>) -> Result<(), String> {
         while !self.control.stop.wait(Duration::ZERO) {
             // Check the deadline between requests, even under a command flood.
+            self.simulation.poll_navigation();
             self.advance_clock()?;
             for result in self.simulation.take_completed_shots() {
                 if let Some(client) = self
@@ -727,6 +728,7 @@ impl Owner {
             self.map_interactions.pop_front();
         }
         self.map_interactions.push_back(event.clone());
+        self.simulation.accept_navigation_intent(&event);
         for peer in self.peers.iter().filter(|p| {
             p.info.team == Some(team)
                 && (p.info.client_id == client_id
@@ -1633,6 +1635,16 @@ mod tests {
             next(&messages);
         }
         for command in [
+            Command::SpawnSentry {
+                team: Team::Red,
+                position_m: [-2., -2., 1.],
+                yaw_deg: 0.,
+            },
+            Command::NavigateSentry {
+                chassis: 0,
+                position_m: [0., 0.],
+            },
+            Command::StopSentry { chassis: 0 },
             Command::SpawnBot {
                 team: Team::Blue,
                 spin_rad_s: 3.,

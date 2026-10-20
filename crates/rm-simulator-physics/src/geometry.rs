@@ -140,6 +140,75 @@ impl StaticGeometry {
             })
     }
 
+    /// Sweep a vertical cylindrical clearance volume between FLU centres (metres).
+    /// Includes both endpoints; unsupported queries fail closed. The cylinder's
+    /// axis is world +z, independent of robot heading. This does not advance physics.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{WorldPhysics, Pose};
+    /// let mut world = WorldPhysics::new(&[], 0.);
+    /// world.add_static_box(Pose::at([1.,0.,0.5]), [0.01,1.,0.5]);
+    /// assert!(!world.static_geometry_snapshot(true).cylinder_sweep_clear([0.,0.,0.5],[2.,0.,0.5],0.3,0.2));
+    /// ```
+    pub fn cylinder_sweep_clear(
+        &self,
+        from_m: [f64; 3],
+        to_m: [f64; 3],
+        radius_m: f64,
+        half_height_m: f64,
+    ) -> bool {
+        if !from_m
+            .into_iter()
+            .chain(to_m)
+            .chain([radius_m, half_height_m])
+            .all(f64::is_finite)
+            || radius_m <= 0.
+            || half_height_m <= 0.
+        {
+            return false;
+        }
+        // Parry cylinders are aligned to local Y; rotate to world Z.
+        let cylinder = Cylinder::new(half_height_m, radius_m);
+        let start = rapier3d_f64::prelude::Pose {
+            translation: vector(from_m),
+            rotation: Rotation::from_rotation_x(std::f64::consts::FRAC_PI_2),
+        };
+        let velocity = vector(to_m) - vector(from_m);
+        let extents = [radius_m, radius_m, half_height_m];
+        let bounds = self
+            .bounds
+            .get_or_init(|| self.shapes.iter().map(|(p, s)| s.compute_aabb(p)).collect());
+        self.shapes
+            .iter()
+            .zip(bounds.iter())
+            .all(|((pose, shape), bounds)| {
+                if (0..3).any(|i| {
+                    from_m[i].max(to_m[i]) + extents[i] < bounds.mins[i]
+                        || from_m[i].min(to_m[i]) - extents[i] > bounds.maxs[i]
+                }) {
+                    return true;
+                }
+                if velocity.length_squared() < 1e-16 {
+                    return rapier3d_f64::parry::query::intersection_test(
+                        &start,
+                        &cylinder,
+                        pose,
+                        shape.as_ref(),
+                    )
+                    .is_ok_and(|hit| !hit);
+                }
+                rapier3d_f64::parry::query::cast_shapes(
+                    &start,
+                    velocity,
+                    &cylinder,
+                    pose,
+                    Vector::ZERO,
+                    shape.as_ref(),
+                    rapier3d_f64::parry::query::ShapeCastOptions::with_max_time_of_impact(1.),
+                )
+                .is_ok_and(|hit| hit.is_none())
+            })
+    }
     /// Test a finite sight segment against the shared CAD meshes, using their
     /// cached AABBs before querying triangle BVHs. Does not advance physics.
     pub fn segment_clear(&self, from_m: [f64; 3], to_m: [f64; 3]) -> bool {

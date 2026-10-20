@@ -304,6 +304,7 @@ enum MapItem {
     Rune(usize),
     Marker,
     Interaction(u64),
+    Navigation(u32, usize),
 }
 const MARKER: Color = Color::srgb(1.0, 0.82, 0.25);
 /// Up to three characters for a marker on the map.
@@ -1519,6 +1520,28 @@ pub fn update_map(
             "R".into(),
         ));
     }
+    for nav in &session.navigation {
+        if !session
+            .snapshot
+            .chassis
+            .iter()
+            .any(|c| c.id == nav.chassis && (c.team == session.team || session.role.referees()))
+        {
+            continue;
+        }
+        for (index, &position) in nav.path_m.iter().enumerate() {
+            items.push((
+                MapItem::Navigation(nav.chassis, index),
+                position,
+                Color::srgb(0.3, 1., 0.8),
+                if index + 1 == nav.path_m.len() {
+                    "GO".into()
+                } else {
+                    "·".into()
+                },
+            ));
+        }
+    }
     if let Some(event) = session.map_interactions.back()
         && let rm_simulator_server::map_interaction::Target::Position([x, y]) =
             event.interaction.target
@@ -1969,6 +1992,34 @@ mod peek_scroll_tests {
             app.world().get::<ScrollPosition>(panel).unwrap().y,
             0.,
             "released cursor uses UI scrolling, not both paths"
+        );
+    }
+}
+
+/// Passive host-path overlay, grounded in FLU and independent of controller stepping.
+pub(crate) fn navigation_paths(session: Res<Session>, mut gizmos: Gizmos) {
+    for nav in &session.navigation {
+        if !session
+            .snapshot
+            .chassis
+            .iter()
+            .any(|c| c.id == nav.chassis && (c.team == session.team || session.role.referees()))
+        {
+            continue;
+        }
+        gizmos.linestrip(
+            nav.path_m
+                .iter()
+                .map(|p| rm_simulator_render::flu_position([p[0], p[1], p[2] + 0.05])),
+            if matches!(
+                nav.phase,
+                rm_simulator_server::navigation::Phase::Blocked
+                    | rm_simulator_server::navigation::Phase::Unreachable
+            ) {
+                Color::srgb(1., 0.5, 0.1)
+            } else {
+                Color::srgb(0.2, 1., 0.7)
+            },
         );
     }
 }

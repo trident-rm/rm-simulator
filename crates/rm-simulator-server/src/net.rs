@@ -1186,6 +1186,92 @@ mod tests {
     };
 
     #[test]
+    fn navigation_sentry_routes_team_intents_and_reports_paths_over_both_transports() {
+        let _serial = NATIVE_TEST.lock().unwrap_or_else(|p| p.into_inner());
+        use crate::map_interaction::{Interaction, Recipient, Target};
+        use crate::navigation::Phase;
+        for remote in [false, true] {
+            let (server, handle) = host();
+            let mut client = if remote {
+                Client::connect_udp(
+                    server.local_addr(),
+                    "navigator",
+                    Some(Team::Red),
+                    Role::Pilot,
+                )
+                .unwrap()
+            } else {
+                server
+                    .connect_owner(
+                        "navigator",
+                        Team::Red,
+                        Role::Pilot,
+                        Robot::default(),
+                        [9., 0., 1.],
+                        0.,
+                    )
+                    .unwrap()
+            };
+            handle
+                .apply(&Command::SpawnSentry {
+                    team: Team::Red,
+                    position_m: [-2., -2., 1.],
+                    yaw_deg: 0.,
+                })
+                .unwrap();
+            let id = handle.state().unwrap().navigation[0].chassis;
+            assert!(
+                handle
+                    .apply(&Command::SpawnSentry {
+                        team: Team::Red,
+                        position_m: [-3., -2., 1.],
+                        yaw_deg: 0.
+                    })
+                    .is_err()
+            );
+            client
+                .send_confirmed(Command::MapInteraction(Interaction {
+                    recipient: Recipient::Sentry,
+                    target: Target::Position([2., -2.]),
+                    kind: crate::protocol::MapMarkerKind::Attack,
+                    key_code: 0,
+                }))
+                .unwrap();
+            wait_until("Sentry intent admission", || {
+                client.poll();
+                client.commands_confirmed()
+            });
+            assert_eq!(client.take_map_interactions()[0].recipients, vec![id]);
+            wait_until("Sentry worker plan", || {
+                handle.state().unwrap().navigation[0].phase == Phase::Following
+            });
+            client.confirm().unwrap();
+            wait_until("path checkpoint", || {
+                client.poll();
+                client.commands_confirmed()
+            });
+            let path = &client.state().unwrap().navigation[0];
+            assert_eq!(path.chassis, id);
+            assert!(path.path_m.len() >= 2);
+            assert!(path.valid());
+            handle.apply(&Command::Step { ticks: 2000 }).unwrap();
+            client.confirm().unwrap();
+            wait_until("arrival checkpoint", || {
+                client.poll();
+                client.commands_confirmed()
+            });
+            let state = client.state().unwrap();
+            assert_eq!(state.navigation[0].phase, Phase::Arrived);
+            let body = state.field.chassis.iter().find(|c| c.id == id).unwrap();
+            assert!(
+                (body.pose.translation_m[0] - 2.).hypot(body.pose.translation_m[1] + 2.) < 0.22
+            );
+            assert_eq!(state.field.shots_fired, 0);
+            handle.apply(&Command::RemoveBot { chassis: id }).unwrap();
+            assert!(handle.state().unwrap().navigation.is_empty());
+        }
+    }
+    #[test]
     fn map_intents_roundtrip_over_loopback_and_native_udp_without_actuation() {
         let _serial = NATIVE_TEST.lock().unwrap_or_else(|p| p.into_inner());
         use crate::map_interaction::{Interaction, Recipient, Target};

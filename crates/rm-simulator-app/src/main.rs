@@ -245,6 +245,7 @@ fn main() -> AppExit {
                 hud::click_map.before(mouse_capture),
                 hud::sync_map_interaction.after(hud::click_map),
                 hud::update_map,
+                hud::navigation_paths,
                 network_hud::update,
                 hud::update_panel_rows,
             )

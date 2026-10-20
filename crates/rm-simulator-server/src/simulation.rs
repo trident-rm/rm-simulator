@@ -104,6 +104,8 @@ impl TickSchedule {
 pub struct SimulationState {
     /// Chassis ids of the training bots, ascending.
     pub bots: Vec<u32>,
+    /// Host controller diagnostics and paths; not additional physical rule state.
+    pub navigation: Vec<crate::navigation::View>,
     /// Host publication identity; zero for an unpublished operator capture.
     pub snapshot_id: u64,
     /// Counter bumped on every pause transition. Inputs and shots stamped with
@@ -151,6 +153,7 @@ pub struct FireRecord {
 /// [`advance`](Simulation::advance) and [`step`](Simulation::step), and only in
 /// whole fixed 128 Hz ticks.
 pub struct Simulation {
+    navigation: Option<crate::navigation::Service>,
     #[cfg(feature = "season-2027")]
     assembly: Option<crate::assembly::Service>,
     roster_season: rm_simulator_world::season::Season,
@@ -238,6 +241,7 @@ impl Simulation {
     /// and no prediction scene is advertised.
     pub fn new(field: Field, paused: bool) -> Self {
         Self {
+            navigation: None,
             #[cfg(feature = "season-2027")]
             assembly: None,
             roster_season: rm_simulator_world::season::Season::Rm2026,
@@ -264,6 +268,100 @@ impl Simulation {
             pilot_spawns: Default::default(),
             fire_records: VecDeque::new(),
         }
+    }
+    /// Poll the bounded worker without advancing the world, including while paused.
+    pub(crate) fn poll_navigation(&mut self) {
+        if let Some(nav) = &mut self.navigation {
+            nav.poll(&self.field);
+        }
+    }
+    pub(crate) fn accept_navigation_intent(&mut self, event: &crate::map_interaction::Event) {
+        if let crate::map_interaction::Target::Position(position_m) = event.interaction.target {
+            for &id in &event.recipients {
+                if let Some(nav) = &mut self.navigation
+                    && nav.owns(id)
+                {
+                    let _ = nav.goal(id, position_m);
+                    let _ = self.field.command_chassis(id, Default::default());
+                }
+            }
+        }
+    }
+    fn spawn_sentry(
+        &mut self,
+        team: Team,
+        position_m: [f64; 3],
+        yaw_deg: f64,
+    ) -> Result<(), String> {
+        crate::protocol::check_map_marker(
+            crate::protocol::MapMarkerKind::Alert,
+            [position_m[0], position_m[1]],
+        )?;
+        if !position_m.into_iter().chain([yaw_deg]).all(f64::is_finite) {
+            return Err("Sentry placement must be finite".into());
+        }
+        if self.robots.iter().any(|(&id, &robot)| {
+            robot == Robot::Sentry && self.field.chassis_team(id) == Some(team)
+        }) {
+            return Err("team already has a Sentry".into());
+        }
+        if self.bots.len() >= 32 {
+            return Err("at most 32 training bots".into());
+        }
+        self.validate_roster(Robot::Sentry)?;
+        let config = self.robot_config(Robot::Sentry, crate::protocol::Chassis::Auto)?;
+        let placement = self
+            .spawner
+            .as_ref()
+            .ok_or("this field offers no chassis")?
+            .at_with(config, RobotKind::Sentry, team, position_m, yaw_deg);
+        let support = self
+            .spawner
+            .as_ref()
+            .and_then(|s| s.terrain.as_ref())
+            .and_then(|t| {
+                t.ground
+                    .ground_height_below(position_m[0], position_m[1], position_m[2])
+            })
+            .unwrap_or(self.field.floor_height_m());
+        if !self.field.static_geometry_snapshot().cylinder_sweep_clear(
+            [position_m[0], position_m[1], support + 0.40],
+            [position_m[0], position_m[1], support + 0.40],
+            crate::navigation::RADIUS_M,
+            0.24,
+        ) || self
+            .field
+            .chassis_positions_m()
+            .any(|p| (p[0] - position_m[0]).hypot(p[1] - position_m[1]) < 0.9)
+        {
+            return Err("Sentry spawn is obstructed or occupied".into());
+        }
+        if self.navigation.is_none() {
+            let ground = self
+                .spawner
+                .as_ref()
+                .and_then(|s| s.terrain.as_ref())
+                .map(|t| t.ground.clone());
+            let bounds = self
+                .spawner
+                .as_ref()
+                .and_then(|s| s.terrain.as_ref())
+                .and_then(|t| t.projectile_bounds_m)
+                .map_or([-14.5, -8., 14.5, 8.], |b| {
+                    [b[0][0], b[0][1], b[1][0], b[1][1]]
+                });
+            self.navigation = Some(crate::navigation::Service::new(
+                self.field.fixed_geometry_snapshot(),
+                ground,
+                self.field.floor_height_m(),
+                bounds,
+                crate::navigation::road_exclusions(self.roster_season),
+            )?);
+        }
+        let id = self.place(placement, Some(Robot::Sentry))?;
+        self.bots.insert(id);
+        self.navigation.as_mut().unwrap().add(id);
+        Ok(())
     }
     fn spawn_bot(&mut self, team: Team, spin_rad_s: f64) -> Result<(), String> {
         if !spin_rad_s.is_finite() || spin_rad_s.abs() > 20. {
@@ -707,6 +805,9 @@ impl Simulation {
         self.fired_ns.remove(&id);
         self.pilot_weapons.remove(&id);
         self.robots.remove(&id);
+        if let Some(nav) = &mut self.navigation {
+            nav.remove(id);
+        }
         self.field.remove_chassis(id).map_err(|e| e.to_string())
     }
     /// A copy of the accepted shot journal, oldest first, at most 256 records.
@@ -723,6 +824,10 @@ impl Simulation {
     pub fn state(&self) -> SimulationState {
         SimulationState {
             bots: self.bots.iter().copied().collect(),
+            navigation: self
+                .navigation
+                .as_ref()
+                .map_or_else(Vec::new, |nav| nav.views()),
             snapshot_id: 0,
             input_epoch: self.input_epoch,
             shot_results: self
@@ -774,7 +879,11 @@ impl Simulation {
         if let Some(service) = &mut self.assembly {
             service.poll(&mut self.field);
         }
-        if self.input_streams.is_empty() && self.pending_shots.is_empty() {
+        self.poll_navigation();
+        if self.navigation.is_none()
+            && self.input_streams.is_empty()
+            && self.pending_shots.is_empty()
+        {
             return self.field.step_with_hits(ticks, observer);
         }
         for _ in 0..ticks {
@@ -791,6 +900,9 @@ impl Simulation {
                 if let Some(neutral) = stream.advance(now) {
                     let _ = self.field.command_chassis(*id, neutral);
                 }
+            }
+            if let Some(nav) = &mut self.navigation {
+                nav.tick(&mut self.field);
             }
             self.execute_pending_shots();
             self.field.step_with_hits(1, observer)?;
@@ -1084,6 +1196,38 @@ impl Simulation {
         observer: &mut dyn FnMut(&rm_simulator_world::ArmorHit),
     ) -> Result<(), String> {
         match command {
+            Command::SpawnSentry {
+                team,
+                position_m,
+                yaw_deg,
+            } => self.spawn_sentry(*team, *position_m, *yaw_deg),
+            Command::NavigateSentry {
+                chassis,
+                position_m,
+            } => {
+                crate::protocol::check_map_marker(
+                    crate::protocol::MapMarkerKind::Alert,
+                    *position_m,
+                )?;
+                self.navigation
+                    .as_mut()
+                    .ok_or("no navigation Sentry")?
+                    .goal(*chassis, *position_m)?;
+                self.field
+                    .command_chassis(*chassis, Default::default())
+                    .map_err(|e| e.to_string())
+            }
+            Command::StopSentry { chassis } => {
+                let nav = self
+                    .navigation
+                    .as_mut()
+                    .filter(|n| n.owns(*chassis))
+                    .ok_or("not a navigation Sentry")?;
+                nav.stop(*chassis);
+                self.field
+                    .command_chassis(*chassis, Default::default())
+                    .map_err(|e| e.to_string())
+            }
             Command::MapInteraction(_) => {
                 Err("map interactions require a connected team pilot".into())
             }
@@ -1227,6 +1371,9 @@ impl Simulation {
                     .ok_or("this field offers no chassis")?;
                 let placement = spawner.at(team, *position_m, *yaw_deg);
                 self.input_streams.remove(chassis);
+                if let Some(nav) = &mut self.navigation {
+                    nav.stop(*chassis);
+                }
                 self.field
                     .place_chassis(*chassis, placement.spawn)
                     .map_err(|e| e.to_string())

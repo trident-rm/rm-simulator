@@ -30,6 +30,7 @@ pub mod layout;
 mod lifecycle;
 pub mod map_interaction;
 pub mod math;
+pub mod navigation;
 pub mod net;
 pub mod protocol;
 pub mod rmuc_2027;

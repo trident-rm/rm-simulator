@@ -749,6 +749,7 @@ fn state(world: &mut World) -> Value {
         "arms":session.snapshot.restore.as_ref().map(|r| &r.arms),
         "energy_units":session.snapshot.restore.as_ref().map(|r| &r.energy_units),
         "map_interactions":session.map_interactions,
+        "navigation":session.navigation,
         "pending_map":world.get_resource::<crate::hud::HudState>().and_then(|ui|ui.pending_map),
         "armor_hits":session.snapshot.hits,
         "projectiles":session.snapshot.projectiles,

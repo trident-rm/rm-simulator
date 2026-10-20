@@ -497,6 +497,7 @@ fn run_arm(
             next_publish += publish_clock.advance(publish_period_ns).max(1);
             let mut state = SimulationState {
                 bots: Vec::new(),
+                navigation: Vec::new(),
                 snapshot_id: tick,
                 input_epoch: 0,
                 shot_results: Vec::new(),

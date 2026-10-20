@@ -99,6 +99,8 @@ pub struct Session {
     pub snapshot: FieldSnapshot,
     /// Newest 64 accepted team map intents; no autonomous execution is inferred.
     pub map_interactions: std::collections::VecDeque<rm_simulator_server::map_interaction::Event>,
+    /// Most recent host-owned navigation paths and status, for passive overlays.
+    pub navigation: Vec<rm_simulator_server::navigation::View>,
     /// Interpolation delay for peer motion, automatic or set by hand in the
     /// F3 menu.
     pub remote_buffer: crate::interpolation::Buffer,
@@ -503,6 +505,7 @@ impl Session {
             singleplayer: args.connect.is_none() && args.host.listen.is_none(),
             snapshot,
             map_interactions: Default::default(),
+            navigation: state.navigation.clone(),
             paused,
             team,
             client_id,
@@ -728,7 +731,14 @@ impl Session {
                 self.map_interactions.pop_front();
             }
             if event.client_id == self.client.welcome().client_id {
-                self.notices.push_back((self.snapshot.time_ns, format!("Map intent #{} accepted ({} deployed receiver(s)); no autonomous execution", event.id, event.recipients.len())));
+                self.notices.push_back((
+                    self.snapshot.time_ns,
+                    format!(
+                        "Map intent #{} accepted ({} deployed receiver(s))",
+                        event.id,
+                        event.recipients.len()
+                    ),
+                ));
             }
             self.map_interactions.push_back(event);
         }
@@ -800,6 +810,25 @@ impl Session {
                 self.paused = state.paused;
             }
             self.prediction.context_input_epoch = state.input_epoch;
+            for nav in &state.navigation {
+                if state
+                    .field
+                    .chassis
+                    .iter()
+                    .any(|c| c.id == nav.chassis && c.team == self.team)
+                    && !self.navigation.iter().any(|old| {
+                        old.chassis == nav.chassis
+                            && old.phase == nav.phase
+                            && old.message == nav.message
+                    })
+                {
+                    self.notices.push_back((
+                        state.field.time_ns,
+                        format!("Sentry #{}: {:?} — {}", nav.chassis, nav.phase, nav.message),
+                    ));
+                }
+            }
+            self.navigation = state.navigation.clone();
             self.snapshot = state.field;
         }
         self.poll_owner_anchor();

@@ -241,6 +241,15 @@ not a refactor.
   bounded numbered events; this is not a Sentry controller or world rule state.
   Transport-clock rate limits continue while paused. World FLU/chassis identities
   require explicit conversion before a future referee UART/MQTT bridge.
+  `server::navigation` optionally consumes location intents for operator-spawned
+  Sentries only: one bounded map/search worker, ordinary chassis commands on
+  explicit ticks, path diagnostics through snapshots, and braking on obstruction
+  or stalled progress, with at most three recovery replans per goal. Inflated
+  terrain checks, explicit 2027 Road exclusions and bounded per-Sentry learned
+  failure regions constrain navigation only. Manual Sentry pilots remain manual;
+  no automatic combat.
+  The CAD bake is an in-memory host cache; controller state is external input,
+  not a second physical world or an addition to the referee rules.
 - **Renderer is passive.** It applies caller-owned `SceneState` and never
   advances rules or reads the physics/world crates. Chassis ingestion resolves
   caller state into pose and light components before applying changes. Keep

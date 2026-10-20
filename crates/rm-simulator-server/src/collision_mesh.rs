@@ -123,7 +123,7 @@ fn triangle_height(
 /// Immutable ground geometry with a bounding-volume tree over triangle footprints.
 /// Build after placement and assembly. Exposing only shared mesh access prevents
 /// edits from invalidating the index; physics still receives the original triangles.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct GroundMesh {
     mesh: CollisionMesh,
     root: GroundNode,
@@ -131,7 +131,7 @@ pub struct GroundMesh {
 
 /// Bounding-volume tree over triangle footprints: a leaf holds up to eight
 /// indices, a branch splits the rest along the wider floor axis.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum GroundNode {
     Leaf {
         bounds: [f64; 4],

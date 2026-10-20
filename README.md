@@ -535,7 +535,10 @@ does not acknowledge its execution by the host.
 | 50 | Adds the Drone's Aerial Safety Rope to the chassis configuration and the `MapMarker` command. |
 | 52 | Adds connected deployment and the reliable ownership receipt. |
 
-The current protocol version is 73, defined by `PROTOCOL_VERSION` in
+The console can spawn a host-owned navigation Sentry and send it map destinations.
+See [navigation commands and prototype limits](docs/app-options.md#console-spawned-navigation-sentry).
+
+The current protocol version is 74, defined by `PROTOCOL_VERSION` in
 `crates/rm-simulator-server/src/protocol.rs`. GNS sends redundant controls
 and retried shot intents unreliably; scheduling receipts and terminal shot results
 remain reliable. There is no shooter-view fire path or input-acknowledgement
