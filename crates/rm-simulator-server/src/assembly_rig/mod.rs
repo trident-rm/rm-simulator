@@ -878,6 +878,10 @@ impl Rig {
         candidate.initial_engineer_body = body;
         candidate.fixed_chassis = true;
         candidate.live_parking = true;
+        // Preloaded fixture uses the source-validated 20 mm pad offset, fixed
+        // before the payload appears or any setup search begins.
+        candidate.grasp_axial_m = 0.02;
+        candidate.grasp_roll_rad = 3. * std::f64::consts::FRAC_PI_4;
         *self = candidate;
         Ok(())
     }
@@ -903,6 +907,54 @@ impl Rig {
     }
     pub(crate) fn set_live_entry(&mut self, arm: &rm_simulator_world::assembly::ArmState) {
         self.live_entry = Some((arm.joints_rad, arm.jaws_rad));
+    }
+    // Operator-loaded payload fixture: its grasp is fixed before any planning.
+    // This does not seat the Unit on the Core or advance insertion evidence.
+    pub(crate) fn carried_start(&self, arm: &rm_simulator_world::assembly::ArmState) -> Self {
+        let mut carried = self.clone();
+        carried.engineer_q = arm.joints_rad;
+        carried.jaw_angles = arm.jaws_rad.to_vec();
+        carried.tool = compose(
+            carried.engineer_body,
+            carried.config.engineer.tool_pose(carried.engineer_q),
+        );
+        carried.unit_pose = carried.tool_unit_pose();
+        carried.gripped = true;
+        carried.grip_requested = true;
+        carried
+    }
+    pub(crate) fn adopt_runtime_pose(
+        &mut self,
+        pose: &rm_simulator_world::assembly::RigPose,
+    ) -> Result<(), &'static str> {
+        self.engineer_body = pose.engineer_body;
+        self.engineer_q = pose.engineer_q;
+        self.core_q = pose.core_q;
+        self.jaw_angles = pose.jaw_angles.to_vec();
+        self.lift_m = pose.lift_m;
+        self.p_rad = pose.p_rad;
+        self.q_rad = pose.q_rad;
+        self.gripped = pose.gripped;
+        self.unit_pose = pose.unit_pose;
+        self.tool = compose(
+            self.engineer_body,
+            self.config.engineer.tool_pose(self.engineer_q),
+        );
+        self.live_entry = None;
+        if !self.gripped {
+            return Err("post-flip planning requires the existing rigid grasp");
+        }
+        let expected = self.tool_unit_pose();
+        if position(expected).distance(position(self.unit_pose)) > 1e-4
+            || quaternion(expected)
+                .normalize()
+                .angle_between(quaternion(self.unit_pose).normalize())
+                > 1e-4
+        {
+            return Err("actual attached Unit disagrees with the retained grasp");
+        }
+        self.unit_pose = expected;
+        Ok(())
     }
     pub(crate) fn prepare_live_gripper(&mut self) -> Result<(), &'static str> {
         self.engineer_q = solve_initial(

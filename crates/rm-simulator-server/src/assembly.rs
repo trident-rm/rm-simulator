@@ -14,6 +14,7 @@ use std::{
 
 struct Solved {
     start: Rig,
+    end: Rig,
     frames: Vec<rm_simulator_world::assembly::Frame>,
 }
 struct Job {
@@ -21,6 +22,7 @@ struct Job {
     signal: Arc<Signal>,
     receiver: mpsc::Receiver<Result<Solved, String>>,
     begin: Option<mpsc::SyncSender<()>>,
+    twist: bool,
 }
 pub(crate) struct Service {
     template: Rig,
@@ -28,6 +30,7 @@ pub(crate) struct Service {
     generation: u64,
     jobs: BTreeMap<u32, Job>,
     warm: Option<Rig>,
+    resumes: BTreeMap<u32, (u64, Rig)>,
 }
 fn compose(a: Pose, b: Pose) -> Pose {
     crate::assembly_rig::compose(a, b)
@@ -86,6 +89,7 @@ impl Service {
             generation: 0,
             jobs: Default::default(),
             warm: None,
+            resumes: Default::default(),
         })
     }
     pub(crate) fn start(
@@ -136,19 +140,18 @@ impl Service {
             difficulty,
             phase: Phase::Positioning,
             positioning: None,
+            twist_target_rad: None,
             checks: 0,
             budget: 5000,
             message: "Moving Tech Core into position".into(),
             world_from_rig: origin,
             model: rig.runtime_model(),
-            pose: rig.runtime_pose(),
+            pose: rig.carried_start(arm).runtime_pose(),
             frames: Vec::new(),
             cursor: 0,
             started_ns: now_ns,
             attempt: rm_simulator_world::gameplay::rmuc_2027::manipulation::Attempt::new(
-                difficulty,
-                [std::f64::consts::PI / 6.; 2],
-                now_ns,
+                difficulty, [0.; 2], now_ns,
             )
             .map_err(str::to_string)?,
             awards_match,
@@ -162,7 +165,7 @@ impl Service {
         } else {
             run.pose.core_q = [0.; 6];
         }
-        run.pose.gripped = false;
+        run.pose.gripped = true;
         run.positioning = Some(rm_simulator_world::assembly::CorePositioning::new(
             &run.pose,
             target_core,
@@ -179,34 +182,7 @@ impl Service {
                 if begin_receiver.recv().is_err() {
                     return;
                 }
-                let result = rig
-                    .prepare_live_gripper()
-                    .map_err(str::to_string)
-                    .and_then(|()| {
-                        rig.plan_assembly_observed(
-                            difficulty,
-                            std::f64::consts::PI / 6.,
-                            5000,
-                            worker_signal.clone(),
-                        )
-                        .map_err(|f| f.reason)
-                    })
-                    .and_then(|(start, plan)| {
-                        if worker_signal.cancelled.load(Ordering::Relaxed) {
-                            return Err("Assembly cancelled".into());
-                        }
-                        let frames = start
-                            .runtime_limited_frames(&plan)
-                            .map_err(str::to_string)?;
-                        if frames.len() > 4096 {
-                            return Err(
-                                "Arm trajectory exceeds the 32-second playback capacity".into()
-                            );
-                        }
-                        let mut start = start;
-                        start.remember_runtime_plan(&plan);
-                        Ok(Solved { start, frames })
-                    });
+                let result = solve_segment(rig, difficulty, None, worker_signal);
                 let _ = sender.send(result);
             })
             .map_err(|e| e.to_string())?;
@@ -217,6 +193,7 @@ impl Service {
                 signal,
                 receiver,
                 begin: Some(begin),
+                twist: false,
             },
         );
         Ok(run)
@@ -236,16 +213,81 @@ impl Service {
                 ));
             }
         }
+        let waiting: Vec<_> = field
+            .assemblies()
+            .iter()
+            .filter(|r| r.phase == Phase::AwaitingTarget)
+            .cloned()
+            .collect();
+        for mut run in waiting {
+            let Some((generation, mut rig)) = self.resumes.remove(&run.owner) else {
+                field.cancel_assembly(run.owner, "Missing post-flip planner context");
+                continue;
+            };
+            if generation != run.generation {
+                field.cancel_assembly(run.owner, "Stale post-flip planner context");
+                continue;
+            }
+            if let Err(error) = rig.adopt_runtime_pose(&run.pose) {
+                field.cancel_assembly(run.owner, error);
+                continue;
+            }
+            let Some(target) = run.twist_target_rad else {
+                field.cancel_assembly(run.owner, "Q target not observed");
+                continue;
+            };
+            let signal = Arc::new(Signal::default());
+            let worker_signal = signal.clone();
+            let (sender, receiver) = mpsc::sync_channel(1);
+            let difficulty = run.difficulty;
+            let spawned = std::thread::Builder::new()
+                .name("assembly-twist-planner".into())
+                .spawn(move || {
+                    let result = solve_segment(rig, difficulty, Some(target), worker_signal);
+                    let _ = sender.send(result);
+                });
+            if let Err(error) = spawned {
+                field.cancel_assembly(run.owner, &error.to_string());
+                continue;
+            }
+            self.jobs.insert(
+                run.owner,
+                Job {
+                    generation,
+                    signal,
+                    receiver,
+                    begin: None,
+                    twist: true,
+                },
+            );
+            run.phase = Phase::SolvingTwist;
+            run.checks = 0;
+            run.message = format!(
+                "Solving observed Q target {:.1} degrees",
+                target.to_degrees()
+            );
+            let _ = field.set_assembly(run);
+        }
+        self.resumes.retain(|owner, (generation, _)| {
+            field
+                .assemblies()
+                .iter()
+                .any(|r| r.owner == *owner && r.generation == *generation && r.active())
+        });
         let ids: Vec<_> = self.jobs.keys().copied().collect();
         for owner in ids {
             let job = self.jobs.get_mut(&owner).unwrap();
+            let twist = job.twist;
             let current = field
                 .assemblies()
                 .iter()
                 .find(|r| {
                     r.owner == owner
                         && r.generation == job.generation
-                        && matches!(r.phase, Phase::Positioning | Phase::Solving)
+                        && matches!(
+                            r.phase,
+                            Phase::Positioning | Phase::Solving | Phase::SolvingTwist
+                        )
                 })
                 .cloned();
             if current.is_none() {
@@ -294,13 +336,31 @@ impl Service {
                                 );
                                 continue;
                             }
+                            if twist
+                                && ((0..6).any(|i| {
+                                    (start_pose.engineer_q[i] - run.pose.engineer_q[i]).abs() > 1e-6
+                                }) || (start_pose.p_rad - run.pose.p_rad).abs() > 1e-6
+                                    || (start_pose.q_rad - run.pose.q_rad).abs() > 1e-6)
+                            {
+                                field.cancel_assembly(
+                                    owner,
+                                    "Twist plan changed its actual start state",
+                                );
+                                continue;
+                            }
                             run.pose = start_pose;
                             run.pose.engineer_q = arm.joints_rad;
                             run.pose.jaw_angles = arm.jaws_rad;
                             run.frames = solved.frames;
+                            run.cursor = 0;
                             run.phase = Phase::Actuating;
                             run.message = "Actuating validated path".into();
-                            run.attempt=rm_simulator_world::gameplay::rmuc_2027::manipulation::Attempt::new(run.difficulty,[std::f64::consts::PI/6.;2],field.time_ns()).unwrap();
+                            if !twist {
+                                run.attempt=rm_simulator_world::gameplay::rmuc_2027::manipulation::Attempt::new(run.difficulty,[0.;2],field.time_ns()).unwrap();
+                                if run.difficulty == 3 {
+                                    self.resumes.insert(owner, (run.generation, solved.end));
+                                }
+                            }
                             self.warm = Some(solved.start);
                             if let Err(error) = field.set_assembly(run) {
                                 field.cancel_assembly(owner, &error.to_string());
@@ -318,6 +378,39 @@ impl Service {
         }
     }
 }
+fn solve_segment(
+    mut rig: Rig,
+    difficulty: u8,
+    twist: Option<f64>,
+    signal: Arc<Signal>,
+) -> Result<Solved, String> {
+    if twist.is_none() {
+        rig.prepare_live_gripper().map_err(str::to_string)?;
+    }
+    let (mut start, plan) = rig
+        .plan_runtime_segment(difficulty, twist, 5000, signal.clone())
+        .map_err(|f| {
+            #[cfg(test)]
+            eprintln!(
+                "runtime planning failure: {}",
+                serde_json::to_string(&f).unwrap()
+            );
+            f.reason
+        })?;
+    if signal.cancelled.load(Ordering::Relaxed) {
+        return Err("Assembly cancelled".into());
+    }
+    let frames = start
+        .runtime_limited_frames(&plan)
+        .map_err(str::to_string)?;
+    if frames.len() > 4096 {
+        return Err("Arm trajectory exceeds the 32-second playback capacity".into());
+    }
+    let mut end = start.runtime_endpoint(&plan).map_err(str::to_string)?;
+    start.remember_runtime_plan(&plan);
+    end.reuse_runtime_hints(&start);
+    Ok(Solved { start, end, frames })
+}
 impl Drop for Service {
     fn drop(&mut self) {
         for job in self.jobs.values() {
@@ -330,6 +423,33 @@ impl Drop for Service {
 mod tests {
     use super::*;
     use rm_simulator_world::Team;
+    #[test]
+    #[ignore = "requires generated source CAD and assembly terrain"]
+    fn source_preloaded_unit_starts_clear_at_actual_wrist() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../local-assets/assembly-cad");
+        let service = Service::load(
+            &root.join("package"),
+            &root.join("area"),
+            None,
+            -1.640343675041,
+        )
+        .unwrap();
+        let mut rig = service.template.clone();
+        rig.set_live_parking(Pose::yawed(
+            [1.278000049957, -0.547914948432, 0.383150523114],
+            195f64.to_radians(),
+        ))
+        .unwrap();
+        let arm = rm_simulator_world::assembly::ArmState::neutral(0, rig.runtime_model());
+        let carried = rig.carried_start(&arm);
+        assert!(
+            carried.collision_contacts().unwrap().is_empty(),
+            "loaded collisions: {:?}",
+            carried.collision_contacts().unwrap()
+        );
+        assert!(carried.runtime_pose().gripped);
+        assert_eq!(carried.runtime_pose().engineer_q, arm.joints_rad);
+    }
     #[test]
     #[ignore = "requires generated source CAD and assembly terrain"]
     fn source_live_manual_parking_all_levels() {
@@ -358,6 +478,12 @@ mod tests {
             .into_iter()
             .flat_map(|b| (1..=3).map(move |d| (b, d)))
         {
+            if std::env::var("RM_ASSEMBLY_TEST_LEVEL")
+                .ok()
+                .is_some_and(|s| s != difficulty.to_string())
+            {
+                continue;
+            }
             let config = rm_simulator_world::chassis::ChassisConfig::default();
             let mut field = rm_simulator_world::Field::new(&Default::default()).unwrap();
             let world_body = compose(service.origins[0], body);
@@ -386,6 +512,16 @@ mod tests {
                     .zip(world_body.translation_m)
                     .all(|(a, b)| (a - b).abs() < 1e-12)
             );
+            assert!(run.pose.gripped);
+            let mut carried = service.template.clone();
+            carried.set_live_parking(run.pose.engineer_body).unwrap();
+            let carried = carried.carried_start(&arm);
+            assert_eq!(run.pose.unit_pose, carried.runtime_pose().unit_pose);
+            let loaded_unit = run.pose.unit_pose;
+            assert_eq!(
+                run.attempt.cores[0].step,
+                rm_simulator_world::gameplay::rmuc_2027::manipulation::Step::Approach
+            );
             assert_eq!(run.phase, Phase::Positioning);
             assert_eq!(service.jobs[&id].signal.checks.load(Ordering::Relaxed), 0);
             assert!(matches!(
@@ -396,6 +532,8 @@ mod tests {
             for tick in 1..=duration / rm_simulator_world::tick_ns() {
                 run.advance(tick * rm_simulator_world::tick_ns());
             }
+            assert_eq!(run.pose.unit_pose, loaded_unit);
+            assert!(run.pose.gripped);
             assert_eq!(run.phase, Phase::Solving);
             service
                 .jobs
@@ -419,6 +557,27 @@ mod tests {
             run.pose.engineer_q = arm.joints_rad;
             run.pose.jaw_angles = arm.jaws_rad;
             run.frames = solved.frames;
+            assert!(run.frames.iter().all(|f| f.gripped));
+            for f in run.frames.iter().filter(|f| f.stage < 2) {
+                assert!(f.guide_m[0] >= 0.05 - 1e-6);
+                assert_eq!(&f.guide_m[1..], &[0.2, 0.6]);
+            }
+            for f in &run.frames {
+                let carried = solved.start.clone();
+                // Source replay and retiming must keep the payload rigid to the wrist.
+                let arm = rm_simulator_world::assembly::ArmState {
+                    joints_rad: f.joints_rad,
+                    ..arm.clone()
+                };
+                let expected = carried.carried_start(&arm).runtime_pose().unit_pose;
+                assert!(
+                    expected
+                        .translation_m
+                        .iter()
+                        .zip(f.unit.translation_m)
+                        .all(|(a, b)| (a - b).abs() < 2e-6)
+                );
+            }
             run.phase = Phase::Actuating;
             assert!(run.parking_matches(world_body));
             run.validate().unwrap();
@@ -462,8 +621,71 @@ mod tests {
                 let now = (i as u64 + 1) * rm_simulator_world::tick_ns();
                 run.advance(now);
                 restored.advance(now);
+                if run.frames[i].stage < 2 {
+                    assert!(
+                        run.attempt.cores[0]
+                            .milestones_ns
+                            .iter()
+                            .all(Option::is_none)
+                    );
+                }
             }
             assert_eq!(run, restored);
+            if difficulty == 3 {
+                assert_eq!(run.phase, Phase::AwaitingTarget);
+                let target = run.twist_target_rad.unwrap();
+                let mut endpoint = solved.end;
+                endpoint.adopt_runtime_pose(&run.pose).unwrap();
+                let twist_start = std::time::Instant::now();
+                let held = endpoint.runtime_pose();
+                let twist = match solve_segment(
+                    endpoint.clone(),
+                    difficulty,
+                    Some(target),
+                    Arc::new(Signal::default()),
+                ) {
+                    Ok(twist) => twist,
+                    Err(error) => {
+                        // An unknown target cannot be used to choose an earlier
+                        // grasp. A bounded late failure is a valid controller
+                        // outcome, never a completed assembly or a resample.
+                        assert_eq!(
+                            error,
+                            "No attached Q/rod continuation found within the local search budget"
+                        );
+                        assert_eq!(endpoint.runtime_pose(), held);
+                        assert_eq!(run.phase, Phase::AwaitingTarget);
+                        assert_eq!(run.twist_target_rad, Some(target));
+                        assert!(run.pose.gripped && !run.attempt.completed());
+                        eprintln!(
+                            "L3 revealed {:.2} degrees: bounded unresolved continuation after {:.3}s",
+                            target.to_degrees(),
+                            twist_start.elapsed().as_secs_f64()
+                        );
+                        service.warm = Some(solved.start);
+                        continue;
+                    }
+                };
+                run.pose = twist.start.runtime_pose();
+                run.frames = twist.frames;
+                run.cursor = 0;
+                run.phase = Phase::Actuating;
+                run.validate().unwrap();
+                restored = serde_json::from_slice(&serde_json::to_vec(&run).unwrap()).unwrap();
+                let base_now = run.attempt.now_ns;
+                for i in 0..run.frames.len() {
+                    let now = base_now + (i as u64 + 1) * rm_simulator_world::tick_ns();
+                    run.advance(now);
+                    restored.advance(now);
+                }
+                assert_eq!(run, restored);
+                eprintln!(
+                    "L3 revealed {:.2} degrees: twist {:.3}s, {} frames",
+                    target.to_degrees(),
+                    twist_start.elapsed().as_secs_f64(),
+                    run.frames.len()
+                );
+            }
             assert_eq!(
                 run.phase,
                 Phase::Completed,

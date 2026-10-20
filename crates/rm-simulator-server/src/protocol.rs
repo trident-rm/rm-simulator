@@ -107,7 +107,8 @@ use serde::{Deserialize, Serialize};
 /// Version 64 carries verified source serial joints, oriented collision envelopes and fitted optics.
 /// Version 66 adds persistent Heavy arm joints and bounded joint-rate playback.
 /// Version 67 carries the pre-planning Core positioning phase and its restorable motion.
-pub const PROTOCOL_VERSION: u32 = 67;
+/// Version 68 carries post-flip Q reveal and the separate attached twist search.
+pub const PROTOCOL_VERSION: u32 = 68;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///

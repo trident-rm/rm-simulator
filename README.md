@@ -224,9 +224,12 @@ deadline. That referee mode requires no manipulation. The source PIE Heavy also
 supports [in-game automatic L1–L3 assembly](docs/assembly-workbench.md#in-game-automatic-assembly):
 park manually, press J, and choose a level. The host solves asynchronously and
 first moves the Tech Core into position, then solves and plays the articulated
-sequence, with separate positioning, solving and actuation progress bars. The arm
-starts neutral, follows a checked approach from its current joints and holds its
-last pose when finished. T folds it for tunnels or returns it toward neutral;
+sequence, with separate positioning, solving and actuation progress bars.
+For L3, the final Q angle is revealed by the LEDs only after insertion, lift and
+flip; the arm holds its grasp while a second solve plans the observed twist. The arm
+starts neutral with an operator-preloaded Unit; it closes the jaws, carries the
+Unit through a collision-checked approach and inserts it before lifting or flipping.
+It holds its last pose when finished. T folds it for tunnels or returns it toward neutral;
 joint and jaw motion is limited to 1 rad/s.
 
 Native 2027 adaptive armor can be selected from the referee panel after ten enemy

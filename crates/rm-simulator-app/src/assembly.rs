@@ -239,13 +239,13 @@ fn update_panel(
     let (message, progress) = if let Some(r) = run {
         let progress = match r.phase {
             Phase::Positioning => r.positioning.as_ref().map_or(0., |p| p.progress() as f32),
-            Phase::Solving => r.checks as f32 / r.budget.max(1) as f32,
+            Phase::Solving | Phase::SolvingTwist => r.checks as f32 / r.budget.max(1) as f32,
             Phase::Actuating | Phase::Completed => r.cursor as f32 / r.frames.len().max(1) as f32,
             _ => 0.,
         };
         let label = if r.phase == Phase::Positioning {
             format!("Core positioning: {:.0}%", progress * 100.)
-        } else if r.phase == Phase::Solving {
+        } else if matches!(r.phase, Phase::Solving | Phase::SolvingTwist) {
             format!("Search budget: {} / {}", r.checks, r.budget)
         } else {
             format!("Actuation: {} / {} ticks", r.cursor, r.frames.len())

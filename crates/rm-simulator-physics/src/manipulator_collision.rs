@@ -6,7 +6,7 @@ use crate::{Pose, manipulator::rigid_pose};
 use rapier3d_f64::{
     math::Vector,
     parry::{
-        bounding_volume::BoundingVolume,
+        bounding_volume::{Aabb, BoundingVolume},
         query::{self, NonlinearRigidMotion},
     },
     prelude::SharedShape,
@@ -88,7 +88,15 @@ pub struct CollisionScene {
     // One exact endpoint result per pair: stationary fixture/terrain contacts
     // need not be recomputed for every moving arm sample. No nearby-pose reuse.
     contacts_cache: std::sync::Arc<std::sync::Mutex<BTreeMap<(usize, usize), PairContacts>>>,
+    // Two exact placed states per body retain both endpoints of short sweeps.
+    // Geometry belongs to this immutable scene; convex replacements reset it.
+    bounds_cache: std::sync::Arc<std::sync::Mutex<Vec<Vec<PlacedBounds>>>>,
     approximate: bool,
+}
+#[derive(Clone)]
+struct PlacedBounds {
+    pose: rapier3d_f64::math::Pose,
+    bounds: std::sync::Arc<[Aabb]>,
 }
 #[derive(Clone)]
 struct PairContacts {
@@ -292,6 +300,7 @@ impl CollisionScene {
             bodies,
             excluded,
             contacts_cache: Default::default(),
+            bounds_cache: Default::default(),
             approximate: false,
         })
     }
@@ -311,6 +320,7 @@ impl CollisionScene {
             }
         }
         scene.contacts_cache = Default::default();
+        scene.bounds_cache = Default::default();
         scene.approximate = scene.bodies.iter().any(|b| b.approximate);
         scene
     }
@@ -339,6 +349,37 @@ impl CollisionScene {
                 .iter()
                 .any(|[x, y]| (a.name == *x && b.name == *y) || (a.name == *y && b.name == *x))
     }
+    fn placed_bounds(
+        &self,
+        poses: &[rapier3d_f64::math::Pose],
+    ) -> Result<Vec<std::sync::Arc<[Aabb]>>, &'static str> {
+        let mut cache = self
+            .bounds_cache
+            .lock()
+            .map_err(|_| "collision bounds cache poisoned")?;
+        cache.resize_with(self.bodies.len(), Vec::new);
+        let mut result = Vec::with_capacity(self.bodies.len());
+        for ((body, pose), entries) in self.bodies.iter().zip(poses).zip(cache.iter_mut()) {
+            if let Some(entry) = entries.iter().find(|entry| entry.pose == *pose) {
+                result.push(entry.bounds.clone());
+                continue;
+            }
+            let bounds: std::sync::Arc<[Aabb]> = body
+                .shapes
+                .iter()
+                .map(|shape| shape.compute_aabb(pose))
+                .collect();
+            if entries.len() == 2 {
+                entries.remove(0);
+            }
+            entries.push(PlacedBounds {
+                pose: *pose,
+                bounds: bounds.clone(),
+            });
+            result.push(bounds);
+        }
+        Ok(result)
+    }
     /// Report solid penetrations exceeding a nonnegative tolerance in metres,
     /// and exact mesh/mesh surface intersections (no volume depth is inferred).
     /// Every body frame must be supplied, including stationary bodies. Query errors
@@ -353,12 +394,7 @@ impl CollisionScene {
             return Err("invalid collision tolerance");
         }
         let poses = self.poses(frames)?;
-        let bounds: Vec<Vec<_>> = self
-            .bodies
-            .iter()
-            .zip(&poses)
-            .map(|(body, pose)| body.shapes.iter().map(|s| s.compute_aabb(pose)).collect())
-            .collect();
+        let bounds = self.placed_bounds(&poses)?;
         let mut result = Vec::new();
         for (i, a) in self.bodies.iter().enumerate() {
             for (j, b) in self.bodies.iter().enumerate().skip(i + 1) {
@@ -496,6 +532,8 @@ impl CollisionScene {
             })
             .collect();
 
+        let before_bounds = self.placed_bounds(&before)?;
+        let after_bounds = self.placed_bounds(&after)?;
         let bounds: Vec<Vec<_>> = self
             .bodies
             .iter()
@@ -503,11 +541,11 @@ impl CollisionScene {
             .map(|(i, body)| {
                 body.shapes
                     .iter()
-                    .map(|shape| {
+                    .enumerate()
+                    .map(|(index, _)| {
                         // A point travels at most radius * angle under rotation.
-                        shape
-                            .compute_aabb(&before[i])
-                            .merged(&shape.compute_aabb(&after[i]))
+                        before_bounds[i][index]
+                            .merged(&after_bounds[i][index])
                             .loosened(body.radius_m * motions[i].angvel.length())
                     })
                     .collect()
@@ -614,6 +652,53 @@ mod tests {
     }
     fn frames(a: Pose, b: Pose) -> BTreeMap<String, Pose> {
         BTreeMap::from([("arm".into(), a), ("wall".into(), b)])
+    }
+    #[test]
+    fn placed_bounds_reuse_exact_endpoints_and_keep_decisions_unchanged() {
+        let cached = scene(vec![body("arm", [0.1; 3]), body("wall", [0.1; 3])]);
+        let mut reference = cached.clone();
+        reference.contacts_cache = Default::default();
+        reference.bounds_cache = Default::default();
+        let mut previous = frames(Pose::at([-0.4, 0., 0.]), Pose::default());
+        for i in 0..9 {
+            let next = frames(
+                Pose::yawed([-0.4 + i as f64 * 0.1, 0., 0.], i as f64 * 0.1),
+                Pose::default(),
+            );
+            reference.contacts_cache = Default::default();
+            reference.bounds_cache = Default::default();
+            assert_eq!(
+                cached.contacts(&next, &[], 0.0005).unwrap(),
+                reference.contacts(&next, &[], 0.0005).unwrap()
+            );
+            assert_eq!(
+                cached.check_motion(&previous, &next, &[], 0.0005).unwrap(),
+                reference
+                    .check_motion(&previous, &next, &[], 0.0005)
+                    .unwrap()
+            );
+            let poses = cached.poses(&next).unwrap();
+            let a = cached.placed_bounds(&poses).unwrap();
+            let b = cached.placed_bounds(&poses).unwrap();
+            assert!(a.iter().zip(&b).all(|(a, b)| std::sync::Arc::ptr_eq(a, b)));
+            assert!(
+                cached
+                    .bounds_cache
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|entries| entries.len() <= 2)
+            );
+            previous = next;
+        }
+        assert!(
+            cached
+                .convex_approximation(|_| true)
+                .bounds_cache
+                .lock()
+                .unwrap()
+                .is_empty()
+        );
     }
     #[test]
     fn solid_contacts_exclusions_and_missing_frames_fail_closed() {
@@ -775,6 +860,7 @@ mod tests {
         // Compare against an unpartitioned copy of exactly the same geometry.
         let mut reference = s.clone();
         reference.contacts_cache = Default::default();
+        reference.bounds_cache = Default::default();
         reference.bodies[1].shapes = vec![SharedShape::trimesh(points, triangles).unwrap()];
         reference.bodies[1].envelopes = reference.bodies[1].shapes.clone();
         for y in [0., 0.15, 0.3, 0.5, 0.95, 1.1] {

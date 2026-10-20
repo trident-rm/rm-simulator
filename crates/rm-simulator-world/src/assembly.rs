@@ -353,6 +353,10 @@ pub enum Phase {
     Positioning,
     /// A host worker is searching; the world clock is unaffected.
     Solving,
+    /// Insertion, lift and flip finished; the newly revealed LED target awaits planning.
+    AwaitingTarget,
+    /// Planning Q rotation from the actual attached post-flip pose.
+    SolvingTwist,
     /// A validated trajectory is being applied one frame per tick.
     Actuating,
     /// The manipulation evaluator accepted confirmation.
@@ -512,6 +516,9 @@ pub struct Run {
     pub phase: Phase,
     /// Persistent pre-planning Core motion, retained for progress and restore.
     pub positioning: Option<CorePositioning>,
+    /// Observed Q target, radians; absent until a level-three Unit is inserted,
+    /// lifted and fully flipped. No initial plan may consume this value.
+    pub twist_target_rad: Option<f64>,
     /// Guarded search queries consumed, not an estimate of solution completion.
     pub checks: u32,
     /// Maximum guarded search queries.
@@ -540,7 +547,11 @@ impl Run {
     pub fn active(&self) -> bool {
         matches!(
             self.phase,
-            Phase::Positioning | Phase::Solving | Phase::Actuating
+            Phase::Positioning
+                | Phase::Solving
+                | Phase::AwaitingTarget
+                | Phase::SolvingTwist
+                | Phase::Actuating
         )
     }
     /// Source rig Engineer body expressed in world FLU metres and wxyz.
@@ -571,7 +582,11 @@ impl Run {
             if (self.phase == Phase::Positioning && motion.elapsed_ns == motion.duration_ns)
                 || (matches!(
                     self.phase,
-                    Phase::Solving | Phase::Actuating | Phase::Completed
+                    Phase::Solving
+                        | Phase::AwaitingTarget
+                        | Phase::SolvingTwist
+                        | Phase::Actuating
+                        | Phase::Completed
                 ) && motion.elapsed_ns != motion.duration_ns)
             {
                 return Err("Core positioning phase disagrees with motion progress");
@@ -598,7 +613,22 @@ impl Run {
         {
             return Err("invalid assembly pose");
         }
+        if self
+            .twist_target_rad
+            .is_some_and(|q| !q.is_finite() || q.abs() > std::f64::consts::FRAC_PI_2)
+            || (self.difficulty == 3
+                && self.twist_target_rad.is_none()
+                && self.attempt.target_q_rad != [0.; 2])
+            || (matches!(self.phase, Phase::AwaitingTarget | Phase::SolvingTwist)
+                && (self.difficulty != 3 || self.twist_target_rad.is_none()))
+        {
+            return Err("invalid or premature Q target");
+        }
         for f in &self.frames {
+            if self.difficulty == 3 && self.twist_target_rad.is_none() && f.stage >= 5 {
+                return Err("unobserved Q target cannot enter a planned alignment");
+            }
+
             if !valid(f.unit)
                 || !f
                     .joints_rad
@@ -669,6 +699,17 @@ impl Run {
                 self.message = reason.into();
                 return;
             }
+            if self.difficulty == 3 && self.twist_target_rad.is_none() {
+                // Zero is a placeholder, not a revealed target. Until the LED
+                // is available it cannot satisfy alignment or its dwell.
+                use crate::gameplay::rmuc_2027::manipulation::Step;
+                let core = &mut self.attempt.cores[0];
+                if matches!(core.step, Step::Align | Step::Ready) {
+                    core.step = Step::Align;
+                    core.aligned_since_ns = None;
+                    core.milestones_ns[2] = None;
+                }
+            }
             self.cursor += 1;
             self.message = [
                 "Approaching",
@@ -682,6 +723,25 @@ impl Run {
                 .into();
         }
         if self.cursor as usize == self.frames.len() {
+            if self.difficulty == 3 && self.twist_target_rad.is_none() {
+                use crate::gameplay::rmuc_2027::{assembly_pose::Targets, manipulation::Step};
+                let core = &self.attempt.cores[0];
+                if core.step != Step::Align
+                    || (self.pose.p_rad - std::f64::consts::FRAC_PI_2).abs() > 1e-5
+                {
+                    self.phase = Phase::Failed;
+                    self.message = "Prefix ended before insertion, lift and full P flip".into();
+                    return;
+                }
+                // Sample only at the physical reveal event. Uniform Table 5-10
+                // range is a reproducible simulator policy, not an official PDF.
+                let q = Targets::sample(0, self.generation, 3).unwrap().q_rad[0];
+                self.twist_target_rad = Some(q);
+                self.attempt.target_q_rad = [q, 0.];
+                self.phase = Phase::AwaitingTarget;
+                self.message = format!("LED revealed Q target {:.1} degrees", q.to_degrees());
+                return;
+            }
             match self.attempt.confirm(0) {
                 Ok(()) => {
                     self.phase = Phase::Completed;
@@ -969,6 +1029,7 @@ mod tests {
             difficulty: 1,
             phase: Phase::Actuating,
             positioning: None,
+            twist_target_rad: None,
             checks: 1,
             budget: 10,
             message: String::new(),
@@ -984,6 +1045,75 @@ mod tests {
         run.frames[0].guide_m[0] = 0.05;
         (field, run)
     }
+    #[test]
+    fn final_q_is_revealed_only_after_the_prefix_and_holds_during_replanning() {
+        use crate::gameplay::rmuc_2027::manipulation::{Attempt, Step};
+        let (mut field, mut run) = fixture();
+        run.difficulty = 3;
+        run.attempt = Attempt::new(3, [0.; 2], 0).unwrap();
+        let mut frames = vec![];
+        for (stage, guide, angles) in [
+            (0, [0.05, 0.2, 0.6], [0.; 3]),
+            (2, [-0.05, 0.2, 0.6], [0.; 3]),
+            (3, [-0.05, 0.2, 0.7], [0.; 3]),
+            (4, [-0.05, 0.2, 0.7], [std::f64::consts::FRAC_PI_2, 0., 0.]),
+        ] {
+            let mut f = run.frames[0].clone();
+            f.stage = stage;
+            f.guide_m = guide;
+            f.angles_rad = angles;
+            frames.push(f);
+        }
+        run.frames = frames;
+        run.validate().unwrap();
+        for tick in 1..4 {
+            run.advance(tick * crate::tick_ns());
+            assert_eq!(run.twist_target_rad, None);
+            assert_eq!(run.attempt.target_q_rad, [0.; 2]);
+            assert!(!run.attempt.completed());
+        }
+        field.set_assembly(run.clone()).unwrap();
+        let restored_field =
+            Field::restore(&field.snapshot(), &StaticGeometry::default(), 0.).unwrap();
+        let mut restored = restored_field.assemblies()[0].clone();
+        run.advance(4 * crate::tick_ns());
+        restored.advance(4 * crate::tick_ns());
+        assert_eq!(run, restored);
+        assert_eq!(run.phase, Phase::AwaitingTarget);
+        let q = run.twist_target_rad.unwrap();
+        assert!(q.abs() <= std::f64::consts::FRAC_PI_2);
+        assert_eq!(run.attempt.cores[0].step, Step::Align);
+        assert_eq!(run.attempt.cores[0].aligned_since_ns, None);
+        assert_eq!(run.attempt.target_q_rad[0], q);
+        let held = run.pose.clone();
+        run.phase = Phase::SolvingTwist;
+        for tick in 5..128 {
+            run.advance(tick * crate::tick_ns());
+        }
+        assert_eq!(run.pose, held);
+        assert!(run.pose.gripped);
+        run.phase = Phase::Actuating;
+        run.cursor = 0;
+        let mut aligned = run.frames.last().unwrap().clone();
+        aligned.stage = 5;
+        aligned.angles_rad[1] = q;
+        run.frames = vec![aligned; 64];
+        run.validate().unwrap();
+        for tick in 128..192 {
+            run.advance(tick * crate::tick_ns());
+        }
+        assert_eq!(run.phase, Phase::Completed);
+    }
+    #[test]
+    fn unknown_target_cannot_have_an_alignment_trajectory() {
+        let (_, mut run) = fixture();
+        run.difficulty = 3;
+        run.frames[0].stage = 5;
+        assert!(run.validate().is_err());
+        run.phase = Phase::AwaitingTarget;
+        assert!(run.validate().is_err());
+    }
+
     #[test]
     fn core_moves_before_solving_and_restores_mid_motion() {
         let (mut field, mut run) = fixture();

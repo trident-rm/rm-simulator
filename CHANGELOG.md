@@ -4,6 +4,15 @@
 
 ## Unreleased
 
+- Start automatic assembly with the Unit carried by the actual gripper; preserve
+  its grasp and check payload collisions through approach before insertion.
+
+- Make live L3 assembly observe the final Q target only after insertion, lift
+  and flip, then solve an attached Q/rod continuation from the held pose.
+  Preserve attachment, milestones and target across checkpoints (protocol 68).
+- Reuse exact placed collision bounds with a bounded cache, following the
+  immutable-geometry approach investigated in arm-eval.
+
 - Correct Tech Core angular lights to include imported CAD ancestor transforms.
   Add bounded, restorable Core positioning before robot path solving; show
   positioning progress and flowing lights, freeze the positioned Core branch,

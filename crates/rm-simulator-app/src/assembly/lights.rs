@@ -280,6 +280,7 @@ fn indication(phase: Phase, step: Step, difficulty: u8) -> Indication {
         Phase::Failed | Phase::Cancelled => Indication::Idle,
         Phase::Positioning => Indication::Positioning,
         Phase::Solving => Indication::Ready,
+        Phase::AwaitingTarget | Phase::SolvingTwist => Indication::Aligning,
         Phase::Completed => Indication::Confirmed,
         Phase::Actuating => match step {
             Step::Approach | Step::Insert => Indication::Ready,
@@ -380,7 +381,11 @@ fn update(
         let core = &run.attempt.cores[0];
         let mut state = indication(run.phase, core.step, run.difficulty);
         // Between finishing P and starting Q, Table 5-13's step-4 indication.
+        if state == Indication::Aligning && run.twist_target_rad.is_none() {
+            state = Indication::Raised;
+        }
         if state == Indication::Aligning
+            && run.phase == Phase::Actuating
             && run
                 .frames
                 .get(run.cursor.saturating_sub(1) as usize)

@@ -67,13 +67,31 @@ def run(client, args):
         assert job['phase'] == 'Actuating', job['message']
         if args.screenshots:
             client.call({'type': 'screenshot', 'path': str((args.out / f'l{level}-ready.png').resolve())})
-        while job['phase'] == 'Actuating':
-            state = client.call({'type': 'step', 'ticks': min(64, len(job['frames']) - job['cursor'])})
-            job = next(r for r in state['assemblies'] if r['owner'] == chassis)
+        twist_started=None
+        held=None
+        while job['phase'] in ['Actuating','AwaitingTarget','SolvingTwist']:
+            if job['phase']=='Actuating':
+                if held is not None:
+                    actual=next(a for a in state['arms'] if a['owner']==chassis)
+                    assert actual['joints_rad']==held['joints_rad'],'twist solve moved the arm'
+                    held=None
+                state=client.call({'type':'step','ticks':min(64,len(job['frames'])-job['cursor'])})
+            else:
+                assert job['twist_target_rad'] is not None
+                assert abs(job['pose']['p_rad']-math.pi/2)<1e-5
+                assert job['pose']['gripped']
+                if twist_started is None:twist_started=time.monotonic()
+                if time.monotonic()-twist_started>90:raise RuntimeError('twist planning timed out')
+                actual=next(a for a in state['arms'] if a['owner']==chassis)
+                if held is None:held=actual
+                assert actual['joints_rad']==held['joints_rad']
+                time.sleep(.05)
+                state=client.call({'type':'state'})
+            job=next(r for r in state['assemblies'] if r['owner']==chassis)
         assert job['phase'] == 'Completed', job['message']
         if args.screenshots:
             client.call({'type': 'screenshot', 'path': str((args.out / f'l{level}-complete.png').resolve())})
-        result = {'level': level, 'positioning_ticks': positioning_ticks, 'solving_s': elapsed, 'frames': len(job['frames']), 'checks': job['checks'], 'phase': job['phase']}
+        result = {'level': level, 'positioning_ticks': positioning_ticks, 'solving_s': elapsed, 'frames': len(job['frames']), 'checks': job['checks'], 'phase': job['phase'], 'revealed_target_rad':job['twist_target_rad']}
         results.append(result)
         print(json.dumps(result), flush=True)
     client.call({'type': 'world', 'command': {'AutoAssembly': {'chassis': chassis, 'difficulty': 3}}})

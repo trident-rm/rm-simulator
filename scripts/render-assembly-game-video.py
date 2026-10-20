@@ -106,30 +106,50 @@ def capture(client, args, temporary):
     actual = next(a for a in state['arms'] if a['owner'] == owner)
     assert actual['joints_rad'] == initial_arm['joints_rad'], 'solve changed actual joints'
     assert actual['jaws_rad'] == initial_arm['jaws_rad'], 'solve changed actual jaws'
-    previous_q, previous_jaws = actual['joints_rad'], actual['jaws_rad']
-    max_joint_rad_s = max_jaw_rad_s = 0.
-    for sample in job['frames']:
-        max_joint_rad_s = max(max_joint_rad_s, *(abs(a-b)*128 for a,b in zip(sample['joints_rad'], previous_q)))
-        max_jaw_rad_s = max(max_jaw_rad_s, *(abs(a-b)*128 for a,b in zip(sample['jaws_rad'], previous_jaws)))
-        previous_q, previous_jaws = sample['joints_rad'], sample['jaws_rad']
-    assert max_joint_rad_s <= 1.0003 and max_jaw_rad_s <= 1.0003
-    total = len(job['frames'])
-    print(f'L{args.level} solved in {solve_s:.3f}s; capturing {total} ticks', flush=True)
-    for frame in range(math.ceil(total * args.fps / 128)):
-        target = min(total, round(frame * 128 / args.fps))
-        if target > job['cursor']:
-            state = client.call({'type': 'step', 'ticks': target - job['cursor']})
-            job = next(r for r in state['assemblies'] if r['owner'] == owner)
-        if job['phase'] != 'Actuating':
-            raise RuntimeError(job['message'])
-        screenshot(1 / args.fps)
-        audit.append({'phase': job['phase'], 'cursor': job['cursor'], 'stage': job['message']})
-        if frame % args.fps == 0:
-            print(f'Captured {frame / args.fps:.0f}s / {total / 128:.2f}s', flush=True)
-    state = client.call({'type': 'step', 'ticks': total - job['cursor']})
-    job = next(r for r in state['assemblies'] if r['owner'] == owner)
-    if job['phase'] != 'Completed':
-        raise RuntimeError(job['message'])
+    max_joint_rad_s=max_jaw_rad_s=0.
+    segment_ticks=[]
+    twist_solving_s=0.
+    while True:
+        actual=next(a for a in state['arms'] if a['owner']==owner)
+        previous_q,previous_jaws=actual['joints_rad'],actual['jaws_rad']
+        for sample in job['frames']:
+            max_joint_rad_s=max(max_joint_rad_s,*(abs(a-b)*128 for a,b in zip(sample['joints_rad'],previous_q)))
+            max_jaw_rad_s=max(max_jaw_rad_s,*(abs(a-b)*128 for a,b in zip(sample['jaws_rad'],previous_jaws)))
+            previous_q,previous_jaws=sample['joints_rad'],sample['jaws_rad']
+        assert max_joint_rad_s<=1.0003 and max_jaw_rad_s<=1.0003
+        total=len(job['frames']);segment_ticks.append(total)
+        print(f'Segment {len(segment_ticks)}: capturing {total} ticks',flush=True)
+        for frame in range(math.ceil(total*args.fps/128)):
+            target=min(total,round(frame*128/args.fps))
+            if target>job['cursor']:
+                state=client.call({'type':'step','ticks':target-job['cursor']})
+                job=next(r for r in state['assemblies'] if r['owner']==owner)
+            if job['phase']!='Actuating':raise RuntimeError(job['message'])
+            screenshot(1/args.fps)
+            audit.append({'phase':job['phase'],'cursor':job['cursor'],'stage':job['message'],'target_q_rad':job['twist_target_rad']})
+        state=client.call({'type':'step','ticks':total-job['cursor']})
+        job=next(r for r in state['assemblies'] if r['owner']==owner)
+        if job['phase']=='Completed':break
+        if job['phase'] not in ['AwaitingTarget','SolvingTwist']:raise RuntimeError(job['message'])
+        assert job['twist_target_rad'] is not None
+        assert abs(job['pose']['p_rad']-math.pi/2)<1e-5 and job['pose']['gripped']
+        held=next(a for a in state['arms'] if a['owner']==owner)
+        started=time.monotonic();previous=None
+        while job['phase'] in ['AwaitingTarget','SolvingTwist']:
+            actual=next(a for a in state['arms'] if a['owner']==owner)
+            assert actual['joints_rad']==held['joints_rad'] and actual['jaws_rad']==held['jaws_rad']
+            now=time.monotonic()
+            if now-started>90:raise RuntimeError('twist planning timed out')
+            if previous is not None:segments[previous[0]][1]=max(1/args.fps,now-previous[1])
+            index=screenshot(1/args.fps);previous=index,now
+            audit.append({'phase':job['phase'],'checks':job['checks'],'target_q_rad':job['twist_target_rad']})
+            state=client.call({'type':'state'});job=next(r for r in state['assemblies'] if r['owner']==owner)
+        twist_solving_s+=time.monotonic()-started
+        if previous is not None:segments[previous[0]][1]=max(1/args.fps,time.monotonic()-previous[1])
+        if job['phase']!='Actuating':raise RuntimeError(job['message'])
+        actual=next(a for a in state['arms'] if a['owner']==owner)
+        assert actual['joints_rad']==held['joints_rad']
+    total=sum(segment_ticks)
     end_joints = next(a for a in state['arms'] if a['owner'] == owner)['joints_rad']
     state = client.call({'type': 'step', 'ticks': 128})
     assert next(a for a in state['arms'] if a['owner'] == owner)['joints_rad'] == end_joints
@@ -149,7 +169,7 @@ def capture(client, args, temporary):
         'max_joint_rad_s': max_joint_rad_s, 'max_jaw_rad_s': max_jaw_rad_s,
         'initial_joints_rad': initial_arm['joints_rad'], 'held_final_joints_rad': end_joints,
         'solving_elapsed_s': solve_s,
-        'actuation_ticks': total, 'tick_hz': 128, 'fps': args.fps, 'completed': True,
+        'actuation_ticks': total, 'segment_ticks':segment_ticks, 'twist_solving_s':twist_solving_s, 'revealed_target_rad':job['twist_target_rad'], 'tick_hz': 128, 'fps': args.fps, 'completed': True,
         'duration_s': sum(duration for _, duration in segments), 'samples': audit,
     }, indent=2) + '\n')
     print(args.out, flush=True)

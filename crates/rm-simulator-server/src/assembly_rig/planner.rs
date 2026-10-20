@@ -745,6 +745,303 @@ impl Rig {
             Some(signal),
         )
     }
+    pub(crate) fn plan_runtime_segment(
+        &self,
+        difficulty: u8,
+        twist: Option<f64>,
+        budget: usize,
+        signal: std::sync::Arc<Signal>,
+    ) -> Result<(Rig, Plan), Failure> {
+        let result = if let Some(target) = twist {
+            self.plan_attached_twist(target, budget, signal)
+        } else {
+            // Initial Q is physically zero. The future LED target does not
+            // exist yet and cannot influence grasp, branch or route selection.
+            self.plan_assembly_observed(difficulty, 0., budget, signal)
+        };
+        result.map(|(start, mut plan)| {
+            if difficulty == 3 && twist.is_none() {
+                plan.frames.retain(|f| f.stage != Stage::Settle);
+            }
+            (start, plan)
+        })
+    }
+    fn plan_attached_twist(
+        &self,
+        target: f64,
+        budget: usize,
+        signal: std::sync::Arc<Signal>,
+    ) -> Result<(Rig, Plan), Failure> {
+        let mut search = Search {
+            stats: Statistics::default(),
+            budget,
+            ik_table: IkTable::default(),
+            transitions: TransitionTable::default(),
+            last: None,
+            last_checked: None,
+            stage: Stage::Align,
+            signal: Some(signal),
+        };
+        if !target.is_finite()
+            || target.abs() > std::f64::consts::FRAC_PI_2
+            || !self.gripped
+            || (self.p_rad - std::f64::consts::FRAC_PI_2).abs() > 1e-5
+        {
+            return Err(
+                search.failure("Attached Q planning requires a revealed target and full P flip")
+            );
+        }
+        let dt = rm_simulator_physics::tick_ns() as f64 * 1e-9;
+        let half = std::f64::consts::FRAC_PI_2;
+        // Once attached, stay on the actual branch. Short local continuation
+        // avoids a global grasp/parking/end-branch search that cannot be applied
+        // without releasing the Unit. Rod clocking may lead or accompany Q.
+        for (pre, delta) in [
+            (0., 0.),
+            (0., half),
+            (0., -half),
+            (half / 2., 0.),
+            (-half / 2., 0.),
+            (half, 0.),
+            (-half, 0.),
+            (0., half / 2.),
+            (0., -half / 2.),
+            (half, -half),
+            (-half, half),
+            (half, half),
+            (-half, -half),
+            (0., 2. * half),
+            (0., -2. * half),
+        ] {
+            let mut state = self.clone();
+            let mut frames = Vec::new();
+            let mut clear = true;
+            search.stats.candidates += 1;
+            for (q0, q1, s0, s1) in [
+                (
+                    self.q_rad,
+                    self.q_rad,
+                    self.rod_spin_rad,
+                    self.rod_spin_rad + pre,
+                ),
+                (
+                    self.q_rad,
+                    target,
+                    self.rod_spin_rad + pre,
+                    self.rod_spin_rad + pre + delta,
+                ),
+            ] {
+                let count =
+                    (((q1 - q0).abs().max((s1 - s0).abs())) / (super::RATE * dt)).ceil() as usize;
+                for i in 1..=count {
+                    let t = i as f64 / count as f64;
+                    let angles = [self.p_rad, q0 + (q1 - q0) * t, 0.];
+                    let logical = [-0.05, 0.2, 0.6 + self.lift_m];
+                    let mut next = state.clone();
+                    next.rod_spin_rad = s0 + (s1 - s0) * t;
+                    if let Err(error) = next.solve_tool(logical, angles) {
+                        search.stats.ik_rejections += 1;
+                        *search
+                            .stats
+                            .rejected_stages
+                            .entry("Align IK".into())
+                            .or_default() += 1;
+                        if search.stats.collision_checks >= budget {
+                            return Err(search.failure(error));
+                        }
+                        clear = false;
+                        break;
+                    }
+                    match search.check(&state, next) {
+                        Ok(next) => state = next,
+                        Err(error) if search.stats.collision_checks >= budget => {
+                            return Err(search.failure(error));
+                        }
+                        Err(_) => {
+                            clear = false;
+                            break;
+                        }
+                    }
+                    frames.push(search.frame(&state, logical, angles, Stage::Align, false));
+                }
+                if !clear {
+                    break;
+                }
+            }
+            if clear {
+                let logical = [-0.05, 0.2, 0.6 + self.lift_m];
+                let angles = [self.p_rad, target, 0.];
+                for _ in 0..64 {
+                    frames.push(search.frame(&state, logical, angles, Stage::Settle, false));
+                }
+                search.stats.frames = frames.len();
+                return Ok((
+                    self.clone(),
+                    Plan {
+                        frames,
+                        statistics: search.stats,
+                    },
+                ));
+            }
+        }
+        // A sparse Q/clock graph can route around obstacles that no straight
+        // pre-twist/profile reaches. These are search waypoints only; every
+        // selected route is then re-solved and checked at execution cadence.
+        struct Node {
+            rig: Rig,
+            q: usize,
+            clock: i32,
+            parent: usize,
+        }
+        let q_steps = ((target - self.q_rad).abs() / 5f64.to_radians())
+            .ceil()
+            .max(1.) as usize;
+        let logical = [-0.05, 0.2, 0.6 + self.lift_m];
+        let mut nodes = vec![Node {
+            rig: self.clone(),
+            q: 0,
+            clock: 0,
+            parent: 0,
+        }];
+        let mut open = vec![0usize];
+        let mut cells: BTreeMap<(usize, i32), Vec<[f64; 6]>> = BTreeMap::new();
+        cells.insert((0, 0), vec![self.engineer_q]);
+        while !open.is_empty() && nodes.len() < 384 && search.stats.collision_checks < budget {
+            let at = open
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, n)| {
+                    (q_steps - nodes[**n].q) * 100 + nodes[**n].clock.unsigned_abs() as usize
+                })
+                .unwrap()
+                .0;
+            let index = open.swap_remove(at);
+            let node = &nodes[index];
+            if node.q == q_steps {
+                let mut path = vec![index];
+                let mut k = index;
+                while k != 0 {
+                    k = nodes[k].parent;
+                    path.push(k);
+                }
+                path.reverse();
+                let mut state = self.clone();
+                let mut frames = vec![];
+                let mut clear = true;
+                for edge in path.windows(2) {
+                    let a = &nodes[edge[0]];
+                    let b = &nodes[edge[1]];
+                    let q0 = self.q_rad + (target - self.q_rad) * a.q as f64 / q_steps as f64;
+                    let q1 = self.q_rad + (target - self.q_rad) * b.q as f64 / q_steps as f64;
+                    let s0 = self.rod_spin_rad + a.clock as f64 * 15f64.to_radians();
+                    let s1 = self.rod_spin_rad + b.clock as f64 * 15f64.to_radians();
+                    let n = ((q1 - q0).abs().max((s1 - s0).abs()) / (super::RATE * dt))
+                        .ceil()
+                        .max(1.) as usize;
+                    for i in 1..=n {
+                        let t = i as f64 / n as f64;
+                        let angles = [self.p_rad, q0 + (q1 - q0) * t, 0.];
+                        let mut next = state.clone();
+                        next.rod_spin_rad = s0 + (s1 - s0) * t;
+                        if next.solve_tool(logical, angles).is_err() {
+                            clear = false;
+                            break;
+                        }
+                        match search.check(&state, next) {
+                            Ok(next) => state = next,
+                            Err(_) => {
+                                clear = false;
+                                break;
+                            }
+                        }
+                        frames.push(search.frame(&state, logical, angles, Stage::Align, false));
+                    }
+                    if !clear {
+                        break;
+                    }
+                }
+                if clear {
+                    for _ in 0..64 {
+                        frames.push(search.frame(
+                            &state,
+                            logical,
+                            [self.p_rad, target, 0.],
+                            Stage::Settle,
+                            false,
+                        ));
+                    }
+                    search.stats.frames = frames.len();
+                    return Ok((
+                        self.clone(),
+                        Plan {
+                            frames,
+                            statistics: search.stats,
+                        },
+                    ));
+                }
+                continue;
+            }
+            let q = node.q as i32;
+            let clock = node.clock;
+            let from = node.rig.clone();
+            for (next_q, next_clock) in [
+                (q + 1, clock),
+                (q + 1, clock + 1),
+                (q + 1, clock - 1),
+                (q, clock + 1),
+                (q, clock - 1),
+                (q - 1, clock),
+            ] {
+                if !(0..=q_steps as i32).contains(&next_q) || !(-12..=12).contains(&next_clock) {
+                    continue;
+                }
+                let key = (next_q as usize, next_clock);
+                if cells.get(&key).is_some_and(|branches| branches.len() >= 3) {
+                    continue;
+                }
+                let mut next = from.clone();
+                next.rod_spin_rad = self.rod_spin_rad + next_clock as f64 * 15f64.to_radians();
+                let angles = [
+                    self.p_rad,
+                    self.q_rad + (target - self.q_rad) * next_q as f64 / q_steps as f64,
+                    0.,
+                ];
+                if next.solve_tool(logical, angles).is_err() {
+                    continue;
+                }
+                if cells.get(&key).is_some_and(|branches| {
+                    branches
+                        .iter()
+                        .any(|q| (0..6).all(|j| (q[j] - next.engineer_q[j]).abs() < 0.1))
+                }) {
+                    continue;
+                }
+                let Ok(next) = search.check(&from, next) else {
+                    continue;
+                };
+                cells.entry(key).or_default().push(next.engineer_q);
+                let id = nodes.len();
+                nodes.push(Node {
+                    rig: next,
+                    q: key.0,
+                    clock: next_clock,
+                    parent: index,
+                });
+                open.push(id);
+                if search.stats.collision_checks >= budget {
+                    break;
+                }
+            }
+        }
+        Err(search.failure("No attached Q/rod continuation found within the local search budget"))
+    }
+    pub(crate) fn runtime_endpoint(&self, plan: &Plan) -> Result<Rig, &'static str> {
+        let mut end = self.clone();
+        for frame in &plan.frames {
+            end.follow_plan(frame)?;
+        }
+        Ok(end)
+    }
     #[allow(clippy::too_many_arguments)]
     fn plan_assembly_inner(
         &self,
@@ -890,6 +1187,13 @@ impl Rig {
                     }
                 }
             }
+        }
+        if self.live_entry.is_some() {
+            // A preloaded Unit cannot be re-clocked or shifted in the closed
+            // gripper by setup search. Those are offline fixture freedoms only.
+            setups.retain(|r| {
+                r.grasp_roll_rad == self.grasp_roll_rad && r.grasp_axial_m == self.grasp_axial_m
+            });
         }
         if !prepare && !self.gripped {
             setups.clear();
@@ -1386,7 +1690,8 @@ fn route_order(setup: usize, route: usize, linear: usize, total: usize) -> (bool
     (nonlinear, (ordinal as u64).wrapping_mul(0x9e3779b97f4a7c15))
 }
 // Escape the narrow grasp neighbourhood in Cartesian space before asking
-// a global joint sampler to choose directions. The payload stays parked.
+// a global joint sampler to choose directions. A held payload follows the wrist;
+// an ungripped offline fixture stays parked.
 fn free_retreat(
     original: &Rig,
     logical: [f64; 3],
@@ -1394,12 +1699,23 @@ fn free_retreat(
     search: &mut Search,
 ) -> Result<(Rig, Vec<Frame>), &'static str> {
     let rotation = quaternion(original.tool);
-    for direction in [
-        -(rotation * glam::DVec3::X),
-        rotation * glam::DVec3::Z,
-        glam::DVec3::Z,
-        rotation * glam::DVec3::X,
-    ] {
+    let directions = if original.gripped {
+        // Back out along the bore before trying sideways clearance with a load.
+        [
+            rotation * glam::DVec3::Z,
+            glam::DVec3::Z,
+            -(rotation * glam::DVec3::X),
+            rotation * glam::DVec3::X,
+        ]
+    } else {
+        [
+            -(rotation * glam::DVec3::X),
+            rotation * glam::DVec3::Z,
+            glam::DVec3::Z,
+            rotation * glam::DVec3::X,
+        ]
+    };
+    for direction in directions {
         let mut state = original.clone();
         let mut frames = vec![];
         let mut clear = true;
@@ -1435,6 +1751,76 @@ fn free_retreat(
     }
     Ok((original.clone(), vec![]))
 }
+// Prefer a loaded Cartesian clearance route over a broad six-joint search.
+// Every accepted edge still passes the ordinary articulated swept guard.
+fn carried_clearance_path(
+    original: &Rig,
+    goal: &Rig,
+    search: &mut Search,
+) -> Result<Option<Vec<[f64; 6]>>, &'static str> {
+    for height_m in [0.08, 0.16, 0.24, 0.] {
+        let mut state = original.clone();
+        let mut path = vec![state.engineer_q];
+        let waypoints = if height_m == 0. {
+            vec![goal.tool]
+        } else {
+            vec![
+                pose(
+                    position(original.tool) + glam::DVec3::Z * height_m,
+                    quaternion(original.tool),
+                ),
+                pose(
+                    position(goal.tool) + glam::DVec3::Z * height_m,
+                    quaternion(goal.tool),
+                ),
+                goal.tool,
+            ]
+        };
+        let mut clear = true;
+        for target in waypoints {
+            let from = state.tool;
+            let count = (position(from).distance(position(target)) / 0.015)
+                .max(quaternion(from).angle_between(quaternion(target)) / 0.06)
+                .ceil()
+                .max(1.) as usize;
+            for i in 1..=count {
+                let t = i as f64 / count as f64;
+                let tool = pose(
+                    position(from).lerp(position(target), t),
+                    quaternion(from).slerp(quaternion(target), t),
+                );
+                let Ok(q) = state.config.engineer.solve(
+                    compose(inverse(state.engineer_body), tool),
+                    state.engineer_q,
+                ) else {
+                    clear = false;
+                    break;
+                };
+                match search.check(&state, at(state.clone(), q)) {
+                    Ok(next) => {
+                        state = next;
+                        path.push(q);
+                    }
+                    Err(e) if search.stats.collision_checks >= search.budget => return Err(e),
+                    Err(_) => {
+                        clear = false;
+                        break;
+                    }
+                }
+            }
+            if !clear {
+                break;
+            }
+        }
+        // Cartesian continuation can reach another IK branch. Only a matching
+        // endpoint can join the already validated insertion/flip suffix.
+        if clear && (0..6).all(|i| (state.engineer_q[i] - goal.engineer_q[i]).abs() < 1e-4) {
+            path.push(goal.engineer_q);
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
 #[allow(clippy::too_many_arguments)]
 fn build(
     current: &Rig,
@@ -1459,11 +1845,30 @@ fn build(
     if let Some((q, jaws)) = entry {
         state = at(state, q);
         state.jaw_angles = jaws.to_vec();
-        state.gripped = false;
-        state.grip_requested = false;
+        state.gripped = true;
+        state.grip_requested = true;
+        state.unit_pose = state.tool_unit_pose();
     }
     let start = state.clone();
+    let carried_entry = entry.is_some();
     let mut frames = vec![];
+    if carried_entry {
+        search.stage = Stage::Grasp;
+        for _ in 0..128 {
+            if state
+                .jaw_angles
+                .iter()
+                .zip(&state.config.engineer_jaws)
+                .all(|(a, j)| (a - j.closed_rad).abs() < 1e-10)
+            {
+                break;
+            }
+            let mut next = state.clone();
+            next.advance_gripper(true, dt);
+            state = search.check(&state, next)?;
+            frames.push(search.frame(&state, logical, angles, Stage::Grasp, true));
+        }
+    }
     if (!prepare || entry.is_some()) && !state.gripped {
         search.stage = Stage::Approach;
         for _ in 0..64 {
@@ -1487,7 +1892,7 @@ fn build(
             .fold(0., f64::max)
             > 1e-6
     {
-        if state.gripped {
+        if state.gripped && !carried_entry {
             return Err("cannot change grasp branch with a carried or seated unit");
         }
         search.stage = Stage::Approach;
@@ -1495,45 +1900,60 @@ fn build(
         state = retreated;
         frames.extend(retreat_frames);
         let mut grasp = root.clone();
-        grasp.gripped = false;
-        grasp.grip_requested = false;
+        grasp.gripped = carried_entry;
+        grasp.grip_requested = carried_entry;
         grasp.jaw_angles = state.jaw_angles.clone();
-        grasp.unit_pose = state.unit_pose;
+        grasp.unit_pose = if carried_entry {
+            grasp.tool_unit_pose()
+        } else {
+            state.unit_pose
+        };
         let (pregrasp, arrival) = free_retreat(&grasp, logical, angles, search)?;
         let mut approach_joints = vec![grasp.engineer_q];
         approach_joints.extend(arrival.iter().map(|f| f.q));
         let model = state.clone();
-        let path = joint_path(
-            model.config.engineer.axes.map(|a| a.range_rad),
-            model.engineer_q,
-            pregrasp.engineer_q,
-            JointSearch {
-                samples: 128,
-                ..Default::default()
-            },
-            |a, b| {
-                // Long RRT shortcuts still use the same small articulated
-                // intervals as execution, rather than exhausting one guard call.
-                let n = ((0..6).map(|i| (b[i] - a[i]).abs()).fold(0., f64::max) / 0.1)
-                    .ceil()
-                    .max(1.) as usize;
-                let mut previous = at(model.clone(), a);
-                for i in 1..=n {
-                    let t = i as f64 / n as f64;
-                    let next = at(
-                        model.clone(),
-                        std::array::from_fn(|j| a[j] + (b[j] - a[j]) * t),
-                    );
-                    match search.check(&previous, next) {
-                        Ok(accepted) => previous = accepted,
-                        Err("motion blocked by collision") => return Ok(false),
-                        Err(_) => return Err(PlanError::CollisionQuery),
+        let cartesian = if carried_entry {
+            carried_clearance_path(&model, &pregrasp, search)?
+        } else {
+            None
+        };
+        let path = if let Some(path) = cartesian {
+            path
+        } else {
+            joint_path(
+                model.config.engineer.axes.map(|a| a.range_rad),
+                model.engineer_q,
+                pregrasp.engineer_q,
+                JointSearch {
+                    // Try other endpoint branches before spending the entire
+                    // global budget on a trapped loaded-arm connection.
+                    samples: if carried_entry { 16 } else { 128 },
+                    ..Default::default()
+                },
+                |a, b| {
+                    // Long RRT shortcuts still use the same small articulated
+                    // intervals as execution, rather than exhausting one guard call.
+                    let n = ((0..6).map(|i| (b[i] - a[i]).abs()).fold(0., f64::max) / 0.1)
+                        .ceil()
+                        .max(1.) as usize;
+                    let mut previous = at(model.clone(), a);
+                    for i in 1..=n {
+                        let t = i as f64 / n as f64;
+                        let next = at(
+                            model.clone(),
+                            std::array::from_fn(|j| a[j] + (b[j] - a[j]) * t),
+                        );
+                        match search.check(&previous, next) {
+                            Ok(accepted) => previous = accepted,
+                            Err("motion blocked by collision") => return Ok(false),
+                            Err(_) => return Err(PlanError::CollisionQuery),
+                        }
                     }
-                }
-                Ok(true)
-            },
-        )
-        .map_err(|_| "free approach joint search exhausted or obstructed")?;
+                    Ok(true)
+                },
+            )
+            .map_err(|_| "free approach joint search exhausted or obstructed")?
+        };
         for pair in path.windows(2) {
             let n = ((0..6)
                 .map(|i| (pair[1][i] - pair[0][i]).abs())
@@ -1609,9 +2029,13 @@ impl Rig {
             joints_rad: self.engineer_q,
             jaws_rad: [self.jaw_angles[0], self.jaw_angles[1]],
             unit: self.unit_pose,
-            guide_m: [0.09, 0.2, 0.6],
-            angles_rad: [0.; 3],
-            gripped: false,
+            guide_m: if self.gripped && self.live_entry.is_none() {
+                [-0.05, 0.2, 0.6 + self.lift_m]
+            } else {
+                [0.09, 0.2, 0.6]
+            },
+            angles_rad: [self.p_rad, self.q_rad, 0.],
+            gripped: self.gripped,
             stage: 0,
         };
         let dt = rm_simulator_physics::tick_ns() as f64 * 1e-9;
@@ -1642,7 +2066,13 @@ impl Rig {
                 frame.angles_rad =
                     std::array::from_fn(|j| mix(previous.angles_rad[j], next.angles_rad[j]));
                 let q = quaternion(previous.unit).slerp(quaternion(next.unit), t);
-                frame.unit = pose(position(previous.unit).lerp(position(next.unit), t), q);
+                frame.unit = if previous.gripped && next.gripped {
+                    // Retiming must retain the rigid grasp even between source
+                    // samples: interpolating payload poses separately drifts.
+                    at(self.clone(), frame.joints_rad).tool_unit_pose()
+                } else {
+                    pose(position(previous.unit).lerp(position(next.unit), t), q)
+                };
                 frame.unit.translation_m =
                     frame.unit.translation_m.map(|v| (v * 1e6).round() / 1e6);
                 frame.unit.rotation_wxyz =
@@ -1686,6 +2116,42 @@ impl Rig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn preloaded_payload_retiming_preserves_the_actual_grasp() {
+        let mut rig = super::super::tests::mechanism_fixture();
+        rig.config.engineer_jaws = (0..2)
+            .map(|i| Jaw {
+                name: format!("jaw-{i}"),
+                origin_m: [0.; 3],
+                axis: [0., 0., 1.],
+                open_rad: 0.,
+                closed_rad: 0.2,
+            })
+            .collect();
+        let mut arm = rm_simulator_world::assembly::ArmState::neutral(1, rig.runtime_model());
+        arm.jaws_rad = [0.2; 2];
+        rig.set_live_entry(&arm);
+        let carried = rig.carried_start(&arm);
+        assert_eq!(carried.engineer_q, arm.joints_rad);
+        assert!(carried.gripped);
+        let mut goal = arm.joints_rad;
+        goal[0] += 0.7;
+        let next = at(carried.clone(), goal);
+        let frame = sample_frame(&next, [0.09, 0.2, 0.6], [0.; 3], Stage::Approach, true);
+        let plan = Plan {
+            frames: vec![frame],
+            statistics: Statistics::default(),
+        };
+        let samples = carried.runtime_limited_frames(&plan).unwrap();
+        assert!(samples.len() > 1);
+        for f in samples {
+            assert!(f.gripped);
+            assert_eq!(f.guide_m, [0.09, 0.2, 0.6]);
+            let expected = at(carried.clone(), f.joints_rad).tool_unit_pose();
+            assert!(position(expected).distance(position(f.unit)) < 2e-6);
+            assert!(quaternion(expected).angle_between(quaternion(f.unit).normalize()) < 2e-6);
+        }
+    }
     #[test]
     #[ignore = "requires source CAD and a completed recording"]
     fn audit_recorded_source_contacts() {

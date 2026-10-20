@@ -350,7 +350,11 @@ phase first moves the Core from its previous joint/lift/P/Q state (the source
 CAD rest state on first use) into its selected pose with flowing radial lights.
 Only arrival releases the robot planner; ready-to-insert lights remain active
 while that planner searches. The selected Core positioning branch stays fixed.
-The native 45-second attempt begins at arrival. Confirmed indication is shown after acceptance; physical
+The native 45-second attempt begins at arrival. For live L3, the final
+Q target remains unavailable through insertion/lift/P flip. The world samples
+and reveals it only at the completed flip; target LEDs then guide a separate
+attached solve. The initial path never sees that target. Failed late planning
+does not resample it or retroactively change the grasp. Confirmed indication is shown after acceptance; physical
 Unit recovery motion remains unimplemented. These effects currently apply to
 the articulated source Core loaded for a live assembly, not the untouched
 static arena Core or the standalone workbench renderer.

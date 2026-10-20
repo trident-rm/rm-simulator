@@ -1222,10 +1222,11 @@ Solving holds the current joints, plans a collision-checked approach from them,
 and retimes the trajectory to preserve every waypoint within those limits.
 Completion and cancellation hold the last joint pose; they never reset the arm.
 
-This first version prepares a stationary Unit near the selected grasp and selects
-a Core branch; pickup from storage is not implemented. It uses the canonical
-frozen Core pose and a 30° Q target. The same source-preserving arm,
-Core and Unit meshes animate through grasp, insertion, lift, P flip and Q alignment.
+This version starts with an operator-loaded Unit at the actual gripper; pickup
+from storage is not implemented. The grasp remains fixed through the loaded
+approach and insertion. It uses the canonical frozen Core pose, with the L3 Q
+target revealed only after the P flip. The same source-preserving arm, Core and
+Unit meshes animate through insertion, lift, P flip and Q alignment.
 It does not yet drive the live projectile collision envelopes of the six-axis
 arm or replace the field's static Core collision mesh; collision-aware planning
 uses its own verified source station terrain and selective convex arm envelopes.
@@ -1242,7 +1243,7 @@ trajectories, source calibration, evaluator state and cursor travel in checkpoin
 so prediction and restore use the same remaining motion. Motion samples use micrometre/microradian grids (0.1 micro-unit for quaternion
 components), far below the collision tolerance. Those samples are column-delta
 packed and compressed losslessly to fit the world-update budget. Persistent idle
-arm state, posture targets and jaws also travel in checkpoints. Protocol 67
+arm state, posture targets and jaws also travel in checkpoints. Protocol 68
 requires matching clients and hosts.
 
 In Idle practice all three levels are available. During a running native match,
@@ -1285,3 +1286,87 @@ including the team-colored target-angle strip and current-angle white strip.
 The 1 Hz and 3 Hz signals use simulation time and freeze when paused. See
 [rules-2027](rules-2027.md#tech-core-indicators) for the full table, simulator
 presentation policies and current scope. No light changes the rules authority.
+
+### Online L3 reveal and solver reuse
+
+The live controller has two L3 motion segments. The first plans a carried approach,
+insertion, lift and P flip using the actual initial Q=0. It neither
+receives the eventual angle nor chooses its grasp/route using that angle.
+Its trajectory stops at the full post-flip pose without a confirmation dwell.
+Before that endpoint, `Run::twist_target_rad` is `None`; the manipulation
+adapter suppresses alignment acceptance against the evaluator's zero placeholder.
+
+At the endpoint the world samples the final Q angle, once, from the existing
+Table 5-10 uniform-range sampler (seed 0, selection = job generation). This
+reproducible distribution is a simulator policy. The observed angle becomes
+public with `AwaitingTarget`, and the target LED appears. Only then does the
+host enter `SolvingTwist` and pass it to a planner. The actual joints, jaws,
+Unit attachment and Core are held while searching; the native attempt clock
+continues on unpaused simulation time. The attached planner tries local
+continuation on the current branch with rod pre-twist and simultaneous Q/rod
+profiles, with a bounded sparse Q/clock graph fallback and dense validation of
+any selected route. It cannot change grasp, parking or Core placement. A bounded failure
+is reported, without resampling the angle or replaying an easier initial grasp.
+
+The accepted prefix, reveal and remaining segment are restorable checkpoint
+state. The final segment replaces the consumed trajectory, starts at the held
+joints, respects the same joint/jaw rates and retains the evaluator's insertion,
+lift and flip evidence. Confirmation follows only the actual Q alignment dwell.
+The standalone workbench remains an offline, known-target diagnostic; it must
+not be presented as an online controller without this reveal boundary.
+
+Review of the sibling `arm-eval` project identified these useful distinctions:
+
+- `docs/optimization.md` and `docs/articulated-campaign.md` reuse immutable
+  placed geometry and Core/Unit contexts. Here the existing exact pair-contact
+  cache is supplemented with two exact-pose AABB entries per body, shared only
+  by clones of the same immutable collision scene. Changing a body pose misses
+  the cache; changing collision geometry clears it. Allowed pairs, tolerances,
+  source triangles, narrow phase and swept validation remain unchanged.
+- Continuation from an attached pose is a smaller problem than global setup.
+  The late-Q planner directly follows the existing branch and varies rod
+  clocking. The initial planner still searches grasps and free-arm approaches.
+- `arm_eval/core_analytic.py` is a geometric solver for the field Core's
+  three-parallel-axis layout. It is not an Engineer solver. The ideal
+  spherical-wrist Engineer solvers also cannot be applied unchanged to PIE's
+  source axes: the last axis has a measured source tilt and offset. Any port
+  needs structural admission checks and original source-FK validation.
+- Exact intrinsic collision reuse and certified subpath reuse remain useful
+  next steps. Near-pose IK hints may seed a solve, but do not certify clearance.
+
+No sibling Python dependency or solver source was copied; the bounds cache and
+attached continuation are original Rust implementations of these design ideas.
+
+Online information limits can reduce success relative to an offline plan that
+knows the final target before picking its grasp. In the source regression,
++43.7° and +4.6° revealed targets have connected continuations; −32.5° from a
+different, already-fixed prefix remains unresolved after bounded search. This
+is not a proof of physical impossibility. The diagnostic records such late
+failures explicitly, keeps the revealed target/grasp fixed and checks that no
+completion is awarded. Universal late-Q recovery is not implemented.
+
+A single local M5 Max live L1 probe measured 16.798 s before versus 16.444 s
+with exact bounds reuse and the common worker refactor. Both produced 1,202
+frames, 1,950 reported guard queries, and identical serialized trajectory SHA-256
+`01cb5092f37c90a59366d4bb305fcb8e6e1016c9f9e1fb814d7b85a73776f89f`.
+This roughly 2% difference is a single sample, not evidence of a significant
+whole-planner speedup; bounds construction is only part of the workload.
+The staged +43.7° and +4.6° continuation probes took 3.709 s and 0.361 s
+respectively, including source validation/retiming. Their different targets and
+initial prefixes make them examples, not an average or percentile estimate.
+
+### Preloaded Unit and insertion
+
+The live prototype starts with an operator-loaded Unit at the actual wrist,
+including while the Core positions and the worker solves. It is not seated on
+the Core. The jaws close at bounded speed before the loaded arm approaches;
+loading from storage and gravity during this fixture closure are not simulated.
+The preload uses the source-validated 135° grasp clock and 20 mm axial pad
+offset, fixed before planning. Offline fixture
+search may vary those, but a live carried plan cannot silently change them.
+
+The free approach checks the Unit alongside the arm against source collision
+geometry. Retimed samples derive the Unit pose from actual joint FK and the
+same rigid grasp. Free approach samples report no insertion evidence. Only the
+subsequent Cartesian entrance/insertion stages advance the assembly evaluator,
+followed by lift, flip and the delayed LED target.
