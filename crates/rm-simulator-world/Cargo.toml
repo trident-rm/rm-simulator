@@ -16,6 +16,7 @@ season-2026 = ["rm-simulator-gameplay/season-2026"]
 season-2027 = ["rm-simulator-gameplay/season-2027"]
 
 [dependencies]
+glam.workspace = true
 rm-simulator-gameplay = { version = "0.1.0", path = "../rm-simulator-gameplay", default-features = false }
 rm-simulator-physics = { version = "0.1.0", path = "../rm-simulator-physics" }
 serde.workspace = true

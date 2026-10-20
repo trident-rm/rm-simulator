@@ -256,6 +256,13 @@ impl Session {
                 },
             )?
             .with_password(args.password.clone())
+            .with_assembly_assets(
+                args.host.assembly_assets.as_deref(),
+                args.host.assembly_area.as_deref(),
+                args.host.assembly_hints.as_deref(),
+                cad.floor_top_cad_m,
+            )
+            .map_err(anyhow::Error::msg)?
             .with_weapon(args.host.weapon())
             .map_err(anyhow::Error::msg)?
             .with_weapon_limits(args.host.weapon_limits())

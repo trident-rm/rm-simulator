@@ -133,7 +133,7 @@ Never bake geometry into code beyond the fitted physics and world constants.
 See `docs/field-package.md` for composition, collision contracts and deployment.
 
 The RMUC 2027 sandbox displays the complete equipment roster through
-`server::roster`; only Infantry 3/4 and the manual Sentry have practice models.
+`server::roster`; Infantry 3/4, the manual Sentry and assembly-only Heavy have practice models.
 `server::zone_catalog` contains diagram footprints. Bound RMUC 2027 V1.0.0
 packages use approximate antenna polygons for control, supply, Vantage and
 terrain traversal; other unsupported areas remain inspection-only. Never feed these
@@ -142,7 +142,12 @@ combat/control subset, including native heat, allowance, healing, respawn and
 combat XP and continuous Base/Vantage/Highland/Fortress field benefits. Virtual
 assembly supports referee Start/Finish/Cancel, automatic 45-second timeouts,
 shared-core exclusion, income, Infantry caps and permanent defense; physical
-manipulation and Heavy progression remain unavailable. Adaptive reinforcement
+Heavy combat progression remains unavailable. Source PIE Heavy automatic L1–L3
+manipulation uses manually parked chassis, bounded restorable Core positioning
+before host worker planning, and restorable 128 Hz playback from persistent actual joints with 1 rad/s joint/jaw limits and
+T-selectable tunnel/neutral postures (`world::assembly`, `server::assembly_rig`,
+`app::assembly`); see
+`docs/assembly-workbench.md`. Adaptive reinforcement
 uses frozen selection-time areas, inclusive circle boundaries and clipping without
 resizing; undefined selection-time statistics freeze default armor until reselection.
 Referee commands stand in for Radar selection. Native Road/Highland/
@@ -191,7 +196,8 @@ not a refactor.
   restore shared mutable simulation access in a transport or app system.
   The embedded owner is not a separate typed path: `Server::connect_owner` runs
   the same `udp_codec` per-peer codec a UDP client runs over two in-process
-  datagram channels, with compression skipped (`raw`), so bitpacking, baselines,
+  datagram channels, with transport compression skipped (`raw`; the bounded
+  assembly trajectory payload is independently packed/compressed), so bitpacking, baselines,
   input batches, owner anchors and pacing are shared and only the socket and
   ZSTD differ.
   Queue confirmation snapshots and Pongs in the worker's application order;

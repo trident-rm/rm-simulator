@@ -170,7 +170,7 @@ impl Rig {
         for x in [-0.25, 0.25] {
             for y in [-0.25, 0.25] {
                 let p = position(self.engineer_body)
-                    + quaternion(self.engineer_body) * bevy::math::DVec3::new(x, y, 0.);
+                    + quaternion(self.engineer_body) * glam::DVec3::new(x, y, 0.);
                 let Some(z) = area.mesh.ground_height_below(p.x, p.y, 0.6) else {
                     return false;
                 };
@@ -182,7 +182,11 @@ impl Rig {
         if high - low > 0.005 {
             return false;
         }
-        self.engineer_body.translation_m[2] = high + area.stance_offset_m;
+        let supported_z = high + area.stance_offset_m;
+        if self.live_parking {
+            return (self.engineer_body.translation_m[2] - supported_z).abs() <= 0.02;
+        }
+        self.engineer_body.translation_m[2] = supported_z;
         true
     }
 }

@@ -6,6 +6,7 @@
 //! motion with live rules, scoring, referee decisions and complete restore.
 #![deny(missing_docs)]
 
+pub mod assembly;
 pub mod base;
 pub use base::{BaseConfig, BaseSnapshot};
 pub mod chassis;
@@ -226,6 +227,12 @@ pub enum FieldError {
 /// against armor registers that touch once more.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FieldRestore {
+    /// Restorable automatic assembly jobs and validated remaining trajectories.
+    #[serde(default)]
+    pub assemblies: Vec<assembly::Run>,
+    /// Persistent articulated arm authority for deployed source Heavy robots.
+    #[serde(default)]
+    pub arms: Vec<assembly::ArmState>,
     /// Complete RMUC 2027 authority and geometry, absent for 2026.
     pub rmuc_2027: Option<rmuc_2027::State>,
     /// Every rune's activation state, held angle and seeded target stream.
@@ -296,6 +303,8 @@ pub struct FieldSnapshot {
 /// assert_eq!(field.time_ns(), tick_ns());
 /// ```
 pub struct Field {
+    arms: Vec<assembly::ArmState>,
+    assemblies: Vec<assembly::Run>,
     rmuc_2027: Option<rmuc_2027::State>,
     bases: Vec<BaseSnapshot>,
     floor_height_m: f64,
@@ -456,6 +465,8 @@ impl Field {
             &mut faces,
         );
         let mut field = Self {
+            arms: Vec::new(),
+            assemblies: Vec::new(),
             rmuc_2027,
             bases,
             floor_height_m: config.floor_height_m,
@@ -786,7 +797,10 @@ impl Field {
     /// ```
     pub fn add_chassis(&mut self, placement: &ChassisPlacement) -> Result<u32, FieldError> {
         if self.rmuc_2027.is_some()
-            && !matches!(placement.kind, RobotKind::Infantry | RobotKind::Sentry)
+            && !matches!(
+                placement.kind,
+                RobotKind::Infantry | RobotKind::Sentry | RobotKind::Engineer
+            )
         {
             return Err(FieldError::Referee("unsupported 2027 ground role"));
         }
@@ -806,7 +820,9 @@ impl Field {
             .physics
             .add_chassis(placement.team, placement.config.clone(), placement.spawn)
             .map_err(FieldError::Chassis)?;
-        if let Some(state) = &mut self.rmuc_2027 {
+        if let Some(state) = &mut self.rmuc_2027
+            && placement.kind != RobotKind::Engineer
+        {
             let role = match placement.kind {
                 RobotKind::Infantry => rmuc_2027::match_rules::GroundRole::Infantry,
                 RobotKind::Sentry => rmuc_2027::match_rules::GroundRole::Sentry,
@@ -834,6 +850,8 @@ impl Field {
     }
     /// Take a chassis off the field, with its robot record.
     pub fn remove_chassis(&mut self, id: u32) -> Result<(), FieldError> {
+        self.cancel_assembly(id, "Assembly owner disconnected");
+        self.arms.retain(|a| a.owner != id);
         self.physics
             .remove_chassis(id)
             .map_err(FieldError::Chassis)?;
@@ -936,6 +954,16 @@ impl Field {
     /// assert!(moved[0] > 0.5, "{moved:?}");
     /// ```
     pub fn command_chassis(&mut self, id: u32, command: ChassisCommand) -> Result<(), FieldError> {
+        if command.forward_m_s.abs() > 0.01
+            || self
+                .arms
+                .iter()
+                .any(|a| a.owner == id && a.folded != command.folded)
+            || command.left_m_s.abs() > 0.01
+            || command.yaw_rate_rad_s.abs() > 0.01
+        {
+            self.cancel_assembly(id, "Cancelled by manual driving");
+        }
         self.physics
             .command_chassis(id, command)
             .map_err(FieldError::Chassis)
@@ -971,6 +999,10 @@ impl Field {
     /// snapshot; a replay reads its own robot after every tick.
     pub fn chassis_snapshot(&self, id: u32) -> Option<ChassisSnapshot> {
         self.physics.chassis_snapshot(id)
+    }
+    /// All current physical chassis, without copying match or trajectory state.
+    pub fn chassis_snapshots(&self) -> Vec<ChassisSnapshot> {
+        self.physics.chassis_snapshots()
     }
     /// Current chassis centres in world FLU metres, in id order, without snapshots.
     pub fn chassis_positions_m(&self) -> impl Iterator<Item = [f64; 3]> + '_ {
@@ -1077,6 +1109,7 @@ impl Field {
                     state.game.start(state.config.rotor_direction);
                 }
                 RefereeCommand::ResetMatch => {
+                    self.assemblies.clear();
                     let robots = state.game.robots.clone();
                     state.game = Match::new(state.config.rotor_direction);
                     for r in robots {
@@ -1288,7 +1321,11 @@ impl Field {
             .ok_or(FieldError::TickOverflow)?;
         while self.tick < end {
             let idle = self.physics.is_idle();
-            if idle && self.referee.is_none() && self.rmuc_2027.is_none() {
+            if idle
+                && self.referee.is_none()
+                && self.rmuc_2027.is_none()
+                && !self.assemblies.iter().any(assembly::Run::active)
+            {
                 for rune in &mut self.runes {
                     rune.advance_to(end * tick_ns())?;
                 }
@@ -1345,6 +1382,7 @@ impl Field {
                 self.sync_defeats();
             }
             self.advance_2027(tick_ns());
+            self.advance_assemblies();
             self.sync_mechanisms();
             if idle {
                 continue;
@@ -1560,6 +1598,8 @@ impl Field {
             hits_detected: self.hits_detected,
             referee: self.referee.as_ref().map(Referee::snapshot),
             restore: Some(FieldRestore {
+                assemblies: self.assemblies.clone(),
+                arms: self.arms.clone(),
                 rmuc_2027: self.rmuc_2027.clone(),
                 runes: self.runes.clone(),
                 outposts: self.outposts.clone(),
@@ -1642,6 +1682,37 @@ impl Field {
             .restore
             .as_ref()
             .ok_or(FieldError::Restore("the snapshot carries no rule state"))?;
+        if rules.arms.len() > 64 {
+            return Err(FieldError::Restore("too many arm owners"));
+        }
+        let mut arm_ids = std::collections::BTreeSet::new();
+        for arm in &rules.arms {
+            arm.validate().map_err(FieldError::Restore)?;
+            if !arm_ids.insert(arm.owner) || !snapshot.chassis.iter().any(|c| c.id == arm.owner) {
+                return Err(FieldError::Restore("missing or duplicate arm owner"));
+            }
+        }
+        if rules.assemblies.len() > 2 {
+            return Err(FieldError::Restore("too many assembly jobs"));
+        }
+        if rules.assemblies.len() == 2
+            && (rules.assemblies[0].owner == rules.assemblies[1].owner
+                || rules.assemblies[0].team == rules.assemblies[1].team)
+        {
+            return Err(FieldError::Restore("duplicate assembly owner or station"));
+        }
+        for run in &rules.assemblies {
+            run.validate().map_err(FieldError::Restore)?;
+            if run.active()
+                && !snapshot.chassis.iter().any(|c| {
+                    c.id == run.owner
+                        && c.team == run.team
+                        && c.placement_revision == run.placement_revision
+                })
+            {
+                return Err(FieldError::Restore("missing assembly owner"));
+            }
+        }
         if !floor_height_m.is_finite() {
             return Err(FieldError::Restore("the floor height must be finite"));
         }
@@ -1682,6 +1753,8 @@ impl Field {
             .map_err(FieldError::Restore)?;
         physics.insert_geometry(geometry);
         let mut field = Self {
+            assemblies: rules.assemblies.clone(),
+            arms: rules.arms.clone(),
             rmuc_2027: rules.rmuc_2027.clone(),
             bases: snapshot.bases.clone(),
             floor_height_m,

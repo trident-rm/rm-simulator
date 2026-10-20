@@ -56,11 +56,25 @@ impl TeamRobotStatus {
         self.failed.is_none() && self.ready == self.requested
     }
 }
+/// Caller-owned robot identities whose decorative arm groups are replaced.
+#[derive(Resource, Default)]
+pub struct ReplacedArmOwners(pub std::collections::BTreeSet<u32>);
+/// Verified source mesh names supplied by the caller for arm-only replacement.
+#[derive(Resource, Default)]
+pub struct ReplacedArmMeshes(pub std::collections::BTreeSet<String>);
+#[derive(Component)]
+struct ArmMesh {
+    id: u32,
+    name: String,
+}
+
 /// Render the approved source-derived robot when its asset is supplied.
 pub struct TeamRobotVisualsPlugin;
 impl Plugin for TeamRobotVisualsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TeamRobotStatus>()
+            .init_resource::<ReplacedArmOwners>()
+            .init_resource::<ReplacedArmMeshes>()
             .add_observer(loaded)
             .add_systems(
                 Update,
@@ -229,6 +243,10 @@ fn loaded(
         let Ok((name, transform)) = names.get(e) else {
             continue;
         };
+        commands.entity(e).insert(ArmMesh {
+            id: root.id,
+            name: name.as_str().into(),
+        });
         if let Some(name) = name.as_str().strip_prefix("link/") {
             bound.insert(name.to_owned());
             commands.entity(e).insert(Link {
@@ -366,6 +384,9 @@ fn sync(
     input: Res<SceneInput>,
     mut roots: Query<(&RobotRoot, &mut Transform), Without<Link>>,
     mut links: Query<(&Link, &mut Transform), Without<RobotRoot>>,
+    mut meshes: Query<(&ArmMesh, &mut Visibility)>,
+    arms: Res<ReplacedArmOwners>,
+    names: Res<ReplacedArmMeshes>,
 ) {
     let Some(scene) = &input.0 else { return };
     for (root, mut t) in &mut roots {
@@ -374,6 +395,15 @@ fn sync(
             apply_pose(&mut next, c.pose);
             t.set_if_neq(next);
         }
+    }
+    for (mesh, mut visibility) in &mut meshes {
+        visibility.set_if_neq(
+            if arms.0.contains(&mesh.id) && names.0.contains(&mesh.name) {
+                Visibility::Hidden
+            } else {
+                Visibility::Inherited
+            },
+        );
     }
     for (link, mut t) in &mut links {
         if let Some(c) = scene.chassis.iter().find(|c| c.id == link.id) {

@@ -93,6 +93,8 @@ def run_case(case, args):
         command += ['--spin-deltas', *map(str, case['spin'])]
     if args.hints:
         command += ['--ik-hints', str(args.hints)]
+    if args.fast_collisions:
+        command += ['--fast-collisions']
     started = time.monotonic()
     try:
         result = subprocess.run(command, text=True, capture_output=True, timeout=args.timeout)
@@ -118,6 +120,7 @@ def run_case(case, args):
     else:
         row.update(outcome='playback-failure', reason=state['diagnostic'])
     row['statistics'] = planner.get('statistics', planner.get('failure', {}).get('statistics'))
+    row['planning_elapsed_s'] = (row['statistics'] or {}).get('planning_elapsed_s')
     return row
 
 
@@ -131,6 +134,7 @@ def main():
     parser.add_argument('--jobs', type=int, default=3)
     parser.add_argument('--timeout', type=float, default=900.)
     parser.add_argument('--hints', type=Path, help='Completed source recording used only for IK warm starts.')
+    parser.add_argument('--fast-collisions', action='store_true', help='Use conservative convex chunks.')
     parser.add_argument('--case', action='append', help='Run only these named cases (repeatable).')
     args = parser.parse_args()
     args.binary, args.package, args.area = (p.resolve() for p in (args.binary, args.package, args.area))
@@ -151,7 +155,7 @@ def main():
         hashes = {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in
                   [('binary', args.binary), ('package_manifest', args.package/'manifest.json'),
                    ('area_evidence', args.area/'area.json')]}
-        report = dict(schema=1, hashes=hashes, budget=args.budget, cases=[])
+        report = dict(schema=1, hashes=hashes, budget=args.budget, fast_collisions=args.fast_collisions, cases=[])
         if args.hints:
             hashes['ik_hints'] = hashlib.sha256(args.hints.read_bytes()).hexdigest()
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:

@@ -5731,6 +5731,7 @@ dependencies = [
  "bevy",
  "bevy_flair",
  "clap",
+ "glam 0.33.12",
  "prost",
  "rm-simulator-physics",
  "rm-simulator-render",
@@ -5791,7 +5792,9 @@ dependencies = [
  "clap",
  "criterion",
  "game-networking-sockets",
+ "glam 0.33.12",
  "if-addrs",
+ "rm-simulator-physics",
  "rm-simulator-world",
  "serde",
  "serde_json",
@@ -5803,6 +5806,7 @@ dependencies = [
 name = "rm-simulator-world"
 version = "0.1.0"
 dependencies = [
+ "glam 0.33.12",
  "rm-simulator-gameplay",
  "rm-simulator-physics",
  "serde",

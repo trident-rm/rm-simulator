@@ -103,6 +103,7 @@ The essentials, for driving and for match control:
 | Left Ctrl | Fast: 5 m/s drive command, 8 m/s flight |
 | R | Toggle chassis spin (6 rad/s) while driving |
 | T | Toggle mechanism: Hero fold / stair Heavy wheel linkage / PIE tunnel stow (2026 practice) |
+| J | Open automatic L1–L3 assembly controls for the source PIE Heavy (manual parking) |
 | V | Toggle first- and third-person view while driving |
 | C | Cycle physics colliders: Off / Overlay / Only |
 | F3 | Open / close debug panel: collider Off / Overlay / Only, visual wireframe, buff/RFID zones and labels, rendering statistics, remote motion buffering, reset own robot to spawn |
@@ -219,7 +220,14 @@ for approximations and remaining equipment.
 
 RMUC 2027 also supports virtual assembly through the `--http` referee panel:
 start a difficulty and press **Finish assembly** before its 45-second prototype
-deadline. No manipulation is required. See [assembly controls and scope](docs/gameplay.md#rmuc-2027-virtual-assembly).
+deadline. That referee mode requires no manipulation. The source PIE Heavy also
+supports [in-game automatic L1–L3 assembly](docs/assembly-workbench.md#in-game-automatic-assembly):
+park manually, press J, and choose a level. The host solves asynchronously and
+first moves the Tech Core into position, then solves and plays the articulated
+sequence, with separate positioning, solving and actuation progress bars. The arm
+starts neutral, follows a checked approach from its current joints and holds its
+last pose when finished. T folds it for tunnels or returns it toward neutral;
+joint and jaw motion is limited to 1 rad/s.
 
 Native 2027 adaptive armor can be selected from the referee panel after ten enemy
 hits and an earned opportunity. Its center and selection-time area stay fixed
@@ -797,6 +805,8 @@ reachability is checked separately. It is separate from live match assembly prog
 Its offline planner can twist the Unit around the rod across all moving stages;
 explicit Core poses, fixed chassis parking and per-stage twist inputs support
 repeatable source-CAD scenario tests.
+`--fast-collisions` uses convex proxies for the larger Engineer parts while
+retaining source geometry at the gripper and fixture; visuals stay unchanged.
 
 `just run --robot hero --third-person` drives the mecanum Hero; omit `--robot`
 for the omni Infantry 3, or choose robot then chassis on the title screen.

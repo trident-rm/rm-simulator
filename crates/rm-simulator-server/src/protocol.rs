@@ -105,7 +105,9 @@ use serde::{Deserialize, Serialize};
 /// The wire layout is unchanged; older prediction uses incompatible fitted shapes.
 /// Version 63 carries the source stair linkage configuration and primary actuator semantics.
 /// Version 64 carries verified source serial joints, oriented collision envelopes and fitted optics.
-pub const PROTOCOL_VERSION: u32 = 64;
+/// Version 66 adds persistent Heavy arm joints and bounded joint-rate playback.
+/// Version 67 carries the pre-planning Core positioning phase and its restorable motion.
+pub const PROTOCOL_VERSION: u32 = 67;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///
@@ -798,6 +800,18 @@ pub fn check_map_marker(kind: MapMarkerKind, position_m: [f64; 2]) -> Result<(),
 /// Anything that changes the simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Command {
+    /// Solve and actuate an assembly at the pilot's current parking pose.
+    AutoAssembly {
+        /// Requesting pilot's chassis; ownership is checked by the host.
+        chassis: u32,
+        /// Assembly difficulty, one through three.
+        difficulty: u8,
+    },
+    /// Stop the pilot's assembly without awarding completion.
+    CancelAutoAssembly {
+        /// Requesting pilot's chassis.
+        chassis: u32,
+    },
     /// Deploy a connected spectator once, subject to host placement validation.
     Deploy {
         /// Team whose base ring contains the requested position.

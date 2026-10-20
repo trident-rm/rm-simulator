@@ -105,8 +105,117 @@ struct Header {
 /// its epoch, stage, state, first-hit and current times as stamp codes, lit
 /// pair, hits, completed groups, restart policy and seeded stream. A state
 /// with no restore, or with views that differ from it, cannot be encoded.
+// A trajectory is immutable bulk data plus a small changing cursor. Packing it
+// separately keeps a complete restore within the pacer's 64 KiB world budget,
+// including on the raw loopback carrier. Source calibration stays exact.
+struct AssemblyWire(rm_simulator_world::assembly::Run);
+#[derive(Serialize, Deserialize)]
+struct AssemblyData {
+    header: rm_simulator_world::assembly::Run,
+    columns: [Vec<i32>; 21],
+    flags: Vec<u8>,
+}
+impl AssemblyData {
+    fn new(run: &rm_simulator_world::assembly::Run) -> Self {
+        let mut header = run.clone();
+        let frames = std::mem::take(&mut header.frames);
+        let mut columns: [Vec<i32>; 21] = std::array::from_fn(|_| Vec::with_capacity(frames.len()));
+        let mut flags = Vec::with_capacity(frames.len());
+        let mut previous = [0_i32; 21];
+        for f in frames {
+            for (j, (column, value)) in columns
+                .iter_mut()
+                .zip(
+                    f.joints_rad
+                        .into_iter()
+                        .chain(f.jaws_rad)
+                        .chain(f.unit.translation_m)
+                        .chain(f.unit.rotation_wxyz)
+                        .chain(f.guide_m)
+                        .chain(f.angles_rad),
+                )
+                .enumerate()
+            {
+                let scale = if (11..15).contains(&j) { 1e7 } else { 1e6 };
+                let value = (value * scale).round() as i32;
+                column.push(value - previous[j]);
+                previous[j] = value;
+            }
+            flags.push(f.stage | (u8::from(f.gripped) << 3));
+        }
+        Self {
+            header,
+            columns,
+            flags,
+        }
+    }
+    fn into_run(mut self) -> Result<rm_simulator_world::assembly::Run, &'static str> {
+        if self.flags.len() > 4096
+            || self.columns.iter().any(|v| v.len() != self.flags.len())
+            || self.flags.iter().any(|v| *v > 15)
+            || !self.header.frames.is_empty()
+        {
+            return Err("invalid packed assembly trajectory");
+        }
+        let mut previous = [0_i64; 21];
+        self.header.frames = (0..self.flags.len())
+            .map(|i| {
+                let v: [f64; 21] = std::array::from_fn(|j| {
+                    previous[j] += i64::from(self.columns[j][i]);
+                    previous[j] as f64 / if (11..15).contains(&j) { 1e7 } else { 1e6 }
+                });
+                rm_simulator_world::assembly::Frame {
+                    joints_rad: std::array::from_fn(|j| v[j]),
+                    jaws_rad: [v[6], v[7]],
+                    unit: rm_simulator_world::Pose {
+                        translation_m: [v[8], v[9], v[10]],
+                        rotation_wxyz: [v[11], v[12], v[13], v[14]],
+                    },
+                    guide_m: [v[15], v[16], v[17]],
+                    angles_rad: [v[18], v[19], v[20]],
+                    gripped: self.flags[i] & 8 != 0,
+                    stage: self.flags[i] & 7,
+                }
+            })
+            .collect();
+        self.header.validate()?;
+        Ok(self.header)
+    }
+}
+impl Serialize for AssemblyWire {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::Error;
+        let packed = bitpack::to_bytes(&AssemblyData::new(&self.0)).map_err(S::Error::custom)?;
+        let bytes = zstd::bulk::compress(&packed, 3).map_err(S::Error::custom)?;
+        serializer.serialize_bytes(&bytes)
+    }
+}
+impl<'de> Deserialize<'de> for AssemblyWire {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = AssemblyWire;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a bounded packed assembly trajectory")
+            }
+            fn visit_bytes<E: serde::de::Error>(self, bytes: &[u8]) -> Result<Self::Value, E> {
+                let packed = zstd::bulk::decompress(bytes, crate::protocol::MAX_LINE_BYTES)
+                    .map_err(E::custom)?;
+                let data: AssemblyData = bitpack::from_bytes(&packed).map_err(E::custom)?;
+                let run = data.into_run().map_err(E::custom)?;
+                Ok(AssemblyWire(run))
+            }
+            fn visit_byte_buf<E: serde::de::Error>(self, bytes: Vec<u8>) -> Result<Self::Value, E> {
+                self.visit_bytes(&bytes)
+            }
+        }
+        deserializer.deserialize_bytes(Visitor)
+    }
+}
 #[derive(Serialize, Deserialize)]
 struct DerivedRules {
+    assemblies: Vec<AssemblyWire>,
+    arms: Vec<rm_simulator_world::assembly::ArmState>,
     rmuc_2027: Option<rm_simulator_world::rmuc_2027::State>,
     runes: Vec<Aligned<rm_simulator_world::Rune>>,
     outposts: Vec<Aligned<rm_simulator_world::Outpost>>,
@@ -118,6 +227,13 @@ struct DerivedRules {
 impl DerivedRules {
     fn new(restore: &rm_simulator_world::FieldRestore) -> Self {
         Self {
+            arms: restore.arms.clone(),
+            assemblies: restore
+                .assemblies
+                .iter()
+                .cloned()
+                .map(AssemblyWire)
+                .collect(),
             rmuc_2027: restore.rmuc_2027.clone(),
             runes: restore.runes.iter().cloned().map(Aligned).collect(),
             outposts: restore.outposts.iter().cloned().map(Aligned).collect(),
@@ -129,6 +245,8 @@ impl DerivedRules {
     }
     fn into_restore(self) -> rm_simulator_world::FieldRestore {
         rm_simulator_world::FieldRestore {
+            assemblies: self.assemblies.into_iter().map(|a| a.0).collect(),
+            arms: self.arms,
             rmuc_2027: self.rmuc_2027,
             runes: self.runes.into_iter().map(|rune| rune.0).collect(),
             outposts: self.outposts.into_iter().map(|outpost| outpost.0).collect(),

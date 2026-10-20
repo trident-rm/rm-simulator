@@ -4,6 +4,27 @@
 
 ## Unreleased
 
+- Correct Tech Core angular lights to include imported CAD ancestor transforms.
+  Add bounded, restorable Core positioning before robot path solving; show
+  positioning progress and flowing lights, freeze the positioned Core branch,
+  and start the native attempt timer on arrival (protocol 67).
+
+- Add rulebook-driven Tech Core lights to live source-CAD assembly: independent
+  radial, side and insertion indicators, simulation-clock flashing, and Q-angle
+  target/current/aligned cues (UC2027 Figure 5-11, Table 5-13).
+
+- Add in-game automatic L1–L3 assembly for the source PIE Heavy: manual parking,
+  asynchronous host planning, tick-driven articulated playback, cancellation and
+  restorable trajectories, with a J panel for solving/actuation progress.
+  Keep the arm in a persistent neutral posture, plan from its actual joints,
+  limit joint/jaw speeds to 1 rad/s and retain the final posture. T folds it for
+  tunnels or returns it toward neutral. Advance the multiplayer protocol to 66.
+
+- Accelerate assembly collision queries with spatial source-mesh chunks,
+  per-chunk bounds and exact stationary-pair caching. Add optional selective
+  convex proxies, prioritize recorded twist profiles and report planning time
+  separately from loading/playback.
+
 - Reuse exact validated assembly transitions and warm-start nearby IK targets
   from a bounded table or a completed source recording; recheck changed paths.
 

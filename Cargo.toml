@@ -32,6 +32,7 @@ clap = { version = "4.6", features = ["derive"] }
 anyhow = "1"
 serde_json = "1"
 sha2 = "0.10"
+glam = "0.33.12"
 # Wire-compression candidate: ZSTD with a trained checkpoint dictionary.
 # `legacy` and `arrays` are unused; `zdict_builder` trains the embedded dictionary.
 zstd = { version = "0.13", default-features = false, features = ["zdict_builder"] }

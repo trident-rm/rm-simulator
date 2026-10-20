@@ -744,6 +744,8 @@ fn state(world: &mut World) -> Value {
         "rmuc_2027_config":session.rmuc_2027().map(|state|&state.config),
         "control_diagnostics":session.rmuc_2027().map(|state|state.game.control_diagnostics()),
         "chassis_all":session.snapshot.chassis,
+        "assemblies":session.snapshot.restore.as_ref().map(|r| &r.assemblies),
+        "arms":session.snapshot.restore.as_ref().map(|r| &r.arms),
         "armor_hits":session.snapshot.hits,
         "projectiles":session.snapshot.projectiles,
         "presented_chassis":session.presented_chassis(),

@@ -179,7 +179,14 @@ pub struct CadMesh;
 
 /// Index of the spawned instance in the scene configuration.
 #[derive(Component)]
-struct CadRoot(usize);
+pub struct CadRoot(
+    /// Instance index in `CadSceneConfig::instances`.
+    pub usize,
+);
+
+/// Caller-selected CAD instances replaced by articulated scenery.
+#[derive(Resource, Default, PartialEq, Eq)]
+pub struct HiddenCadInstances(pub std::collections::BTreeSet<usize>);
 
 /// Whether the CAD scenery draws at all; hide it to look at overlays alone.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
@@ -218,6 +225,7 @@ impl Plugin for CadScenePlugin {
             failed: None,
         })
         .insert_resource(SceneryVisibility(true))
+        .init_resource::<HiddenCadInstances>()
         .add_systems(Update, spawn)
         .add_observer(loaded)
         .add_systems(
@@ -226,7 +234,7 @@ impl Plugin for CadScenePlugin {
                 check_loading,
                 sync_cad.after(SceneSyncSet),
                 sync_joints.after(SceneSyncSet),
-                apply_scenery_visibility.run_if(resource_changed::<SceneryVisibility>),
+                apply_scenery_visibility,
             ),
         );
     }
@@ -235,10 +243,11 @@ impl Plugin for CadScenePlugin {
 /// Show or hide every imported CAD root.
 fn apply_scenery_visibility(
     shown: Res<SceneryVisibility>,
-    mut roots: Query<&mut Visibility, With<CadRoot>>,
+    hidden: Res<HiddenCadInstances>,
+    mut roots: Query<(&CadRoot, &mut Visibility)>,
 ) {
-    for mut visibility in &mut roots {
-        visibility.set_if_neq(if shown.0 {
+    for (root, mut visibility) in &mut roots {
+        visibility.set_if_neq(if shown.0 && !hidden.0.contains(&root.0) {
             Visibility::Inherited
         } else {
             Visibility::Hidden

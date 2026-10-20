@@ -81,9 +81,7 @@ fn kind_name(kind: RobotKind) -> &'static str {
 }
 fn matches(slot: &Slot, robot: &RobotStatus) -> bool {
     slot.prototype.is_some_and(|p| {
-        robot
-            .number
-            .map_or(p.kind() == robot.kind, |number| slot.number == number)
+        p.kind() == robot.kind && robot.number.is_none_or(|number| slot.number == number)
     })
 }
 fn reconcile(occupants: &mut Vec<Option<u32>>, robots: &[RobotStatus], slots: &[Slot]) {
@@ -122,6 +120,8 @@ fn presentation(
             .map_or_else(|| "HP --".into(), |(hp, max)| format!("{hp}/{max}"));
         let status = if robot.hp.is_some_and(|(hp, _)| hp == 0) {
             "DOWN"
+        } else if slots.get(index).is_some_and(|s| s.name == "Heavy") {
+            "HEAVY"
         } else {
             kind_name(robot.kind)
         };
@@ -221,7 +221,12 @@ pub(super) fn update(
                         .iter()
                         .find(|p| p.chassis == Some(c.id))
                         .and_then(|p| p.robot)
-                        .map(|r| r.number()),
+                        .map(|r| {
+                            slots
+                                .iter()
+                                .find(|s| s.prototype == Some(r))
+                                .map_or(r.number(), |s| s.number)
+                        }),
                     hp: health.map(|r| (r.hp, r.max_hp)).or_else(|| {
                         session
                             .rmuc_2027()
@@ -392,7 +397,7 @@ mod tests {
                 "missing {name}: {texts:?}"
             );
         }
-        assert!(texts.iter().any(|t| t.starts_with("1 HEAVY\nNO SIM")));
+        assert!(texts.iter().any(|t| t.starts_with("1 HEAVY\nEMPTY")));
         // A stale Hero snapshot remains an extra practice chassis, never Heavy.
         assert!(!texts.iter().any(|t| t.starts_with("1 HERO")));
     }

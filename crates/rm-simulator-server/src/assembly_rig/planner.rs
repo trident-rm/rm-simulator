@@ -39,6 +39,8 @@ pub struct Frame {
 }
 #[derive(Clone, Default, Serialize)]
 pub struct Statistics {
+    /// Wall time spent searching and validating this plan, excluding load/playback.
+    pub planning_elapsed_s: f64,
     pub candidates: usize,
     pub ik_queries: usize,
     pub nearby_ik_hints: usize,
@@ -239,6 +241,12 @@ struct Search {
     last: Option<CollisionHit>,
     last_checked: Option<std::sync::Arc<ValidatedTransition>>,
     stage: Stage,
+    signal: Option<std::sync::Arc<Signal>>,
+}
+#[derive(Default)]
+pub(crate) struct Signal {
+    pub checks: std::sync::atomic::AtomicUsize,
+    pub cancelled: std::sync::atomic::AtomicBool,
 }
 impl Search {
     fn ik(
@@ -257,6 +265,13 @@ impl Search {
         found
     }
     fn charge(&mut self) -> Result<(), &'static str> {
+        if let Some(signal) = &self.signal {
+            use std::sync::atomic::Ordering;
+            if signal.cancelled.load(Ordering::Relaxed) {
+                return Err("assembly planning cancelled");
+            }
+            signal.checks.fetch_add(1, Ordering::Relaxed);
+        }
         if self.stats.collision_checks >= self.budget {
             return Err("planning collision-check budget exhausted");
         }
@@ -347,15 +362,11 @@ impl Search {
 }
 fn goals(d: u8, q: f64, logical: [f64; 3], angles: [f64; 3]) -> Vec<(Stage, [f64; 3], [f64; 3])> {
     let mut result = vec![];
-    if logical[0] > super::super::ENTRANCE_X + 1e-9 {
-        result.push((
-            Stage::Approach,
-            [super::super::ENTRANCE_X, 0.2, 0.6],
-            [0.; 3],
-        ));
+    if logical[0] > super::ENTRANCE_X + 1e-9 {
+        result.push((Stage::Approach, [super::ENTRANCE_X, 0.2, 0.6], [0.; 3]));
     }
-    if logical[0] > super::super::SOCKET[0] + 1e-9 {
-        result.push((Stage::Insert, super::super::SOCKET, [0.; 3]));
+    if logical[0] > super::SOCKET[0] + 1e-9 {
+        result.push((Stage::Insert, super::SOCKET, [0.; 3]));
     }
     if d >= 2 && logical[2] < 0.7 - 1e-9 {
         result.push((Stage::Lift, [-0.05, 0.2, 0.7], [0.; 3]));
@@ -485,6 +496,15 @@ pub struct ChassisRoute {
     flip_mid_spin_rad: Option<f64>,
 }
 impl ChassisRoute {
+    fn spin_deltas(self) -> [f64; 5] {
+        [
+            self.approach_spin_rad,
+            self.insert_spin_rad,
+            self.lift_spin_rad,
+            self.flip_spin_rad,
+            self.align_spin_rad,
+        ]
+    }
     /// Progress coordinates for the five moving stages, independent of pose azimuth.
     fn phases(self, p: [f64; 3], a: [f64; 3]) -> [f64; 5] {
         [
@@ -555,7 +575,7 @@ impl ChassisRoute {
         let flip = (angles[0] / std::f64::consts::FRAC_PI_2).clamp(0., 1.);
         pose(
             position(origin)
-                + bevy::math::DVec3::new(
+                + glam::DVec3::new(
                     lift * self.lift_offset_m[0] + flip * self.flip_offset_m[0],
                     lift * self.lift_offset_m[1] + flip * self.flip_offset_m[1],
                     0.,
@@ -650,7 +670,7 @@ impl Rig {
         next.engineer_body = f.chassis;
         if !f.rod_spin_rad.is_finite()
             || (f.rod_spin_rad - self.rod_spin_rad).abs()
-                > super::super::RATE * rm_simulator_physics::tick_ns() as f64 * 1e-9 + 1e-9
+                > super::RATE * rm_simulator_physics::tick_ns() as f64 * 1e-9 + 1e-9
         {
             return Err("planned rod spin exceeds workbench cadence");
         }
@@ -698,6 +718,44 @@ impl Rig {
         prepare: bool,
         budget: usize,
     ) -> Result<(Rig, Plan), Failure> {
+        let started = std::time::Instant::now();
+        let mut result =
+            self.plan_assembly_inner(difficulty, target_q, logical, angles, prepare, budget, None);
+        let elapsed = started.elapsed().as_secs_f64();
+        match &mut result {
+            Ok((_, plan)) => plan.statistics.planning_elapsed_s = elapsed,
+            Err(failure) => failure.statistics.planning_elapsed_s = elapsed,
+        }
+        result
+    }
+    pub(crate) fn plan_assembly_observed(
+        &self,
+        difficulty: u8,
+        target_q: f64,
+        budget: usize,
+        signal: std::sync::Arc<Signal>,
+    ) -> Result<(Rig, Plan), Failure> {
+        self.plan_assembly_inner(
+            difficulty,
+            target_q,
+            [0.09, 0.2, 0.6],
+            [0.; 3],
+            true,
+            budget,
+            Some(signal),
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn plan_assembly_inner(
+        &self,
+        difficulty: u8,
+        target_q: f64,
+        logical: [f64; 3],
+        angles: [f64; 3],
+        prepare: bool,
+        budget: usize,
+        signal: Option<std::sync::Arc<Signal>>,
+    ) -> Result<(Rig, Plan), Failure> {
         let mut search = Search {
             stats: Statistics::default(),
             budget,
@@ -706,6 +764,7 @@ impl Rig {
             last: None,
             last_checked: None,
             stage: Stage::Approach,
+            signal,
         };
         for (target, q) in self.ik_hints.iter() {
             search
@@ -730,8 +789,15 @@ impl Rig {
         let mut setups = vec![self.clone()];
         if prepare {
             // Preserve the selected socket pose. Only numerical Core IK branches change.
-            let mut clear_core = None;
-            for q in search.ik(&self.config.core, self.socket, initial_seeds(), 8) {
+            // Live Core positioning has finished before this robot search.
+            // Its selected numerical IK branch is physical, not a setup freedom.
+            let mut clear_core = self.live_parking.then(|| self.clone());
+            let core_candidates = if self.live_parking {
+                vec![]
+            } else {
+                search.ik(&self.config.core, self.socket, initial_seeds(), 8)
+            };
+            for q in core_candidates {
                 let mut trial = self.clone();
                 trial.core_q = q;
                 search.charge().map_err(|e| search.failure(e))?;
@@ -811,6 +877,9 @@ impl Rig {
                         if !trial.support_parking() {
                             continue;
                         }
+                        if self.live_parking {
+                            trial.engineer_body = base.engineer_body;
+                        }
                         trial.grasp_roll_rad = roll;
                         // Source triangle sections preserve the 32.3 mm radial
                         // envelope through the pads' +/-11 mm span at +20 mm.
@@ -848,7 +917,11 @@ impl Rig {
             let postures = setups.into_iter().flat_map(|rig| {
                 let mut deployed = rig.clone();
                 deployed.camera_deployed = !rig.camera_deployed;
-                [rig, deployed]
+                if self.live_parking {
+                    vec![rig]
+                } else {
+                    vec![rig, deployed]
+                }
             });
             let mut ranked: Vec<_> = postures.enumerate().collect();
             ranked.sort_by_key(|(i, _)| (*i as u64).wrapping_mul(0x9e3779b97f4a7c15));
@@ -1026,10 +1099,27 @@ impl Rig {
             .enumerate()
             .collect();
         if routes.len() > 1 {
-            schedule
-                .sort_by_key(|(_, (i, j))| route_order(*i, *j, linear_route_count, routes.len()));
+            schedule.sort_by_key(|(_, (i, j))| {
+                (
+                    self.preferred_spin_deltas_rad
+                        .is_some_and(|hint| routes[*j].spin_deltas() != hint),
+                    route_order(*i, *j, linear_route_count, routes.len()),
+                )
+            });
         }
         for (_, (setup_index, route_index)) in schedule {
+            if search
+                .signal
+                .as_ref()
+                .is_some_and(|s| s.cancelled.load(std::sync::atomic::Ordering::Relaxed))
+            {
+                return Err(Failure {
+                    reason: "assembly planning cancelled".into(),
+                    stage: Stage::Approach,
+                    collision: None,
+                    statistics: Box::new(search.stats),
+                });
+            }
             if routes.len() > linear_route_count
                 && route_index < linear_route_count
                 && search.stats.collision_checks >= linear_search_budget(budget)
@@ -1100,7 +1190,7 @@ impl Rig {
                     }
                 }
             }
-            let candidates = search.ik(
+            let mut candidates = search.ik(
                 &setup.config.engineer,
                 compose(inverse(setup.engineer_body), target),
                 backward
@@ -1110,6 +1200,13 @@ impl Rig {
                     .chain(seeds),
                 12,
             );
+            if let Some((actual, _)) = self.live_entry {
+                candidates.sort_by(|a, b| {
+                    let distance =
+                        |q: &[f64; 6]| (0..6).map(|i| (q[i] - actual[i]).powi(2)).sum::<f64>();
+                    distance(a).total_cmp(&distance(b))
+                });
+            }
             for q in candidates {
                 search.stats.candidates += 1;
                 search.stage = Stage::Approach;
@@ -1298,16 +1395,16 @@ fn free_retreat(
 ) -> Result<(Rig, Vec<Frame>), &'static str> {
     let rotation = quaternion(original.tool);
     for direction in [
-        -(rotation * bevy::math::DVec3::X),
-        rotation * bevy::math::DVec3::Z,
-        bevy::math::DVec3::Z,
-        rotation * bevy::math::DVec3::X,
+        -(rotation * glam::DVec3::X),
+        rotation * glam::DVec3::Z,
+        glam::DVec3::Z,
+        rotation * glam::DVec3::X,
     ] {
         let mut state = original.clone();
         let mut frames = vec![];
         let mut clear = true;
-        let n = (0.12 / (super::super::SPEED * rm_simulator_physics::tick_ns() as f64 * 1e-9))
-            .ceil() as usize;
+        let n =
+            (0.12 / (super::SPEED * rm_simulator_physics::tick_ns() as f64 * 1e-9)).ceil() as usize;
         for i in 1..=n {
             let desired = pose(
                 position(original.tool) + direction * (0.12 * i as f64 / n as f64),
@@ -1358,9 +1455,16 @@ fn build(
     };
     state.grasp_roll_rad = root.grasp_roll_rad;
     state.grasp_axial_m = root.grasp_axial_m;
+    let entry = if prepare { current.live_entry } else { None };
+    if let Some((q, jaws)) = entry {
+        state = at(state, q);
+        state.jaw_angles = jaws.to_vec();
+        state.gripped = false;
+        state.grip_requested = false;
+    }
     let start = state.clone();
     let mut frames = vec![];
-    if !prepare && !state.gripped {
+    if (!prepare || entry.is_some()) && !state.gripped {
         search.stage = Stage::Approach;
         for _ in 0..64 {
             if state
@@ -1377,7 +1481,7 @@ fn build(
             frames.push(search.frame(&state, logical, angles, Stage::Approach, true));
         }
     }
-    if !prepare
+    if (!prepare || entry.is_some())
         && (0..6)
             .map(|i| (state.engineer_q[i] - root.engineer_q[i]).abs())
             .fold(0., f64::max)
@@ -1468,7 +1572,7 @@ fn build(
     for segment in segments(d, q, logical, angles) {
         let stage = segment.stage;
         search.stage = stage;
-        let n = route.samples(segment, super::super::SPEED * dt, super::super::RATE * dt);
+        let n = route.samples(segment, super::SPEED * dt, super::RATE * dt);
         for i in 1..=n {
             let (x, r) = segment.point(i as f64 / n as f64);
             let mut next = state.clone();
@@ -1492,9 +1596,130 @@ fn build(
     Ok((start, frames))
 }
 
+impl Rig {
+    /// Retime validated motion along its existing joint path. No IK goal or
+    /// endpoint is projected; slow joints lengthen the corresponding segment.
+    pub(crate) fn runtime_limited_frames(
+        &self,
+        plan: &Plan,
+    ) -> Result<Vec<rm_simulator_world::assembly::Frame>, &'static str> {
+        use rm_simulator_world::assembly::{Frame as Output, JAW_SPEED_RAD_S, JOINT_SPEED_RAD_S};
+        let source = self.runtime_frames(plan)?;
+        let mut previous = Output {
+            joints_rad: self.engineer_q,
+            jaws_rad: [self.jaw_angles[0], self.jaw_angles[1]],
+            unit: self.unit_pose,
+            guide_m: [0.09, 0.2, 0.6],
+            angles_rad: [0.; 3],
+            gripped: false,
+            stage: 0,
+        };
+        let dt = rm_simulator_physics::tick_ns() as f64 * 1e-9;
+        let mut output = Vec::new();
+        for next in source {
+            let count = (0..6)
+                .map(|i| {
+                    ((next.joints_rad[i] - previous.joints_rad[i]).abs()
+                        / (JOINT_SPEED_RAD_S[i] * dt))
+                        .ceil() as usize
+                })
+                .chain((0..2).map(|i| {
+                    ((next.jaws_rad[i] - previous.jaws_rad[i]).abs() / (JAW_SPEED_RAD_S * dt))
+                        .ceil() as usize
+                }))
+                .max()
+                .unwrap_or(1)
+                .max(1);
+            for i in 1..=count {
+                let t = i as f64 / count as f64;
+                let mix = |a: f64, b: f64| ((a + (b - a) * t) * 1e6).round() / 1e6;
+                let mut frame = next.clone();
+                frame.joints_rad =
+                    std::array::from_fn(|j| mix(previous.joints_rad[j], next.joints_rad[j]));
+                frame.jaws_rad =
+                    std::array::from_fn(|j| mix(previous.jaws_rad[j], next.jaws_rad[j]));
+                frame.guide_m = std::array::from_fn(|j| mix(previous.guide_m[j], next.guide_m[j]));
+                frame.angles_rad =
+                    std::array::from_fn(|j| mix(previous.angles_rad[j], next.angles_rad[j]));
+                let q = quaternion(previous.unit).slerp(quaternion(next.unit), t);
+                frame.unit = pose(position(previous.unit).lerp(position(next.unit), t), q);
+                frame.unit.translation_m =
+                    frame.unit.translation_m.map(|v| (v * 1e6).round() / 1e6);
+                frame.unit.rotation_wxyz =
+                    frame.unit.rotation_wxyz.map(|v| (v * 1e7).round() / 1e7);
+                frame.gripped = if i == count {
+                    next.gripped
+                } else {
+                    previous.gripped
+                };
+                output.push(frame);
+            }
+            previous = next;
+        }
+        Ok(output)
+    }
+}
+
+#[cfg(test)]
+impl Rig {
+    pub(crate) fn test_playback_fixture() -> (Self, Plan) {
+        let mut rig = super::tests::mechanism_fixture();
+        let logical = [0.09, 0.2, 0.6];
+        let target = rig.target(logical, [0.; 3]);
+        rig.config.engineer.tool = target;
+        rig.tool = target;
+        rig.unit_pose = rig.tool_unit_pose();
+        let frames = [Stage::Approach, Stage::Approach, Stage::Grasp]
+            .into_iter()
+            .map(|stage| sample_frame(&rig, logical, [0.; 3], stage, false))
+            .collect();
+        (
+            rig,
+            Plan {
+                frames,
+                statistics: Statistics::default(),
+            },
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires source CAD and a completed recording"]
+    fn audit_recorded_source_contacts() {
+        let package = std::env::var("ASSEMBLY_CAD_PACKAGE").unwrap();
+        let area = std::env::var("ASSEMBLY_CAD_AREA").unwrap();
+        let input =
+            std::fs::read_to_string(std::env::var("ASSEMBLY_CONTACT_RECORDING").unwrap()).unwrap();
+        let mut rows = input.lines();
+        let header: serde_json::Value = serde_json::from_str(rows.next().unwrap()).unwrap();
+        let requested = serde_json::from_value(header["requested_pose"].clone()).unwrap();
+        let mut rig = Rig::load_in_area(Path::new(&package), requested, Path::new(&area)).unwrap();
+        for row in rows {
+            let row: serde_json::Value = serde_json::from_str(row).unwrap();
+            let cad = &row["cad"];
+            rig.tool = serde_json::from_value(cad["tool"].clone()).unwrap();
+            rig.unit_pose = serde_json::from_value(cad["unit_pose"].clone()).unwrap();
+            rig.core_q = serde_json::from_value(cad["core_q_rad"].clone()).unwrap();
+            rig.gripped = cad["gripped"].as_bool().unwrap();
+            rig.grip_requested = cad["grip_requested"].as_bool().unwrap();
+            rig.grasp_roll_rad = cad["grasp_roll_rad"].as_f64().unwrap();
+            rig.grasp_axial_m = cad["grasp_axial_m"].as_f64().unwrap();
+            rig.lift_m = row["guide_m"][2].as_f64().unwrap() - 0.6;
+            rig.p_rad = row["angles_rad"][0].as_f64().unwrap();
+            rig.q_rad = row["angles_rad"][1].as_f64().unwrap();
+            let frames = serde_json::from_value(row["frames_world_flu"].clone()).unwrap();
+            let hits = rig
+                .collision
+                .as_ref()
+                .unwrap()
+                .contacts(&frames, &rig.allowed_contacts(), 0.0005)
+                .unwrap();
+            assert!(hits.is_empty(), "tick {}: {hits:?}", row["tick"]);
+        }
+    }
     /// Isolate the dominant collision to original source leaves. Diagnostic only:
     /// neither ownership nor collision exclusions are changed by this audit.
     #[test]
@@ -1625,13 +1850,11 @@ mod tests {
                 };
                 points_m
                     .iter()
-                    .map(|p| {
-                        position(frame) + quaternion(frame) * bevy::math::DVec3::from_array(*p)
-                    })
+                    .map(|p| position(frame) + quaternion(frame) * glam::DVec3::from_array(*p))
                     .fold(
                         (
-                            bevy::math::DVec3::splat(f64::INFINITY),
-                            bevy::math::DVec3::splat(f64::NEG_INFINITY),
+                            glam::DVec3::splat(f64::INFINITY),
+                            glam::DVec3::splat(f64::NEG_INFINITY),
                         ),
                         |(lo, hi), p| (lo.min(p), hi.max(p)),
                     )
@@ -1795,6 +2018,7 @@ mod tests {
                                     last: None,
                                     last_checked: None,
                                     stage: Stage::Approach,
+                                    signal: None,
                                 };
                                 match build(
                                     &rig,
@@ -2050,7 +2274,7 @@ mod tests {
             for dy in [-0.15, 0., 0.15] {
                 for yaw_degrees in [-30., 0., 30.] {
                     rig.engineer_body = pose(
-                        position(body) + bevy::math::DVec3::new(dx, dy, 0.),
+                        position(body) + glam::DVec3::new(dx, dy, 0.),
                         quaternion(body)
                             * DQuat::from_rotation_z(yaw_degrees * std::f64::consts::PI / 180.),
                     );
@@ -2108,7 +2332,7 @@ mod tests {
     }
     #[test]
     fn axial_spin_preserves_rod_position_axis_and_rigid_grasp_through_flip() {
-        let mut rig = crate::assembly_cad::tests::mechanism_fixture();
+        let mut rig = super::super::tests::mechanism_fixture();
         rig.grasp_axial_m = 0.02;
         for angles in [
             [0.; 3],
@@ -2120,13 +2344,13 @@ mod tests {
             rig.tool = rig.target(logical, angles);
             let zero = rig.tool_unit_pose();
             let grip = compose(inverse(rig.tool), zero);
-            let axis = quaternion(zero) * bevy::math::DVec3::Z;
+            let axis = quaternion(zero) * glam::DVec3::Z;
             for spin in [-3., -1.5, 0.4, 2.8] {
                 rig.rod_spin_rad = spin;
                 rig.tool = rig.target(logical, angles);
                 let unit = rig.tool_unit_pose();
                 assert!(position(unit).distance(position(zero)) < 1e-12);
-                assert!((quaternion(unit) * bevy::math::DVec3::Z - axis).length() < 1e-12);
+                assert!((quaternion(unit) * glam::DVec3::Z - axis).length() < 1e-12);
                 assert!(quaternion(unit).angle_between(quaternion(zero)) > 0.3);
                 let actual_grip = compose(inverse(rig.tool), unit);
                 assert!(position(actual_grip).distance(position(grip)) < 1e-12);
@@ -2151,7 +2375,7 @@ mod tests {
             at_flip,
             route.spin([-0.05, 0.2, 0.7], [std::f64::consts::FRAC_PI_2, 0.5, 0.])
         );
-        let mut rig = crate::assembly_cad::tests::mechanism_fixture();
+        let mut rig = super::super::tests::mechanism_fixture();
         let previous = rig.report();
         let mut frame = sample_frame(&rig, [-0.05, 0.2, 0.7], [0.; 3], Stage::Lift, true);
         for spin in [0.1, f64::NAN] {
@@ -2181,12 +2405,12 @@ mod tests {
             let spin = route.spin(segment.to.0, segment.to.1);
             assert!((spin - previous - delta).abs() < 1e-12);
             let dt = rm_simulator_physics::tick_ns() as f64 * 1e-9;
-            let n = route.samples(segment, crate::SPEED * dt, crate::RATE * dt);
+            let n = route.samples(segment, super::super::SPEED * dt, super::super::RATE * dt);
             let mut last = previous;
             for i in 1..=n {
                 let (p, a) = segment.point(i as f64 / n as f64);
                 let v = route.spin(p, a);
-                assert!((v - last).abs() <= crate::RATE * dt + 1e-9);
+                assert!((v - last).abs() <= super::super::RATE * dt + 1e-9);
                 last = v;
             }
             previous = spin;
@@ -2211,9 +2435,7 @@ mod tests {
     }
     #[test]
     fn nearby_ik_table_reuses_seeds_but_resolves_the_new_pose_and_model() {
-        let mut arm = crate::assembly_cad::tests::mechanism_fixture()
-            .config
-            .engineer;
+        let mut arm = super::super::tests::mechanism_fixture().config.engineer;
         arm.tool = Pose::at([0.2, 0., 0.]);
         let q = [0.05; 6];
         let old = arm.tool_pose(q);
@@ -2233,7 +2455,7 @@ mod tests {
     }
     #[test]
     fn exact_transition_cache_rejects_mutated_state_configuration_and_geometry() {
-        let rig = crate::assembly_cad::tests::mechanism_fixture();
+        let rig = super::super::tests::mechanism_fixture();
         let mut search = Search {
             stats: Statistics::default(),
             budget: 8,
@@ -2242,6 +2464,7 @@ mod tests {
             last: None,
             last_checked: None,
             stage: Stage::Approach,
+            signal: None,
         };
         let checked = search.check(&rig, rig.clone()).unwrap();
         search.check(&rig, rig.clone()).unwrap();
@@ -2339,13 +2562,13 @@ mod tests {
             to: ([-0.05, 0.2, 0.7], [std::f64::consts::FRAC_PI_2, 0., 0.]),
         };
         let dt = rm_simulator_physics::tick_ns() as f64 * 1e-9;
-        let n = route.samples(segment, crate::SPEED * dt, crate::RATE * dt);
+        let n = route.samples(segment, super::super::SPEED * dt, super::super::RATE * dt);
         let mut previous = 0.;
         let mut maximum: f64 = 0.;
         for i in 1..=n {
             let (p, a) = segment.point(i as f64 / n as f64);
             let spin = route.spin(p, a);
-            assert!((spin - previous).abs() <= crate::RATE * dt + 1e-9);
+            assert!((spin - previous).abs() <= super::super::RATE * dt + 1e-9);
             maximum = maximum.max(spin);
             previous = spin;
         }
@@ -2354,14 +2577,14 @@ mod tests {
     }
     #[test]
     fn seated_spin_playback_moves_the_unit_and_gripper_together() {
-        let mut rig = crate::assembly_cad::tests::mechanism_fixture();
+        let mut rig = super::super::tests::mechanism_fixture();
         let logical = [-0.05, 0.2, 0.7];
         rig.grasp_axial_m = 0.02;
         rig.tool = rig.target(logical, [0.; 3]);
         rig.unit_pose = rig.tool_unit_pose();
         rig.config.engineer.tool = rig.tool;
         let unit = rig.unit_pose;
-        let normal = quaternion(unit) * bevy::math::DVec3::Z;
+        let normal = quaternion(unit) * glam::DVec3::Z;
         for axis in &mut rig.config.engineer.axes {
             axis.origin_m = unit.translation_m;
             axis.axis = normal.to_array();
@@ -2374,7 +2597,7 @@ mod tests {
         frame.q[0] = 0.001;
         rig.follow_plan(&frame).unwrap();
         assert!(position(rig.unit_pose).distance(position(unit)) < 1e-12);
-        assert!((quaternion(rig.unit_pose) * bevy::math::DVec3::Z - normal).length() < 1e-12);
+        assert!((quaternion(rig.unit_pose) * glam::DVec3::Z - normal).length() < 1e-12);
         let spun_grip = compose(inverse(rig.tool), rig.unit_pose);
         assert!(position(spun_grip).distance(position(grip)) < 1e-12);
         assert!(quaternion(spun_grip).angle_between(quaternion(grip)) < 1e-7);
@@ -2405,7 +2628,7 @@ mod tests {
                 [std::f64::consts::FRAC_PI_2, 0.5, 0.]
             )
         );
-        let mut rig = crate::assembly_cad::tests::mechanism_fixture();
+        let mut rig = super::super::tests::mechanism_fixture();
         let previous = rig.report();
         let mut frame = sample_frame(&rig, [0.09, 0.2, 0.6], [0.; 3], Stage::Approach, true);
         frame.chassis.translation_m[0] = 0.1;
@@ -2417,7 +2640,7 @@ mod tests {
     }
     #[test]
     fn moving_base_playback_keeps_the_held_gripper_on_its_world_guide() {
-        let mut rig = crate::assembly_cad::tests::mechanism_fixture();
+        let mut rig = super::super::tests::mechanism_fixture();
         let logical = [0.09, 0.2, 0.6];
         let expected = rig.target(logical, [0.; 3]);
         rig.config.engineer.tool = expected;
@@ -2441,7 +2664,7 @@ mod tests {
         use rm_simulator_physics::manipulator_collision::{
             CollisionAsset, CollisionBody, CollisionPart,
         };
-        let mut rig = crate::assembly_cad::tests::mechanism_fixture();
+        let mut rig = super::super::tests::mechanism_fixture();
         rig.engineer_body = Pose::at([-0.05, 0., 0.]);
         rig.initial_engineer_body = rig.engineer_body;
         rig.collision = Some(std::sync::Arc::new(
@@ -2477,7 +2700,7 @@ mod tests {
     }
     #[test]
     fn camera_preparation_changes_only_the_camera_link_and_is_preserved_by_clone() {
-        let mut rig = crate::assembly_cad::tests::mechanism_fixture();
+        let mut rig = super::super::tests::mechanism_fixture();
         rig.config.engineer_auxiliary.push(Auxiliary {
             name: "camera-lift".into(),
             reference: Pose::at([0.1, 0., 0.3]),
@@ -2503,7 +2726,7 @@ mod tests {
     }
     #[test]
     fn reverse_branch_connects_a_junction_and_can_continue_forwards() {
-        let mut rig = crate::assembly_cad::tests::mechanism_fixture();
+        let mut rig = super::super::tests::mechanism_fixture();
         let from = ([0.09, 0.2, 0.6], [0.; 3]);
         let segment = Segment {
             stage: Stage::Align,
@@ -2531,7 +2754,7 @@ mod tests {
     }
     #[test]
     fn reverse_segments_reject_unreachable_junction_without_mutating_the_fixture() {
-        let rig = crate::assembly_cad::tests::mechanism_fixture();
+        let rig = super::super::tests::mechanism_fixture();
         let before = rig.report();
         let task = segments(3, 0.5, [0.09, 0.2, 0.6], [0.; 3]);
         let mut stats = Statistics::default();
@@ -2560,69 +2783,8 @@ mod tests {
         assert!(goals(1, 0.5, [-0.05, 0.2, 0.6], [0.; 3]).is_empty());
     }
     #[test]
-    fn assisted_playback_stops_at_boundaries_and_obeys_pause() {
-        let mut rig = crate::assembly_cad::tests::mechanism_fixture();
-        let logical = [0.09, 0.2, 0.6];
-        let target = rig.target(logical, [0.; 3]);
-        rig.config.engineer.tool = target;
-        rig.tool = target;
-        rig.unit_pose = rig.tool_unit_pose();
-        let mut w = crate::Workbench::new(1);
-        w.plan = Some(Plan {
-            frames: vec![
-                sample_frame(&rig, logical, [0.; 3], Stage::Approach, false),
-                sample_frame(&rig, logical, [0.; 3], Stage::Approach, false),
-                sample_frame(&rig, logical, [0.; 3], Stage::Grasp, false),
-            ],
-            statistics: Statistics::default(),
-        });
-        w.cad = Some(rig);
-        w.stage_run = true;
-        w.paused = true;
-        w.planned_step();
-        assert_eq!(w.tick, 0);
-        w.paused = false;
-        w.planned_step();
-        assert!(w.stage_run);
-        w.planned_step();
-        assert!(!w.stage_run);
-        assert_eq!(w.plan_cursor, 2);
-        w.planned_step();
-        assert_eq!(w.plan_cursor, 2);
-        w.stage_run = true;
-        w.planned_step();
-        assert_eq!(w.plan_cursor, 3);
-        assert!(!w.stage_run);
-        // Exhausting an arbitrary path never bypasses the manipulation referee.
-        w.automatic = true;
-        w.planned_step();
-        assert!(!w.task.completed());
-    }
-    #[test]
-    fn cancelled_worker_result_is_never_installed() {
-        let mut w = crate::Workbench::new(1);
-        let pending = std::sync::Arc::new(std::sync::Mutex::new(None));
-        w.pending_plan = Some(pending.clone());
-        w.unreachable = true;
-        w.planning_report = serde_json::json!({"status":"failed"});
-        w.cancel_plan();
-        *pending.lock().unwrap() = Some(Err(Failure {
-            reason: "old query".into(),
-            stage: Stage::Approach,
-            collision: None,
-            statistics: Box::default(),
-        }));
-        let mut app = App::new();
-        app.insert_resource(w).add_systems(Update, crate::poll_plan);
-        app.update();
-        let w = app.world().resource::<crate::Workbench>();
-        assert_eq!(w.planning_report["status"], "cancelled");
-        assert!(!w.unreachable);
-        assert!(w.plan.is_none());
-    }
-    #[test]
     fn failed_planning_and_invalid_frames_never_mutate_the_live_rig() {
-        let mut rig = crate::assembly_cad::tests::mechanism_fixture();
+        let mut rig = super::super::tests::mechanism_fixture();
         let before = rig.report();
         assert!(
             rig.plan_assembly(3, 0., [0.09, 0.2, 0.6], [0.; 3], false, 0)
@@ -2645,7 +2807,7 @@ mod tests {
     }
     #[test]
     fn grasp_transform_roundtrips_clocking_and_axial_offsets() {
-        let mut rig = crate::assembly_cad::tests::mechanism_fixture();
+        let mut rig = super::super::tests::mechanism_fixture();
         rig.config.engineer.tool = rig.target([0.09, 0.2, 0.6], [0.; 3]);
         let original = rig.config.engineer.tool;
         for roll in [0., 1.2, -1.5] {

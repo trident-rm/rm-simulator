@@ -1040,6 +1040,75 @@ ASSEMBLY_CAD_PACKAGE="$PWD/local-assets/assembly-cad/package" \
   audit_level_three_reverse_ik -- --ignored --nocapture
 ```
 
+## Planning performance and approximate collisions
+
+Source collision geometry is partitioned into spatial chunks of at most 128
+triangles without changing their coordinates or winding. Each chunk has a convex
+superset for cheap distance bounds; the default mode falls back to exact source
+triangles near these bounds. World AABBs and rigid motion bounds are computed
+once per query. Endpoint contact results retain one exact pose/tolerance entry
+per body pair, so stationary Core and terrain pairs can be reused without
+assuming that nearby moving poses are clear. Allowances are checked before
+cache lookup. Scene clones share this bounded cache; proxy scenes get their own.
+
+`--fast-collisions` replaces the larger Engineer frames with their chunk convex
+supersets. The wrist housing (`engineer/j6`), both jaws, complete Core, Unit and
+terrain retain source collision geometry. Keeping the fitted mechanism exact
+avoids proxy interference at its own joints. Visual models remain unchanged.
+Proxy contacts are marked `conservative`; small gaps can become blocked, and
+normal collision tolerances still apply. These are reproducible runtime proxies,
+not a calibrated collision package or motor/contact simulation.
+
+```sh
+python3 scripts/assembly-pose-matrix.py \
+  --package local-assets/assembly-cad/package \
+  --area local-assets/assembly-cad/area \
+  --case reference --case core-azimuth-10deg --case twist-reference \
+  --hints local-assets/assembly-cad/rod-spin-d3.jsonl \
+  --fast-collisions --jobs 1 \
+  --out local-assets/assembly-cad/planner-perf/preferred-fast
+```
+
+Planner statistics now include `planning_elapsed_s`, covering search and complete
+path validation, excluding loading and playback. Matrix reports retain that
+value alongside total process time and collision mode. Timing is diagnostic
+app-side metadata; physics and simulation clocks still use explicit ticks.
+
+The 2026-10-20 experiment uses the same source package and reference IK hints as
+the earlier verified matrix. The original forced-twist reference completed in
+182.64 seconds total; chunk bounds plus exact stationary-pair caching reduced it
+to 13.71 seconds planning / 14.53 seconds total in the exact mode.
+Chunking alone was insufficient. See the retained local reports in
+`local-assets/assembly-cad/planner-perf/` for the individual variants.
+
+Completed recordings also supply a preferred five-stage twist schedule. The
+planner tries matching existing profiles first; it never imports clearance or
+adds unvalidated motion. Older recordings lacking approach/insertion/alignment
+spin fields default those increments to zero. Malformed preference metadata is
+ignored while joint hints still undergo calibration, finite-value, limit and FK
+checks. Explicit spin inputs remain authoritative.
+
+With the same reference recording, selective proxies and preferred-profile
+ordering, four fixed scenarios completed in the final sequential run:
+
+| Case | Planning and validation | Whole process |
+|---|---:|---:|
+| Reference | 7.24 s | 8.06 s |
+| Core azimuth +10 degrees | 7.49 s | 8.31 s |
+| Explicit +90-degree P-stage twist | 7.19 s | 8.01 s |
+| Core height +25 mm | 15.32 s | 16.13 s |
+
+These are warmed searches with imported IK/profile hints, not cold-start latency
+or broad success-rate measurements. A separate reference run without imported
+hints completed in 13.03 seconds planning / 14.43 seconds total. Each returned path completed ordinary
+playback and reached referee confirmation; no collision waivers or cadence
+changes were introduced. The higher case initially exhausted 2,500 checks in
+both exact and proxy modes before preferred-profile ordering was added. Its old
+recording also passes the new source contact audit. The final search found a
+complete path within the same budget. A bounded failure remains distinct from
+proof of infeasibility. Broader coverage and live Heavy integration remain
+separate work.
+
 ## Remaining integration
 
 ### Comparison with HKUAstar planners (2026-10-19)
@@ -1114,3 +1183,105 @@ put commands and complete physical restore state through the existing host
 protocol, and connect Heavy ownership, RFID, defeat/recovery, invincibility and
 rewards. Difficulty four additionally needs two energy units and a supported
 manipulation strategy. The interactive workbench currently has one gripper.
+
+## In-game automatic assembly
+
+The normal app now shares the Bevy-free source rig and planner with this
+workbench. Launch a source PIE Heavy on the bound RMUC 2027 field:
+
+```sh
+just run --play --robot engineer --cad-assets field-2027 \
+  --robot-assets local-assets/robot-cad-survey/bound-tunnel-heavy \
+  --assembly-assets local-assets/assembly-cad/package \
+  --assembly-area local-assets/assembly-cad/area \
+  --assembly-hints local-assets/assembly-cad/rod-spin-d3.jsonl
+```
+
+Drive onto your Assembly Area, park facing the Core, and stop. Press **J**
+(rebindable as Automatic assembly), then choose **L1**, **L2** or **L3**.
+Escape closes the panel. Cancel or manual driving stops the job. No preparation
+command moves the chassis: support height, tilt, motion and reach are checked
+against the current parking. An unsuccessful solve leaves it there.
+
+The arm starts in a compact raised neutral posture and remains part of the robot
+between attempts. **T** folds it for a tunnel or returns it toward neutral. Both
+posture changes and assembly playback obey simulator joint/jaw speed limits of
+1 rad/s (about 57°/s); these are defaults, not measured donor motor limits.
+Before solving, `Positioning` moves the Core from its last actual pose (source
+CAD zero joints on first use) to its selected target on explicit 128 Hz ticks.
+Core rotary joints and P/Q reset use a 1 rad/s simulator limit; carriage reset
+uses 0.1 m/s. The moving Core is shown immediately, with a separate progress
+bar and flowing radial lights. Snapshot/restore retains the motion and elapsed
+time. Arrival starts the native 45-second attempt and releases the waiting
+robot-planning worker; no robot IK/collision search runs during positioning.
+The Core's chosen positioning branch remains fixed through robot planning.
+Core travel is prescribed joint interpolation; Core-arm collision avoidance
+and overload handling remain unimplemented.
+
+Solving holds the current joints, plans a collision-checked approach from them,
+and retimes the trajectory to preserve every waypoint within those limits.
+Completion and cancellation hold the last joint pose; they never reset the arm.
+
+This first version prepares a stationary Unit near the selected grasp and selects
+a Core branch; pickup from storage is not implemented. It uses the canonical
+frozen Core pose and a 30° Q target. The same source-preserving arm,
+Core and Unit meshes animate through grasp, insertion, lift, P flip and Q alignment.
+It does not yet drive the live projectile collision envelopes of the six-axis
+arm or replace the field's static Core collision mesh; collision-aware planning
+uses its own verified source station terrain and selective convex arm envelopes.
+Other robots are not obstacles in that planning scene. Live chassis/terrain
+contact stays with Rapier, so tyre compression does not produce false rigid-CAD
+collisions or cause the planner to adjust the parking height.
+
+The host loads the verified rig once and solves on a bounded worker; no GPU or
+simulation tick waits for IK. The solving bar reports collision-query budget
+consumed, rather than estimating how close the search is to success. Actuation
+advances one validated sample per 128 Hz tick; its bar reports samples applied.
+Pausing holds actuation while the background solve can finish. Complete
+trajectories, source calibration, evaluator state and cursor travel in checkpoints,
+so prediction and restore use the same remaining motion. Motion samples use micrometre/microradian grids (0.1 micro-unit for quaternion
+components), far below the collision tolerance. Those samples are column-delta
+packed and compressed losslessly to fit the world-update budget. Persistent idle
+arm state, posture targets and jaws also travel in checkpoints. Protocol 67
+requires matching clients and hosts.
+
+In Idle practice all three levels are available. During a running native match,
+the existing difficulty unlocks, station ownership, 45-second deadline and rewards
+still apply. Completion comes from the manipulation evaluator, not an unconditional
+Finish button. The Heavy is an assembly-only physical prototype: its 2027 combat
+HP, progression and weapons are still unsupported.
+
+The console accepts `World` protocol commands `AutoAssembly { chassis,
+difficulty }` and `CancelAutoAssembly { chassis }`. `state.arms` exposes actual/target joints and jaws. `state.assemblies` exposes
+phase, checks, budget, frame cursor and failure reason for automation. Console
+`spawn` remains an operator test fixture; the assembly feature never invokes it.
+
+To record the actual game renderer and assembly panel, start the app with
+`--console --start-paused --third-person --window-mode headless`, then run:
+
+```sh
+python3 scripts/render-assembly-game-video.py --level 3 \
+  --out local-assets/assembly-cad/in-game/assembly-l3-in-game.mp4
+```
+
+The Heavy must already be parked; `--reference-parking` explicitly opts into
+operator placement for a reproducible recording fixture. Solving is captured
+on wall time. Actuation is captured by stepping the paused game clock at 128 Hz
+and encoded at normal playback speed, so the HUD displays PAUSED during capture.
+The script uses ordinary console commands and GPU screenshots, retains an audit
+JSON, and removes intermediate PNGs after encoding. FFmpeg is required.
+
+### Live Tech Core lighting
+
+The articulated in-game Core uses the source CAD diffuser triangles for all
+three indicator groups. Disconnected radial strips receive independent
+materials; splitting their index lists preserves every source triangle, normal
+and transform. Angular positions accumulate every imported shell ancestor
+transform into the Core head frame before measuring angles. Only verified white diffuser faces and the two red side bars
+are rebound; the housing and other painted materials retain their source colors.
+
+Lighting follows accepted insertion/lift/P/Q milestones and confirmation,
+including the team-colored target-angle strip and current-angle white strip.
+The 1 Hz and 3 Hz signals use simulation time and freeze when paused. See
+[rules-2027](rules-2027.md#tech-core-indicators) for the full table, simulator
+presentation policies and current scope. No light changes the rules authority.

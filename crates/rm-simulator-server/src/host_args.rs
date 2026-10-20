@@ -27,6 +27,15 @@ use rm_simulator_world::{Caliber, RuneKind, Shot, outpost, projectile::Projectil
 /// accepted by the other. `source_chassis` is embedding-only, populated after asset verification.
 #[derive(Args, Debug, Clone)]
 pub struct HostArgs {
+    /// Verified Engineer/Core source rig for in-game automatic assembly.
+    #[arg(long, requires = "assembly_area")]
+    pub assembly_assets: Option<std::path::PathBuf>,
+    /// Matching verified assembly terrain extraction; no extra terrain is spawned.
+    #[arg(long, requires = "assembly_assets")]
+    pub assembly_area: Option<std::path::PathBuf>,
+    /// Optional completed recording supplying IK seeds and preferred twist profiles.
+    #[arg(long, requires = "assembly_assets")]
+    pub assembly_hints: Option<std::path::PathBuf>,
     /// Verified source-package chassis supplied by the embedding application.
     #[arg(skip)]
     pub source_chassis: Option<rm_simulator_world::ChassisConfig>,

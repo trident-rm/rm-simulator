@@ -190,8 +190,10 @@ parameters. Robot ids must be unique and HP positive. The roster supports
 Hero, Engineer, Infantry, Drone, Sentry, Dart and Radar. These records do not
 create chassis, so unsupported equipment can exist in a headless scenario.
 The app also offers manually driven Engineer and Sentry chassis prototypes;
-the Engineer arm and Sentry radar are decorative and their equipment rules
-remain outside the live integration.
+the Sentry radar remains decorative. A source PIE Engineer/Heavy additionally
+supports [automatic L1–L3 assembly](assembly-workbench.md#in-game-automatic-assembly)
+on the bound 2027 field, with manual parking and measured manipulation completion.
+Heavy combat progression remains outside that prototype.
 There is no referee robot. `AddRobot` and `RemoveRobot` admit and drop robots
 at any phase; the live referee uses them as pilots join and leave.
 
@@ -397,7 +399,9 @@ ten-second boundaries, with no terminal 7:00 payment. Completion submitted at a
 settlement timestamp affects future payments. Heavy level/HP changes and launcher
 permission remain deferred with Heavy equipment support. Assembly can be exercised
 without any deployed robots; buttons remain referee-only rather than granting
-pilots a way to certify real physical completion.
+pilots a way to certify real physical completion. The separate source-bound
+pilot prototype now certifies L1–L3 through the manipulation evaluator; it starts
+and settles these same native attempts, preserving match unlocks and rewards.
 
 ## RMUC 2027 adaptive armor
 

@@ -12,6 +12,7 @@
 //! physics wireframe, `screenshot` serves `--screenshot` and `frames` holds
 //! the FLU-to-Bevy conversions.
 mod args;
+mod assembly;
 mod auto_aim;
 mod bindings;
 mod console;
@@ -104,6 +105,10 @@ fn main() -> AppExit {
                 .expect("verified robot armor mounts"),
         });
     }
+    if let Err(error) = assembly::register(&mut app, args.host.assembly_assets.as_deref()) {
+        eprintln!("assembly assets: {error}");
+        return AppExit::error();
+    }
     let mut plugins = DefaultPlugins
         .set(WindowPlugin {
             primary_window: Some(Window {
@@ -158,6 +163,7 @@ fn main() -> AppExit {
         .add_plugins(preferences::PreferencesPlugin)
         .add_plugins(graphics::GraphicsPlugin)
         .add_plugins(hud::HudPlugin)
+        .add_plugins(assembly::AssemblyPlugin)
         .add_plugins(debug_panel::DebugPanelPlugin)
         .add_plugins(zone_debug::ZoneDebugPlugin)
         .insert_resource(debug_panel::DebugOptions {

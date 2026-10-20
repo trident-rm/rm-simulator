@@ -58,6 +58,9 @@ struct Options {
     /// Verified central-highland terrain extraction, in the source rig frame.
     #[arg(long, requires = "assembly_assets")]
     assembly_area: Option<PathBuf>,
+    /// Use conservative convex collision chunks instead of source triangles.
+    #[arg(long, requires = "assembly_assets")]
+    fast_collisions: bool,
     /// Demonstrate the full sequence with rate-limited Cartesian movements.
     #[arg(long)]
     demo: bool,
@@ -556,6 +559,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         workbench.task = Attempt::new(options.difficulty, [degrees.to_radians(); 2], 0)?;
     }
     if let Some(rig) = &mut workbench.cad {
+        if options.fast_collisions {
+            rig.use_convex_collisions();
+        }
         if let Some(path) = &options.ik_hints {
             rig.load_ik_hints(path)?;
         }
@@ -610,7 +616,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "sample_ticks":4,"difficulty":options.difficulty,"manifest":manifest,
                 "case":"insert 100 mm, lift 100 mm, P 90 deg, then requested Q",
                 "pose_seed":options.pose_seed,"pose_index":options.pose_index,
-                "core_pose":options.core_pose,"chassis_offset":options.chassis_offset,"fixed_chassis":options.fixed_chassis,"spin_deltas":options.spin_deltas,
+                "core_pose":options.core_pose,"chassis_offset":options.chassis_offset,"fixed_chassis":options.fixed_chassis,"spin_deltas":options.spin_deltas,"fast_collisions":options.fast_collisions,
                 "target_q_rad":w.task.target_q_rad,
                 "requested_pose":w.cad.as_ref().unwrap().requested_pose,
                 "area":w.cad.as_ref().unwrap().report()["area"],
@@ -1231,6 +1237,52 @@ fn capture(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn assisted_playback_stops_at_boundaries_and_obeys_pause() {
+        let (rig, plan) = assembly_cad::Rig::test_playback_fixture();
+        let mut w = crate::Workbench::new(1);
+        w.plan = Some(plan);
+        w.cad = Some(rig);
+        w.stage_run = true;
+        w.paused = true;
+        w.planned_step();
+        assert_eq!(w.tick, 0);
+        w.paused = false;
+        w.planned_step();
+        assert!(w.stage_run);
+        w.planned_step();
+        assert!(!w.stage_run);
+        assert_eq!(w.plan_cursor, 2);
+        w.planned_step();
+        assert_eq!(w.plan_cursor, 2);
+        w.stage_run = true;
+        w.planned_step();
+        assert_eq!(w.plan_cursor, 3);
+        assert!(!w.stage_run);
+        // Exhausting an arbitrary path never bypasses the manipulation referee.
+        w.automatic = true;
+        w.planned_step();
+        assert!(!w.task.completed());
+    }
+    #[test]
+    fn cancelled_worker_result_is_never_installed() {
+        let mut w = crate::Workbench::new(1);
+        let pending = std::sync::Arc::new(std::sync::Mutex::new(None));
+        w.pending_plan = Some(pending.clone());
+        w.unreachable = true;
+        w.planning_report = serde_json::json!({"status":"failed"});
+        w.cancel_plan();
+        let (rig, _) = assembly_cad::Rig::test_playback_fixture();
+        *pending.lock().unwrap() =
+            Some(rig.plan_assembly(1, 0., [0.09, 0.2, 0.6], [0.; 3], false, 0));
+        let mut app = App::new();
+        app.insert_resource(w).add_systems(Update, crate::poll_plan);
+        app.update();
+        let w = app.world().resource::<crate::Workbench>();
+        assert_eq!(w.planning_report["status"], "cancelled");
+        assert!(!w.unreachable);
+        assert!(w.plan.is_none());
+    }
     #[test]
     fn rate_limit_pause_and_unreachable_target() {
         let mut w = Workbench::new(1);

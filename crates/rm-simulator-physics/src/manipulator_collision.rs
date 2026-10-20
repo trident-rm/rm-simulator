@@ -68,22 +68,33 @@ pub struct CollisionHit {
     pub penetration_m: f64,
     /// Fraction of the proposed transition at impact; 1 for a pose query.
     pub fraction: f64,
-    /// True when conservative advancement exhausted its iteration budget;
-    /// this is an unresolved obstruction, never a proof of clearance.
+    /// True for a proxy obstruction or exhausted conservative advancement;
+    /// this is an unresolved source obstruction, never a proof of clearance.
     pub conservative: bool,
 }
 #[derive(Clone)]
 struct Body {
     name: String,
     shapes: Vec<SharedShape>,
+    envelopes: Vec<SharedShape>,
     radius_m: f64,
-    envelope: SharedShape,
+    approximate: bool,
 }
 /// Shared, immutable BVHs and convex shapes, cheap to clone for transactional IK.
 #[derive(Clone)]
 pub struct CollisionScene {
     bodies: Vec<Body>,
     excluded: BTreeSet<(String, String)>,
+    // One exact endpoint result per pair: stationary fixture/terrain contacts
+    // need not be recomputed for every moving arm sample. No nearby-pose reuse.
+    contacts_cache: std::sync::Arc<std::sync::Mutex<BTreeMap<(usize, usize), PairContacts>>>,
+    approximate: bool,
+}
+#[derive(Clone)]
+struct PairContacts {
+    poses: [rapier3d_f64::math::Pose; 2],
+    tolerance_m: f64,
+    hits: Vec<CollisionHit>,
 }
 fn pair(a: &str, b: &str) -> (String, String) {
     if a < b {
@@ -99,6 +110,71 @@ fn valid_pose(p: Pose) -> bool {
         .all(f64::is_finite)
         && (p.rotation_wxyz.into_iter().map(|v| v * v).sum::<f64>() - 1.).abs() < 1e-8
 }
+// Spatially partition source triangles, preserving each triangle exactly. Small
+// chunks avoid nested whole-link/terrain distance traversals during short sweeps.
+fn mesh_chunks(
+    vertices: &[Vector],
+    mut triangles: Vec<[u32; 3]>,
+    out: &mut Vec<SharedShape>,
+) -> Result<(), &'static str> {
+    if triangles.len() > 128 {
+        let centre = |t: &[u32; 3]| {
+            (vertices[t[0] as usize] + vertices[t[1] as usize] + vertices[t[2] as usize]) / 3.
+        };
+        let mut lo = centre(&triangles[0]);
+        let mut hi = lo;
+        for t in &triangles {
+            lo = lo.min(centre(t));
+            hi = hi.max(centre(t));
+        }
+        let size = hi - lo;
+        let axis = if size.x >= size.y && size.x >= size.z {
+            0
+        } else if size.y >= size.z {
+            1
+        } else {
+            2
+        };
+        let coordinate = |v: Vector| [v.x, v.y, v.z][axis];
+        let middle = triangles.len() / 2;
+        triangles.select_nth_unstable_by(middle, |a, b| {
+            coordinate(centre(a)).total_cmp(&coordinate(centre(b)))
+        });
+        let right = triangles.split_off(middle);
+        mesh_chunks(vertices, triangles, out)?;
+        return mesh_chunks(vertices, right, out);
+    }
+    let mut indices = BTreeMap::new();
+    let mut points = Vec::new();
+    let triangles = triangles
+        .into_iter()
+        .map(|t| {
+            t.map(|old| {
+                *indices.entry(old).or_insert_with(|| {
+                    let new = points.len() as u32;
+                    points.push(vertices[old as usize]);
+                    new
+                })
+            })
+        })
+        .collect();
+    out.push(SharedShape::trimesh(points, triangles).map_err(|_| "invalid source triangle mesh")?);
+    Ok(())
+}
+fn shape_envelope(shape: &SharedShape) -> SharedShape {
+    let Some(mesh) = shape.as_trimesh() else {
+        return shape.clone();
+    };
+    SharedShape::convex_hull(mesh.vertices()).unwrap_or_else(|| {
+        let bounds = shape.compute_local_aabb();
+        let centre = bounds.center();
+        let half = bounds.half_extents();
+        SharedShape::compound(vec![(
+            rapier3d_f64::math::Pose::translation(centre.x, centre.y, centre.z),
+            SharedShape::cuboid(half.x.max(1e-8), half.y.max(1e-8), half.z.max(1e-8)),
+        )])
+    })
+}
 impl CollisionScene {
     /// Build shared geometry, rejecting malformed input instead of dropping parts.
     ///
@@ -109,6 +185,9 @@ impl CollisionScene {
     /// let scene=CollisionScene::new(CollisionAsset{schema:1,bodies:vec![body("tool"),body("wall")],excluded_pairs:vec![]}).unwrap();
     /// let frames=BTreeMap::from([("tool".into(),Pose::default()),("wall".into(),Pose::at([0.15,0.,0.]))]);
     /// assert_eq!(scene.contacts(&frames,&[],0.).unwrap().len(),1);
+    /// let fast=scene.convex_approximation(|name| name == "tool");
+    /// assert!(fast.uses_convex_approximation());
+    /// assert!(fast.contacts(&frames,&[],0.).unwrap()[0].conservative);
     /// ```
     pub fn new(asset: CollisionAsset) -> Result<Self, &'static str> {
         if asset.schema != 1 || asset.bodies.is_empty() {
@@ -121,7 +200,6 @@ impl CollisionScene {
                 return Err("duplicate or empty collision body");
             }
             let mut convex = Vec::new();
-            let mut envelopes = Vec::new();
             let mut vertices = Vec::new();
             let mut indices = Vec::new();
             let mut radius_m: f64 = 0.;
@@ -167,36 +245,6 @@ impl CollisionScene {
                         {
                             return Err("invalid source collision mesh");
                         }
-                        let points: Vec<_> =
-                            points_m.iter().copied().map(Vector::from_array).collect();
-                        let hull = SharedShape::convex_hull(&points).unwrap_or_else(|| {
-                            let mut min = points[0];
-                            let mut max = points[0];
-                            for p in &points {
-                                min = min.min(*p);
-                                max = max.max(*p);
-                            }
-                            let half = (max - min) * 0.5;
-                            SharedShape::compound(vec![(
-                                rapier3d_f64::math::Pose::translation(
-                                    (min.x + max.x) * 0.5,
-                                    (min.y + max.y) * 0.5,
-                                    (min.z + max.z) * 0.5,
-                                ),
-                                SharedShape::cuboid(
-                                    half.x.max(1e-8),
-                                    half.y.max(1e-8),
-                                    half.z.max(1e-8),
-                                ),
-                            )])
-                        });
-                        // A compound cannot contain another compound. Flatten the
-                        // planar fallback's translated cuboid into this envelope.
-                        if let Some(parts) = hull.as_compound() {
-                            envelopes.extend(parts.shapes().iter().cloned());
-                        } else {
-                            envelopes.push((Default::default(), hull));
-                        }
                         let offset = u32::try_from(vertices.len())
                             .map_err(|_| "collision mesh too large")?;
                         for p in points_m {
@@ -218,23 +266,19 @@ impl CollisionScene {
                     }
                 }
             }
-            envelopes.extend(convex.iter().cloned());
-            let envelope = SharedShape::compound(envelopes);
             let mut shapes = Vec::new();
             if !convex.is_empty() {
                 shapes.push(SharedShape::compound(convex));
             }
             if !vertices.is_empty() {
-                shapes.push(
-                    SharedShape::trimesh(vertices, indices)
-                        .map_err(|_| "invalid source triangle mesh")?,
-                );
+                mesh_chunks(&vertices, indices, &mut shapes)?;
             }
             bodies.push(Body {
                 name: body.frame,
+                envelopes: shapes.iter().map(shape_envelope).collect(),
                 shapes,
                 radius_m,
-                envelope,
+                approximate: false,
             });
         }
         let mut excluded = BTreeSet::new();
@@ -244,7 +288,35 @@ impl CollisionScene {
             }
             excluded.insert(pair(&a, &b));
         }
-        Ok(Self { bodies, excluded })
+        Ok(Self {
+            bodies,
+            excluded,
+            contacts_cache: Default::default(),
+            approximate: false,
+        })
+    }
+    /// Replace selected frames' spatial triangle chunks with convex envelopes.
+    /// Geometry consists of convex supersets; normal contact tolerances still
+    /// apply. Proxies may block small source apertures. Contact points/depths
+    /// describe proxies, not CAD.
+    /// The returned scene has independent caches and unchanged frame/exclusions.
+    /// Unselected frames retain their source triangles, allowing precise gripper
+    /// and socket geometry alongside approximate chassis and arm links.
+    pub fn convex_approximation(&self, select: impl Fn(&str) -> bool) -> Self {
+        let mut scene = self.clone();
+        for body in &mut scene.bodies {
+            if select(&body.name) {
+                body.shapes.clone_from(&body.envelopes);
+                body.approximate = true;
+            }
+        }
+        scene.contacts_cache = Default::default();
+        scene.approximate = scene.bodies.iter().any(|b| b.approximate);
+        scene
+    }
+    /// Whether triangle chunks have been replaced by conservative convex proxies.
+    pub fn uses_convex_approximation(&self) -> bool {
+        self.approximate
     }
     fn poses(
         &self,
@@ -281,6 +353,12 @@ impl CollisionScene {
             return Err("invalid collision tolerance");
         }
         let poses = self.poses(frames)?;
+        let bounds: Vec<Vec<_>> = self
+            .bodies
+            .iter()
+            .zip(&poses)
+            .map(|(body, pose)| body.shapes.iter().map(|s| s.compute_aabb(pose)).collect())
+            .collect();
         let mut result = Vec::new();
         for (i, a) in self.bodies.iter().enumerate() {
             for (j, b) in self.bodies.iter().enumerate().skip(i + 1) {
@@ -290,26 +368,39 @@ impl CollisionScene {
                 {
                     continue;
                 }
-                if !query::intersection_test(
-                    &poses[i],
-                    a.envelope.as_ref(),
-                    &poses[j],
-                    b.envelope.as_ref(),
-                )
-                .map_err(|_| "unsupported collision envelope query")?
-                {
+                let cached = self
+                    .contacts_cache
+                    .lock()
+                    .map_err(|_| "collision cache poisoned")?
+                    .get(&(i, j))
+                    .filter(|c| c.poses == [poses[i], poses[j]] && c.tolerance_m == tolerance_m)
+                    .cloned();
+                if let Some(cached) = cached {
+                    result.extend(cached.hits);
                     continue;
                 }
+                let first_hit = result.len();
                 let mut deepest = None;
-                for x in &a.shapes {
-                    for y in &b.shapes {
-                        if !x
-                            .compute_aabb(&poses[i])
-                            .intersects(&y.compute_aabb(&poses[j]))
+                let mut surface_hit = false;
+                for (xi, x) in a.shapes.iter().enumerate() {
+                    for (yi, y) in b.shapes.iter().enumerate() {
+                        if !bounds[i][xi].intersects(&bounds[j][yi]) {
+                            continue;
+                        }
+                        if !query::intersection_test(
+                            &poses[i],
+                            a.envelopes[xi].as_ref(),
+                            &poses[j],
+                            b.envelopes[yi].as_ref(),
+                        )
+                        .map_err(|_| "unsupported collision envelope query")?
                         {
                             continue;
                         }
                         if x.as_trimesh().is_some() && y.as_trimesh().is_some() {
+                            if surface_hit {
+                                continue;
+                            }
                             if query::intersection_test(
                                 &poses[i],
                                 x.as_ref(),
@@ -318,13 +409,14 @@ impl CollisionScene {
                             )
                             .map_err(|_| "unsupported source surface query")?
                             {
+                                surface_hit = true;
                                 result.push(CollisionHit {
                                     first: a.name.clone(),
                                     second: b.name.clone(),
                                     point_m: poses[i].translation.to_array(),
                                     penetration_m: 0.,
                                     fraction: 1.,
-                                    conservative: false,
+                                    conservative: a.approximate || b.approximate,
                                 });
                             }
                             continue;
@@ -348,9 +440,20 @@ impl CollisionScene {
                         point_m: hit.point1.to_array(),
                         penetration_m: -hit.dist,
                         fraction: 1.,
-                        conservative: false,
+                        conservative: a.approximate || b.approximate,
                     });
                 }
+                self.contacts_cache
+                    .lock()
+                    .map_err(|_| "collision cache poisoned")?
+                    .insert(
+                        (i, j),
+                        PairContacts {
+                            poses: [poses[i], poses[j]],
+                            tolerance_m,
+                            hits: result[first_hit..].to_vec(),
+                        },
+                    );
             }
         }
         Ok(result)
@@ -371,30 +474,51 @@ impl CollisionScene {
         }
         let before = self.poses(from)?;
         let after = self.poses(to)?;
+        let motions: Vec<_> = (0..self.bodies.len())
+            .map(|k| {
+                let mut q = after[k].rotation * before[k].rotation.inverse();
+                if q.w < 0. {
+                    q = -q;
+                }
+                let v = Vector::new(q.x, q.y, q.z);
+                let n = v.length();
+                let angular = if n > 1e-12 {
+                    v * (2. * n.atan2(q.w) / n)
+                } else {
+                    Vector::ZERO
+                };
+                NonlinearRigidMotion::new(
+                    before[k],
+                    Vector::ZERO,
+                    after[k].translation - before[k].translation,
+                    angular,
+                )
+            })
+            .collect();
+
+        let bounds: Vec<Vec<_>> = self
+            .bodies
+            .iter()
+            .enumerate()
+            .map(|(i, body)| {
+                body.shapes
+                    .iter()
+                    .map(|shape| {
+                        // A point travels at most radius * angle under rotation.
+                        shape
+                            .compute_aabb(&before[i])
+                            .merged(&shape.compute_aabb(&after[i]))
+                            .loosened(body.radius_m * motions[i].angvel.length())
+                    })
+                    .collect()
+            })
+            .collect();
+
         for (i, a) in self.bodies.iter().enumerate() {
             for (j, b) in self.bodies.iter().enumerate().skip(i + 1) {
                 if self.skipped(a, b, allowed) || (before[i] == after[i] && before[j] == after[j]) {
                     continue;
                 }
-                let motion = |k: usize| {
-                    let mut q = after[k].rotation * before[k].rotation.inverse();
-                    if q.w < 0. {
-                        q = -q;
-                    }
-                    let v = Vector::new(q.x, q.y, q.z);
-                    let n = v.length();
-                    let angular = if n > 1e-12 {
-                        v * (2. * n.atan2(q.w) / n)
-                    } else {
-                        Vector::ZERO
-                    };
-                    NonlinearRigidMotion::new(
-                        before[k],
-                        Vector::ZERO,
-                        after[k].translation - before[k].translation,
-                        angular,
-                    )
-                };
                 // Origin-centred spheres enclose all orientations over the sweep.
                 let travel = (after[i].translation - before[i].translation).length()
                     + (after[j].translation - before[j].translation).length();
@@ -403,26 +527,16 @@ impl CollisionScene {
                 {
                     continue;
                 }
-                let ma = motion(i);
-                let mb = motion(j);
-                for x in &a.shapes {
-                    for y in &b.shapes {
-                        // Endpoint AABBs enlarged by the maximum rotational point
-                        // displacement enclose every intermediate orientation.
-                        let aa = x
-                            .compute_aabb(&before[i])
-                            .merged(&x.compute_aabb(&after[i]))
-                            .loosened(a.radius_m * ma.angvel.length());
-                        let bb = y
-                            .compute_aabb(&before[j])
-                            .merged(&y.compute_aabb(&after[j]))
-                            .loosened(b.radius_m * mb.angvel.length());
-                        if !aa.intersects(&bb) {
+                let ma = &motions[i];
+                let mb = &motions[j];
+                for (xi, x) in a.shapes.iter().enumerate() {
+                    for (yi, y) in b.shapes.iter().enumerate() {
+                        if !bounds[i][xi].intersects(&bounds[j][yi]) {
                             continue;
                         }
                         // Distance is Lipschitz with the sum of maximum point speeds.
                         // This conservative advancement keeps mesh apertures intact and
-                        // avoids treating a composite bounding-volume TOI as a surface hit.
+                        // avoids treating a bounding-volume impact as a surface hit.
                         let speed = ma.linvel.length()
                             + mb.linvel.length()
                             + a.radius_m * ma.angvel.length()
@@ -435,11 +549,17 @@ impl CollisionScene {
                         for iteration in 0..512 {
                             let pa = ma.position_at_time(t);
                             let pb = mb.position_at_time(t);
-                            let envelope_distance =
-                                query::distance(&pa, a.envelope.as_ref(), &pb, b.envelope.as_ref())
-                                    .map_err(|_| "unsupported collision envelope distance")?;
-                            let distance = if envelope_distance > 2e-6 {
-                                envelope_distance
+                            // A convex superset gives a cheap distance lower bound.
+                            // Only near its surface do we need the exact triangles.
+                            let lower = query::distance(
+                                &pa,
+                                a.envelopes[xi].as_ref(),
+                                &pb,
+                                b.envelopes[yi].as_ref(),
+                            )
+                            .map_err(|_| "unsupported collision envelope distance")?;
+                            let distance = if lower > 2e-6 {
+                                lower
                             } else {
                                 query::distance(&pa, x.as_ref(), &pb, y.as_ref())
                                     .map_err(|_| "unsupported collision distance query")?
@@ -454,7 +574,7 @@ impl CollisionScene {
                                     point_m: pa.translation.to_array(),
                                     penetration_m: 0.,
                                     fraction: t,
-                                    conservative: distance > 2e-6,
+                                    conservative: a.approximate || b.approximate || distance > 2e-6,
                                 }));
                             }
                             let advance = 0.9 * (distance - 1e-6) / speed;
@@ -505,6 +625,17 @@ mod tests {
         assert!(s.contacts(&p, &[["arm", "wall"]], 0.).unwrap().is_empty());
         assert!(s.contacts(&BTreeMap::new(), &[], 0.).is_err());
         assert!(s.contacts(&p, &[], f64::NAN).is_err());
+        // Tolerance, allowances and both absolute poses are part of the query.
+        assert!(s.contacts(&p, &[], 0.1).unwrap().is_empty());
+        assert_eq!(s.contacts(&p, &[], 0.0005).unwrap(), hit);
+        let clear = frames(Pose::at([-1., 0., 0.]), Pose::at([0.15, 0., 0.]));
+        assert!(s.contacts(&clear, &[], 0.).unwrap().is_empty());
+        assert_eq!(s.contacts(&p, &[], 0.0005).unwrap(), hit);
+        let proxies = s.convex_approximation(|name| name == "arm");
+        assert!(proxies.uses_convex_approximation());
+        let proxy_hit = proxies.contacts(&p, &[], 0.0005).unwrap();
+        assert!(proxy_hit[0].conservative);
+        assert!(!s.contacts(&p, &[], 0.0005).unwrap()[0].conservative);
     }
     #[test]
     fn sweep_blocks_a_thin_wall_even_with_clear_endpoints() {
@@ -591,5 +722,73 @@ mod tests {
         let h = s.contacts(&p, &[], 0.001).unwrap();
         assert_eq!(h.len(), 1);
         assert_eq!(h[0].penetration_m, 0.);
+    }
+    #[test]
+    fn partition_preserves_triangles_apertures_and_swept_contacts() {
+        let mut points = Vec::new();
+        let mut triangles = Vec::new();
+        for y in 0..20 {
+            for z in 0..20 {
+                if (8..12).contains(&y) && (8..12).contains(&z) {
+                    continue;
+                }
+                let y0 = y as f64 * 0.1 - 1.;
+                let z0 = z as f64 * 0.1 - 1.;
+                let n = points.len() as u32;
+                points.extend([
+                    Vector::new(0., y0, z0),
+                    Vector::new(0., y0 + 0.1, z0),
+                    Vector::new(0., y0 + 0.1, z0 + 0.1),
+                    Vector::new(0., y0, z0 + 0.1),
+                ]);
+                triangles.extend([[n, n + 1, n + 2], [n, n + 2, n + 3]]);
+            }
+        }
+        let mut chunks = Vec::new();
+        mesh_chunks(&points, triangles.clone(), &mut chunks).unwrap();
+        assert!(chunks.len() > 1);
+        let key = |t: [Vector; 3]| t.map(|p| p.to_array().map(f64::to_bits));
+        let mut expected: Vec<_> = triangles
+            .iter()
+            .map(|t| key(t.map(|i| points[i as usize])))
+            .collect();
+        let mut actual = Vec::new();
+        for shape in &chunks {
+            let mesh = shape.as_trimesh().unwrap();
+            actual.extend(
+                mesh.indices()
+                    .iter()
+                    .map(|t| key(t.map(|i| mesh.vertices()[i as usize]))),
+            );
+        }
+        expected.sort();
+        actual.sort();
+        assert_eq!(actual, expected);
+        let wall = CollisionBody {
+            frame: "wall".into(),
+            parts: vec![CollisionPart::Mesh {
+                points_m: points.iter().map(|p| p.to_array()).collect(),
+                triangles: triangles.clone(),
+            }],
+        };
+        let s = scene(vec![body("arm", [0.025; 3]), wall]);
+        // Compare against an unpartitioned copy of exactly the same geometry.
+        let mut reference = s.clone();
+        reference.contacts_cache = Default::default();
+        reference.bodies[1].shapes = vec![SharedShape::trimesh(points, triangles).unwrap()];
+        reference.bodies[1].envelopes = reference.bodies[1].shapes.clone();
+        for y in [0., 0.15, 0.3, 0.5, 0.95, 1.1] {
+            let a = frames(Pose::at([-0.2, y, 0.]), Pose::default());
+            let b = frames(Pose::at([0.2, y, 0.]), Pose::default());
+            assert_eq!(
+                s.check_motion(&a, &b, &[], 0.).unwrap().is_some(),
+                reference.check_motion(&a, &b, &[], 0.).unwrap().is_some()
+            );
+            let c = frames(Pose::at([0., y, 0.]), Pose::default());
+            assert_eq!(
+                s.contacts(&c, &[], 0.).unwrap().is_empty(),
+                reference.contacts(&c, &[], 0.).unwrap().is_empty()
+            );
+        }
     }
 }

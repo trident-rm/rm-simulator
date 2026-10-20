@@ -41,7 +41,7 @@ const RM2026: [Slot; 9] = [
     slot(9, "Radar", "1 system", None),
 ];
 const RM2027: [Slot; 7] = [
-    slot(1, "Heavy", "1 robot", None),
+    slot(1, "Heavy", "1 robot", Some(Robot::Engineer)),
     slot(3, "Infantry 3", "1 robot", Some(Robot::Infantry3)),
     slot(4, "Infantry 4", "1 robot", Some(Robot::Infantry4)),
     slot(6, "Aerial system", "1 hangar + 4 aircraft", None),
@@ -94,11 +94,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             [1, 3, 4, 6, 7, 8, 9]
         );
-        for robot in [Robot::Hero, Robot::Engineer, Robot::Infantry5, Robot::Drone] {
+        for robot in [Robot::Hero, Robot::Infantry5, Robot::Drone] {
             assert!(!supports(Season::Rm2027, robot));
             assert!(supports(Season::Rm2026, robot));
         }
-        assert_eq!(RM2027.iter().filter(|s| s.prototype.is_some()).count(), 3);
+        assert_eq!(RM2027.iter().filter(|s| s.prototype.is_some()).count(), 4);
         assert!(RM2027[5].equipment.contains("4 darts"));
     }
 }

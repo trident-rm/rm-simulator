@@ -140,3 +140,9 @@ Protocol 58 adds frozen adaptive-armor selections, spending counters and histori
 per-impact regions. Referee actions stand in for Radar selection. See
 [adaptive armor](gameplay.md#rmuc-2027-adaptive-armor) for adopted boundary,
 clipping, singular-statistics and selection-time area policies.
+
+Protocol 67 adds a persistent source PIE Heavy assembly prototype on the bound 2027 field.
+It shares the workbench's collision-aware planner, requires manual parking, and
+plans from actual arm joints and replays rate-limited L1–L3 manipulation on the
+field clock. T selects tunnel/neutral postures. Heavy combat statistics
+and progression remain unsupported. See [in-game assembly](assembly-workbench.md#in-game-automatic-assembly).

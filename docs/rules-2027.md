@@ -317,6 +317,44 @@ UC §5.4.3 also defines removal/failure, loss of assembly-zone detection for
 retains chassis/gimbal power for up to 15 s to disengage; its launcher is off.
 This is a specific exception to ordinary defeated-robot actuation.
 
+### Tech Core indicators
+
+UC §5.4.3, Figure 5-11 and Table 5-13 (printed pp.84–85) specify three
+independent groups: the radial angular strips (1), the two vertical side bars
+(2), and the small indicators around the insertion mechanism (3). The supplied
+2026 English V2.1.0 manual has the same patterns in Figure 5-11 and Table 5-10
+(printed pp.88–90).
+
+| Physical state | Radial group 1 | Side group 2 | Insertion group 3 |
+|---|---|---|---|
+| No assembly in progress | Off | Steady team color | Steady team color |
+| Difficulty selected, Core arm positioning | Flowing lights | Steady team color | Steady team color |
+| Core positioned, ready to insert | White, 1 Hz | Team color, 1 Hz | Team color, 1 Hz |
+| Step 2 complete: inserted | White, 1 Hz | Team color, 1 Hz | Team color, 3 Hz |
+| Step 3 complete: lifted | White, 1 Hz | Team color, 3 Hz | Team color, 3 Hz |
+| Step 4 complete: raised 90° about P | White, 1 Hz | Steady team color | Steady team color |
+| Step 5: rotating Q | Target angle in team color; current angle in white | Steady team color | Steady team color |
+| Step 5 complete: alignment accepted | Target angle in green | Steady team color | Steady team color |
+| Confirmed, Unit recovery | White, 3 Hz | Team color, 3 Hz | Team color, 3 Hz |
+
+The manual does not define flash duty cycle, phase origin, luminous intensity,
+flowing-light speed or overlapping angular-indicator priority. Simulator display
+policies use a 50% duty cycle on explicit field time, nearest source strip per
+angular marker, and team-target priority if current and target choose the same
+strip. A paused simulation freezes the lights. No special failure pattern is
+specified; cancelled/failed attempts return to idle indication.
+
+Live source-CAD assembly binds these effects to accepted manipulation steps,
+not planner progress or elapsed animation percentage. A restorable positioning
+phase first moves the Core from its previous joint/lift/P/Q state (the source
+CAD rest state on first use) into its selected pose with flowing radial lights.
+Only arrival releases the robot planner; ready-to-insert lights remain active
+while that planner searches. The selected Core positioning branch stays fixed.
+The native 45-second attempt begins at arrival. Confirmed indication is shown after acceptance; physical
+Unit recovery motion remains unimplemented. These effects currently apply to
+the articulated source Core loaded for a live assembly, not the untouched
+static arena Core or the standalone workbench renderer.
+
 ### Virtual assembly prototype
 
 The live simulator supports referee Start/Finish/Cancel rather than physical

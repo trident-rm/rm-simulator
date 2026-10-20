@@ -46,6 +46,8 @@ pub struct HudState {
     pub network_stats: crate::network_hud::NetworkStatsMode,
     /// The settings panel is open.
     pub settings: bool,
+    /// Automatic assembly controls are open.
+    pub assembly: bool,
     /// The pause menu is open.
     pub pause_menu: bool,
     /// The quit confirmation dialog is open.
@@ -85,6 +87,7 @@ impl Default for HudState {
             unfocused: false,
             network_stats: Default::default(),
             settings: false,
+            assembly: false,
             pause_menu: false,
             quit_confirm: false,
             respawn: false,
@@ -107,6 +110,7 @@ impl HudState {
     /// True while an open panel or a running capture must swallow gameplay input.
     pub fn blocks_input(&self) -> bool {
         self.unfocused
+            || self.assembly
             || self.rebinding
             || self.respawn
             || self.debug
@@ -197,7 +201,8 @@ pub fn panel_input(
 impl HudState {
     /// True while a panel is open that Escape closes before the match is paused.
     pub fn modal_open(&self) -> bool {
-        self.pause_menu
+        self.assembly
+            || self.pause_menu
             || self.quit_confirm
             || self.respawn
             || self.debug
@@ -218,6 +223,7 @@ impl HudState {
     /// Close every dismissible panel and swallow this frame's remaining input.
     /// The respawn prompt follows defeat instead and stays open.
     pub fn close(&mut self) {
+        self.assembly = false;
         self.pause_menu = false;
         self.quit_confirm = false;
         self.debug = false;

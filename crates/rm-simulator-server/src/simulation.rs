@@ -151,6 +151,8 @@ pub struct FireRecord {
 /// [`advance`](Simulation::advance) and [`step`](Simulation::step), and only in
 /// whole fixed 128 Hz ticks.
 pub struct Simulation {
+    #[cfg(feature = "season-2027")]
+    assembly: Option<crate::assembly::Service>,
     roster_season: rm_simulator_world::season::Season,
     /// Lobby password every remote seat must present. The embedded owner seat
     /// is exempt because it already holds the simulation.
@@ -236,6 +238,8 @@ impl Simulation {
     /// and no prediction scene is advertised.
     pub fn new(field: Field, paused: bool) -> Self {
         Self {
+            #[cfg(feature = "season-2027")]
+            assembly: None,
             roster_season: rm_simulator_world::season::Season::Rm2026,
             password: String::new(),
             bots: Default::default(),
@@ -732,6 +736,10 @@ impl Simulation {
         delta_ns: u64,
         observer: &mut dyn FnMut(&rm_simulator_world::ArmorHit),
     ) -> Result<u64, FieldError> {
+        #[cfg(feature = "season-2027")]
+        if let Some(service) = &mut self.assembly {
+            service.poll(&mut self.field);
+        }
         if self.paused {
             return Ok(0);
         }
@@ -753,6 +761,10 @@ impl Simulation {
         ticks: u64,
         observer: &mut dyn FnMut(&rm_simulator_world::ArmorHit),
     ) -> Result<(), FieldError> {
+        #[cfg(feature = "season-2027")]
+        if let Some(service) = &mut self.assembly {
+            service.poll(&mut self.field);
+        }
         if self.input_streams.is_empty() && self.pending_shots.is_empty() {
             return self.field.step_with_hits(ticks, observer);
         }
@@ -1061,6 +1073,14 @@ impl Simulation {
         observer: &mut dyn FnMut(&rm_simulator_world::ArmorHit),
     ) -> Result<(), String> {
         match command {
+            Command::AutoAssembly {
+                chassis,
+                difficulty,
+            } => self.start_auto_assembly(*chassis, *difficulty),
+            Command::CancelAutoAssembly { chassis } => {
+                self.field.cancel_assembly(*chassis, "Cancelled by pilot");
+                Ok(())
+            }
             Command::Deploy { .. } => Err("deployment requires a connected peer".into()),
             Command::ConfigureWeapon { chassis, weapon } => {
                 if self.field.chassis_muzzle_pose(*chassis).is_none() {
@@ -2825,7 +2845,7 @@ mod seasonal_roster_tests {
     fn host_rejects_removed_roles_before_creating_a_chassis() {
         let mut simulation = Simulation::new(Field::new(&Default::default()).unwrap(), true);
         simulation.roster_season = rm_simulator_world::season::Season::Rm2027;
-        for robot in [Robot::Hero, Robot::Engineer, Robot::Infantry5, Robot::Drone] {
+        for robot in [Robot::Hero, Robot::Infantry5, Robot::Drone] {
             assert!(
                 simulation
                     .spawn_robot(Team::Red, robot)
@@ -2840,5 +2860,135 @@ mod seasonal_roster_tests {
             );
         }
         assert!(simulation.field.snapshot().chassis.is_empty());
+    }
+}
+
+impl Simulation {
+    /// Enable verified automatic assembly with a source rig, matching terrain and
+    /// optional completed-recording hints. No robot is moved by this installation.
+    pub fn with_assembly_assets(
+        mut self,
+        package: Option<&std::path::Path>,
+        area: Option<&std::path::Path>,
+        hints: Option<&std::path::Path>,
+        floor_top_cad_m: f64,
+    ) -> Result<Self, String> {
+        let Some(package) = package else {
+            return Ok(self);
+        };
+        let area = area.ok_or("--assembly-assets requires --assembly-area")?;
+        #[cfg(feature = "season-2027")]
+        {
+            self.assembly = Some(crate::assembly::Service::load(
+                package,
+                area,
+                hints,
+                floor_top_cad_m,
+            )?);
+            Ok(self)
+        }
+        #[cfg(not(feature = "season-2027"))]
+        {
+            let _ = (package, area, hints, floor_top_cad_m);
+            Err("automatic assembly requires season-2027".into())
+        }
+    }
+    fn start_auto_assembly(&mut self, owner: u32, difficulty: u8) -> Result<(), String> {
+        #[cfg(not(feature = "season-2027"))]
+        {
+            let _ = (owner, difficulty);
+            return Err("automatic assembly requires season-2027".into());
+        }
+        #[cfg(feature = "season-2027")]
+        {
+            if self.robot(owner) != Some(Robot::Engineer) {
+                return Err("Automatic assembly requires the Engineer/Heavy pilot".into());
+            }
+            let chassis = self
+                .field
+                .chassis_snapshot(owner)
+                .ok_or("Assembly chassis is unavailable")?;
+            if chassis.defeated {
+                return Err("A defeated robot cannot assemble".into());
+            }
+            if chassis
+                .config
+                .articulation
+                .as_ref()
+                .is_none_or(|a| a.profile != "pie-tunnel-heavy-v1")
+            {
+                return Err(
+                    "Automatic assembly currently needs the source PIE tunnel Heavy".into(),
+                );
+            }
+            if self
+                .field
+                .assemblies()
+                .iter()
+                .any(|r| r.active() && (r.owner == owner || r.team == chassis.team))
+            {
+                return Err("Assembly station is busy; cancel before restarting".into());
+            }
+            let service = self
+                .assembly
+                .as_mut()
+                .ok_or("Host has no verified assembly assets installed")?;
+            let awards = self.field.rmuc_2027().is_some_and(|s| {
+                s.game.phase == rm_simulator_world::rmuc_2027::match_rules::Phase::Running
+            });
+            if let Some(state) = self.field.rmuc_2027() {
+                if awards {
+                    let mut game = state.game.clone();
+                    game.start_assembly(
+                        if chassis.team == Team::Red {
+                            rm_simulator_world::gameplay::Team::Red
+                        } else {
+                            rm_simulator_world::gameplay::Team::Blue
+                        },
+                        difficulty,
+                    )
+                    .map_err(str::to_string)?;
+                }
+            } else {
+                return Err("Automatic assembly requires the bound RMUC 2027 field".into());
+            }
+            let arm = self
+                .field
+                .arms()
+                .iter()
+                .find(|a| a.owner == owner)
+                .cloned()
+                .ok_or("Source arm has not finished initialization")?;
+            let previous = self
+                .field
+                .assemblies()
+                .iter()
+                .find(|r| r.team == chassis.team)
+                .map(|r| r.pose.clone());
+            let run = service.start(
+                difficulty,
+                &chassis,
+                self.field.time_ns(),
+                awards,
+                &arm,
+                previous.as_ref(),
+            )?;
+            // Native 45-second assembly admission starts when the Core arrives,
+            // not while its positioning mechanism is still moving.
+            self.input_streams.remove(&owner);
+            self.field
+                .command_chassis(
+                    owner,
+                    rm_simulator_world::ChassisCommand {
+                        forward_m_s: 0.,
+                        left_m_s: 0.,
+                        yaw_rate_rad_s: 0.,
+                        jump: false,
+                        ..chassis.command
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+            self.field.set_assembly(run).map_err(|e| e.to_string())
+        }
     }
 }

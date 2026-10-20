@@ -80,10 +80,12 @@ pub enum InputAction {
     /// Spend one opportunity to activate this session's team rune. A remote host
     /// lets only the referee do this, and only while the round runs.
     Rune,
+    /// Open automatic assembly controls for a supported Heavy.
+    Assembly,
 }
 impl InputAction {
     /// Every action, in the order the help panel and the controls menu list them.
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 31] = [
         Self::Forward,
         Self::Backward,
         Self::Left,
@@ -114,6 +116,7 @@ impl InputAction {
         Self::Step,
         Self::Start,
         Self::Rune,
+        Self::Assembly,
     ];
     /// The action's user-facing name, as menus and messages show it.
     pub fn label(self) -> &'static str {
@@ -148,6 +151,7 @@ impl InputAction {
             Self::Step => "Step match",
             Self::Start => "Start / reset match",
             Self::Rune => "Activate rune",
+            Self::Assembly => "Automatic assembly",
         }
     }
     /// Bits describe modes in which an action is usable: pilot, spectator, referee.
@@ -155,6 +159,7 @@ impl InputAction {
         match self {
             Self::Spin
             | Self::Transform
+            | Self::Assembly
             | Self::TurnLeft
             | Self::TurnRight
             | Self::Jump
@@ -201,6 +206,7 @@ impl InputAction {
             Self::Step => F7,
             Self::Start => F5,
             Self::Rune => KeyF,
+            Self::Assembly => KeyJ,
         })
     }
 }

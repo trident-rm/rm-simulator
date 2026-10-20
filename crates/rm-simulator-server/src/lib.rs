@@ -8,6 +8,12 @@
 //! `rm-simulator-server`.
 #![deny(missing_docs)]
 
+extern crate self as rm_simulator_server;
+#[cfg(feature = "season-2027")]
+mod assembly;
+#[cfg(feature = "season-2027")]
+#[allow(dead_code, unused_imports)] // Shared diagnostic entry points are used by the workbench.
+mod assembly_rig;
 #[cfg(test)]
 mod bandwidth_probe;
 pub mod base_layout;
