@@ -385,11 +385,12 @@ mod tests {
 
     #[test]
     fn asset_paths_are_absolute_before_manifest_and_bevy_loading() {
-        let mut args = Args::try_parse_from(["rm-simulator", "--cad-assets", "field"]).unwrap();
+        let mut args =
+            Args::try_parse_from(["rm-simulator", "--cad-assets", "field-2027"]).unwrap();
         args.resolve_asset_path().unwrap();
         assert_eq!(
             args.host.cad_assets,
-            std::env::current_dir().unwrap().join("field")
+            std::env::current_dir().unwrap().join("field-2027")
         );
         let resolved = args.host.cad_assets.clone();
         args.resolve_asset_path().unwrap();

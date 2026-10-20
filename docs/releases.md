@@ -83,7 +83,7 @@ overwritten.
 
 ### Release packages
 
-Each ZIP contains `bin/`, `field/`, notices, license texts, dependency lockfile,
+Each ZIP contains `bin/`, `field-2027/`, notices, license texts, dependency lockfile,
 and a file checksum manifest. Windows also includes the existing launchers and
 MSVC runtime DLLs. macOS includes relocated Homebrew dylibs and ad-hoc signatures.
 Linux includes linked non-glibc libraries and relative loader paths, and requires
@@ -160,17 +160,14 @@ and all proposed commit messages before either merge method.
 
 ## Field assets in Git LFS
 
-The approved runtime package lives in `field/`. Its data files use Git LFS;
+The approved runtime package lives in `field-2027/`. Its data files use Git LFS;
 `CAD-NOTICE.md` remains ordinary Git text and retains the upstream notice
 verbatim. These are DJI / RoboMaster assets under their original terms, not
 MIT/Apache-licensed simulator code. Original STEP inputs are not imported.
 
-The initial import is byte-for-byte from the former rm-map-tools release archive,
-verified against its pinned SHA-256. `scripts/release-field.json` retains that URL
-and archive hash as historical provenance; CI no longer downloads that release.
-`scripts/release-field-2027.json` pins the active runtime package by SHA-256.
-New archives ship only `field-2027/`; `rm2026-final` preserves the old runtime. The source commit fixes
-both that inventory and the corresponding LFS object IDs.
+`scripts/release-field-2027.json` pins every active package file by SHA-256.
+The source commit fixes both this inventory and the corresponding LFS object IDs.
+The historical 2026 package and inventory are preserved at `rm2026-final`.
 
 ```sh
 git lfs install
@@ -189,14 +186,13 @@ preserve the ownership notice and exporter provenance, then run:
 
 ```sh
 python3 scripts/stage-release-field.py --update-checksums
-cargo run --release --locked -p rm-simulator-server --example inspect_assets -- field
+cargo run --release --locked -p rm-simulator-server --example inspect_assets -- field-2027
 ```
 
-Commit the changed LFS pointers and `scripts/release-field.json` together. Do not
-run text formatters over exported data; hooks exclude `field/` to preserve the
-manifest hashes and source notices. The default loader keeps `local-assets/field`
-as a local override before the versioned `field/` package.
+Commit changed LFS pointers and `scripts/release-field-2027.json` together.
+Do not format exported data; hooks exclude `field-2027/` to preserve its hashes.
+Use `--cad-assets` for an explicit development package.
 
 Git LFS storage and downloads have their own allowance and billing, separate
 from Actions caches. Lightweight CI skips downloads; native test/package jobs
-fetch the approximately 52 MiB field. See [GitHub's LFS billing documentation](https://docs.github.com/en/billing/concepts/product-billing/git-lfs).
+fetch the pinned field. See [GitHub's LFS billing documentation](https://docs.github.com/en/billing/concepts/product-billing/git-lfs).

@@ -14,7 +14,6 @@ mod assembly;
 mod assembly_rig;
 #[cfg(test)]
 mod bandwidth_probe;
-pub mod base_layout;
 pub mod binary_snapshot;
 pub mod cad_assets;
 pub mod clock;

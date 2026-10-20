@@ -10,9 +10,7 @@ use rm_simulator_server::{
     protocol::{Command, PlayerInfo, Role, WeaponConfig},
     simulation::{BuildProgress, Simulation},
 };
-use rm_simulator_world::{
-    ChassisCommand, ChassisConfig, ChassisSnapshot, FieldSnapshot, RefereeSnapshot, Team,
-};
+use rm_simulator_world::{ChassisCommand, ChassisConfig, ChassisSnapshot, FieldSnapshot, Team};
 use std::collections::VecDeque;
 
 use crate::args::Args;
@@ -60,8 +58,6 @@ struct PredictionState {
 /// The app's view of the simulation, refreshed once per frame.
 #[derive(Resource)]
 pub struct Session {
-    /// Season of the verified CAD package; practice rules can remain disabled.
-    pub season: rm_simulator_world::season::Season,
     prediction: PredictionState,
     shots: shots::LocalShots,
     /// Every wall-clock reading in the session and its client comes from here.
@@ -465,7 +461,6 @@ impl Session {
         };
         let now = time.now();
         let session = Session {
-            season: cad.season,
             deployment_ground,
             prediction: PredictionState {
                 worker: predictor,
@@ -1218,10 +1213,6 @@ impl Session {
         self.client.disconnected().is_some()
             || self.time.since(self.last_checkpoint) >= std::time::Duration::from_secs(1)
     }
-    /// The match referee's snapshot, or `None` when this field has no referee.
-    pub fn referee(&self) -> Option<&RefereeSnapshot> {
-        self.snapshot.referee.as_ref()
-    }
 }
 
 /// Narrow views the deterministic network trace asserts on. They read fields
@@ -1271,7 +1262,7 @@ pub fn advance_world(
 ) {
     use crate::bindings::InputAction;
     use rm_simulator_server::simulation::step_ticks;
-    use rm_simulator_world::{MatchPhase, RefereeCommand};
+    use rm_simulator_world::{RefereeCommand, rmuc_2027::match_rules::Phase};
     if ui.blocks_input() {
         poll_session(&mut session, &mut commands);
         return;
@@ -1321,21 +1312,9 @@ pub fn advance_world(
         .controls
         .just_pressed(InputAction::Start, &keys, buttons.as_deref())
     {
-        match session.referee().map(|referee| referee.phase).or_else(|| {
-            session.rmuc_2027().map(|r| {
-                use rm_simulator_world::rmuc_2027::match_rules::Phase;
-                match r.game.phase {
-                    Phase::Idle => MatchPhase::Idle,
-                    Phase::Countdown => MatchPhase::Countdown,
-                    Phase::Running => MatchPhase::Running,
-                    Phase::Finished => MatchPhase::Finished,
-                }
-            })
-        }) {
-            Some(MatchPhase::Idle) => session.apply(Command::Referee(RefereeCommand::StartMatch)),
-            Some(MatchPhase::Finished) => {
-                session.apply(Command::Referee(RefereeCommand::ResetMatch))
-            }
+        match session.rmuc_2027().map(|r| r.game.phase) {
+            Some(Phase::Idle) => session.apply(Command::Referee(RefereeCommand::StartMatch)),
+            Some(Phase::Finished) => session.apply(Command::Referee(RefereeCommand::ResetMatch)),
             Some(_) => session.notice("match in progress (reset from the referee panel)".into()),
             None => session.notice("no referee on this field".into()),
         }
@@ -1352,10 +1331,7 @@ pub fn advance_world(
                 session.apply(Command::ActivateRune { team });
             }
         } else {
-            match session.referee() {
-                Some(_) => session.apply(Command::Referee(RefereeCommand::ActivateRune { team })),
-                None => session.notice("no referee on this field".into()),
-            }
+            session.notice("no referee on this field".into());
         }
     }
     poll_session(&mut session, &mut commands);
@@ -1509,35 +1485,15 @@ mod tests {
     }
 
     #[test]
-    fn runtime_admission_rejects_legacy_authority_from_a_connected_host() {
-        use clap::Parser;
-        let args = Args::try_parse_from(["rm-simulator"]).unwrap();
-        let field =
-            rm_simulator_world::Field::new(&rm_simulator_world::FieldConfig::default()).unwrap();
-        let server = Server::in_process(Simulation::new(field, true), false).unwrap();
-        server.spawn_clock().unwrap();
-        let client = server
-            .connect_owner_with_chassis(
-                "archive-check",
-                Team::Red,
-                Role::Spectator,
-                args.robot,
-                args.chassis,
-                [0.; 3],
-                0.,
-            )
-            .unwrap();
-        let error = Session::from_client(
-            client,
-            TimeSource::system(),
-            &args,
-            &test_cad_assets(),
-            [0.; 3],
-            |_, _| {},
-        )
-        .err()
-        .expect("old targets cannot enter a current session");
-        assert!(error.to_string().contains("rm2026-final"), "{error}");
+    fn runtime_admission_rejects_legacy_authority_before_it_can_be_hosted() {
+        let config = rm_simulator_world::FieldConfig {
+            referee: Some(rm_simulator_world::RefereeConfig::default()),
+            ..Default::default()
+        };
+        let error = rm_simulator_world::Field::new(&config)
+            .err()
+            .expect("archived authority removed");
+        assert!(error.to_string().contains("rm2026-final"));
     }
 
     #[test]

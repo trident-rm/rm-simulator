@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! Deterministic RoboMaster field objects on an explicit 1 ms clock.
+//! Native RoboMaster field and shared physics on an explicit 128 Hz clock.
 //! No renderer, host clock, transport or background threads. Projectiles fly in
 //! the shared `rm-simulator-physics` world. This facade coordinates its contacts and
 //! motion with live rules, scoring, referee decisions and complete restore.
@@ -29,12 +29,11 @@ pub use referee::{
     BuffState, MatchPhase, Referee, RefereeCommand, RefereeConfig, RefereeEvent, RefereeSnapshot,
     RobotConfig, RobotKind, RobotSnapshot, RuneStage, StampClock, Team, TeamSnapshot, TimedEvent,
 };
-use rune::{BigRune, RuneError, SmallRune};
+use rune::RuneError;
 pub use rune::{BigRuneMotion, HitOutcome, Rune, RuneKind, RuneSnapshot, RuneState};
 use serde::{Deserialize, Serialize};
 
-/// The match engine the referee runs, so callers can read
-/// [`RefereeSnapshot::game`] without depending on it directly.
+/// Native gameplay authority and shared serialized records.
 pub use rm_simulator_gameplay as gameplay;
 /// Season identities and admission checks shared with standalone gameplay.
 pub use rm_simulator_gameplay::season;
@@ -110,28 +109,24 @@ pub struct ChassisPlacement {
 /// ```rust
 /// use rm_simulator_world::FieldConfig;
 ///
-/// // The default layout is one Small Rune and an outpost on either side.
+/// // Defaults provide bare physics; native bindings opt into match rules.
 /// let config = FieldConfig::default();
-/// assert_eq!(config.runes.len(), 1);
-/// assert_eq!(config.outposts.len(), 2);
-/// assert_eq!(config.outposts[0].origin.translation_m, [4.0, -3.0, 0.0]);
+/// assert!(config.runes.is_empty());
+/// assert!(config.outposts.is_empty());
 /// assert_eq!(config.floor_height_m, 0.0);
 /// assert!(config.bases.is_empty());
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FieldConfig {
-    /// RMUC 2027 V1.0.0 control/structure subset; mutually exclusive with 2026 rules.
+    /// Native RMUC 2027 rules and source geometry; absent for bare physics.
     #[serde(default)]
     pub rmuc_2027: Option<rmuc_2027::Config>,
-    /// Live bases. `ArmorTarget::Base` indexes this list; empty means no base
-    /// is simulated and none can be destroyed.
+    /// Historical layout record; must be empty. Native bases use `rmuc_2027`.
     #[serde(default)]
     pub bases: Vec<BaseConfig>,
-    /// Power Runes in referee index order, so `RefereeConfig::rune_teams`
-    /// must name an owner for each.
+    /// Historical layout record; must be empty. Native Runes use `rmuc_2027`.
     pub runes: Vec<RuneConfig>,
-    /// Outposts in referee index order, so `RefereeConfig::outpost_teams`
-    /// must name an owner for each.
+    /// Historical layout record; must be empty. Native towers use `rmuc_2027`.
     pub outposts: Vec<OutpostConfig>,
     /// Height of the flat floor plane. Zero is the playing floor; a field
     /// that supplies its own ground mesh lowers it to a catch surface.
@@ -140,8 +135,7 @@ pub struct FieldConfig {
     /// leave with [`Field::add_chassis`] and [`Field::remove_chassis`].
     #[serde(default)]
     pub chassis: Vec<ChassisPlacement>,
-    /// Optional match referee. Without one, runes use training policy and
-    /// base/outpost damage still applies, but no referee tracks robot HP or a match.
+    /// Historical configuration record; must be `None`.
     #[serde(default)]
     pub referee: Option<RefereeConfig>,
     /// Ball restitution, hard flight limit and low-speed retirement rule. The
@@ -150,8 +144,7 @@ pub struct FieldConfig {
     /// snapshot's [`FieldRestore`] as well.
     #[serde(default)]
     pub projectile_policy: projectile::ProjectilePolicy,
-    /// Buff point footprints a running match reports robot contacts for;
-    /// empty reports none. [`zones::rmuc_2026`] is the full field's set.
+    /// Historical zone records; must be empty. Native zones use `rmuc_2027`.
     #[serde(default)]
     pub zones: Vec<zones::ZoneArea>,
 }
@@ -166,15 +159,8 @@ impl Default for FieldConfig {
             chassis: Vec::new(),
             referee: None,
             projectile_policy: projectile::ProjectilePolicy::default(),
-            runes: vec![RuneConfig::default()],
-            outposts: [-1.0, 1.0]
-                .into_iter()
-                .map(|side| OutpostConfig {
-                    pivot_cad_m: None,
-                    origin: Pose::at([4.0, side * 3.0, 0.0]),
-                    speed_rad_s: outpost::DEFAULT_SPEED_RAD_S,
-                })
-                .collect(),
+            runes: Vec::new(),
+            outposts: Vec::new(),
         }
     }
 }
@@ -234,14 +220,8 @@ pub struct FieldRestore {
     /// Persistent physical Energy Units, including loose and socket-seated objects.
     #[serde(default)]
     pub energy_units: Vec<energy_unit::EnergyUnit>,
-    /// Complete RMUC 2027 authority and geometry, absent for 2026.
+    /// Complete RMUC 2027 authority and geometry, absent for bare physics.
     pub rmuc_2027: Option<rmuc_2027::State>,
-    /// Every rune's activation state, held angle and seeded target stream.
-    pub runes: Vec<Rune>,
-    /// Every outpost's rotor stop and HP.
-    pub outposts: Vec<Outpost>,
-    /// The referee's schedule, teams, robots and buffs, when the field has one.
-    pub referee: Option<Referee>,
     /// Next id [`Field::add_chassis`] would hand out; ids are never reused.
     pub next_chassis_id: u32,
     /// Per-module time of the last detected strike, oldest kept, in target
@@ -308,138 +288,51 @@ pub struct Field {
     arms: Vec<assembly::ArmState>,
     assemblies: Vec<assembly::Run>,
     rmuc_2027: Option<rmuc_2027::State>,
-    bases: Vec<BaseSnapshot>,
     floor_height_m: f64,
     tick: u64,
-    runes: Vec<Rune>,
-    outposts: Vec<Outpost>,
     physics: WorldPhysics,
     target_frames: TargetFrames,
     hits: Vec<ArmorHit>,
     hits_detected: u64,
     last_detection_ns: std::collections::HashMap<ArmorTarget, u64>,
-    referee: Option<Referee>,
-    zones: Vec<zones::ZoneArea>,
 }
 impl Field {
-    /// Build the configured world. A source-bound `rmuc_2027` config runs the
-    /// native RMUC 2027 rules. Unbound worlds are retained for standalone physics
-    /// and regression fixtures; application sessions validate their CAD separately.
-    /// Chassis listed in the config join immediately, in order, so their ids
-    /// match their index. The clock starts at tick zero.
+    /// Build a native match from source bindings, or a bare physical world.
+    /// Historical rule configurations are rejected with the archive tag.
     ///
-    /// ```rust
-    /// use rm_simulator_world::{Field, FieldConfig, Pose, RuneConfig, RuneKind};
-    ///
-    /// let config = FieldConfig {
-    ///     runes: vec![RuneConfig {
-    ///         kind: RuneKind::Big,
-    ///         hub_pose: Pose::at([6.0, 0.0, 1.6]),
-    ///         cad_orbit: false,
-    ///     }],
-    ///     outposts: vec![],
-    ///     ..FieldConfig::default()
-    /// };
-    /// let field = Field::new(&config).unwrap();
-    /// assert_eq!(field.runes().len(), 1);
-    /// assert_eq!(field.runes()[0].kind(), RuneKind::Big);
-    /// assert!(field.referee().is_none());
+    /// ```
+    /// use rm_simulator_world::{Field, FieldConfig};
+    /// let field = Field::new(&FieldConfig::default()).unwrap();
+    /// assert!(field.rmuc_2027().is_none());
+    /// assert!(field.snapshot().chassis.is_empty());
     /// ```
     pub fn new(config: &FieldConfig) -> Result<Self, FieldError> {
-        if let Some(live_config) = config.rmuc_2027.as_ref() {
-            if config.referee.is_some()
-                || !config.runes.is_empty()
-                || !config.outposts.is_empty()
-                || !config.bases.is_empty()
-                || !config.zones.is_empty()
-            {
-                return Err(FieldError::Restore(
-                    "2027 field cannot contain 2026 rule geometry",
-                ));
-            }
-            live_config.validate().map_err(FieldError::Restore)?;
-        }
-        for base in &config.bases {
-            base.validate().map_err(FieldError::Mesh)?;
-        }
-        let runes = config
-            .runes
-            .iter()
-            .map(|rune| {
-                Ok(match rune.kind {
-                    RuneKind::Small if rune.cad_orbit => {
-                        Rune::Small(SmallRune::from_cad(rune.hub_pose)?)
-                    }
-                    RuneKind::Small => Rune::Small(SmallRune::new(rune.hub_pose)?),
-                    RuneKind::Big => Rune::Big(BigRune::new(
-                        rune.hub_pose,
-                        rune.cad_orbit,
-                        BigRuneMotion::default(),
-                    )?),
-                })
-            })
-            .collect::<Result<Vec<_>, RuneError>>()?;
-        let outposts = config
-            .outposts
-            .iter()
-            .map(|outpost| {
-                Outpost::with_pivot(
-                    outpost.origin,
-                    outpost.speed_rad_s,
-                    outpost.pivot_cad_m.unwrap_or(outpost::PIVOT_CAD_M),
-                )
-                .map_err(FieldError::Outpost)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let referee = config
-            .referee
-            .as_ref()
-            .map(|referee| {
-                Referee::new(
-                    referee.clone(),
-                    runes.iter().map(Rune::kind).collect(),
-                    outposts.len(),
-                )
-            })
-            .transpose()
-            .map_err(FieldError::Referee)?;
-        if referee.is_some()
-            && Team::BOTH
-                .iter()
-                .any(|team| config.bases.iter().filter(|b| b.team == *team).count() > 1)
+        if config.referee.is_some()
+            || !config.runes.is_empty()
+            || !config.outposts.is_empty()
+            || !config.bases.is_empty()
+            || !config.zones.is_empty()
         {
-            return Err(FieldError::Referee("a team can have at most one base"));
+            return Err(FieldError::Restore(
+                "2026 runtime removed; use rm2026-final",
+            ));
         }
-        let bases: Vec<_> = config
-            .bases
-            .iter()
-            .cloned()
-            .map(BaseSnapshot::new)
-            .collect();
+        if let Some(native) = &config.rmuc_2027 {
+            native.validate().map_err(FieldError::Restore)?;
+        }
         let mut faces = Vec::new();
         let rmuc_2027 = config.rmuc_2027.clone().map(|config| rmuc_2027::State {
             game: rmuc_2027::match_rules::Match::new(config.rotor_direction),
             config,
         });
-        Self::write_target_faces(
-            &runes,
-            &outposts,
-            &bases,
-            rmuc_2027.as_ref(),
-            None,
-            0,
-            &mut faces,
-        );
+        Self::write_target_faces(rmuc_2027.as_ref(), &mut faces);
         let mut field = Self {
             energy_units: Vec::new(),
             arms: Vec::new(),
             assemblies: Vec::new(),
             rmuc_2027,
-            bases,
             floor_height_m: config.floor_height_m,
             tick: 0,
-            runes,
-            outposts,
             physics: {
                 let mut physics = WorldPhysics::new(&faces, config.floor_height_m);
                 physics
@@ -451,66 +344,17 @@ impl Field {
             hits: Vec::new(),
             hits_detected: 0,
             last_detection_ns: std::collections::HashMap::new(),
-            referee,
-            zones: config.zones.clone(),
         };
-        for outpost in &field.outposts {
-            let (pose, size) = outpost.body_proxy();
-            field.physics.add_static_box(pose, size);
-        }
         for chassis in &config.chassis {
             field.add_chassis(chassis)?;
         }
         Ok(field)
     }
     /// Refill scoring faces in their fixed construction order, keeping capacity.
-    fn write_target_faces(
-        runes: &[Rune],
-        outposts: &[Outpost],
-        bases: &[BaseSnapshot],
-        rmuc_2027: Option<&rmuc_2027::State>,
-        dart_since_ns: Option<u64>,
-        time_ns: u64,
-        faces: &mut Vec<TargetFace>,
-    ) {
+    fn write_target_faces(native: Option<&rmuc_2027::State>, faces: &mut Vec<TargetFace>) {
         faces.clear();
-        if let Some(state) = rmuc_2027 {
+        if let Some(state) = native {
             state.faces(faces);
-            return;
-        }
-        let dart = referee::dart_target_position(dart_since_ns, time_ns);
-        for (base, state) in bases.iter().enumerate() {
-            for plate in 0..7 {
-                faces.push(TargetFace {
-                    target: ArmorTarget::Base {
-                        base: base as u32,
-                        plate: plate as u32,
-                    },
-                    pose: state.pose(plate, dart),
-                });
-            }
-        }
-        for (index, outpost) in outposts.iter().enumerate() {
-            for (face, pose) in outpost.armor_poses(time_ns).into_iter().enumerate() {
-                faces.push(TargetFace {
-                    target: ArmorTarget::Outpost {
-                        outpost: index as u32,
-                        face: face as u32,
-                    },
-                    pose,
-                });
-            }
-        }
-        for (index, rune) in runes.iter().enumerate() {
-            for (blade, pose) in rune.target_poses().into_iter().enumerate() {
-                faces.push(TargetFace {
-                    target: ArmorTarget::Rune {
-                        rune: index as u32,
-                        blade: blade as u32,
-                    },
-                    pose: rune::scoring_pose(pose),
-                });
-            }
         }
     }
     /// Add a fixed collision mesh (world FLU metres), for example the field CAD.
@@ -624,46 +468,15 @@ impl Field {
         self.physics.dynamic_geometry_snapshot()
     }
 
-    /// Launch a projectile along the muzzle's +x at the current tick,
-    /// credited to the chassis `shooter` when a pilot fires. With a referee a
-    /// defeated, weakened or overheated robot cannot fire, a robot fires only
-    /// its own caliber, and a running round charges heat, allowance and launch
-    /// experience. Returns the ball's identity.
+    /// Launch a projectile in the shared physical world, with an optional shooter.
+    /// Native matches enforce phase, HP, launcher locks, heat and allowance.
+    /// Returns the projectile identity.
     ///
-    /// ```rust
-    /// use rm_simulator_world::{BaseConfig, Caliber, Field, FieldConfig, Pose, Shot, Team};
-    ///
-    /// # let base = BaseConfig {
-    /// #     team: Team::Red,
-    /// #     plates: std::array::from_fn(|i| Pose::at([0.0, i as f64 * 0.5, 1.0])),
-    /// #     dart_offsets_m: [[0.0; 3]; 2],
-    /// # };
-    /// # let mut field = Field::new(&FieldConfig {
-    /// #     bases: vec![base],
-    /// #     runes: vec![],
-    /// #     outposts: vec![],
-    /// #     ..FieldConfig::default()
-    /// # })
-    /// # .unwrap();
-    /// // The muzzle faces the base plate 0.5 m ahead of it; +x is the barrel.
-    /// let ball = field
-    ///     .fire(
-    ///         Pose::yawed([0.5, 0.0, 1.002], std::f64::consts::PI),
-    ///         Shot::at_limit(Caliber::Mm17),
-    ///         None,
-    ///     )
-    ///     .unwrap();
-    /// field.step(100).unwrap();
-    ///
-    /// let hit = field
-    ///     .snapshot()
-    ///     .hits
-    ///     .into_iter()
-    ///     .find(|hit| hit.projectile == ball)
-    ///     .unwrap();
-    /// assert!(hit.detected);
-    /// // 20 HP for a non-frontal plate, doubled to 150 % inside the centre square.
-    /// assert_eq!(hit.damage, 30);
+    /// ```
+    /// use rm_simulator_world::{Caliber, Field, FieldConfig, Pose, Shot};
+    /// let mut field = Field::new(&FieldConfig::default()).unwrap();
+    /// field.fire(Pose::at([0.,0.,1.]), Shot::at_limit(Caliber::Mm17), None).unwrap();
+    /// assert_eq!(field.snapshot().shots_fired, 1);
     /// ```
     pub fn fire(
         &mut self,
@@ -702,18 +515,10 @@ impl Field {
                 ));
             }
         }
-        if let Some(referee) = &self.referee {
-            referee
-                .check_launch(shooter, shot.caliber)
-                .map_err(FieldError::Referee)?;
-        }
         let id = self
             .physics
             .fire(self.time_ns(), muzzle, shot, shooter)
             .map_err(FieldError::Shot)?;
-        if let Some(referee) = &mut self.referee {
-            referee.record_launch(shooter, shot.caliber);
-        }
         if let (Some(state), Some(id)) = (&mut self.rmuc_2027, shooter) {
             state.game.record_launch(id, shot.speed_m_s);
         }
@@ -831,11 +636,6 @@ impl Field {
                 r.hp = r.max_hp;
             }
         }
-        if let Some(referee) = &mut self.referee {
-            referee
-                .add_robot(id, placement.team, placement.kind, placement.performance)
-                .map_err(FieldError::Referee)?;
-        }
         Ok(id)
     }
     /// Take a chassis off the field, with its robot record.
@@ -851,9 +651,6 @@ impl Field {
             if state.game.phase == rmuc_2027::match_rules::Phase::Running {
                 state.game.activations();
             }
-        }
-        if let Some(referee) = &mut self.referee {
-            referee.remove_robot(id).map_err(FieldError::Referee)?;
         }
         Ok(())
     }
@@ -873,25 +670,6 @@ impl Field {
     pub fn chassis_defeated(&self, id: u32) -> Option<bool> {
         self.physics.chassis_defeated(id)
     }
-    /// Mirror the gameplay engine's base and outpost HP onto the physical
-    /// bases and outposts at `time_ns`. Without a referee the physical objects
-    /// are their own authority.
-    fn sync_structures(&mut self, time_ns: u64) {
-        let Some(referee) = &self.referee else {
-            return;
-        };
-        for base in &mut self.bases {
-            (base.hp, base.shield_hp) = referee.base_hp(base.config.team);
-        }
-        for (index, outpost) in self.outposts.iter_mut().enumerate() {
-            if let Some(hp) = referee.outpost_hp(index)
-                && hp != outpost.hp()
-            {
-                // The game bounds outpost HP to 1500, which `set_hp` accepts.
-                let _ = outpost.set_hp(time_ns, hp);
-            }
-        }
-    }
     /// Cut the drive of every chassis whose robot the referee has defeated
     /// and restore the revived ones.
     fn sync_defeats(&mut self) {
@@ -899,13 +677,6 @@ impl Field {
             for robot in &state.game.robots {
                 self.physics.set_chassis_defeated(robot.id, robot.hp == 0);
             }
-            return;
-        }
-        let Some(referee) = &self.referee else {
-            return;
-        };
-        for robot in referee.robots() {
-            self.physics.set_chassis_defeated(robot.id, !robot.alive());
         }
     }
     /// Set a chassis' desired body velocity; it holds until replaced. The
@@ -1061,17 +832,9 @@ impl Field {
     pub fn chassis_positions_m(&self) -> impl Iterator<Item = [f64; 3]> + '_ {
         self.physics.chassis_positions_m()
     }
-    /// The field's outposts in referee index order.
-    ///
-    /// ```rust
-    /// use rm_simulator_world::{Field, FieldConfig, outpost::INITIAL_HP};
-    ///
-    /// let field = Field::new(&FieldConfig::default()).unwrap();
-    /// assert_eq!(field.outposts().len(), 2);
-    /// assert_eq!(field.outposts()[0].hp(), INITIAL_HP);
-    /// ```
-    pub fn outposts(&self) -> &[Outpost] {
-        &self.outposts
+    /// Shared presentation compatibility view; native towers live in `rmuc_2027`.
+    pub fn outposts(&self) -> &[OutpostSnapshot] {
+        &[]
     }
     /// Ticks elapsed since the field was built.
     pub fn tick(&self) -> u64 {
@@ -1081,29 +844,13 @@ impl Field {
     pub fn time_ns(&self) -> u64 {
         self.tick * tick_ns()
     }
-    /// The field's runes in referee index order.
-    ///
-    /// ```rust
-    /// use rm_simulator_world::{Field, FieldConfig, RuneState};
-    ///
-    /// let field = Field::new(&FieldConfig::default()).unwrap();
-    /// assert_eq!(field.runes().len(), 1);
-    /// // Training policy: a fresh rune is already Activating with blade 0 lit.
-    /// assert_eq!(field.runes()[0].state(), RuneState::Activating);
-    /// assert_eq!(field.runes()[0].snapshot().active_blade, Some(0));
-    /// ```
-    pub fn runes(&self) -> &[Rune] {
-        &self.runes
+    /// Shared presentation compatibility view; native Runes live in `rmuc_2027`.
+    pub fn runes(&self) -> &[RuneSnapshot] {
+        &[]
     }
-    /// Mutable access to rune `index` for a caller that establishes hits
-    /// itself; the field advances the rune again on the next tick. `None`
-    /// when the index is out of range.
-    pub fn rune_mut(&mut self, index: usize) -> Option<&mut Rune> {
-        self.runes.get_mut(index)
-    }
-    /// The match referee, when the field was configured with one.
-    pub fn referee(&self) -> Option<&Referee> {
-        self.referee.as_ref()
+    /// Shared compatibility view; always absent. Read `rmuc_2027` for live rules.
+    pub fn referee(&self) -> Option<&RefereeSnapshot> {
+        None
     }
     /// Supply the host's random shared rotor direction for the next 2027 round.
     /// The selected sign is carried into the match checkpoint at Start.
@@ -1121,35 +868,15 @@ impl Field {
             }
         }
     }
-    /// Forward an operator command to the referee, stamped with the field's
-    /// own clock. Base and outpost HP overrides are applied to the physical
-    /// objects here rather than inside the referee; `StartMatch` and
-    /// `ResetMatch` also restore every base, outpost and robot.
+    /// Apply an operator command to native authority at the current field time.
+    /// Bare physics worlds reject rule commands.
     ///
-    /// ```rust
-    /// use rm_simulator_world::{
-    ///     Field, FieldConfig, MatchPhase, RefereeCommand, RefereeConfig, tick_ns,
-    /// };
-    ///
-    /// let config = FieldConfig {
-    ///     referee: Some(RefereeConfig::alternating(1, 2)),
-    ///     ..FieldConfig::default()
-    /// };
-    /// let mut field = Field::new(&config).unwrap();
-    /// // StartMatch runs the section 6.5 five-second countdown first.
-    /// field.referee_command(RefereeCommand::StartMatch).unwrap();
-    /// field.step(5_000_000_000 / tick_ns()).unwrap();
-    /// assert_eq!(field.referee().unwrap().phase(), MatchPhase::Running);
-    /// assert_eq!(field.referee().unwrap().snapshot().match_time_ns, 0);
-    /// // The round clock advances with the field's ticks of tick_ns() each.
-    /// field.step(1_000_000_000 / tick_ns()).unwrap();
-    /// assert_eq!(
-    ///     field.referee().unwrap().snapshot().match_time_ns,
-    ///     1_000_000_000
-    /// );
+    /// ```
+    /// use rm_simulator_world::{Field, FieldConfig, RefereeCommand};
+    /// let mut field = Field::new(&FieldConfig::default()).unwrap();
+    /// assert!(field.referee_command(RefereeCommand::StartMatch).is_err());
     /// ```
     pub fn referee_command(&mut self, command: RefereeCommand) -> Result<(), FieldError> {
-        let now_ns = self.time_ns();
         if let Some(state) = &mut self.rmuc_2027 {
             use rmuc_2027::match_rules::{Match, Phase};
             match command {
@@ -1299,31 +1026,7 @@ impl Field {
             self.sync_mechanisms();
             return Ok(());
         }
-        let referee = self
-            .referee
-            .as_mut()
-            .ok_or(FieldError::Referee("the field has no referee"))?;
-        referee
-            .command(command, now_ns, &mut self.runes)
-            .map_err(FieldError::Referee)?;
-        match command {
-            RefereeCommand::StartMatch => {
-                let start_ns = now_ns.saturating_add(referee.config().countdown_ns);
-                for outpost in &mut self.outposts {
-                    outpost.start_match(start_ns);
-                }
-            }
-            RefereeCommand::ResetMatch => {
-                for outpost in &mut self.outposts {
-                    outpost.reset_training();
-                }
-            }
-            _ => {}
-        }
-        self.sync_structures(now_ns);
-        self.sync_mechanisms();
-        self.sync_defeats();
-        Ok(())
+        Err(FieldError::Referee("no native RMUC 2027 match is bound"))
     }
     /// Advance exactly `ticks` ticks of `tick_ns()` nanoseconds each. Stepping
     /// in pieces equals one large step.
@@ -1375,13 +1078,9 @@ impl Field {
         while self.tick < end {
             let idle = self.physics.is_idle();
             if idle
-                && self.referee.is_none()
                 && self.rmuc_2027.is_none()
                 && !self.assemblies.iter().any(assembly::Run::active)
             {
-                for rune in &mut self.runes {
-                    rune.advance_to(end * tick_ns())?;
-                }
                 self.tick = end;
                 self.sync_mechanisms();
                 break;
@@ -1391,49 +1090,11 @@ impl Field {
                 // Rule commands and scored hits may change a target at this same
                 // timestamp, so derive the start frame from authoritative rules.
                 self.target_frames
-                    .begin(|faces| {
-                        Self::write_target_faces(
-                            &self.runes,
-                            &self.outposts,
-                            &self.bases,
-                            self.rmuc_2027.as_ref(),
-                            self.referee
-                                .as_ref()
-                                .and_then(Referee::dart_target_since_ns),
-                            prev_ns,
-                            faces,
-                        )
-                    })
+                    .begin(|faces| Self::write_target_faces(self.rmuc_2027.as_ref(), faces))
                     .map_err(FieldError::Ballistics)?;
             }
             self.tick += 1;
             let next_ns = self.time_ns();
-            for rune in &mut self.runes {
-                rune.advance_to(next_ns)?;
-            }
-            if let Some(referee) = &mut self.referee {
-                // The referee's own rune changes are applied at this tick too.
-                referee.tick(next_ns, &mut self.runes)?;
-                for rune in &mut self.runes {
-                    rune.advance_to(next_ns)?;
-                }
-                // Section 5.5.1: the middle armor stops for the round at 3:00,
-                // and a team's once the other team's base armor expands.
-                if referee.phase() == MatchPhase::Running {
-                    let teams = &referee.game().snapshot().teams;
-                    let late = referee.match_time_ns() >= referee::OUTPOST_ROTOR_STOP_NS;
-                    for team in Team::BOTH {
-                        let expanded = teams[team.other().index()].base_armor_expanded;
-                        if (late || expanded)
-                            && let Some(index) = referee.outpost_of(team)
-                        {
-                            self.outposts[index].stop(next_ns);
-                        }
-                    }
-                }
-                self.sync_structures(next_ns);
-                self.sync_defeats();
-            }
             self.advance_2027(tick_ns());
             self.advance_assemblies();
             self.sync_mechanisms();
@@ -1441,19 +1102,7 @@ impl Field {
                 continue;
             }
             self.target_frames
-                .update(|faces| {
-                    Self::write_target_faces(
-                        &self.runes,
-                        &self.outposts,
-                        &self.bases,
-                        self.rmuc_2027.as_ref(),
-                        self.referee
-                            .as_ref()
-                            .and_then(Referee::dart_target_since_ns),
-                        next_ns,
-                        faces,
-                    )
-                })
+                .update(|faces| Self::write_target_faces(self.rmuc_2027.as_ref(), faces))
                 .map_err(FieldError::Ballistics)?;
             let contacts = self
                 .physics
@@ -1465,15 +1114,10 @@ impl Field {
                     continue;
                 }
                 let hit = self.score(next_ns, contact)?;
-                if let Some(referee) = &mut self.referee {
-                    referee.observe_hit(&hit);
-                }
                 observer(&hit);
                 self.hits.push(hit);
             }
             self.apply_collisions(next_ns);
-            self.observe_zones();
-            self.sync_structures(next_ns);
             self.sync_mechanisms();
             self.sync_defeats();
             self.hits
@@ -1503,67 +1147,16 @@ impl Field {
                 self.last_detection_ns.insert(target, time_ns);
                 state.game.collision(collision.chassis);
             }
-            return;
-        }
-        let Some(referee) = &mut self.referee else {
-            return;
-        };
-        if referee.phase() != MatchPhase::Running {
-            return;
-        }
-        for collision in collisions {
-            let target = ArmorTarget::Chassis {
-                chassis: collision.chassis,
-                plate: collision.plate,
-            };
-            if self.physics.chassis_defeated(collision.chassis) != Some(false) {
-                continue;
-            }
-            if let Some(last) = self.last_detection_ns.get(&target)
-                && time_ns.saturating_sub(*last) < Caliber::Mm17.detection_interval_ns()
-            {
-                continue;
-            }
-            self.last_detection_ns.insert(target, time_ns);
-            referee.damage(
-                rm_simulator_gameplay::Target::Robot(collision.chassis),
-                referee::COLLISION_DAMAGE_HP,
-                rm_simulator_gameplay::DamageKind::Collision,
-            );
-        }
-    }
-    /// Report each robot's contact with every buff point footprint, so a
-    /// running round applies the section 5.5.3 occupation effects.
-    fn observe_zones(&mut self) {
-        let Some(referee) = &mut self.referee else {
-            return;
-        };
-        if self.zones.is_empty() || referee.phase() != MatchPhase::Running {
-            return;
-        }
-        let robots: Vec<u32> = referee.robots().map(|r| r.id).collect();
-        for id in robots {
-            let Some(position) = self.physics.chassis_position_m(id) else {
-                continue;
-            };
-            for area in &self.zones {
-                referee.observe_zone(id, area.zone(), area.contains(position));
-            }
         }
     }
     /// Buff point footprints this field reports contacts for.
     pub fn zones(&self) -> &[zones::ZoneArea] {
-        &self.zones
-    }
-    /// Replace the buff point footprints, for a field rebuilt by
-    /// [`Field::restore`], which carries none.
-    pub fn set_zones(&mut self, zones: Vec<zones::ZoneArea>) {
-        self.zones = zones;
+        &[]
     }
     /// Resolve match state only when articulated scenery actually needs it.
     fn sync_mechanisms(&mut self) {
         if self.physics.has_mechanisms() {
-            let mut state = referee::mechanism_state(self.referee.as_ref(), self.time_ns());
+            let mut state = referee::mechanism_view(None, self.time_ns());
             if let Some(r) = &self.rmuc_2027 {
                 state.outpost_angle_rad = Team::BOTH.map(|t| r.angle_rad(t));
                 state.rune_angle_rad = r
@@ -1576,44 +1169,17 @@ impl Field {
             self.physics.sync_mechanisms(&state);
         }
     }
-    /// Disabled armor remains physical but does not register hits or flashes.
-    /// A base or outpost is disabled once its HP reaches zero, and a chassis
-    /// module once the referee has defeated its robot. Rune targets are never
-    /// disabled here; the referee decides which rings still detect.
-    ///
-    /// ```rust
-    /// use rm_simulator_world::{
-    ///     ArmorTarget, Field, FieldConfig, RefereeCommand, RefereeConfig,
-    /// };
-    ///
-    /// let config = FieldConfig {
-    ///     referee: Some(RefereeConfig::alternating(1, 2)),
-    ///     ..FieldConfig::default()
-    /// };
-    /// let mut field = Field::new(&config).unwrap();
-    /// let face = ArmorTarget::Outpost { outpost: 0, face: 0 };
-    /// assert!(!field.armor_disabled(face));
-    /// field
-    ///     .referee_command(RefereeCommand::SetOutpostHp { outpost: 0, hp: 0 })
-    ///     .unwrap();
-    /// assert!(field.armor_disabled(face));
-    /// ```
+    /// Whether native authority disables this physical scoring face.
+    /// Unknown targets are disabled; physical chassis remain usable in bare worlds.
     pub fn armor_disabled(&self, target: ArmorTarget) -> bool {
         if let Some(state) = &self.rmuc_2027 {
             return state.disabled(target);
         }
         match target {
-            ArmorTarget::Base { base, .. } => {
-                self.bases.get(base as usize).is_none_or(|b| b.hp == 0)
-            }
-            ArmorTarget::Outpost { outpost, .. } => self
-                .outposts
-                .get(outpost as usize)
-                .is_none_or(|o| o.hp() == 0),
             ArmorTarget::Chassis { chassis, .. } => {
                 self.physics.chassis_defeated(chassis).unwrap_or(true)
             }
-            ArmorTarget::Rune { .. } => false,
+            _ => true,
         }
     }
     /// A frame of everything an observer needs at the current tick: bases,
@@ -1622,43 +1188,36 @@ impl Field {
     /// rule state a `restore` needs.
     ///
     /// ```rust
-    /// use rm_simulator_world::{Field, FieldConfig, RuneState, tick_ns};
+    /// use rm_simulator_world::{Field, FieldConfig, tick_ns};
     ///
     /// let mut field = Field::new(&FieldConfig::default()).unwrap();
     /// field.step(250).unwrap();
     /// let snapshot = field.snapshot();
     /// assert_eq!(snapshot.tick, 250);
     /// assert_eq!(snapshot.time_ns, 250 * tick_ns());
-    /// assert_eq!(snapshot.runes[0].state, RuneState::Activating);
+    /// assert!(snapshot.runes.is_empty());
     /// assert!(snapshot.restore.is_some());
     /// ```
     pub fn snapshot(&self) -> FieldSnapshot {
         let time_ns = self.time_ns();
         FieldSnapshot {
             rmuc_2027: self.rmuc_2027.clone(),
-            bases: self.bases.clone(),
+            bases: Vec::new(),
             tick: self.tick,
             time_ns,
-            runes: self.runes.iter().map(Rune::snapshot).collect(),
-            outposts: self
-                .outposts
-                .iter()
-                .map(|outpost| outpost.snapshot(time_ns))
-                .collect(),
+            runes: Vec::new(),
+            outposts: Vec::new(),
             projectiles: self.physics.snapshot(),
             chassis: self.physics.chassis_snapshots(),
             hits: self.hits.clone(),
             shots_fired: self.physics.launched(),
             hits_detected: self.hits_detected,
-            referee: self.referee.as_ref().map(Referee::snapshot),
+            referee: None,
             restore: Some(FieldRestore {
                 assemblies: self.assemblies.clone(),
                 arms: self.arms.clone(),
                 energy_units: self.energy_units(),
                 rmuc_2027: self.rmuc_2027.clone(),
-                runes: self.runes.clone(),
-                outposts: self.outposts.clone(),
-                referee: self.referee.clone(),
                 next_chassis_id: self.physics.next_chassis_id(),
                 projectile_policy: self.physics.projectile_policy(),
                 last_detection_ns: {
@@ -1713,6 +1272,15 @@ impl Field {
     ) -> Result<Self, FieldError> {
         // The explicit native authority chooses restore admission; never infer
         // a season from a team, HP value or CAD position.
+        if snapshot.referee.is_some()
+            || !snapshot.runes.is_empty()
+            || !snapshot.outposts.is_empty()
+            || !snapshot.bases.is_empty()
+        {
+            return Err(FieldError::Restore(
+                "2026 runtime/checkpoints removed; use rm2026-final",
+            ));
+        }
         let incoming_2027 = snapshot.restore.as_ref().and_then(|r| r.rmuc_2027.as_ref());
         if let Some(state) = incoming_2027 {
             state.config.validate().map_err(FieldError::Restore)?;
@@ -1776,27 +1344,8 @@ impl Field {
             }
         }
         let time_ns = snapshot.time_ns;
-        let runes = rules.runes.clone();
-        let outposts = rules.outposts.clone();
-        for rune in &runes {
-            rune.validate().map_err(FieldError::Rune)?;
-        }
-        for outpost in &outposts {
-            outpost.validate().map_err(FieldError::Outpost)?;
-        }
         let mut faces = Vec::new();
-        Self::write_target_faces(
-            &runes,
-            &outposts,
-            &snapshot.bases,
-            incoming_2027,
-            rules
-                .referee
-                .as_ref()
-                .and_then(Referee::dart_target_since_ns),
-            time_ns,
-            &mut faces,
-        );
+        Self::write_target_faces(rules.rmuc_2027.as_ref(), &mut faces);
         let mut physics = WorldPhysics::new(&faces, floor_height_m);
         physics
             .set_projectile_policy(rules.projectile_policy)
@@ -1807,18 +1356,13 @@ impl Field {
             arms: rules.arms.clone(),
             energy_units: rules.energy_units.clone(),
             rmuc_2027: rules.rmuc_2027.clone(),
-            bases: snapshot.bases.clone(),
             floor_height_m,
             tick: snapshot.tick,
-            runes,
-            outposts,
             physics,
             target_frames: TargetFrames::new(faces),
             hits: snapshot.hits.clone(),
             hits_detected: snapshot.hits_detected,
             last_detection_ns: rules.last_detection_ns.iter().copied().collect(),
-            referee: rules.referee.clone(),
-            zones: Vec::new(),
         };
         for chassis in &snapshot.chassis {
             field
@@ -1853,6 +1397,38 @@ impl Field {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn removed_runtime_configs_are_rejected_even_without_a_cad_host() {
+        use super::*;
+        let variants = [
+            FieldConfig {
+                referee: Some(RefereeConfig::default()),
+                ..Default::default()
+            },
+            FieldConfig {
+                runes: vec![RuneConfig::default()],
+                ..Default::default()
+            },
+            FieldConfig {
+                outposts: vec![OutpostConfig {
+                    origin: Pose::default(),
+                    pivot_cad_m: None,
+                    speed_rad_s: 0.,
+                }],
+                ..Default::default()
+            },
+        ];
+        for config in variants {
+            assert!(
+                Field::new(&config)
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("rm2026-final")
+            );
+        }
+        assert!(Field::new(&FieldConfig::default()).is_ok());
+    }
     use super::*;
     /// World-time durations as tick counts, so every stepping rhythm here
     /// keeps its meaning whatever the fixed tick length is. Rounded up: these
@@ -1894,11 +1470,11 @@ mod tests {
                     spawn: Pose::at([1.5, -2.0, spawn]),
                 },
             ],
-            referee: Some(RefereeConfig::alternating(1, 2)),
+            runes: vec![],
+            outposts: vec![],
             ..FieldConfig::default()
         };
         let mut field = Field::new(&config).unwrap();
-        field.referee_command(RefereeCommand::StartMatch).unwrap();
         field.step(ticks(referee::COUNTDOWN_NS)).unwrap();
         let drive = ChassisCommand {
             forward_m_s: 1.2,
@@ -1907,7 +1483,7 @@ mod tests {
             ..Default::default()
         };
         field.command_chassis(0, drive).unwrap();
-        for round in 0..8 {
+        for _ in 0..8 {
             field.step(ticks(60_000_000)).unwrap();
             if !shoot {
                 continue;
@@ -1915,19 +1491,6 @@ mod tests {
             let muzzle = field.chassis_muzzle_pose(0).unwrap();
             field
                 .fire(muzzle, Shot::at_limit(Caliber::Mm17), Some(0))
-                .unwrap();
-            // Aim one shot straight at the rune so its rules advance too.
-            let target = field.snapshot().runes[0].target_poses[round % 5];
-            let toward = Pose {
-                translation_m: [
-                    target.translation_m[0] - 1.2,
-                    target.translation_m[1],
-                    target.translation_m[2],
-                ],
-                ..Pose::default()
-            };
-            field
-                .fire(toward, Shot::at_limit(Caliber::Mm17), None)
                 .unwrap();
         }
         field.step(ticks(30_000_000)).unwrap();
@@ -2086,564 +1649,10 @@ mod tests {
         let snapshot = whole.snapshot();
         assert_eq!(snapshot.tick, 2_600);
         assert_eq!(snapshot.time_ns, 2_600 * tick_ns());
-        assert_eq!(snapshot.outposts.len(), 2);
-        assert!(snapshot.runes[0].angle_rad > 0.0);
+        assert!(snapshot.outposts.is_empty());
+        assert!(snapshot.runes.is_empty());
         // Reading a snapshot does not advance time.
         assert_eq!(whole.snapshot(), snapshot);
-    }
-    #[test]
-    fn big_rune_and_empty_field_are_valid_and_invalid_input_is_rejected() {
-        let big = FieldConfig {
-            runes: vec![
-                RuneConfig {
-                    kind: RuneKind::Big,
-                    cad_orbit: true,
-                    ..RuneConfig::default()
-                },
-                RuneConfig {
-                    cad_orbit: true,
-                    ..RuneConfig::default()
-                },
-            ],
-            outposts: Vec::new(),
-            ..FieldConfig::default()
-        };
-        let mut field = Field::new(&big).unwrap();
-        field.step(10).unwrap();
-        let snapshot = field.snapshot();
-        assert_eq!(snapshot.runes[0].kind, rune::RuneKind::Big);
-        assert_eq!(snapshot.runes[1].kind, rune::RuneKind::Small);
-        assert!(
-            snapshot
-                .runes
-                .iter()
-                .all(|rune| (rune.target_radius_m - 0.6985).abs() < 1e-12)
-        );
-        assert!(snapshot.outposts.is_empty());
-        assert!(field.rune_mut(1).is_some() && field.rune_mut(2).is_none());
-        let empty = Field::new(&FieldConfig {
-            runes: Vec::new(),
-            outposts: Vec::new(),
-            ..FieldConfig::default()
-        })
-        .unwrap();
-        assert!(empty.snapshot().runes.is_empty());
-        assert!(matches!(
-            Field::new(&FieldConfig {
-                outposts: vec![OutpostConfig {
-                    pivot_cad_m: None,
-                    origin: Pose::at([f64::NAN, 0.0, 0.0]),
-                    speed_rad_s: 1.0
-                }],
-                ..FieldConfig::default()
-            }),
-            Err(FieldError::Outpost(_))
-        ));
-        assert!(matches!(
-            Field::new(&FieldConfig {
-                runes: vec![RuneConfig {
-                    hub_pose: Pose {
-                        rotation_wxyz: [0.0; 4],
-                        ..Pose::default()
-                    },
-                    ..RuneConfig::default()
-                }],
-                ..FieldConfig::default()
-            }),
-            Err(FieldError::Rune(_))
-        ));
-        let mut field = Field::new(&FieldConfig::default()).unwrap();
-        assert_eq!(field.step(u64::MAX), Err(FieldError::TickOverflow));
-        assert_eq!(field.tick(), 0);
-    }
-    /// A stationary outpost whose face 0 (facing -x, pitched 15 degrees down)
-    /// stands 1.5 m ahead of a shooter at the given height.
-    fn stationary_outpost() -> (FieldConfig, Pose) {
-        let config = FieldConfig {
-            runes: Vec::new(),
-            outposts: vec![OutpostConfig {
-                pivot_cad_m: None,
-                origin: Pose::at([4.0, 0.0, 0.0]),
-                speed_rad_s: 0.0,
-            }],
-            ..FieldConfig::default()
-        };
-        let field = Field::new(&config).unwrap();
-        let face = field.snapshot().outposts[0].armors[0].pose;
-        let muzzle = Pose::at([
-            face.translation_m[0] - 1.5,
-            face.translation_m[1],
-            face.translation_m[2] + 0.005,
-        ]);
-        (config, muzzle)
-    }
-    #[test]
-    fn disabled_outpost_armor_does_not_register_hits_and_revives() {
-        let (mut config, muzzle) = stationary_outpost();
-        config.referee = Some(RefereeConfig::alternating(0, 1));
-        let mut field = Field::new(&config).unwrap();
-        field
-            .referee_command(RefereeCommand::SetOutpostHp { outpost: 0, hp: 0 })
-            .unwrap();
-        field
-            .fire(muzzle, Shot::at_limit(Caliber::Mm17), None)
-            .unwrap();
-        field.step(100).unwrap();
-        assert!(field.snapshot().hits.is_empty());
-        assert_eq!(field.snapshot().hits_detected, 0);
-        // The projectile bounced off the retained armor housing.
-        assert!(field.snapshot().projectiles[0].velocity_m_s[0] < 0.);
-        field
-            .referee_command(RefereeCommand::SetOutpostHp {
-                outpost: 0,
-                hp: 1500,
-            })
-            .unwrap();
-        field
-            .fire(muzzle, Shot::at_limit(Caliber::Mm17), None)
-            .unwrap();
-        field.step(100).unwrap();
-        assert_eq!(field.snapshot().hits_detected, 1);
-    }
-    #[test]
-    fn cached_moving_collider_mesh_reconstructs_live_physics() {
-        let mut field = Field::new(&FieldConfig {
-            runes: Vec::new(),
-            outposts: Vec::new(),
-            referee: Some(RefereeConfig::alternating(0, 0)),
-            ..Default::default()
-        })
-        .unwrap();
-        field
-            .referee_command(RefereeCommand::SetDartTargetMoving { moving: true })
-            .unwrap();
-        field
-            .add_mechanism_mesh(
-                vec![[20., 0., 1.], [20., 1., 1.], [20., 0., 2.]],
-                vec![[0, 1, 2]],
-                referee::Mechanism::DartTarget,
-                Team::Red,
-                [[0., -0.28, 0.], [0., 0.28, 0.]],
-            )
-            .unwrap();
-        let mut parts = field.static_geometry_snapshot().moving_parts();
-        assert_eq!(parts.len(), 1);
-        let part = parts.pop().unwrap();
-        let (vertices, indices) = part.geometry.into_triangles();
-        for ticks in [0, 16, 250, 1000, 2000] {
-            field.step(ticks).unwrap();
-            let fraction = field
-                .referee()
-                .unwrap()
-                .snapshot()
-                .dart_target_position(field.time_ns());
-            let translation = part.motion.pose(fraction).translation_m;
-            let moved: Vec<[f64; 3]> = vertices
-                .iter()
-                .map(|v| std::array::from_fn(|i| v[i] + translation[i]))
-                .collect();
-            let actual = field.dynamic_geometry_snapshot().into_triangles();
-            assert_eq!(actual, (moved, indices.clone()));
-        }
-    }
-
-    #[test]
-    fn dart_target_collision_sweeps_and_is_tick_partition_independent() {
-        // Without a referee, or until one starts the sweep, the target rests.
-        for referee in [None, Some(RefereeConfig::alternating(1, 2))] {
-            let mut field = Field::new(&FieldConfig {
-                referee,
-                ..Default::default()
-            })
-            .unwrap();
-            field
-                .add_mechanism_mesh(
-                    vec![[20., 0., 1.], [20., 1., 1.], [20., 0., 2.]],
-                    vec![[0, 1, 2]],
-                    referee::Mechanism::DartTarget,
-                    Team::Red,
-                    [[0., -0.28, 0.], [0., 0.28, 0.]],
-                )
-                .unwrap();
-            let initial = field.static_geometry();
-            field.step(ticks(2_000_000_000)).unwrap();
-            assert_eq!(field.static_geometry(), initial);
-        }
-        {
-            let config = FieldConfig {
-                referee: Some(RefereeConfig::alternating(1, 2)),
-                ..Default::default()
-            };
-            let make = || {
-                let mut field = Field::new(&config).unwrap();
-                field
-                    .add_mechanism_mesh(
-                        vec![[20., 0., 1.], [20., 1., 1.], [20., 0., 2.]],
-                        vec![[0, 1, 2]],
-                        referee::Mechanism::DartTarget,
-                        Team::Red,
-                        [[0., -0.28, 0.], [0., 0.28, 0.]],
-                    )
-                    .unwrap();
-                field
-                    .referee_command(RefereeCommand::SetDartTargetMoving { moving: true })
-                    .unwrap();
-                field
-            };
-            let mut bulk = make();
-            let mut incremental = make();
-            // The sweep sets off from the middle of the rail.
-            let initial = bulk.static_geometry();
-            assert!(
-                initial
-                    .0
-                    .iter()
-                    .any(|v| v[0] == 20. && v[1].abs() < 1e-12 && v[2] == 1.)
-            );
-            bulk.step(ticks(1_000_000_000)).unwrap();
-            for _ in 0..ticks(1_000_000_000) {
-                incremental.step(1).unwrap();
-            }
-            assert_eq!(bulk.static_geometry(), incremental.static_geometry());
-            assert!(bulk.static_geometry().0.contains(&[20., 0.28, 1.]));
-            bulk.step(ticks(2_000_000_000)).unwrap();
-            assert!(bulk.static_geometry().0.contains(&[20., -0.28, 1.]));
-            bulk.step(ticks(1_000_000_000)).unwrap();
-            assert_eq!(bulk.static_geometry(), initial);
-            bulk.step(0).unwrap();
-            assert_eq!(bulk.static_geometry(), initial);
-        }
-    }
-    #[test]
-    fn mechanism_override_moves_collision_over_its_travel_and_resets() {
-        let config = FieldConfig {
-            referee: Some(RefereeConfig::alternating(1, 2)),
-            ..Default::default()
-        };
-        let mut field = Field::new(&config).unwrap();
-        let vertices = vec![[20., 0., 1.], [20., 1., 1.], [20., 0., 2.]];
-        field
-            .add_mechanism_mesh(
-                vertices,
-                vec![[0, 1, 2]],
-                referee::Mechanism::Base,
-                Team::Blue,
-                [[0.; 3], [0., 0., 3.]],
-            )
-            .unwrap();
-        let closed = field.static_geometry();
-        field
-            .referee_command(RefereeCommand::SetBaseOpen {
-                team: Team::Red,
-                open: true,
-            })
-            .unwrap();
-        assert_eq!(field.static_geometry(), closed);
-        field
-            .referee_command(RefereeCommand::SetBaseOpen {
-                team: Team::Blue,
-                open: true,
-            })
-            .unwrap();
-        // The armor travels; halfway through it is halfway up.
-        field
-            .step(ticks(rm_simulator_physics::motion::BASE_TRAVEL_NS / 2))
-            .unwrap();
-        assert!(field.static_geometry().0.contains(&[20., 0., 2.5]));
-        field
-            .step(ticks(rm_simulator_physics::motion::BASE_TRAVEL_NS / 2))
-            .unwrap();
-        let opened = field.static_geometry();
-        assert_ne!(opened, closed);
-        assert!(opened.0.contains(&[20., 0., 4.]));
-        field.referee_command(RefereeCommand::StartMatch).unwrap();
-        assert_eq!(field.static_geometry(), closed);
-        assert_eq!(field.snapshot().referee.unwrap().base_open, [false; 2]);
-    }
-    #[test]
-    fn outpost_strike_is_detected_once_per_interval_and_costs_hp() {
-        let (config, muzzle) = stationary_outpost();
-        let mut field = Field::new(&config).unwrap();
-        let shot = Shot::at_limit(Caliber::Mm17);
-        let first = field.fire(muzzle, shot, None).unwrap();
-        field.step(ticks(10_000_000)).unwrap();
-        let mut second_muzzle = muzzle;
-        second_muzzle.translation_m[1] += 0.03;
-        let second = field.fire(second_muzzle, shot, None).unwrap();
-        field.step(ticks(300_000_000)).unwrap();
-        let snapshot = field.snapshot();
-        assert_eq!(snapshot.shots_fired, 2);
-        assert_eq!(snapshot.hits_detected, 1);
-        assert_eq!(snapshot.hits.len(), 2, "{:?}", snapshot.hits);
-        let hit = &snapshot.hits[0];
-        assert_eq!(hit.projectile, first);
-        assert!(hit.detected);
-        assert_eq!(
-            hit.target,
-            ArmorTarget::Outpost {
-                outpost: 0,
-                face: 0
-            }
-        );
-        assert!(hit.normal_speed_m_s > 22.0, "{hit:?}");
-        assert_eq!(hit.damage, 20);
-        assert!(hit.local_offset_m[0].abs() < 0.01, "{hit:?}");
-        let rejected = &snapshot.hits[1];
-        assert_eq!(rejected.projectile, second);
-        assert!(!rejected.detected);
-        assert_eq!(rejected.rejection, Some(Rejection::DetectionInterval));
-        assert_eq!(rejected.damage, 0);
-        assert_eq!(snapshot.outposts[0].hp, outpost::INITIAL_HP - 20);
-        // Hits age out of the snapshot after a second.
-        field.step(ticks(1_000_000_000)).unwrap();
-        assert!(field.snapshot().hits.is_empty());
-        assert_eq!(field.snapshot().hits_detected, 1);
-    }
-    #[test]
-    fn referee_runs_the_match_on_the_field_clock_and_shields_buffed_outposts() {
-        let (mut config, muzzle) = stationary_outpost();
-        config.runes = vec![RuneConfig::default()];
-        config.referee = Some(RefereeConfig::alternating(1, 1));
-        let mut field = Field::new(&config).unwrap();
-        assert_eq!(field.referee().unwrap().phase(), MatchPhase::Idle);
-        assert_eq!(field.runes()[0].state(), RuneState::Activating);
-        assert_eq!(
-            field.referee_command(RefereeCommand::ActivateRune { team: Team::Red }),
-            Err(FieldError::Referee("the round is not running"))
-        );
-        field.referee_command(RefereeCommand::StartMatch).unwrap();
-        assert_eq!(field.runes()[0].state(), RuneState::Inactive);
-        // The same match, stepped whole and in pieces, agrees.
-        let mut split = Field::new(&config).unwrap();
-        split.referee_command(RefereeCommand::StartMatch).unwrap();
-        let total = ticks(6_000_000_000);
-        field.step(total).unwrap();
-        let parts = [1, total / 2, total / 4];
-        for part in parts {
-            split.step(part).unwrap();
-        }
-        split.step(total - parts.iter().sum::<u64>()).unwrap();
-        assert_eq!(field.snapshot(), split.snapshot());
-        let referee = field.snapshot().referee.unwrap();
-        assert_eq!(referee.phase, MatchPhase::Running);
-        assert_eq!(referee.match_time_ns, 1_000_000_000);
-        assert_eq!(referee.teams[0].rune_opportunities, 1);
-        // Red activates by hitting each lit blade; the referee then shields red's outpost.
-        field
-            .referee_command(RefereeCommand::ActivateRune { team: Team::Red })
-            .unwrap();
-        for _ in 0..5 {
-            field.step(ticks(100_000_000)).unwrap();
-            let time_ns = field.time_ns();
-            let blade = field.runes()[0].snapshot().active_blade.unwrap();
-            field.rune_mut(0).unwrap().hit(time_ns, blade).unwrap();
-        }
-        field.step(1).unwrap();
-        assert_eq!(field.runes()[0].state(), RuneState::Activated);
-        let buff = field.snapshot().referee.unwrap().teams[0].buff.unwrap();
-        assert_eq!(buff.defense_pct, 25);
-        let shot = Shot::at_limit(Caliber::Mm17);
-        field.fire(muzzle, shot, None).unwrap();
-        field.step(ticks(300_000_000)).unwrap();
-        let snapshot = field.snapshot();
-        let hit = snapshot.hits.iter().find(|hit| hit.detected).unwrap();
-        assert_eq!(hit.damage, 15);
-        assert_eq!(snapshot.outposts[0].hp, outpost::INITIAL_HP - 15);
-        // Reset hands the rune back to training.
-        field.referee_command(RefereeCommand::ResetMatch).unwrap();
-        assert_eq!(field.runes()[0].state(), RuneState::Activating);
-        assert_eq!(field.snapshot().referee.unwrap().phase, MatchPhase::Idle);
-        // A referee needs an owner for every rune and outpost.
-        let mut bad = config.clone();
-        bad.referee = Some(RefereeConfig::alternating(2, 1));
-        assert!(matches!(Field::new(&bad), Err(FieldError::Referee(_))));
-    }
-    #[test]
-    fn slow_and_heavy_shots_follow_their_own_thresholds() {
-        let (config, muzzle) = stationary_outpost();
-        let mut field = Field::new(&config).unwrap();
-        // A slow ball drops about 9 cm over 1.5 m; lift the muzzle to keep it on the face.
-        let mut lifted = muzzle;
-        lifted.translation_m[2] += 0.09;
-        field
-            .fire(
-                lifted,
-                Shot {
-                    caliber: Caliber::Mm17,
-                    speed_m_s: 11.0,
-                },
-                None,
-            )
-            .unwrap();
-        field.step(ticks(400_000_000)).unwrap();
-        let hits = field.snapshot().hits;
-        assert_eq!(hits.len(), 1, "{hits:?}");
-        assert!(!hits[0].detected);
-        assert_eq!(hits[0].rejection, Some(Rejection::NormalSpeed));
-        let mut field = Field::new(&config).unwrap();
-        // Aim off the 10 mm centre square so the plain Table 5-2 damage applies.
-        let mut raised = muzzle;
-        raised.translation_m[1] += 0.03;
-        raised.translation_m[2] += 0.06;
-        field
-            .fire(raised, Shot::at_limit(Caliber::Mm42), None)
-            .unwrap();
-        field.step(ticks(400_000_000)).unwrap();
-        let snapshot = field.snapshot();
-        assert_eq!(snapshot.hits.len(), 1, "{:?}", snapshot.hits);
-        assert!(snapshot.hits[0].detected, "{:?}", snapshot.hits);
-        assert_eq!(snapshot.hits[0].damage, 200);
-        assert_eq!(snapshot.outposts[0].hp, outpost::INITIAL_HP - 200);
-        assert!(matches!(
-            field.fire(
-                muzzle,
-                Shot {
-                    caliber: Caliber::Mm17,
-                    speed_m_s: f64::NAN
-                },
-                None,
-            ),
-            Err(FieldError::Shot(_))
-        ));
-    }
-    #[test]
-    fn shots_follow_rune_conversion_and_idle_resume() {
-        let mut field = Field::new(&FieldConfig {
-            outposts: Vec::new(),
-            ..FieldConfig::default()
-        })
-        .unwrap();
-        // Reuse the same physics scene across expired shots, idle jumps and
-        // both rune conversions. Old target poses or velocities must not leak.
-        for (kind, speed_m_s) in [
-            (RuneKind::Small, 25.0),
-            (RuneKind::Big, 20.0),
-            (RuneKind::Small, 25.0),
-        ] {
-            let now_ns = field.time_ns();
-            let rune = field.rune_mut(0).unwrap();
-            rune.convert(kind, now_ns).unwrap();
-            rune.activate(now_ns).unwrap();
-            field.step(1_237).unwrap();
-            let rune = &field.snapshot().runes[0];
-            let blade = rune.active_blade.unwrap();
-            let [x, y, z] = rune.target_poses[blade as usize].translation_m;
-            let projectile = field
-                .fire(
-                    Pose::at([x - 0.1, y, z]),
-                    Shot {
-                        caliber: Caliber::Mm17,
-                        speed_m_s,
-                    },
-                    None,
-                )
-                .unwrap();
-            field.step(10).unwrap();
-            let snapshot = field.snapshot();
-            let hit = snapshot
-                .hits
-                .iter()
-                .find(|hit| hit.projectile == projectile)
-                .expect("the projectile must hit the visible rune target");
-            assert_eq!(hit.target, ArmorTarget::Rune { rune: 0, blade });
-            assert!(hit.detected, "{hit:?}");
-            assert!((hit.normal_speed_m_s - speed_m_s).abs() < 0.2, "{hit:?}");
-            field
-                .step(projectile::MAX_FLIGHT_NS / tick_ns() + 1)
-                .unwrap();
-            assert!(field.snapshot().projectiles.is_empty());
-        }
-    }
-    #[test]
-    fn active_physics_refreshes_targets_changed_at_the_current_time() {
-        let chassis = ChassisConfig::default();
-        let mut field = Field::new(&FieldConfig {
-            outposts: Vec::new(),
-            chassis: vec![ChassisPlacement {
-                config: chassis.clone(),
-                spawn: Pose::at([-10.0, -5.0, chassis.rest_height_m()]),
-                team: Team::Red,
-                kind: RobotKind::Infantry,
-                performance: None,
-            }],
-            ..FieldConfig::default()
-        })
-        .unwrap();
-        field.step(10).unwrap();
-        let now_ns = field.time_ns();
-        field
-            .rune_mut(0)
-            .unwrap()
-            .convert(RuneKind::Big, now_ns)
-            .unwrap();
-        let mut expected = Vec::new();
-        Field::write_target_faces(
-            &field.runes,
-            &field.outposts,
-            &field.bases,
-            field.rmuc_2027.as_ref(),
-            None,
-            now_ns,
-            &mut expected,
-        );
-
-        field.step(1).unwrap();
-        assert_eq!(field.target_frames.start(), expected);
-    }
-    #[test]
-    fn rune_target_scores_from_its_visible_front_and_rejects_42mm() {
-        let config = FieldConfig {
-            runes: vec![RuneConfig::default()],
-            outposts: Vec::new(),
-            ..FieldConfig::default()
-        };
-        let mut field = Field::new(&config).unwrap();
-        // The visible front is the hub's -x side; blade 0 starts straight up.
-        let target = field.snapshot().runes[0].target_poses[0].translation_m;
-        assert_eq!(target, [6.0, 0.0, 2.3]);
-        let muzzle = Pose::at([target[0] - 1.5, target[1], target[2] + 0.02]);
-        field
-            .fire(muzzle, Shot::at_limit(Caliber::Mm17), None)
-            .unwrap();
-        field.step(ticks(200_000_000)).unwrap();
-        let snapshot = field.snapshot();
-        assert_eq!(snapshot.hits.len(), 1, "{:?}", snapshot.hits);
-        let hit = &snapshot.hits[0];
-        assert!(hit.detected, "{hit:?}");
-        assert_eq!(hit.target, ArmorTarget::Rune { rune: 0, blade: 0 });
-        assert_eq!(
-            hit.rune_outcome,
-            Some(HitOutcome::Accepted {
-                blade: 0,
-                next_blade: 1
-            })
-        );
-        assert!(hit.local_offset_m[0].abs() < 0.1 && hit.local_offset_m[1].abs() < 0.1);
-        assert_eq!(snapshot.runes[0].active_blade, Some(1));
-        assert!(snapshot.runes[0].activated[0]);
-        // A 42 mm projectile bounces off the same face without being detected.
-        let mut field = Field::new(&config).unwrap();
-        field
-            .fire(muzzle, Shot::at_limit(Caliber::Mm42), None)
-            .unwrap();
-        field.step(ticks(400_000_000)).unwrap();
-        let hits = field.snapshot().hits;
-        assert_eq!(hits.len(), 1, "{hits:?}");
-        assert!(!hits[0].detected);
-        assert_eq!(hits[0].rejection, Some(Rejection::Caliber));
-        // Shooting the wheel from behind touches the housing back: no detection.
-        let mut field = Field::new(&config).unwrap();
-        let behind = Pose::yawed(
-            [target[0] + 1.5, target[1], target[2] + 0.02],
-            std::f64::consts::PI,
-        );
-        field
-            .fire(behind, Shot::at_limit(Caliber::Mm17), None)
-            .unwrap();
-        field.step(ticks(400_000_000)).unwrap();
-        let hits = field.snapshot().hits;
-        assert_eq!(hits.len(), 1, "{hits:?}");
-        assert_eq!(hits[0].rejection, Some(Rejection::OutsideTarget));
     }
     #[test]
     fn projectiles_keep_stepping_deterministic_in_any_partition() {
@@ -2681,13 +1690,13 @@ mod tests {
     fn ramp_field() -> FieldConfig {
         FieldConfig {
             rmuc_2027: None,
+            zones: Vec::new(),
             bases: vec![],
             runes: Vec::new(),
             outposts: Vec::new(),
             floor_height_m: 0.0,
             referee: None,
             projectile_policy: Default::default(),
-            zones: Vec::new(),
             chassis: vec![ChassisPlacement {
                 config: ChassisConfig::default(),
                 spawn: Pose::at([0.0, 0.0, ChassisConfig::default().rest_height_m()]),
@@ -2882,107 +1891,6 @@ mod tests {
         field.step(100).unwrap();
         let ids: Vec<u32> = field.snapshot().chassis.iter().map(|c| c.id).collect();
         assert_eq!(ids, vec![blue, next]);
-    }
-    /// Strikes on a chassis armor module damage its referee robot; at zero
-    /// HP the drive is cut and the gun silent until the referee revives it.
-    #[test]
-    fn chassis_armor_takes_damage_and_a_defeated_robot_stops() {
-        let config = FieldConfig {
-            referee: Some(RefereeConfig::alternating(1, 2)),
-            ..Default::default()
-        };
-        let mut field = Field::new(&config).unwrap();
-        let chassis = ChassisConfig::default();
-        let placement = |x: f64, team: Team| ChassisPlacement {
-            config: chassis.clone(),
-            spawn: Pose::at([x, 0.0, chassis.rest_height_m()]),
-            team,
-            kind: RobotKind::Infantry,
-            performance: None,
-        };
-        let red = field.add_chassis(&placement(0.0, Team::Red)).unwrap();
-        let blue = field.add_chassis(&placement(-2.0, Team::Blue)).unwrap();
-        let robots = field.snapshot().referee.unwrap().robots;
-        assert_eq!(robots.len(), 2);
-        assert_eq!(
-            (robots[0].id, robots[0].team, robots[0].hp),
-            (red, Team::Red, 200)
-        );
-        assert_eq!((robots[1].id, robots[1].team), (blue, Team::Blue));
-        field.step(300).unwrap();
-        // Blue shoots red's back plate from 1.2 m behind it; a ball at the
-        // 17 mm limit drops under a centimetre on the way.
-        let muzzle = Pose::at([-1.5, 0.0, chassis.rest_height_m() + chassis.armor_height_m]);
-        assert!(matches!(
-            field.fire(muzzle, Shot::at_limit(Caliber::Mm17), Some(9)),
-            Err(FieldError::Shot(_))
-        ));
-        field
-            .fire(muzzle, Shot::at_limit(Caliber::Mm17), Some(blue))
-            .unwrap();
-        field.step(ticks(200_000_000)).unwrap();
-        let snapshot = field.snapshot();
-        let hit = snapshot
-            .hits
-            .iter()
-            .find(|hit| matches!(hit.target, ArmorTarget::Chassis { .. }))
-            .expect("the ball struck the armor");
-        assert_eq!(
-            hit.target,
-            ArmorTarget::Chassis {
-                chassis: red,
-                plate: 2
-            }
-        );
-        assert!(hit.detected, "{hit:?}");
-        assert_eq!((hit.shooter, hit.damage), (Some(blue), 20));
-        assert_eq!(snapshot.referee.unwrap().robots[0].hp, 180);
-        assert!(!snapshot.chassis[0].defeated);
-        // Wear it down; each shot waits out the 50 ms detection interval.
-        // Inelastic spent balls can intercept later rounds; allow a bounded
-        // number of extra attempts rather than assuming every shot scores.
-        for _ in 0..29 {
-            if field.snapshot().chassis[0].defeated {
-                break;
-            }
-            field
-                .fire(muzzle, Shot::at_limit(Caliber::Mm17), Some(blue))
-                .unwrap();
-            field.step(ticks(200_000_000)).unwrap();
-        }
-        let snapshot = field.snapshot();
-        assert_eq!(
-            snapshot.referee.unwrap().robots[0].hp,
-            0,
-            "{:?}",
-            snapshot.hits
-        );
-        assert!(snapshot.chassis[0].defeated);
-        assert!(matches!(
-            field.fire(muzzle, Shot::at_limit(Caliber::Mm17), Some(red)),
-            Err(FieldError::Referee(_))
-        ));
-        let drive = ChassisCommand {
-            forward_m_s: 1.0,
-            aim_yaw_rad: 1.0,
-            ..Default::default()
-        };
-        field.command_chassis(red, drive).unwrap();
-        field.step(1_000).unwrap();
-        let stopped = field.snapshot().chassis[0].clone();
-        assert!(stopped.pose.translation_m[0].abs() < 0.1, "{stopped:?}");
-        assert!(chassis::yaw_of(stopped.turret).abs() < 1e-6);
-        field
-            .referee_command(RefereeCommand::ReviveRobot { robot: red })
-            .unwrap();
-        field.step(1_000).unwrap();
-        let revived = field.snapshot().chassis[0].clone();
-        assert!(!revived.defeated);
-        assert!(revived.pose.translation_m[0] > 0.3, "{revived:?}");
-        assert!((chassis::yaw_of(revived.turret) - 1.0).abs() < 1e-6);
-        // Leaving takes the robot record along.
-        field.remove_chassis(red).unwrap();
-        assert_eq!(field.snapshot().referee.unwrap().robots.len(), 1);
     }
     /// A roof the body fits under but the turret does not stops the chassis.
     #[test]
@@ -3234,403 +2142,5 @@ mod tests {
             }),
             Err(FieldError::Chassis(_))
         ));
-    }
-
-    /// A field whose red team has activated the Big Rune once, so its rune
-    /// only detects rings 4 to 10.
-    fn field_after_one_big_activation(config: &FieldConfig) -> Field {
-        let mut field = Field::new(config).unwrap();
-        field.referee_command(RefereeCommand::StartMatch).unwrap();
-        field.step(ticks(5_000_000_000)).unwrap();
-        field
-            .referee_command(RefereeCommand::SkipTo {
-                match_time_ns: 180_000_000_000,
-            })
-            .unwrap();
-        field.step(1).unwrap();
-        assert_eq!(field.runes()[0].kind(), RuneKind::Big);
-        field
-            .referee_command(RefereeCommand::ActivateRune { team: Team::Red })
-            .unwrap();
-        for _ in 0..12 {
-            field.step(ticks(100_000_000)).unwrap();
-            let time_ns = field.time_ns();
-            let Some(blade) = field.runes()[0].snapshot().active_blade else {
-                break;
-            };
-            let outcome = field.rune_mut(0).unwrap().hit(time_ns, blade).unwrap();
-            if matches!(outcome, HitOutcome::GroupHit { .. }) {
-                field.step(ticks(1_001_000_000)).unwrap();
-            }
-        }
-        field.step(1).unwrap();
-        assert_eq!(field.runes()[0].state(), RuneState::Activated);
-        assert_eq!(field.referee().unwrap().rune_min_ring(0), 4);
-        field
-    }
-    #[test]
-    fn projectiles_on_a_disabled_ring_are_rejected() {
-        let config = FieldConfig {
-            runes: vec![RuneConfig::default()],
-            outposts: Vec::new(),
-            referee: Some(RefereeConfig::alternating(1, 0)),
-            ..FieldConfig::default()
-        };
-        // Aim where blade 0 will be when the ball arrives (1.5 m at 25 m/s).
-        let flight_ns = 60_000_000;
-        let mut probe = field_after_one_big_activation(&config);
-        probe.step(ticks(flight_ns)).unwrap();
-        let target = probe.snapshot().runes[0].target_poses[0].translation_m;
-        let shoot = |offset_y_m: f64| {
-            let mut field = field_after_one_big_activation(&config);
-            let muzzle = Pose::at([target[0] - 1.5, target[1] + offset_y_m, target[2] + 0.02]);
-            field
-                .fire(muzzle, Shot::at_limit(Caliber::Mm17), None)
-                .unwrap();
-            field.step(ticks(flight_ns) + ticks(100_000_000)).unwrap();
-            let snapshot = field.snapshot();
-            snapshot
-                .hits
-                .iter()
-                .find(|hit| matches!(hit.target, ArmorTarget::Rune { rune: 0, .. }))
-                .cloned()
-                .unwrap_or_else(|| panic!("no rune hit: {:?}", snapshot.hits))
-        };
-        let outer = shoot(0.13);
-        assert!(referee::ring_of(outer.local_offset_m) < 4, "{outer:?}");
-        assert_eq!(outer.rejection, Some(Rejection::DisabledRing));
-        assert!(!outer.detected);
-        let centre = shoot(0.0);
-        assert!(referee::ring_of(centre.local_offset_m) >= 4, "{centre:?}");
-        assert!(centre.detected, "{centre:?}");
-    }
-    fn referee_events(field: &Field) -> Vec<RefereeEvent> {
-        field
-            .snapshot()
-            .referee
-            .unwrap()
-            .events
-            .into_iter()
-            .map(|timed| timed.event)
-            .collect()
-    }
-    /// A defeated robot respawns where it stands, weakened until its own
-    /// outpost zone clears it; the rotor stops at 3:00 and a destroyed base
-    /// ends the round with a result.
-    #[test]
-    fn a_match_respawns_in_place_stops_the_rotor_and_ends_on_a_base() {
-        let (mut config, _) = stationary_outpost();
-        config.outposts[0].speed_rad_s = 0.8;
-        config.referee = Some(RefereeConfig::alternating(0, 1));
-        config.zones = vec![zones::ZoneArea {
-            kind: rm_simulator_gameplay::ZoneKind::Outpost,
-            owner: Team::Red,
-            pad: 0,
-            floor_m: 0.0,
-            polygon_m: vec![[3.0, 0.5], [5.0, 0.5], [5.0, 1.5], [3.0, 1.5]],
-        }];
-        let mut field = Field::new(&config).unwrap();
-        let red = field
-            .add_chassis(&ChassisPlacement {
-                config: ChassisConfig::default(),
-                spawn: Pose::at([4.0, 1.0, 1.0]),
-                team: Team::Red,
-                kind: RobotKind::Infantry,
-                performance: None,
-            })
-            .unwrap();
-        field.referee_command(RefereeCommand::StartMatch).unwrap();
-        // The match rotor rests through the countdown.
-        let resting = field.snapshot().outposts[0].angle_rad;
-        field.step(ticks(referee::COUNTDOWN_NS)).unwrap();
-        assert_eq!(field.snapshot().outposts[0].angle_rad, resting);
-        field.step(ticks(1_000_000_000)).unwrap();
-        let before = field.snapshot().chassis[0].pose.translation_m;
-        field
-            .referee_command(RefereeCommand::SetRobotHp { robot: red, hp: 0 })
-            .unwrap();
-        assert!(field.snapshot().chassis[0].defeated);
-        // Section 5.2.2: 10 s plus a tenth of the elapsed round.
-        field.step(ticks(10_200_000_000)).unwrap();
-        let events = referee_events(&field);
-        assert!(events.contains(&RefereeEvent::RobotRespawned { robot: red }));
-        assert!(events.contains(&RefereeEvent::WeaknessCleared { robot: red }));
-        let snapshot = field.snapshot();
-        let robot = &snapshot.referee.as_ref().unwrap().robots[0];
-        assert_eq!((robot.hp, robot.weakened), (20, false));
-        assert!(!snapshot.chassis[0].defeated);
-        let after = snapshot.chassis[0].pose.translation_m;
-        assert!((after[0] - before[0]).hypot(after[1] - before[1]) < 0.05);
-        // Section 5.5.1: the living rotor stops and homes at 3:00.
-        field
-            .referee_command(RefereeCommand::SkipTo {
-                match_time_ns: referee::OUTPOST_ROTOR_STOP_NS,
-            })
-            .unwrap();
-        field.step(1).unwrap();
-        let outpost = &field.snapshot().outposts[0];
-        assert!(
-            outpost.stopped_ns.is_some() && outpost.homing,
-            "{outpost:?}"
-        );
-        field
-            .referee_command(RefereeCommand::SetBaseHp {
-                team: Team::Blue,
-                hp: 0,
-                shield_hp: 0,
-            })
-            .unwrap();
-        field.step(1).unwrap();
-        assert_eq!(field.referee().unwrap().phase(), MatchPhase::Finished);
-        assert!(referee_events(&field).iter().any(|event| matches!(
-            event,
-            RefereeEvent::RoundResult(rm_simulator_gameplay::RoundResult::Decided {
-                winner: Some(rm_simulator_gameplay::Team::Red),
-                ..
-            })
-        )));
-    }
-    /// Section 5.5.3.9: 20 s on the opponent's Fortress after 3:00, with
-    /// its outpost destroyed, expands that team's Base Protective Armor and
-    /// opens the base mechanism.
-    #[test]
-    fn fortress_capture_opens_the_owners_base() {
-        let (mut config, _) = stationary_outpost();
-        config.referee = Some(RefereeConfig::alternating(0, 1));
-        config.zones = zones::rmuc_2026();
-        let mut field = Field::new(&config).unwrap();
-        let fortress = config
-            .zones
-            .iter()
-            .find(|z| z.kind == rm_simulator_gameplay::ZoneKind::Fortress && z.owner == Team::Red)
-            .unwrap();
-        let n = fortress.polygon_m.len() as f64;
-        let x = fortress.polygon_m.iter().map(|p| p[0]).sum::<f64>() / n;
-        let y = fortress.polygon_m.iter().map(|p| p[1]).sum::<f64>() / n;
-        field
-            .add_chassis(&ChassisPlacement {
-                config: ChassisConfig::default(),
-                spawn: Pose::at([x, y, ChassisConfig::default().rest_height_m()]),
-                team: Team::Blue,
-                kind: RobotKind::Infantry,
-                performance: None,
-            })
-            .unwrap();
-        field.referee_command(RefereeCommand::StartMatch).unwrap();
-        field.step(ticks(referee::COUNTDOWN_NS)).unwrap();
-        field
-            .referee_command(RefereeCommand::SetOutpostHp { outpost: 0, hp: 0 })
-            .unwrap();
-        field
-            .referee_command(RefereeCommand::SkipTo {
-                match_time_ns: referee::OUTPOST_ROTOR_STOP_NS,
-            })
-            .unwrap();
-        field.step(ticks(19_000_000_000)).unwrap();
-        assert_eq!(field.snapshot().referee.unwrap().base_open, [false; 2]);
-        field.step(ticks(1_100_000_000)).unwrap();
-        assert_eq!(field.snapshot().referee.unwrap().base_open, [true, false]);
-        assert!(
-            referee_events(&field).contains(&RefereeEvent::BaseArmorExpanded { team: Team::Red })
-        );
-    }
-    /// The bumper protects armor from full-height walls. An elevated obstacle
-    /// can still strike armor directly; only a running round charges collision HP.
-    #[test]
-    fn armor_collisions_cost_hp_only_in_a_running_round() {
-        let run = |start: bool, bottom_m: f64| {
-            let mut field = Field::new(&FieldConfig {
-                runes: Vec::new(),
-                outposts: Vec::new(),
-                referee: Some(RefereeConfig::alternating(0, 0)),
-                ..FieldConfig::default()
-            })
-            .unwrap();
-            field
-                .add_chassis(&ChassisPlacement {
-                    config: ChassisConfig::default(),
-                    spawn: Pose::at([0.0, 0.0, 1.0]),
-                    team: Team::Red,
-                    kind: RobotKind::Infantry,
-                    performance: None,
-                })
-                .unwrap();
-            field
-                .add_static_mesh(
-                    vec![
-                        [4.0, -2.0, bottom_m],
-                        [4.0, 2.0, bottom_m],
-                        [4.0, -2.0, 1.0],
-                        [4.0, 2.0, 1.0],
-                    ],
-                    vec![[0, 1, 2], [1, 3, 2]],
-                )
-                .unwrap();
-            if start {
-                field.referee_command(RefereeCommand::StartMatch).unwrap();
-            }
-            field.step(ticks(referee::COUNTDOWN_NS)).unwrap();
-            field
-                .command_chassis(
-                    0,
-                    ChassisCommand {
-                        forward_m_s: 3.0,
-                        ..Default::default()
-                    },
-                )
-                .unwrap();
-            field.step(ticks(4_000_000_000)).unwrap();
-            field.snapshot().referee.unwrap().robots[0].hp
-        };
-        let hp = run(true, 0.21);
-        assert!(hp < 200 && hp % referee::COLLISION_DAMAGE_HP == 0, "{hp}");
-        assert_eq!(run(false, 0.21), 200);
-        assert_eq!(
-            run(true, 0.0),
-            200,
-            "the protective ring must contact a full wall first"
-        );
-    }
-    #[test]
-    fn launches_follow_the_gameplay_rules_and_roster() {
-        let mut field = Field::new(&FieldConfig {
-            referee: Some(RefereeConfig::alternating(1, 2)),
-            ..Default::default()
-        })
-        .unwrap();
-        let placement = ChassisPlacement {
-            config: ChassisConfig::default(),
-            spawn: Pose::at([0.0, 0.0, 1.0]),
-            team: Team::Red,
-            kind: RobotKind::Infantry,
-            performance: None,
-        };
-        let id = field.add_chassis(&placement).unwrap();
-        let shot = Shot::at_limit(Caliber::Mm17);
-        let muzzle = Pose::at([0.0, 0.0, 2.0]);
-        let game = |field: &Field| field.snapshot().referee.unwrap().game;
-        // Idle practice fires freely without accounting, but only the
-        // robot's own caliber.
-        field.fire(muzzle, shot, Some(id)).unwrap();
-        assert_eq!(game(&field).robots[0].shots_launched, [0; 2]);
-        assert_eq!(
-            field.fire(muzzle, Shot::at_limit(Caliber::Mm42), Some(id)),
-            Err(FieldError::Referee(
-                "the robot has no launcher for that caliber"
-            ))
-        );
-        field.referee_command(RefereeCommand::StartMatch).unwrap();
-        assert_eq!(
-            field.fire(muzzle, shot, Some(id)),
-            Err(FieldError::Referee("the round is not running"))
-        );
-        field.step(ticks(6_100_000_000)).unwrap();
-        assert_eq!(field.referee().unwrap().phase(), MatchPhase::Running);
-        // A failed launch changes nothing.
-        let before = game(&field);
-        let nan = Shot {
-            speed_m_s: f64::NAN,
-            ..shot
-        };
-        assert!(field.fire(muzzle, nan, Some(id)).is_err());
-        assert_eq!(game(&field).robots, before.robots);
-        // Table 5-14 cooling-focused launcher: a 40 heat limit, 10 per shot.
-        for _ in 0..5 {
-            field.fire(muzzle, shot, Some(id)).unwrap();
-        }
-        let robot = game(&field).robots.remove(0);
-        assert_eq!(robot.shots_launched, [5, 0]);
-        assert!(robot.overheated);
-        assert_eq!(
-            field.fire(muzzle, shot, Some(id)),
-            Err(FieldError::Referee("the barrel is overheated"))
-        );
-        // Income arrived at 0:01, so ten rounds can be bought anywhere.
-        field.buy_ammo(id, Caliber::Mm17).unwrap();
-        assert_eq!(game(&field).robots[0].allowance, [10, 0]);
-        field
-            .referee_command(RefereeCommand::SetRobotHp { robot: id, hp: 0 })
-            .unwrap();
-        assert_eq!(
-            field.fire(muzzle, shot, Some(id)),
-            Err(FieldError::Referee("the robot is defeated"))
-        );
-        assert_eq!(field.chassis_defeated(id), Some(true));
-        let other = field
-            .add_chassis(&ChassisPlacement {
-                spawn: Pose::at([3.0, 0.0, 1.0]),
-                ..placement
-            })
-            .unwrap();
-        field
-            .referee_command(RefereeCommand::SetPolicy(rm_simulator_gameplay::Policy {
-                enforce_allowance: true,
-                exchange_requires_zone: false,
-                enforce_air_support: false,
-            }))
-            .unwrap();
-        assert_eq!(
-            field.fire(muzzle, shot, Some(other)),
-            Err(FieldError::Referee("no projectile allowance"))
-        );
-        field.remove_chassis(other).unwrap();
-        field.referee_command(RefereeCommand::ResetMatch).unwrap();
-        let reset = game(&field);
-        assert_eq!(reset.robots.len(), 1);
-        assert_eq!(reset.robots[0].shots_launched, [0; 2]);
-        assert!(reset.robots[0].alive());
-        assert!(reset.policy.enforce_allowance);
-        assert_eq!(field.chassis_defeated(id), Some(false));
-    }
-    #[test]
-    fn equipment_edits_affect_physics_defense_and_reset() {
-        let (mut config, muzzle) = stationary_outpost();
-        config.runes = FieldConfig::default().runes;
-        config.referee = Some(RefereeConfig::alternating(1, 1));
-        let mut field = Field::new(&config).unwrap();
-        assert!(
-            field
-                .referee_command(RefereeCommand::SetOutpostHp { outpost: 8, hp: 1 })
-                .is_err()
-        );
-        assert!(
-            field
-                .referee_command(RefereeCommand::SetOutpostHp {
-                    outpost: 0,
-                    hp: 1501
-                })
-                .is_err()
-        );
-        field
-            .referee_command(RefereeCommand::SetOutpostHp { outpost: 0, hp: 0 })
-            .unwrap();
-        assert!(field.snapshot().outposts[0].destroyed);
-        field.referee_command(RefereeCommand::StartMatch).unwrap();
-        field.step(5000).unwrap();
-        assert_eq!(field.snapshot().outposts[0].hp, 1500);
-        field
-            .referee_command(RefereeCommand::SetOutpostHp {
-                outpost: 0,
-                hp: 100,
-            })
-            .unwrap();
-        field
-            .referee_command(RefereeCommand::SetRuneBuff {
-                team: Team::Red,
-                defense_pct: 50,
-                attack_pct: 100,
-                cooling_multiplier: 1,
-                duration_ns: 1_000_000_000,
-            })
-            .unwrap();
-        field
-            .fire(muzzle, Shot::at_limit(Caliber::Mm17), None)
-            .unwrap();
-        field.step(300).unwrap();
-        assert_eq!(field.snapshot().outposts[0].hp, 90);
-        field.step(700).unwrap();
-        assert!(field.snapshot().referee.unwrap().teams[0].buff.is_none());
-        field.referee_command(RefereeCommand::ResetMatch).unwrap();
-        assert_eq!(field.snapshot().outposts[0].hp, 1500);
     }
 }

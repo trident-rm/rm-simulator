@@ -6,7 +6,7 @@
 //! Figure 5-24 shows embedded card spacing, not an exact per-card survey. These
 //! outlines show functional RFID areas, including inferred hidden tunnel pads;
 //! they must not be used as an authoritative antenna detection model.
-use rm_simulator_world::{Team, season::Season};
+use rm_simulator_world::Team;
 
 /// A named area for developer visualization; all coordinates are world FLU metres.
 #[derive(Clone, Debug)]
@@ -94,7 +94,7 @@ impl Area {
 /// Higher Highland cards share the connected control polygon. Its halves and the
 /// low footprint are split at y=0; these are diagram approximations, not a card survey.
 pub fn terrain_areas() -> Vec<Area> {
-    let all = areas(Season::Rm2027);
+    let all = areas();
     let mut result = all
         .iter()
         .filter(|a| a.terrain_card().is_some())
@@ -144,23 +144,9 @@ pub fn terrain_areas() -> Vec<Area> {
     }
     result
 }
-/// Build the selected season's inspection areas without enabling gameplay rules.
-/// 2026 uses the existing referee footprints; 2027 uses Figure 5-23 and §5.6.4.
-pub fn areas(season: Season) -> Vec<Area> {
-    if season == Season::Rm2026 {
-        return rm_simulator_world::zones::rmuc_2026()
-            .into_iter()
-            .enumerate()
-            .map(|(i, a)| Area {
-                id: format!("{}-{i}", a.owner.name()),
-                label: format!("{:?} pad {}", a.kind, a.pad),
-                side: a.owner,
-                polygon_m: a.polygon_m,
-                floor_m: a.floor_m,
-                rfid: true,
-            })
-            .collect();
-    }
+/// RMUC 2027 inspection areas from Figure 5-23 and §5.6.4.
+/// These diagram footprints alone do not enable gameplay rules.
+pub fn areas() -> Vec<Area> {
     let mut red = Vec::new();
     // Digitized in the displayed figure's pixel frame; keep that frame here so
     // each vertex can be reviewed against the published diagram.
@@ -362,7 +348,7 @@ mod tests {
     use super::*;
     #[test]
     fn every_2027_zone_and_nine_tunnel_pads_per_side() {
-        let areas = areas(Season::Rm2027);
+        let areas = areas();
         assert_eq!(areas.len(), 38);
         for side in [Team::Red, Team::Blue] {
             assert_eq!(

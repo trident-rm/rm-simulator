@@ -20,7 +20,7 @@ pub use menus::{HudPlugin, menu_input, sync_menus};
 /// both without naming the menus module.
 pub(crate) use menus::{Settings, Toolbar};
 use rm_simulator_server::protocol::MapMarkerKind;
-use rm_simulator_world::{Caliber, MatchPhase, Team};
+use rm_simulator_world::{Caliber, Team};
 
 use crate::controls::{Drive, Gun, Player};
 use crate::session::Session;
@@ -303,7 +303,6 @@ pub struct MapDot(MapItem);
 #[derive(Clone, Copy, PartialEq)]
 enum MapItem {
     Robot(u32),
-    Outpost(usize),
     Rune(usize),
     Marker,
     Interaction(u64),
@@ -601,143 +600,7 @@ fn clock_text(session: &Session) -> String {
         }
         return text;
     }
-    let Some(r) = session.referee() else {
-        return "PRACTICE".into();
-    };
-    let phase = if session.paused {
-        "PAUSED"
-    } else {
-        match r.phase {
-            MatchPhase::Idle => "READY",
-            MatchPhase::Countdown => "COUNTDOWN",
-            MatchPhase::Running => "ROUND 1",
-            MatchPhase::Finished => "FINISHED",
-        }
-    };
-    let elapsed_ns =
-        if !session.paused && matches!(r.phase, MatchPhase::Countdown | MatchPhase::Running) {
-            session
-                .presentation_time_ns()
-                .saturating_sub(session.snapshot.time_ns)
-        } else {
-            0
-        };
-    // Section 6.5: the countdown shows its own seconds, not the round clock.
-    let mut text = if r.phase == MatchPhase::Countdown {
-        let seconds = r
-            .countdown_remaining_ns
-            .saturating_sub(elapsed_ns)
-            .div_ceil(1_000_000_000)
-            .max(1);
-        format!("{phase}\n{seconds}")
-    } else {
-        let seconds = r
-            .remaining_ns
-            .saturating_sub(elapsed_ns)
-            .div_ceil(1_000_000_000);
-        format!("{phase}\n{:02}:{:02}", seconds / 60, seconds % 60)
-    };
-    if let Some(result) = &r.game.result {
-        text.push('\n');
-        text.push_str(&result_text(result));
-    }
-    text
-}
-
-/// One line naming a round's result (section 5.8).
-fn result_text(result: &rm_simulator_world::gameplay::RoundResult) -> String {
-    use rm_simulator_world::gameplay::{DecisionReason, RoundResult};
-    match result {
-        RoundResult::Decided { winner, reason } => {
-            let reason = match reason {
-                DecisionReason::BaseDestroyed => "BASE",
-                DecisionReason::Outpost => "OUTPOST",
-                DecisionReason::AttackDamage => "DAMAGE",
-                DecisionReason::RobotHp => "ROBOT HP",
-                DecisionReason::Equal => "TIED",
-                DecisionReason::Referee => "REFEREE",
-            };
-            match winner {
-                Some(team) => format!("{team:?} WINS ({reason})").to_uppercase(),
-                None => format!("DRAW ({reason})"),
-            }
-        }
-        RoundResult::NeedsRefereeDecision => "AWAITING REFEREE".into(),
-    }
-}
-
-/// Barrel heat and the section 5.2 weakened and invincible states of one
-/// robot; states the robot is not in are left out.
-fn robot_status(state: &rm_simulator_world::gameplay::RobotState, round_ticks: u64) -> String {
-    let stats = state.stats();
-    let mut text = format!("\nHEAT {}/{}", state.heat_tenths / 10, stats.heat_limit);
-    if state.overheated {
-        text.push_str(" OVERHEAT");
-    }
-    if state.weakened {
-        text.push_str("   WEAKENED");
-    }
-    if state.invincible_until_ticks > round_ticks {
-        text.push_str(&format!(
-            "   INVINCIBLE {}s",
-            (state.invincible_until_ticks - round_ticks)
-                .div_ceil(rm_simulator_world::gameplay::SECOND_TICKS)
-        ));
-    }
-    text.push_str(&zone_status(state, round_ticks));
-    text
-}
-
-/// The section 5.5.3 buff points a robot occupies and its timed terrain
-/// crossing and Fortress progress; empty when there is none.
-fn zone_status(state: &rm_simulator_world::gameplay::RobotState, round_ticks: u64) -> String {
-    use rm_simulator_world::gameplay::{SECOND_TICKS, ZoneKind};
-    let seconds = |until: u64| (until - round_ticks).div_ceil(SECOND_TICKS);
-    let mut parts: Vec<String> = Vec::new();
-    for contact in &state.zones {
-        let name = match contact.zone.kind {
-            ZoneKind::Base => "BASE",
-            ZoneKind::Resupply => "SUPPLY",
-            ZoneKind::Outpost => "OUTPOST PT",
-            ZoneKind::CentralHighland => "HIGHLAND",
-            ZoneKind::TrapezoidHighland => "TRAPEZOID",
-            ZoneKind::Fortress => "FORTRESS",
-            // Crossing pads show as the crossing's progress below.
-            _ => continue,
-        };
-        let name = format!("{name}/{:?}", contact.zone.owner).to_uppercase();
-        if !parts.contains(&name) {
-            parts.push(name);
-        }
-    }
-    if let Some(crossing) = &state.crossing {
-        parts.push(format!("{:?} {}", crossing.zone.kind, crossing.done).to_uppercase());
-    }
-    if state.crossing_defense_until_ticks > round_ticks {
-        parts.push(format!(
-            "CROSS DEF +{}% {}s",
-            state.crossing_defense_pct,
-            seconds(state.crossing_defense_until_ticks)
-        ));
-    }
-    if state.tunnel_cooling_until_ticks > round_ticks {
-        parts.push(format!(
-            "COOL x2 {}s",
-            seconds(state.tunnel_cooling_until_ticks)
-        ));
-    }
-    if state.fortress_capture_ticks > 0 {
-        parts.push(format!(
-            "CAPTURE {}/{}s",
-            state.fortress_capture_ticks / SECOND_TICKS,
-            rm_simulator_world::gameplay::zones::FORTRESS_CAPTURE_TICKS / SECOND_TICKS
-        ));
-    }
-    if parts.is_empty() {
-        String::new()
-    } else {
-        format!("\nZONE {}", parts.join("  "))
-    }
+    "PRACTICE".into()
 }
 
 /// Heat ring uniforms for `heat`, the predicted heat in tenths and the
@@ -760,54 +623,6 @@ fn heat_ring_uniform(heat: Option<(u64, u32)>) -> heat_ring::HeatRingUniform {
         fraction,
         thickness_px: 3.,
     }
-}
-
-/// Section 5.5.3.9 Fortress banner for a running round: each team whose
-/// outpost is down shows when its Fortress opens to the opponent (3:00) or
-/// that it is open, and each capture in progress counts down to the Base
-/// Protective Armor expanding, noting a paused capture's reset.
-fn fortress_text(referee: &rm_simulator_world::RefereeSnapshot) -> String {
-    use rm_simulator_world::gameplay::{SECOND_TICKS, zones};
-    if referee.phase != MatchPhase::Running {
-        return String::new();
-    }
-    let game = &referee.game;
-    let now = game.round_elapsed_ticks;
-    let mut lines = Vec::new();
-    for owner in &game.teams {
-        if owner.outpost_hp > 0 || owner.base_armor_expanded {
-            continue;
-        }
-        let name = format!("{:?}", owner.team).to_uppercase();
-        let capture = game
-            .robots
-            .iter()
-            .filter(|r| r.config.team != owner.team && r.fortress_capture_ticks > 0)
-            .max_by_key(|r| r.fortress_capture_ticks);
-        if let Some(r) = capture {
-            let left = zones::FORTRESS_CAPTURE_TICKS
-                .saturating_sub(r.fortress_capture_ticks)
-                .div_ceil(SECOND_TICKS);
-            let by = format!("{:?}", r.config.team).to_uppercase();
-            lines.push(match r.fortress_capture_retained_until_ticks {
-                Some(until) => format!(
-                    "{name} FORTRESS  {by} CAPTURE PAUSED  {left}s LEFT  (RESETS IN {}s)",
-                    until.saturating_sub(now).div_ceil(SECOND_TICKS)
-                ),
-                None => format!("{name} FORTRESS  {by} CAPTURING  BASE OPENS IN {left}s"),
-            });
-        } else if now < zones::OPPONENT_FORTRESS_FROM_TICKS {
-            let left = (zones::OPPONENT_FORTRESS_FROM_TICKS - now).div_ceil(SECOND_TICKS);
-            lines.push(format!(
-                "{name} FORTRESS OPENS IN {}:{:02}",
-                left / 60,
-                left % 60
-            ));
-        } else {
-            lines.push(format!("{name} FORTRESS OPEN"));
-        }
-    }
-    lines.join("\n")
 }
 
 fn control_2027_text(session: &Session) -> String {
@@ -916,7 +731,7 @@ fn control_summary(session: &Session) -> String {
 }
 
 fn team_text(session: &Session, team: Team) -> String {
-    let mut text = team.name().to_uppercase();
+    let text = team.name().to_uppercase();
     if let Some(state) = session.rmuc_2027() {
         let g = &state.game;
         let i = team.index();
@@ -943,28 +758,7 @@ fn team_text(session: &Session, team: Team) -> String {
             if g.base_open[i] { " OPEN" } else { "" }
         );
     }
-    if let Some(base) = session
-        .snapshot
-        .bases
-        .iter()
-        .find(|b| b.config.team == team)
-    {
-        text.push_str(&format!("   BASE {} +{}", base.hp, base.shield_hp));
-        if session.referee().is_some_and(|r| r.base_open[team.index()]) {
-            text.push_str(" OPEN");
-        }
-    }
-    if let Some(r) = session.referee() {
-        let outpost: u32 = session
-            .snapshot
-            .outposts
-            .iter()
-            .zip(&r.outpost_teams)
-            .filter(|(_, owner)| **owner == team)
-            .map(|(o, _)| o.hp)
-            .sum();
-        text.push_str(&format!("   OUTPOST {outpost}"));
-    }
+
     text
 }
 
@@ -1048,7 +842,7 @@ pub fn update_panel_rows(
                 String::new(),
             ]);
             if team.is_some() {
-                for slot in rm_simulator_server::roster::slots(session.season) {
+                for slot in rm_simulator_server::roster::slots() {
                     rows.push([
                         format!("{} {}", slot.number, slot.name),
                         slot.equipment.into(),
@@ -1063,18 +857,11 @@ pub fn update_panel_rows(
             }
             for p in session.roster.iter().filter(|p| p.team == team) {
                 let robot = session
-                    .referee()
-                    .and_then(|r| r.robots.iter().find(|r| Some(r.id) == p.chassis));
-                // The roster alone names the robot, so a pilot stays labelled
-                // even without a referee record (`--no-referee`). The referee
-                // record supplies only health and the kind of a chassis whose
-                // player named none.
+                    .rmuc_2027()
+                    .and_then(|s| s.game.robots.iter().find(|r| Some(r.id) == p.chassis));
                 let label = match (p.chassis, p.robot) {
                     (Some(id), Some(robot)) => format!("#{id} {}", robot.name()),
-                    _ => robot.map_or_else(
-                        || p.role.name().to_owned(),
-                        |r| format!("#{} {:?}", r.id, r.kind),
-                    ),
+                    _ => p.role.name().to_owned(),
                 };
                 rows.push([
                     format!(
@@ -1087,17 +874,7 @@ pub fn update_panel_rows(
                         }
                     ),
                     label,
-                    robot.map_or_else(
-                        || {
-                            session
-                                .rmuc_2027()
-                                .and_then(|s| {
-                                    s.game.robots.iter().find(|r| Some(r.id) == p.chassis)
-                                })
-                                .map_or("--".into(), |r| format!("{} / {} HP", r.hp, r.max_hp))
-                        },
-                        |r| format!("{} / {} HP", r.hp, r.max_hp),
-                    ),
+                    robot.map_or("--".into(), |r| format!("{} / {} HP", r.hp, r.max_hp)),
                 ]);
             }
             // Roster and world updates travel separately. Keep every live robot
@@ -1106,20 +883,12 @@ pub fn update_panel_rows(
                 Some(c.team) == team && !session.roster.iter().any(|p| p.chassis == Some(c.id))
             }) {
                 let robot = session
-                    .referee()
-                    .and_then(|r| r.robots.iter().find(|r| r.id == chassis.id));
+                    .rmuc_2027()
+                    .and_then(|s| s.game.robots.iter().find(|r| r.id == chassis.id));
                 rows.push([
                     format!("Robot #{}", chassis.id),
-                    robot.map_or_else(|| "Pilot".into(), |r| format!("#{} {:?}", r.id, r.kind)),
-                    robot.map_or_else(
-                        || {
-                            session
-                                .rmuc_2027()
-                                .and_then(|s| s.game.robots.iter().find(|r| r.id == chassis.id))
-                                .map_or("--".into(), |r| format!("{} / {} HP", r.hp, r.max_hp))
-                        },
-                        |r| format!("{} / {} HP", r.hp, r.max_hp),
-                    ),
+                    "Pilot".into(),
+                    robot.map_or("--".into(), |r| format!("{} / {} HP", r.hp, r.max_hp)),
                 ]);
             }
         }
@@ -1168,16 +937,6 @@ pub fn update_hud(
     assist: Option<Res<crate::auto_aim::AutoAim>>,
     window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
 ) {
-    let robot = session
-        .referee()
-        .and_then(|r| r.robots.iter().find(|r| Some(r.id) == session.chassis_id));
-    let ammo = session.referee().and_then(|r| {
-        r.game
-            .robots
-            .iter()
-            .find(|r| Some(r.config.id) == session.chassis_id)
-    });
-    let round_ticks = session.referee().map_or(0, |r| r.game.round_elapsed_ticks);
     let native = session.rmuc_2027();
     let native_robot = native.and_then(|s| {
         s.game
@@ -1207,7 +966,7 @@ pub fn update_hud(
                 }
             }),
             Hud::Team(team) => team_text(&session, *team),
-            Hud::Fortress => session.referee().map_or_else(String::new, fortress_text),
+            Hud::Fortress => String::new(),
             Hud::Control => {
                 if ui.debug || ui.roster {
                     control_2027_text(&session)
@@ -1220,18 +979,7 @@ pub fn update_hud(
                 let speed = session
                     .own_chassis()
                     .map_or(0., |c| c.velocity_m_s[0].hypot(c.velocity_m_s[1]));
-                let mut value = robot.map_or_else(
-                    || session.role.name().to_uppercase(),
-                    |r| {
-                        format!(
-                            "#{}  {:?}  LV {}\n{} / {} HP",
-                            r.id, r.kind, r.level, r.hp, r.max_hp
-                        )
-                    },
-                );
-                if let Some(state) = ammo {
-                    value.push_str(&robot_status(state, round_ticks));
-                }
+                let mut value = session.role.name().to_uppercase();
                 if let Some(r) = session.rmuc_2027().and_then(|s| {
                     s.game
                         .robots
@@ -1297,31 +1045,6 @@ pub fn update_hud(
                     };
                     value.push_str(&format!("\n{speed:.1} m/s    {mode}"));
                 }
-                if let Some(r) = session.referee() {
-                    if session.role != rm_simulator_server::protocol::Role::Referee {
-                        value.push_str(&format!(
-                            "\n{} GOLD",
-                            r.game.teams[session.team.index()].gold
-                        ));
-                    }
-                    if let Some(buff) = &r.teams[session.team.index()].buff {
-                        let elapsed_ns = if !session.paused && r.phase == MatchPhase::Running {
-                            session
-                                .presentation_time_ns()
-                                .saturating_sub(session.snapshot.time_ns)
-                        } else {
-                            0
-                        };
-                        let remaining_ns = buff
-                            .expires_ns
-                            .saturating_sub(r.match_time_ns.saturating_add(elapsed_ns));
-                        value.push_str(&format!(
-                            "   DEF +{}% {}s",
-                            buff.defense_pct,
-                            remaining_ns.div_ceil(1_000_000_000)
-                        ));
-                    }
-                }
                 value
             }
             Hud::Ammo => {
@@ -1345,22 +1068,8 @@ pub fn update_hud(
                             .saturating_sub(session.reserved_ammo(gun.shot.caliber))
                             .to_string()
                     })
-                    .unwrap_or_else(|| {
-                        ammo.map_or("--".into(), |a| {
-                            a.allowance[index]
-                                .saturating_sub(session.reserved_ammo(gun.shot.caliber))
-                                .to_string()
-                        })
-                    });
-                let mode = if session
-                    .referee()
-                    .is_some_and(|r| r.game.policy.enforce_allowance)
-                    || native.is_some()
-                {
-                    "LEFT"
-                } else {
-                    "TRACKED"
-                };
+                    .unwrap_or_else(|| "--".into());
+                let mode = if native.is_some() { "LEFT" } else { "TRACKED" };
                 format!(
                     "{allowance}  {mode}   ·   {} mm\n{}",
                     if index == 0 { 17 } else { 42 },
@@ -1380,14 +1089,8 @@ pub fn update_hud(
                 .collect::<Vec<_>>()
                 .join("\n"),
             Hud::Hint => {
-                if robot.is_some_and(|r| !r.alive()) {
-                    match ammo.and_then(|r| r.respawn.as_ref()) {
-                        Some(respawn) => format!(
-                            "ROBOT DEFEATED\nRespawn progress {}%",
-                            respawn.progress_ticks * 100 / respawn.required_ticks.max(1)
-                        ),
-                        None => "ROBOT DEFEATED\nWaiting for revival".into(),
-                    }
+                if native_robot.is_some_and(|r| r.hp == 0) {
+                    "ROBOT DEFEATED\nWaiting for native respawn".into()
                 } else if ui.modal_open() || window.as_ref().is_some_and(|w| w.height() <= 480.) {
                     String::new()
                 } else if !player.captured {
@@ -1453,10 +1156,7 @@ pub fn update_hud(
                     .iter()
                     .find(|r| Some(r.id) == session.chassis_id)
             })
-            .map_or_else(
-                || robot.map_or(0., |r| r.hp as f32 / r.max_hp.max(1) as f32),
-                |r| r.hp as f32 / r.max_hp as f32,
-            );
+            .map_or_else(|| 0., |r| r.hp as f32 / r.max_hp as f32);
         node.width = percent(100. * fraction);
         color.0 = if fraction < 0.2 {
             team_color(Team::Red)
@@ -1564,22 +1264,6 @@ pub fn update_map(
                 color
             },
             c.id.to_string(),
-        ));
-    }
-    for (i, o) in session.snapshot.outposts.iter().enumerate() {
-        let color = session
-            .referee()
-            .and_then(|r| r.outpost_teams.get(i))
-            .map_or(WHITE, |t| team_color(*t));
-        items.push((
-            MapItem::Outpost(i),
-            o.origin.translation_m,
-            if o.destroyed {
-                color.with_alpha(0.3)
-            } else {
-                color
-            },
-            "O".into(),
         ));
     }
     for (i, r) in session.snapshot.runes.iter().enumerate() {

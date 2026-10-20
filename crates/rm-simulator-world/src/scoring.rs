@@ -45,11 +45,6 @@ impl Field {
         {
             return DetectionOutcome::Rejected(Rejection::DetectionInterval);
         }
-        if let (ArmorTarget::Rune { rune, .. }, Some(referee)) = (contact.target, &self.referee)
-            && referee::ring_of(offset) < referee.rune_min_ring(rune)
-        {
-            return DetectionOutcome::Rejected(Rejection::DisabledRing);
-        }
         DetectionOutcome::Detected { offset_m: offset }
     }
     /// Apply the rule manual's detection conditions to one raw contact.
@@ -181,79 +176,7 @@ impl Field {
             self.sync_defeats();
             return Ok(hit);
         }
-        match contact.target {
-            ArmorTarget::Base { base, plate } => {
-                let team = self.bases[base as usize].config.team;
-                hit.damage = match &mut self.referee {
-                    // The gameplay engine applies outpost protection, buffs,
-                    // the Table 5-2 values and the section 5.5.1 centre square.
-                    // The seventh (dart) plate accepting projectiles is a
-                    // training override without the centre bonus.
-                    Some(referee) => {
-                        let applied =
-                            referee.projectile_hit(rm_simulator_gameplay::ProjectileHit {
-                                target: rm_simulator_gameplay::Target::Base(referee::game_team(
-                                    team,
-                                )),
-                                caliber: referee::game_caliber(contact.caliber),
-                                shooter: contact.shooter,
-                                upper_front: plate == 3,
-                                critical: plate != 6 && projectile::in_centre_square(offset),
-                            });
-                        applied.hp + applied.shield
-                    }
-                    None => self.bases[base as usize].damage(base::damage(
-                        contact.caliber,
-                        plate,
-                        offset,
-                    )),
-                };
-                self.sync_structures(time_ns);
-            }
-            ArmorTarget::Outpost { outpost, .. } => {
-                hit.damage = match &mut self.referee {
-                    Some(referee) => {
-                        let team = referee.config().outpost_teams[outpost as usize];
-                        referee
-                            .projectile_hit(rm_simulator_gameplay::ProjectileHit {
-                                target: rm_simulator_gameplay::Target::Outpost(referee::game_team(
-                                    team,
-                                )),
-                                caliber: referee::game_caliber(contact.caliber),
-                                shooter: contact.shooter,
-                                upper_front: false,
-                                critical: projectile::in_centre_square(offset),
-                            })
-                            .hp
-                    }
-                    None => self.outposts[outpost as usize]
-                        .damage(time_ns, projectile::outpost_damage(contact.caliber, offset)),
-                };
-                self.sync_structures(time_ns);
-            }
-            ArmorTarget::Rune { rune, blade } => {
-                let outcome: HitOutcome = self.runes[rune as usize].hit(time_ns, blade)?;
-                hit.rune_outcome = Some(outcome);
-            }
-            ArmorTarget::Chassis { chassis, .. } => {
-                // Table 5-2 robot damage; the gameplay engine keeps the HP, so
-                // without a referee the strike is only reported.
-                hit.damage = match &mut self.referee {
-                    Some(referee) => {
-                        referee
-                            .projectile_hit(rm_simulator_gameplay::ProjectileHit {
-                                target: rm_simulator_gameplay::Target::Robot(chassis),
-                                caliber: referee::game_caliber(contact.caliber),
-                                shooter: contact.shooter,
-                                upper_front: false,
-                                critical: false,
-                            })
-                            .hp
-                    }
-                    None => contact.caliber.robot_damage(),
-                };
-            }
-        }
+        // Bare physical worlds report contacts without a season damage engine.
         Ok(hit)
     }
 }

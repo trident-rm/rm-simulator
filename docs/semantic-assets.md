@@ -9,10 +9,9 @@ transforms. A declared but invalid sidecar stops loading. Packages without a
 sidecar retain the legacy loader. See [field package](field-package.md) for
 package discovery, composition, collision contracts and deployment.
 
-The checked-in `field/` package contains the runtime manifests and their
-referenced sidecars. Build reports excluded from the runtime package are listed
-in `scripts/release-field.json`. The upstream package and its checksum are the
-record of those reports.
+The checked-in `field-2027/` package contains runtime manifests and native
+source bindings. `scripts/release-field-2027.json` pins its files. Historical
+2026 composition inputs and their inventory live at Git tag `rm2026-final`.
 
 ## Compose a package
 

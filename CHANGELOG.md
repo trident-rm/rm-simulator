@@ -4,6 +4,18 @@
 
 ## Unreleased
 
+- Remove the 2026 gameplay engine, referee scheduler, Rune/Outpost controllers,
+  old zone effects and damage paths. Keep shared types, model descriptors and
+  physics; default worlds are bare physics and native bindings are required for
+  matches. Migrate host/transport fixtures and the custom-client status bridge
+  to native 2027 state. Remove historical checkpoint authority (protocol 75).
+
+- Remove the archived 2026 field package, inventory and LFS rules from the active
+  checkout and simplify field staging to the single 2027 package. Use the
+  published `rm2026-final` tag for historical assets. Use one native roster and
+  zone catalog throughout deployment, HUD and navigation, with seven official
+  slots from the first HUD frame and no season-dependent rebuilding.
+
 - Consolidate the application and headless CAD host on RMUC 2027: remove season
   feature switches and the build matrix, reject 2026 sessions with an archive
   hint, and ship/discover only the 2027 runtime field. The final 2026-capable

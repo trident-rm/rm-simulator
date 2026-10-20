@@ -44,6 +44,8 @@ mod session;
 mod staging;
 #[cfg(feature = "steam")]
 mod steam_support;
+#[cfg(test)]
+mod test_fixtures;
 mod title;
 mod ui_theme;
 mod zone_debug;

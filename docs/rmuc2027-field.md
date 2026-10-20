@@ -193,8 +193,9 @@ The output must not already exist. The build is staged in a temporary directory
 and installed only after verification. Choose a new output directory to rebuild
 without overwriting a candidate. Original CAD and generated candidates remain
 outside Git; keep the upstream `CAD-NOTICE.md` with the runtime files.
-The currently bundled LFS `field/` and `scripts/release-field.json` still
-identify the 2026 package. A candidate does not replace that release inventory.
+At this historical adapter stage, `field/` still identified the 2026 package.
+That package is now archived at `rm2026-final`; current candidates must be
+reviewed before replacing `field-2027/` and its 2027 inventory.
 
 The adapter requires the source hash in
 [the partition recipe](rmuc2027-runtime.json):
@@ -1021,7 +1022,8 @@ nix develop -c cargo run -q -p rm-simulator-server \
 
 The local installed candidate is `local-assets/field-2027-solid-wall-flush`;
 `local-assets/field-2027-live.before-solid-walls-20261016` is its rollback copy.
-The tracked `field/` release remains unchanged. Native inspection verifies the
+The then-tracked `field/` release remained unchanged (now archived at
+`rm2026-final`). Native inspection verifies the
 new collision contract. All 111,980 ground probes pass with zero height change;
 screenshot comparisons cover both vent sizes. `just verify` and all 147 CAD Python
 tests passed before local installation.

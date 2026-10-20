@@ -155,7 +155,6 @@ pub struct FireRecord {
 pub struct Simulation {
     navigation: Option<crate::navigation::Service>,
     assembly: Option<crate::assembly::Service>,
-    roster_season: rm_simulator_world::season::Season,
     /// Lobby password every remote seat must present. The embedded owner seat
     /// is exempt because it already holds the simulation.
     pub(crate) password: String,
@@ -232,14 +231,12 @@ impl Simulation {
         if let (Some(native), Some(terrain)) = (&mut config.rmuc_2027, &terrain) {
             crate::rmuc_2027::fit_zone_heights(native, &terrain.ground);
         }
-        config.bases = crate::base_layout::load(cad)?;
         let mut field = Field::new(&config)?;
         if let Some(terrain) = &terrain {
             add_terrain(&mut field, terrain)?;
             progress(BuildProgress::TerrainReady(terrain.describe()));
         }
         let mut simulation = Self::new(field, paused);
-        simulation.roster_season = cad.season;
         if let Some(config) = chassis {
             progress(BuildProgress::PreparingChassis);
             simulation = simulation.with_spawner(ChassisSpawner { config, terrain });
@@ -254,7 +251,6 @@ impl Simulation {
         Self {
             navigation: None,
             assembly: None,
-            roster_season: rm_simulator_world::season::Season::Rm2026,
             password: String::new(),
             bots: Default::default(),
             input_epoch: 0,
@@ -365,7 +361,7 @@ impl Simulation {
                 ground,
                 self.field.floor_height_m(),
                 bounds,
-                crate::navigation::road_exclusions(self.roster_season),
+                crate::navigation::road_exclusions(),
             )?);
         }
         let id = self.place(placement, Some(Robot::Sentry))?;
@@ -620,13 +616,12 @@ impl Simulation {
         )
     }
     fn validate_roster(&self, robot: Robot) -> Result<(), String> {
-        if crate::roster::supports(self.roster_season, robot) {
+        if crate::roster::supports(robot) {
             Ok(())
         } else {
             Err(format!(
-                "{} is not available in the {:?} roster",
-                robot.name(),
-                self.roster_season
+                "{} is not available in the RMUC 2027 roster",
+                robot.name()
             ))
         }
     }
@@ -939,18 +934,8 @@ impl Simulation {
                     .into(),
             );
         }
-        // Section 5.2.2: a match respawns defeated robots on its own timer, so
-        // pilots recover themselves only in practice.
-        if self.field.referee().is_some_and(|referee| {
-            matches!(
-                referee.phase(),
-                rm_simulator_world::MatchPhase::Countdown | rm_simulator_world::MatchPhase::Running
-            )
-        }) {
-            return Err("robots recover on the match's respawn timer".into());
-        }
         // A no-referee practice robot can still be repositioned through debug.
-        if self.field.referee().is_some() || self.field.rmuc_2027().is_some() {
+        if self.field.rmuc_2027().is_some() {
             self.field
                 .referee_command(rm_simulator_world::RefereeCommand::ReviveRobot { robot: id })
                 .map_err(|e| e.to_string())?;
@@ -1476,7 +1461,7 @@ impl Simulation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rm_simulator_world::{FieldConfig, MatchPhase, RefereeCommand, RefereeConfig};
+    use rm_simulator_world::{FieldConfig, RefereeCommand};
 
     fn cad_without_files() -> CadAssets {
         let asset = |placements| crate::cad_assets::CadAsset {
@@ -1591,7 +1576,7 @@ mod tests {
             })
             .unwrap();
         simulation.step(100).unwrap();
-        let robots = simulation.snapshot().referee.unwrap().robots;
+        let robots = simulation.snapshot().rmuc_2027.map(|s| s.game.robots);
         simulation
             .apply(&Command::PlaceChassis {
                 chassis: id,
@@ -1600,7 +1585,7 @@ mod tests {
             })
             .unwrap();
         let snapshot = simulation.snapshot();
-        assert_eq!(snapshot.referee.unwrap().robots, robots);
+        assert_eq!(snapshot.rmuc_2027.map(|s| s.game.robots), robots);
         assert_eq!(snapshot.chassis.len(), 1);
         let chassis = &snapshot.chassis[0];
         assert_eq!(chassis.id, id);
@@ -1645,15 +1630,10 @@ mod tests {
         assert_eq!(simulation.advance(1_000_000).unwrap(), 0);
         let snapshot = simulation.snapshot();
         assert!(snapshot.chassis.is_empty());
-        assert_eq!(snapshot.runes.len(), 2);
-        assert!(
-            snapshot
-                .runes
-                .iter()
-                .all(|r| r.kind == rm_simulator_world::RuneKind::Big)
-        );
-        assert_eq!(snapshot.outposts.len(), 1);
-        assert!(snapshot.referee.is_some());
+        assert!(snapshot.runes.is_empty());
+        assert!(snapshot.outposts.is_empty());
+        assert!(snapshot.referee.is_none());
+        assert!(snapshot.rmuc_2027.is_none());
 
         let local = simulation
             .spawn_chassis_at(Team::Blue, [2.0, 3.0, 10.0], 90.0)
@@ -1708,18 +1688,10 @@ mod tests {
         });
         assert!(result.is_err());
         assert_eq!(events, [BuildProgress::ReadingTerrain]);
-        options.terrain = false;
-        options.outpost_speed_rad_s = f64::NAN;
-        assert!(
-            Simulation::build_cad(&cad_without_files(), &options, None, false, |_| {}).is_err()
-        );
     }
 
     fn simulation() -> Simulation {
-        let config = FieldConfig {
-            referee: Some(RefereeConfig::alternating(1, 2)),
-            ..FieldConfig::default()
-        };
+        let config = crate::workload::field_config();
         Simulation::new(Field::new(&config).unwrap(), false)
             .with_weapon(WeaponConfig {
                 interval_ns: 100_000_000,
@@ -1736,6 +1708,17 @@ mod tests {
         });
         let id = simulation.spawn_chassis(Team::Red).unwrap();
         (simulation, id)
+    }
+
+    fn reference_robot(
+        sim: &mut Simulation,
+        team: Team,
+        robot: Robot,
+        chassis: crate::protocol::Chassis,
+    ) -> u32 {
+        let config = sim.robot_config(robot, chassis).unwrap();
+        sim.spawn_in_slot(team, Some(config), robot.kind(), Some(robot))
+            .unwrap()
     }
 
     #[test]
@@ -1838,66 +1821,6 @@ mod tests {
     }
 
     #[test]
-    fn drone_fires_from_underslung_gimbal_in_practice_and_running_match() {
-        let mut sim = simulation().with_spawner(ChassisSpawner {
-            config: ChassisConfig::default(),
-            terrain: None,
-        });
-        let drone = sim.spawn_robot(Team::Blue, Robot::Drone).unwrap();
-        // It starts over blue's Landing Pad at flight height, on blue's rope.
-        let spawned = sim.snapshot().chassis[0].clone();
-        let (pad, _) = crate::layout::drone_slot(Team::Blue, 0);
-        assert_eq!(spawned.pose.translation_m, pad);
-        assert_eq!(
-            spawned.config.tether,
-            Some(crate::layout::drone_tether(Team::Blue))
-        );
-        assert!(spawned.config.tether.unwrap().slack_m(pad) > 0.0);
-        sim.apply(&Command::Chassis {
-            chassis: drone,
-            command: rm_simulator_world::ChassisCommand {
-                aim_yaw_rad: 0.0,
-                aim_pitch_rad: -0.35,
-                ..Default::default()
-            },
-        })
-        .unwrap();
-        sim.field.step(128).unwrap();
-        let before = sim.snapshot().chassis[0].pose.translation_m;
-        sim.apply(&Command::Fire { shooter: drone }).unwrap();
-        assert!(
-            sim.apply(&Command::Fire { shooter: drone }).is_err(),
-            "cadence must apply"
-        );
-        let launch = sim.fire_records().last().unwrap().clone();
-        assert!(launch.authoritative_muzzle_pose.translation_m[2] < before[2] - 0.14);
-        sim.field.step(4).unwrap();
-        let snapshot = sim.snapshot();
-        let ball = snapshot
-            .projectiles
-            .iter()
-            .find(|ball| ball.id == launch.projectile_id)
-            .unwrap();
-        assert_eq!(ball.caliber, rm_simulator_world::Caliber::Mm17);
-        assert!(ball.position_m[0] > launch.authoritative_muzzle_pose.translation_m[0] + 0.3);
-        assert!(ball.position_m[2] < launch.authoritative_muzzle_pose.translation_m[2]);
-        assert_eq!(snapshot.chassis[0].pose.translation_m[2], before[2]);
-        sim.apply(&Command::Referee(RefereeCommand::StartMatch))
-            .unwrap();
-        sim.field
-            .step(rm_simulator_world::referee::COUNTDOWN_NS.div_ceil(rm_simulator_world::tick_ns()))
-            .unwrap();
-        sim.apply(&Command::Fire { shooter: drone }).unwrap();
-        let state = sim.snapshot();
-        let game = &state.referee.as_ref().unwrap().game;
-        let robot = game.robots.iter().find(|r| r.config.id == drone).unwrap();
-        assert!(!robot.air_support_active);
-        assert!(!game.policy.enforce_air_support);
-        assert!(robot.heat_tenths > 0);
-        assert!(robot.allowance[0] < 750);
-    }
-
-    #[test]
     fn selected_chassis_and_new_robot_roles_are_host_owned() {
         use crate::protocol::Chassis;
         let mut sim = simulation().with_spawner(ChassisSpawner {
@@ -1913,26 +1836,8 @@ mod tests {
             .unwrap();
         let sentry = sim.spawn_robot(Team::Blue, Robot::Sentry).unwrap();
         let engineer = sim.spawn_robot(Team::Red, Robot::Engineer).unwrap();
-        let drone = sim
-            .spawn_robot_with_chassis(Team::Blue, Robot::Drone, Chassis::Flight)
-            .unwrap();
-        assert!(sim.field().chassis_config(drone).unwrap().planar_flight);
-        sim.apply(&Command::Fire { shooter: drone }).unwrap();
-        assert_eq!(
-            sim.weapon_for(drone).shot.caliber,
-            rm_simulator_world::Caliber::Mm17
-        );
         assert!(sim.field().chassis_config(balance).unwrap().balance_assist);
         assert!(sim.field().chassis_config(engineer).unwrap().mecanum);
-        let referee = sim.field().referee().unwrap();
-        assert_eq!(
-            referee.robots().find(|r| r.id == sentry).unwrap().kind,
-            RobotKind::Sentry
-        );
-        assert_eq!(
-            referee.robots().find(|r| r.id == engineer).unwrap().kind,
-            RobotKind::Engineer
-        );
         sim.apply(&Command::Fire { shooter: sentry }).unwrap();
         assert!(
             sim.apply(&Command::Fire { shooter: engineer })
@@ -1961,11 +1866,17 @@ mod tests {
 
     #[test]
     fn a_hero_fires_42_mm_and_an_infantry_17_mm_whatever_the_host_default_says() {
-        let mut sim = simulation().with_spawner(ChassisSpawner {
-            config: ChassisConfig::default(),
-            terrain: None,
-        });
-        let hero = sim.spawn_robot(Team::Red, Robot::Hero).unwrap();
+        let mut sim = Simulation::new(Field::new(&FieldConfig::default()).unwrap(), false)
+            .with_spawner(ChassisSpawner {
+                config: ChassisConfig::default(),
+                terrain: None,
+            });
+        let hero = reference_robot(
+            &mut sim,
+            Team::Red,
+            Robot::Hero,
+            crate::protocol::Chassis::Auto,
+        );
         let infantry = sim.spawn_robot(Team::Blue, Robot::Infantry4).unwrap();
         assert_eq!(sim.robot(hero), Some(Robot::Hero));
         assert_eq!(sim.robot(infantry), Some(Robot::Infantry4));
@@ -1979,11 +1890,6 @@ mod tests {
         let placed = sim.field().chassis_config(hero).unwrap();
         assert!(placed.mecanum);
         assert!(!sim.field().chassis_config(infantry).unwrap().mecanum);
-        let referee = sim.field().referee().unwrap();
-        let kind = |id| referee.robots().find(|r| r.id == id).unwrap().kind;
-        assert_eq!(kind(hero), RobotKind::Hero);
-        assert_eq!(kind(infantry), RobotKind::Infantry);
-
         // The hero starts on its own weapon, slower than the host default.
         assert_eq!(sim.weapon_for(hero), WeaponConfig::hero());
         let mut weapon = sim.weapon_for(hero);
@@ -2155,18 +2061,21 @@ mod tests {
             .unwrap();
         sim.step(6_001_000_000 / rm_simulator_world::tick_ns())
             .unwrap();
-        let game = |sim: &Simulation| sim.snapshot().referee.unwrap().game;
+        let game = |sim: &Simulation| sim.snapshot().rmuc_2027.unwrap().game;
+        sim.apply(&Command::Referee(RefereeCommand::SetGold {
+            team: Team::Red,
+            gold: 1000,
+        }))
+        .unwrap();
         let before = game(&sim);
-        // Table 5-6: ten 17 mm rounds for 10 gold.
+        // Native Table 5-7 remote exchange: 100 rounds for 150 gold after six seconds.
         sim.apply(&buy(Caliber::Mm17)).unwrap();
+        sim.step(768).unwrap();
         let after = game(&sim);
-        assert_eq!(after.teams[0].gold, before.teams[0].gold - 10);
+        assert_eq!(after.gold[0], before.gold[0] - 150);
         assert_eq!(
-            after.robots[0].allowance,
-            [
-                before.robots[0].allowance[0] + 10,
-                before.robots[0].allowance[1]
-            ]
+            after.robots[0].combat.allowance,
+            before.robots[0].combat.allowance + 100
         );
         // An Infantry has no 42 mm launcher.
         let bought = sim.snapshot();
@@ -2174,7 +2083,7 @@ mod tests {
         assert_eq!(sim.snapshot(), bought);
         sim.apply(&Command::Referee(RefereeCommand::SetGold {
             team: Team::Red,
-            gold: 9,
+            gold: 149,
         }))
         .unwrap();
         let empty = sim.snapshot();
@@ -2203,8 +2112,8 @@ mod tests {
             performance,
         };
         sim.apply(&pick(power)).unwrap();
-        // Table 5-13: a level 1 power-focused chassis has 150 HP.
-        assert_eq!(sim.snapshot().referee.unwrap().robots[0].max_hp, 150);
+        // Native Table 5-17: a level-one power-focused chassis has 150 HP.
+        assert_eq!(sim.snapshot().rmuc_2027.unwrap().game.robots[0].max_hp, 150);
         let fixed = Performance::Fixed(Stats {
             max_hp: 10_000,
             chassis_power_w: 1,
@@ -2220,6 +2129,8 @@ mod tests {
             .unwrap();
         sim.step(6_001_000_000 / rm_simulator_world::tick_ns())
             .unwrap();
+        // Native 2027 allows one running selection, then locks changed choices.
+        sim.apply(&pick(power)).unwrap();
         let running = sim.snapshot();
         assert!(
             sim.apply(&pick(
@@ -2242,109 +2153,36 @@ mod tests {
         let after = sim.snapshot();
         assert_eq!(after.chassis[0].pose, before.chassis[0].pose);
         assert_eq!(after.chassis[0].placement_revision, 2);
-        assert_eq!(after.referee.unwrap().game, before.referee.unwrap().game);
+        assert_eq!(
+            after.rmuc_2027.unwrap().game,
+            before.rmuc_2027.unwrap().game
+        );
         assert!(sim.apply(&Command::ResetRobot { chassis: id + 1 }).is_err());
     }
 
     #[test]
-    fn pilot_respawn_restores_only_hp_in_place() {
-        // Practice only: a match respawns robots on its own timer.
+    fn referee_revival_preserves_pose_and_allowance() {
         let (mut sim, id) = pilot_simulation();
-        sim.apply(&Command::PlaceChassis {
-            chassis: id,
-            position_m: [3.0, 4.0, 1.0],
-            yaw_deg: 20.0,
-        })
-        .unwrap();
-        sim.apply(&Command::Chassis {
-            chassis: id,
-            command: rm_simulator_world::ChassisCommand {
-                forward_m_s: 1.0,
-                aim_yaw_rad: 0.5,
-                aim_pitch_rad: 0.2,
-                ..Default::default()
-            },
-        })
-        .unwrap();
-        sim.step(10).unwrap();
-        let mut before_damage = sim.snapshot();
-        sim.apply(&Command::Referee(RefereeCommand::DamageRobot {
-            robot: id,
-            amount: u32::MAX,
-        }))
-        .unwrap();
-        assert!(sim.snapshot().chassis[0].defeated);
-        sim.apply(&Command::Respawn { chassis: id }).unwrap();
-        assert!(sim.apply(&Command::Respawn { chassis: id }).is_err());
-        let respawn = sim.snapshot();
-        assert_eq!(respawn.time_ns, before_damage.time_ns);
-        before_damage.chassis[0].placement_revision += 1;
-        // Defeat brakes the gimbal motors, revival resumes from rest.
-        before_damage.chassis[0].gimbal_velocity_rad_s = [0.0; 2];
-        assert_eq!(respawn.chassis, before_damage.chassis);
-        assert_eq!(
-            respawn.chassis[0].placement_revision,
-            before_damage.chassis[0].placement_revision
-        );
-        assert!(!respawn.chassis[0].defeated);
-        let referee = respawn.referee.unwrap();
-        assert_eq!(referee.robots[0].hp, referee.robots[0].max_hp);
-        let before_game = before_damage.referee.unwrap().game;
-        assert_eq!(referee.game.teams, before_game.teams);
-        assert_eq!(
-            referee.game.robots[0].allowance,
-            before_game.robots[0].allowance
-        );
         sim.apply(&Command::Referee(RefereeCommand::StartMatch))
             .unwrap();
+        sim.step(640).unwrap();
+        let before = sim.snapshot();
         sim.apply(&Command::Referee(RefereeCommand::SetRobotHp {
             robot: id,
             hp: 0,
         }))
         .unwrap();
+        assert!(sim.snapshot().chassis[0].defeated);
         assert!(sim.apply(&Command::Respawn { chassis: id }).is_err());
-        assert!(sim.apply(&Command::ResetRobot { chassis: id }).is_err());
-        sim.remove_chassis(id).unwrap();
-        assert!(sim.pilot_spawns.is_empty());
-    }
-
-    #[test]
-    fn lethal_projectile_waits_for_respawn_independent_of_step_partition() {
-        use rm_simulator_world::{Caliber, Pose, Shot};
-        let (mut whole, id) = pilot_simulation();
-        let (mut split, _) = pilot_simulation();
-        let config = ChassisConfig::default();
-        for sim in [&mut whole, &mut split] {
-            sim.test_field_mut()
-                .place_chassis(id, Pose::at([0.0, 0.0, config.rest_height_m()]))
-                .unwrap();
-            sim.step(300).unwrap();
-            sim.apply(&Command::Referee(RefereeCommand::SetRobotHp {
-                robot: id,
-                hp: 1,
-            }))
+        sim.apply(&Command::Referee(RefereeCommand::ReviveRobot { robot: id }))
             .unwrap();
-            sim.apply(&Command::SpawnProjectile {
-                muzzle: Pose::at([-1.5, 0.0, config.rest_height_m() + config.armor_height_m]),
-                shot: Shot::at_limit(Caliber::Mm17),
-            })
-            .unwrap();
-        }
-        let total = 200_000_000 / rm_simulator_world::tick_ns();
-        whole.step(total).unwrap();
-        for ticks in [1, total / 3, total - 1 - total / 3] {
-            split.step(ticks).unwrap();
-        }
-        let state = whole.snapshot();
-        assert_eq!(state, split.snapshot());
-        assert!(state.hits.iter().any(|hit| hit.detected && hit.damage > 0));
-        assert_eq!(state.chassis[0].placement_revision, 1);
-        assert!(state.chassis[0].defeated);
-        assert_eq!(state.referee.as_ref().unwrap().robots[0].hp, 0);
-        whole.apply(&Command::Respawn { chassis: id }).unwrap();
-        split.apply(&Command::Respawn { chassis: id }).unwrap();
-        assert_eq!(whole.snapshot(), split.snapshot());
-        assert!(!whole.snapshot().chassis[0].defeated);
+        let after = sim.snapshot();
+        assert!(!after.chassis[0].defeated);
+        assert_eq!(after.chassis[0].pose, before.chassis[0].pose);
+        assert_eq!(
+            after.rmuc_2027.unwrap().game.robots[0].combat.allowance,
+            before.rmuc_2027.unwrap().game.robots[0].combat.allowance
+        );
     }
 
     #[test]
@@ -2372,13 +2210,13 @@ mod tests {
             .apply(&Command::Referee(RefereeCommand::StartMatch))
             .unwrap();
         assert_eq!(
-            simulation.snapshot().referee.unwrap().phase,
-            MatchPhase::Countdown
+            simulation.snapshot().rmuc_2027.unwrap().game.phase,
+            rm_simulator_world::rmuc_2027::match_rules::Phase::Countdown
         );
         let rejected = simulation
             .apply(&Command::Referee(RefereeCommand::StartMatch))
             .unwrap_err();
-        assert!(rejected.contains("already in progress"), "{rejected}");
+        assert!(rejected.contains("reset"), "{rejected}");
         // No chassis on this field, and no spawner to make one.
         assert!(
             simulation
@@ -2389,6 +2227,7 @@ mod tests {
                 .is_err()
         );
         assert!(simulation.spawn_chassis(Team::Red).is_err());
+        simulation.step(640).unwrap();
         simulation
             .apply(&Command::SpawnProjectile {
                 muzzle: rm_simulator_world::Pose::at([0.0, 0.0, 1.0]),
@@ -2506,7 +2345,7 @@ mod tests {
             .map(|v| v * v)
             .sum::<f64>()
             .sqrt();
-        assert!((speed - weapon.shot.speed_m_s).abs() < 1e-9);
+        assert!((speed - 25.0).abs() < 1e-9);
         assert!(
             simulation
                 .apply(&Command::Fire { shooter: chassis })
@@ -2664,11 +2503,17 @@ mod tests {
             .unwrap();
         sim.step(6_001_000_000 / rm_simulator_world::tick_ns())
             .unwrap();
+        sim.apply(&Command::Referee(RefereeCommand::SetGold {
+            team: Team::Red,
+            gold: 1000,
+        }))
+        .unwrap();
         sim.apply(&Command::BuyAmmo {
             chassis: shooter,
             caliber: rm_simulator_world::Caliber::Mm17,
         })
         .unwrap();
+        sim.step(768).unwrap();
         let frame = crate::input_stream::InputFrame {
             input_epoch: sim.input_epoch(),
             sequence: 1,
@@ -2691,11 +2536,15 @@ mod tests {
             shot_id: 1,
             input: frame,
         };
-        let allowance = sim.snapshot().referee.unwrap().game.robots[0].allowance;
+        let allowance = sim.snapshot().rmuc_2027.unwrap().game.robots[0]
+            .combat
+            .allowance;
         sim.apply(&fire).unwrap();
         sim.apply(&fire).unwrap();
         assert_eq!(
-            sim.snapshot().referee.unwrap().game.robots[0].allowance,
+            sim.snapshot().rmuc_2027.unwrap().game.robots[0]
+                .combat
+                .allowance,
             allowance
         );
         assert_eq!(sim.pending_shots.len(), 1);
@@ -2753,8 +2602,10 @@ mod tests {
         sim.apply(&fire).unwrap();
         assert_eq!(sim.snapshot().shots_fired, 1);
         assert_eq!(sim.take_completed_shots().len(), 1);
-        let after = sim.snapshot().referee.unwrap().game.robots[0].allowance;
-        assert_eq!(after, [allowance[0] - 1, allowance[1]]);
+        let after = sim.snapshot().rmuc_2027.unwrap().game.robots[0]
+            .combat
+            .allowance;
+        assert_eq!(after, allowance - 1);
     }
     #[test]
     fn shot_queue_is_bounded_and_cancels_across_pause_placement_and_defeat() {
@@ -2929,12 +2780,15 @@ mod tests {
 
     #[test]
     fn revival_without_fresh_packets_neutralizes_the_previous_drive() {
-        for referee in [false, true] {
+        {
             let (mut sim, chassis) = pilot_simulation();
+            sim.apply(&Command::Referee(RefereeCommand::StartMatch))
+                .unwrap();
+            sim.step(640).unwrap();
             let frame = crate::input_stream::InputFrame {
-                input_epoch: 0,
+                input_epoch: sim.input_epoch(),
                 sequence: 1,
-                sampled_time_ns: 0,
+                sampled_time_ns: sim.field().time_ns(),
                 duration_ticks: 16,
                 placement_revision: sim.field().chassis_revision(chassis).unwrap(),
                 command: rm_simulator_world::ChassisCommand {
@@ -2948,11 +2802,9 @@ mod tests {
                 hp: 0,
             }))
             .unwrap();
-            sim.apply(&if referee {
-                Command::Referee(RefereeCommand::ReviveRobot { robot: chassis })
-            } else {
-                Command::Respawn { chassis }
-            })
+            sim.apply(&Command::Referee(RefereeCommand::ReviveRobot {
+                robot: chassis,
+            }))
             .unwrap();
             sim.step(300).unwrap();
             assert_eq!(sim.snapshot().chassis[0].command.forward_m_s, 0.);
@@ -3069,12 +2921,11 @@ mod tests {
 }
 
 #[cfg(test)]
-mod seasonal_roster_tests {
+mod roster_tests {
     use super::*;
     #[test]
     fn host_rejects_removed_roles_before_creating_a_chassis() {
         let mut simulation = Simulation::new(Field::new(&Default::default()).unwrap(), true);
-        simulation.roster_season = rm_simulator_world::season::Season::Rm2027;
         for robot in [Robot::Hero, Robot::Infantry5, Robot::Drone] {
             assert!(
                 simulation

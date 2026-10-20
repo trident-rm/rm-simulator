@@ -270,9 +270,11 @@ mod tests {
         // The checkpoint dictionary is trained on real checkpoints, so both
         // directions must work on one. A corrupt or stale asset that merely
         // round-trips a synthetic frame would otherwise go unnoticed.
-        use rm_simulator_world::{Field, FieldConfig};
-        let mut simulation =
-            crate::simulation::Simulation::new(Field::new(&FieldConfig::default()).unwrap(), false);
+        use rm_simulator_world::Field;
+        let mut simulation = crate::simulation::Simulation::new(
+            Field::new(&crate::workload::field_config()).unwrap(),
+            false,
+        );
         simulation.step(16).unwrap();
         let mut state = simulation.state();
         state.snapshot_id = 1;

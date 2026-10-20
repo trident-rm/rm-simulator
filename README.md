@@ -258,41 +258,12 @@ sessions reject 2026 packages. Live matches require native bindings; unbound
 2027 geometry can be inspected with `--no-referee`. The loader verifies listed
 assets against their recorded SHA-256 checksums.
 
-The following source geometry notes describe the retained offline 2026 fixtures,
-which remain useful to CAD tools and regression tests. For the playable 2026
-runtime use Git tag `rm2026-final`.
+Historical 2026 assets are preserved at Git tag `rm2026-final`; they are no
+longer part of the active checkout or release pipeline.
 
-The retained 2026 package is built by the sibling `rm-map-tools` project from DJI's
-RMUC 2026 V1.2.0 STEP and keeps that release's arena face colours; its manifest
-records the slab top as `floor_top_source_z_m` so the simulator puts it at
-height zero. The rune and the outposts come from the earlier V2.0.0 extraction,
-while the bases and tech cores are exported from the V1.2.0 equipment package.
-The older extraction at `~/dev/RM/assets/rm2026-extracted`
-can still be read by offline CAD inspection tools.
-
-The V1.2.0 floor slab is flat at height zero and the terrain plates (the
-centre-line plateaus at x ≈ ±6.3..8.5 m, the 起伏路段 undulating roads near the
-side walls, ramps, the central highland, covered passages) stand on it. The
-V2.0.0 slab is crowned instead: about 0.11 m below the reference height along the
-centre line, falling to about 0.32 m below at the side walls, with height zero at
-its small level pads. Invisible walls, 2 m high, surround the loaded floor bounds
-to keep robots inside the arena. The CAD floor remains the driving surface;
-there is no invisible catch plane beneath a loaded field.
-
-The default field sits in a dark indoor hall with neutral lighting. Distant
-seating, walls and roof lights are baked into a cubemap; the nearby fence and
-floor apron retain geometry. Equipment
-paint follows team ownership:
-red occupies +x and blue occupies -x. Destroying an outpost opens its team's base
-shields. Friendly-fire rules are unchanged.
-
-The arena's colours are the CAD's. The V1.2.0 STEP styles every arena face
-(white for most surfaces, dark grey slab and plate tops, beige plate sides,
-red and blue 1 mm marking sheets), and the package keeps them as glTF
-materials. The V2.0.0 STEP styles every arena solid in the exporter's
-unpainted cream and its markings are flush cream solids; the simulator
-recolours only that yellow-tinted cream (floor dark, arena light grey), so
-painted materials, white line markings included, are left alone.
+The default field sits in a dark indoor hall. Distant scenery is baked into a
+cubemap; nearby boundaries and floor retain geometry. Source materials remain
+intact, and source-bound equipment lights and motion follow native rules.
 
 Generate the simplified map from your field package with the sibling
 `rm-map-tools` checkout. This is an offline tool, not a runtime dependency:
@@ -605,9 +576,9 @@ Use `--start-paused`, referee controls and the [automation console](docs/console
 to inspect a scenario. Unbound 2027 CAD exports support rest-pose practice with
 `--no-referee`. They cannot start a match using a legacy referee.
 
-The old RMUC 2026 match description remains in
-[the historical referee guide](docs/referee-rules.md). Run Git tag
-`rm2026-final` to use that season in the app; there is no season feature switch.
+The 2026 runtime and historical rule guide are archived at Git tag
+`rm2026-final`. Main retains shared types, robot models and physics, with no
+2026 engine or season feature switch.
 
 ## Robot equipment
 

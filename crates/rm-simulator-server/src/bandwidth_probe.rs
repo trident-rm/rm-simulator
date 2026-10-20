@@ -521,24 +521,6 @@ pub(crate) struct Ablation {
     pub(crate) packed_bytes: i64,
 }
 
-/// The outpost views the restore gives at `time_ns`.
-fn rebuilt_outposts(
-    state: &SimulationState,
-    time_ns: u64,
-) -> Vec<rm_simulator_world::OutpostSnapshot> {
-    state
-        .field
-        .restore
-        .as_ref()
-        .map_or_else(Vec::new, |restore| {
-            restore
-                .outposts
-                .iter()
-                .map(|outpost| outpost.snapshot(time_ns))
-                .collect()
-        })
-}
-
 /// One named ablation that empties a section of a copied state.
 type Candidate = (&'static str, fn(&mut SimulationState));
 
@@ -584,32 +566,23 @@ pub(crate) fn ablation(
     // Each candidate empties one section of a fresh copy of the host state.
     // A checkpoint carries rules only as the restore its views must match, so
     // a rule section is removed from both at once.
-    let candidates: [Candidate; 9] = [
-        ("state.bases", |s| s.field.bases.clear()),
+    let candidates: [Candidate; 7] = [
         ("state.clock", |s| {
             s.field.tick = 0;
             s.field.time_ns = 0;
-            s.field.outposts = rebuilt_outposts(s, 0);
         }),
-        ("state.runes", |s| {
-            s.field.runes.clear();
-            if let Some(restore) = &mut s.field.restore {
-                restore.runes.clear();
-            }
-        }),
-        ("state.outposts", |s| {
-            s.field.outposts.clear();
-            if let Some(restore) = &mut s.field.restore {
-                restore.outposts.clear();
+        ("state.rules", |s| {
+            s.field.rmuc_2027 = None;
+            if let Some(r) = &mut s.field.restore {
+                r.rmuc_2027 = None;
             }
         }),
         ("state.projectiles", |s| s.field.projectiles.clear()),
         ("state.chassis", |s| s.field.chassis.clear()),
         ("state.hits", |s| s.field.hits.clear()),
-        ("state.referee", |s| {
-            s.field.referee = None;
-            if let Some(restore) = &mut s.field.restore {
-                restore.referee = None;
+        ("state.contacts", |s| {
+            if let Some(r) = &mut s.field.restore {
+                r.last_detection_ns.clear();
             }
         }),
         ("shot_results", |s| s.shot_results.clear()),

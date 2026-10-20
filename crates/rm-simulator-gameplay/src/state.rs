@@ -95,12 +95,6 @@ impl Caliber {
     /// Barrel heat one launch adds, in tenths of a heat unit (section
     /// 5.1.3): 10 heat per 17 mm and 100 per 42 mm projectile.
     ///
-    /// ```
-    /// use rm_simulator_gameplay::Caliber;
-    ///
-    /// assert_eq!(Caliber::Mm17.launch_heat_tenths(), 100);
-    /// assert_eq!(Caliber::Mm42.launch_heat_tenths(), 1_000);
-    /// ```
     pub const fn launch_heat_tenths(self) -> u64 {
         match self {
             Self::Mm17 => 100,
@@ -127,15 +121,6 @@ impl RobotConfig {
     /// A Hero or Infantry with its section 5.4.2 default performance, or any
     /// other kind with `fallback`.
     ///
-    /// ```
-    /// use rm_simulator_gameplay::{RobotConfig, RobotKind, Stats, Team};
-    ///
-    /// let fallback = Stats { max_hp: 400, chassis_power_w: 0, heat_limit: 100, cooling_per_s: 20 };
-    /// let infantry = RobotConfig::standard(1, Team::Red, RobotKind::Infantry, fallback);
-    /// assert_eq!(infantry.performance.stats(1).max_hp, 200);
-    /// let sentry = RobotConfig::standard(2, Team::Red, RobotKind::Sentry, fallback);
-    /// assert_eq!(sentry.performance.stats(1).max_hp, 400);
-    /// ```
     pub fn standard(id: u32, team: Team, kind: RobotKind, fallback: crate::Stats) -> Self {
         Self {
             id,
@@ -175,24 +160,6 @@ impl Default for Policy {
 }
 /// Match length and its win threshold.
 ///
-/// ```
-/// use rm_simulator_gameplay::{Command, Config, Game, MatchFormat, Phase, COUNTDOWN_TICKS};
-///
-/// let mut game = Game::new(Config {
-///     format: MatchFormat::Bo2,
-///     ..Config::default()
-/// })?;
-/// for _ in 0..2 {
-///     game.command(Command::BeginCountdown)?;
-///     game.step(COUNTDOWN_TICKS)?;
-///     game.command(Command::EndRound)?;
-///     game.command(Command::ConfirmResult)?;
-/// }
-/// assert_eq!(game.snapshot().phase, Phase::MatchEnded);
-/// // Two drawn rounds leave a Bo2 drawn.
-/// assert_eq!(game.snapshot().match_winner, None);
-/// # Ok::<(), rm_simulator_gameplay::Error>(())
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MatchFormat {
     /// Best of two: two confirmed rounds end the match, drawn or not.
@@ -202,14 +169,14 @@ pub enum MatchFormat {
     /// Best of five: the first team with three wins takes the match.
     Bo5,
 }
-/// Immutable match configuration. [`crate::Game::new`] validates it once; every
+/// Immutable match configuration. The host validates it once; every
 /// new round restores robot state from this roster.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     /// Match length and win threshold.
     pub format: MatchFormat,
     /// Initial roster. Ids must be unique and every performance must fit its
-    /// kind. [`crate::Command::AddRobot`] and [`crate::Command::RemoveRobot`]
+    /// kind. Host deployment and removal
     /// change the roster later.
     pub robots: Vec<RobotConfig>,
     /// How many recent events the snapshot keeps. Application policy, not a
@@ -228,24 +195,6 @@ impl Default for Config {
 /// Lifecycle phase of a round. Durations are 180 s setup, 15 s initialization,
 /// 5 s countdown and 420 s round (sections 6.3 to 6.6 of the V2.1.0 manual).
 ///
-/// ```
-/// use rm_simulator_gameplay::{
-///     Command, Config, Game, Phase, COUNTDOWN_TICKS, INITIALIZATION_TICKS, ROUND_TICKS,
-///     SETUP_TICKS,
-/// };
-///
-/// let mut game = Game::new(Config::default())?;
-/// game.command(Command::BeginRound)?;
-/// game.step(SETUP_TICKS)?;
-/// assert_eq!(game.snapshot().phase, Phase::Initialization);
-/// game.step(INITIALIZATION_TICKS)?;
-/// assert_eq!(game.snapshot().phase, Phase::Countdown);
-/// game.step(COUNTDOWN_TICKS)?;
-/// assert_eq!(game.snapshot().phase, Phase::Running);
-/// game.step(ROUND_TICKS)?;
-/// assert_eq!(game.snapshot().phase, Phase::RoundEnded);
-/// # Ok::<(), rm_simulator_gameplay::Error>(())
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Phase {
     /// No round started. BeginRound and BeginCountdown are accepted here.
@@ -283,43 +232,6 @@ pub enum DecisionReason {
 }
 /// Outcome of a round.
 ///
-/// ```
-/// use rm_simulator_gameplay::{
-///     Command, Config, DamageKind, Error, Game, RoundResult, Target, Team, COUNTDOWN_TICKS,
-/// };
-///
-/// # let mut game = Game::new(Config::default())?;
-/// # game.command(Command::BeginCountdown)?;
-/// # game.step(COUNTDOWN_TICKS)?;
-/// game.command(Command::Damage {
-///     target: Target::Outpost(Team::Blue),
-///     amount: 1_500,
-///     kind: DamageKind::Projectile,
-///     attacker: Some(Team::Red),
-/// })?;
-/// game.command(Command::Damage {
-///     target: Target::Base(Team::Blue),
-///     amount: 200,
-///     kind: DamageKind::Projectile,
-///     attacker: Some(Team::Red),
-/// })?;
-/// game.command(Command::EndRound)?;
-/// // Section 5.8 does not say how unequal surviving bases decide a round.
-/// assert_eq!(game.snapshot().result, Some(RoundResult::NeedsRefereeDecision));
-/// assert_eq!(game.command(Command::ConfirmResult), Err(Error::Ineligible));
-/// game.command(Command::Adjudicate {
-///     winner: Some(Team::Red),
-/// })?;
-/// game.command(Command::ConfirmResult)?;
-/// assert_eq!(
-///     game.snapshot().result,
-///     Some(RoundResult::Decided {
-///         winner: Some(Team::Red),
-///         reason: rm_simulator_gameplay::DecisionReason::Referee,
-///     })
-/// );
-/// # Ok::<(), Error>(())
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RoundResult {
     /// A decided result; a `None` winner is a draw.
@@ -346,45 +258,6 @@ pub struct RoundRecord {
 /// Field zone types a caller can report contacts for (sections 5.5.3.2 to
 /// 5.5.3.9). Contacts are recorded whether or not a rule consumes them.
 ///
-/// ```
-/// use rm_simulator_gameplay::{
-///     Caliber, Command, Config, Game, RobotConfig, RobotKind, Team, Zone, ZoneKind,
-///     COUNTDOWN_TICKS,
-/// };
-///
-/// # let mut game = Game::new(Config {
-/// #     robots: vec![RobotConfig {
-/// #         id: 1,
-/// #         team: Team::Red,
-/// #         kind: RobotKind::Infantry,
-/// #         performance: rm_simulator_gameplay::Performance::default_for(RobotKind::Infantry).unwrap(),
-/// #     }],
-/// #     ..Config::default()
-/// # })?;
-/// # game.command(Command::BeginCountdown)?;
-/// # game.step(COUNTDOWN_TICKS)?;
-/// # game.step(1_000)?; // income at 1 s funds the exchange
-/// let exchange = Command::ExchangeAmmo {
-///     robot: 1,
-///     caliber: Caliber::Mm17,
-///     amount: 10,
-///     remote: false,
-/// };
-/// // A local exchange needs an own base, resupply or living outpost zone.
-/// assert!(game.command(exchange.clone()).is_err());
-/// game.command(Command::ZoneDetection {
-///     robot: 1,
-///     zone: Zone {
-///         kind: ZoneKind::Base,
-///         owner: Team::Red,
-///         pad: 0,
-///     },
-///     detected: true,
-/// })?;
-/// game.command(exchange)?;
-/// assert_eq!(game.snapshot().robots[0].allowance[0], 10);
-/// # Ok::<(), rm_simulator_gameplay::Error>(())
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum ZoneKind {
     /// Base Buff Point. Own-side contact grants 50 percent defense, enables
@@ -435,7 +308,7 @@ pub struct Zone {
     /// belong to the side of the field they lie on and any team may use them.
     pub owner: Team,
     /// Card group within the zone: a terrain crossing pad's number (see
-    /// [`crate::zones::courses`]); 0 for every other kind.
+    /// the native traversal catalog); 0 for every other kind.
     pub pad: u8,
 }
 /// Detected contact with one zone.
@@ -457,7 +330,7 @@ pub struct ZoneContact {
 pub struct CrossingProgress {
     /// Kind and side of the crossing; `pad` is the first pad detected.
     pub zone: Zone,
-    /// Course index within [`crate::zones::courses`].
+    /// Course index within the native traversal catalog.
     pub course: u8,
     /// Pads detected so far, in crossing order.
     pub done: u8,
@@ -596,39 +469,6 @@ impl RobotState {
             .map(|c| c.since_ticks)
             .min()
     }
-    /// Current performance values at the robot's level.
-    pub fn stats(&self) -> crate::Stats {
-        self.config.performance.stats(self.level)
-    }
-    /// Robot-local launch permission at round tick `now_ticks`. It requires the
-    /// robot to be alive, connected, not weakened, overheated or locked, armed
-    /// with the caliber, holding allowance when `enforce_allowance` and, for a
-    /// drone, flying with active air support. Match phase is checked by
-    /// [`crate::Game::can_launch`].
-    pub fn can_launch(&self, now_ticks: u64, caliber: Caliber, enforce_allowance: bool) -> bool {
-        self.can_launch_with_air_support(now_ticks, caliber, enforce_allowance, true)
-    }
-    /// Apply the host's air-support policy while retaining all other launch gates.
-    pub(crate) fn can_launch_with_air_support(
-        &self,
-        now_ticks: u64,
-        caliber: Caliber,
-        enforce_allowance: bool,
-        enforce_air_support: bool,
-    ) -> bool {
-        self.alive()
-            && !self.irregularly_disconnected
-            && !self.weakened
-            && !self.overheated
-            && !self.heat_locked_for_round
-            && !self.speed_locked_for_round
-            && self.speed_locked_until_ticks <= now_ticks
-            && self.config.kind.shoots(caliber)
-            && (!enforce_allowance || self.allowance[caliber.index()] > 0)
-            && (!enforce_air_support
-                || self.config.kind != RobotKind::Drone
-                || self.air_support_active)
-    }
 }
 /// Per-team state within a round.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -758,39 +598,6 @@ pub enum DamageKind {
 /// A caller-certified active buff; strongest effects of each type win
 /// independently (section 5.5.3.1). Expiry uses round ticks.
 ///
-/// ```
-/// use rm_simulator_gameplay::{
-///     coverage::Mechanic, Buff, BuffTarget, Command, Config, Game, RobotConfig, RobotKind, Team,
-///     COUNTDOWN_TICKS,
-/// };
-///
-/// # let mut game = Game::new(Config {
-/// #     robots: vec![RobotConfig {
-/// #         id: 1,
-/// #         team: Team::Red,
-/// #         kind: RobotKind::Infantry,
-/// #         performance: rm_simulator_gameplay::Performance::default_for(RobotKind::Infantry).unwrap(),
-/// #     }],
-/// #     ..Config::default()
-/// # })?;
-/// # game.command(Command::BeginCountdown)?;
-/// # game.step(COUNTDOWN_TICKS)?;
-/// let buff = |defense_pct| Buff {
-///     target: BuffTarget::Robot(1),
-///     source: Mechanic::Rune,
-///     attack_pct: 0,
-///     defense_pct,
-///     vulnerability_pct: 0,
-///     cooling_multiplier: 1,
-///     expires_ticks: 1_000,
-/// };
-/// game.command(Command::ApplyBuff(buff(25)))?;
-/// game.command(Command::ApplyBuff(buff(50)))?;
-/// // One buff per target and source is retained.
-/// assert_eq!(game.snapshot().buffs.len(), 1);
-/// assert_eq!(game.snapshot().buffs[0].defense_pct, 50);
-/// # Ok::<(), rm_simulator_gameplay::Error>(())
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Buff {
     /// Robot, base, outpost or whole team the buff applies to.
@@ -834,24 +641,8 @@ pub struct ElementObservation {
     pub observed_at_ticks: u64,
 }
 /// Read-only view of the whole game. It serializes with serde but is not a
-/// trusted save-game loading API; clone a [`crate::Game`] to branch a scenario.
+/// trusted save-game loading API; clone the native authority to branch a scenario.
 ///
-/// ```
-/// use rm_simulator_gameplay::{Command, Config, EventKind, Game, Phase, COUNTDOWN_TICKS};
-///
-/// # let mut game = Game::new(Config::default())?;
-/// # game.command(Command::BeginCountdown)?;
-/// # game.step(COUNTDOWN_TICKS)?;
-/// let snapshot = game.snapshot();
-/// assert_eq!(snapshot.phase, Phase::Running);
-/// assert_eq!(snapshot.teams.len(), 2);
-/// // Commands are recorded as events in emission order.
-/// assert_eq!(
-///     snapshot.recent_events[0].kind,
-///     EventKind::PhaseChanged(Phase::Countdown)
-/// );
-/// # Ok::<(), rm_simulator_gameplay::Error>(())
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     /// Monotonic simulation tick. It never goes backwards, not even on a match

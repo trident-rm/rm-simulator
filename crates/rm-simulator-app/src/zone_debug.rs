@@ -17,7 +17,6 @@ struct ZoneLabel(usize);
 struct ZoneLegend;
 #[derive(Resource)]
 struct Catalog {
-    season: rm_simulator_world::season::Season,
     live: bool,
     areas: Vec<Area>,
 }
@@ -50,15 +49,13 @@ fn prepare(
     catalog: Option<Res<Catalog>>,
     labels: Query<Entity, Or<(With<ZoneLabel>, With<ZoneLegend>)>>,
 ) {
-    if catalog
-        .is_some_and(|c| c.season == session.season && c.live == session.rmuc_2027().is_some())
-    {
+    if catalog.is_some_and(|c| c.live == session.rmuc_2027().is_some()) {
         return;
     }
     for entity in &labels {
         commands.entity(entity).despawn();
     }
-    let mut areas = areas(session.season);
+    let mut areas = areas();
     if session.rmuc_2027().is_some() {
         areas.retain(|a| !a.id.ends_with("highland-low"));
         areas.extend(
@@ -110,12 +107,11 @@ fn prepare(
     commands.spawn((ZoneLegend, Node { position_type: PositionType::Absolute, left:px(18.), bottom:px(125.), display:Display::None, padding:UiRect::all(px(7.)), ..default() },
         GlobalZIndex(15), Text::new(if session.rmuc_2027().is_some() {
             "2027 LIVE CONTROL | Red/blue: active | Amber: contested\nLabels: occupants, expiry, blocking reasons and field benefits\nDiagram RFID (~10 cm); terrain cards show raw entries (no grace)"
-        } else if session.season == rm_simulator_world::season::Season::Rm2027 {
+        } else {
             "2027 ZONE INSPECTION | Green: RFID | Boxes: height band\nFigure 5-23 estimates (~10 cm); tunnel interiors inferred\nX-ray outlines; no 2027 buff/control enforcement"
-        } else { "2026 ZONE INSPECTION | Green: referee RFID footprints\nBoxes: height band | X-ray outlines" }),
+        }),
         TextFont {font_size:bevy::text::FontSize::Px(13.),..default()}, TextColor(Color::WHITE), BackgroundColor(Color::srgba(0.,0.,0.,0.85)), Pickable::IGNORE));
     commands.insert_resource(Catalog {
-        season: session.season,
         live: session.rmuc_2027().is_some(),
         areas,
     });

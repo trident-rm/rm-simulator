@@ -21,7 +21,7 @@ source file.
 | RMUC 2027 runtime adapter and candidate inspection | `docs/rmuc2027-field.md` |
 | Field package layout, discovery, composition, collision | `docs/field-package.md` |
 | Build, test, release and commit workflow | `docs/development.md`, `CONTRIBUTING.md` |
-| RM2026 rulebook clauses the referee implements | `docs/referee-rules.md` |
+| Current rule sources and historical archive | `docs/referee-rules.md` |
 | RM2027 manuals, interpretation and unresolved requirements | `docs/rules-2027.md` |
 | Current runtime, archived seasons and admission | `docs/seasons.md` |
 | Standalone gameplay engine and its live integration | `docs/gameplay.md` |
@@ -38,19 +38,15 @@ two disagree, this file wins.
 - **Season scope.** The app and headless CAD host target RMUC 2027 V1.0.0
   exclusively, using the bound repaired Low `field-2027/`. There are no season
   Cargo features. The final dual-season revision is tagged `rm2026-final`.
-  Retained 2026 rule kernels and CAD fixtures serve standalone tools and tests;
-  they must not admit a 2026 application session. The supplied 2027 manuals
+  The 2026 runtime engines and field package are removed; shared data types,
+  model descriptors and physics remain. Never reintroduce a 2026 execution path. The supplied 2027 manuals
   (2026-10-15) are interpreted in `docs/rules-2027.md`; RMUC and RMUL require
   distinct competition/revision identities. See `docs/seasons.md` for runtime
   admission, archive instructions and retained internal boundaries.
-- **Rules source.** The RoboMaster 2026 University Championship Rule Manual
-  (V2.1.0, 2026-07-17) is the historical kernel baseline; current live rules use the supplied 2027
-  manuals. The historical base damage
-  table was checked against V2.2.0; see `docs/referee-rules.md` for that
-  limited exception. Cite section, table or figure numbers in doc comments
-  when a constant comes from it (for example Table 5-1 detection speeds,
-  Table 5-2 damage, Figure 5-16 armor detection area, section 5.5.1 outpost).
-  Dimensions that live only in figures were read off the drawings; say so.
+- **Rules source.** Current rules use the supplied RMUC 2027 V1.0.0 manuals
+  (2026-10-15), interpreted in `docs/rules-2027.md`. Historical physical model
+  dimensions retain their original 2026 citations. Cite section, table or figure
+  numbers for rule constants; identify dimensions read only from drawings.
 - **Sibling repositories.** `../Vision/rm-vision-sim` (computer vision
   simulator) and the Embedded simulator share the same rules and the same
   field package; `../rm-map-tools` builds that package from the DJI STEP
@@ -66,44 +62,13 @@ two disagree, this file wins.
   cream, with flush cream markings; the renderer's scenery override
   recolours that cream only (`is_unpainted`), never white or painted
   materials. A re-export of V2.0.0 cannot add colour the STEP lacks.
-- **Chassis per player, a referee, two teams.** The legacy referee details in
-  this paragraph describe retained regression internals; the active native
-  2027 authority is described below under Assets. Every pilot gets its own
-  four-wheel chassis with a stabilised gun pivot (omni Infantry or mecanum
-  Hero preset, documented in `crates/rm-simulator-physics/src/chassis.rs`), added to the field when the player
-  arrives and removed when they leave; spectators and the free-flying
-  camera have none. The field keeps them in a list with ids that are never
-  reused, and commands are addressed by id; the server assigns a chassis
-  per client and refuses commands for any other. A client's role is pilot,
-  spectator or referee: the referee is a spectator on no team with the
-  match controls (`Referee`, `Pause`, `Step`), which a host grants to
-  nobody else; never give the referee a robot. There is a gun; a `Fire`
-  names the shooter's chassis, which a host checks. The host derives the muzzle pose and enforces its weapon
-  configuration and simulation-time cadence; its aim
-  travels in the chassis command and the snapshot carries the turret pose,
-  so peers see where each pilot points. The
-  referee (`referee.rs`) runs the match clock, rune opportunities and
-  stages, and the `rm-simulator-gameplay` `Game`, which owns HP, damage,
-  heat, allowance, gold, experience, levels, performance types, respawn
-  (in place, weakened), buffs, base shield, outpost protection and rebuild,
-  and the single round's result. A robot record opens when the chassis
-  joins with the kind and optional performance its `ChassisPlacement`
-  names; four small armor modules on the chassis body score like outpost
-  armor, collisions against them cost HP, and a defeated robot cannot drive,
-  aim or fire until it respawns. Idle is free practice. The outpost rotor
-  starts with the round and stops at its first destruction, at 3:00 or when
-  the other team's base armor expands. Buff points (`zones.rs`, areas read
-  off Figure 5-24) report occupation to the engine, which applies their
-  defense, terrain crossing, Fortress and rebuild effects. The Assembly Zone,
-  referee power limits,
-  remote exchanges, engineer, drone, dart, sentry and radar equipment and
-  multi-round series remain unenforced in the live simulation; see
-  `docs/gameplay.md` before changing either side. The chassis has an assumed
-  shared drivetrain power budget, requested separately from referee power
-  enforcement. Do not add further rule enforcement without being asked.
-  The rulebook does not describe how an activated rune looks beyond its
-  arms being lit or how long a struck module flashes; the three 2 Hz blinks and
-  the 50 ms grey flash are app settings, not rule constants.
+- **Chassis per player, a referee, two teams.** Pilots own one addressed chassis;
+  spectators and referees own none. The host enforces ownership, weapon cadence
+  and authoritative muzzle poses. IDs are never reused. The native 2027 Match
+  owns HP, heat, economy, respawn, control, Rune, assembly and adaptive armor.
+  `world::referee` retains shared commands and presentation records, not a second
+  scheduler. `FieldConfig::default()` is a bare physical world; old rule configs
+  are rejected. App inputs always travel through protocol Commands.
 
 ## Assets
 
@@ -120,13 +85,12 @@ loader and the licensing rules depend on the split.
 The runtime field is versioned in `field-2027/` through Git LFS with its
 upstream ownership notice retained. `--cad-assets` overrides discovery;
 otherwise the loader checks `field-2027/` beside `bin/` and in the checkout.
-App/server sessions reject 2026 CAD. Historical `field/` remains pinned data for
-offline tools and fixtures, and is omitted from new release archives. Files are
+App/server sessions reject 2026 CAD. Historical `field/` is archived at `rm2026-final` and removed from main. Files are
 verified against SHA-256 in both manifests. The manifest's
 `floor_top_source_z_m` is the slab top in the arena frame. Keep original STEP
 files and intermediate exports outside Git; only approved packages belong in
 LFS. Record runtime package updates in `scripts/release-field-2027.json` and
-verify with `inspect_assets`; `scripts/release-field.json` pins historical data.
+verify with `inspect_assets`.
 Never bake geometry into code beyond the fitted physics and world constants.
 See `docs/field-package.md` for composition, collision contracts and deployment.
 
@@ -134,8 +98,7 @@ The RMUC 2027 sandbox displays the complete equipment roster through
 `server::roster`; Infantry 3/4, the manual Sentry and assembly-only Heavy have practice models.
 `server::zone_catalog` contains diagram footprints. Bound RMUC 2027 V1.0.0
 packages use approximate antenna polygons for control, supply, Vantage and
-terrain traversal; other unsupported areas remain inspection-only. Never feed these
-into the 2026 referee. `gameplay::rmuc_2027::match_rules` owns the live 2027
+terrain traversal; other unsupported areas remain inspection-only. Use only native 2027 bindings for match observations. `gameplay::rmuc_2027::match_rules` owns the live 2027
 combat/control subset, including native heat, allowance, healing, respawn and
 combat XP and continuous Base/Vantage/Highland/Fortress field benefits. Virtual
 assembly supports referee Start/Finish/Cancel, automatic 45-second timeouts,
@@ -269,7 +232,7 @@ not a refactor.
   nanoseconds, never tick counts. Never read
   host time in physics, world or gameplay code. Stepping must be deterministic
   and independent of how ticks are partitioned; there is a test for this.
-  With no projectiles, chassis or referee, `Field::step` advances rune state
+  With no projectiles, chassis or native authority, `Field::step` jumps
   directly to the target tick. A referee keeps the tick loop active even when
   physics is idle; active bodies also advance tick by tick.
 - **Physics.** Projectiles are rapier dynamic balls with CCD, kept until the

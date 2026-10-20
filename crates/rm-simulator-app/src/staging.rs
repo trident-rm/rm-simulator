@@ -102,10 +102,9 @@ struct DeploymentGizmos;
 fn enter(
     mut commands: Commands,
     config: Res<StagingConfig>,
-    session: Res<Session>,
     mut hud: Query<&mut Node, With<crate::hud::HudRoot>>,
 ) {
-    let robot = if rm_simulator_server::roster::supports(session.season, config.0.robot) {
+    let robot = if rm_simulator_server::roster::supports(config.0.robot) {
         config.0.robot
     } else {
         Robot::Infantry3
@@ -498,7 +497,7 @@ fn ui(
                     format!("{} side", stage.team.name()),
                     16.0,
                 );
-                for slot in rm_simulator_server::roster::slots(session.season) {
+                for slot in rm_simulator_server::roster::slots() {
                     let Some(robot) = slot.prototype else {
                         label(
                             &mut commands,

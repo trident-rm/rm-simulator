@@ -1518,18 +1518,10 @@ mod tests {
         }
     }
     fn assert_contact_delivery(ticks: u64) {
-        use rm_simulator_world::{BaseConfig, Caliber, Pose, Shot, Team};
-        let field = Field::new(&FieldConfig {
-            bases: vec![BaseConfig {
-                team: Team::Red,
-                plates: std::array::from_fn(|i| Pose::at([0., i as f64 * 0.5, 1.])),
-                dart_offsets_m: [[0.; 3]; 2],
-            }],
-            runes: vec![],
-            outposts: vec![],
-            ..Default::default()
-        })
-        .unwrap();
+        use rm_simulator_world::{Caliber, Pose, Shot};
+        let mut config = crate::workload::field_config();
+        config.rmuc_2027.as_mut().unwrap().bases[0][0].pose = Pose::at([0., 0., 1.]);
+        let field = Field::new(&config).unwrap();
         let host = Host::new(Simulation::new(field, true), true).unwrap();
         let handle = host.handle();
         let (_, messages) = peer(&handle, Role::Referee);

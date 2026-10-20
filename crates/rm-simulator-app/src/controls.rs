@@ -849,27 +849,24 @@ mod tests {
         let wrapped = drive_command(0.0, 0.0, false, false, -3.1, 0.0, 3.1);
         assert!(wrapped.yaw_rate_rad_s > 0.0 && wrapped.yaw_rate_rad_s < 1.0);
     }
-    /// The 2026 field packages installed on this machine: the versioned one (the
-    /// V1.2.0 arena with its flat slab) and the earlier V2.0.0 extraction
-    /// with its crowned slab. Whichever are missing are skipped.
+    /// Optional external CAD fixtures for historical terrain dynamics checks.
+    /// Never discovers archived assets from checkout scratch or the user's home.
     fn installed_cad_packages() -> Vec<(String, CadAssets)> {
-        let home = std::env::var_os("HOME").unwrap_or_default();
-        [
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../field"),
-            std::path::PathBuf::from(home).join("dev/RM/assets/rm2026-extracted"),
-        ]
-        .into_iter()
-        .filter_map(|root| match rm_simulator_server::cad_assets::load(&root) {
-            Ok(cad) => Some((root.display().to_string(), cad)),
-            Err(error) => {
-                eprintln!(
-                    "CAD assets at {} not usable ({error:#}); skipping",
-                    root.display()
-                );
-                None
-            }
-        })
-        .collect()
+        let Some(paths) = std::env::var_os("RM_SIMULATOR_CAD_PHYSICS_FIXTURES") else {
+            return Vec::new();
+        };
+        std::env::split_paths(&paths)
+            .filter_map(|root| match rm_simulator_server::cad_assets::load(&root) {
+                Ok(cad) => Some((root.display().to_string(), cad)),
+                Err(error) => {
+                    eprintln!(
+                        "CAD assets at {} not usable ({error:#}); skipping",
+                        root.display()
+                    );
+                    None
+                }
+            })
+            .collect()
     }
     /// Drives the default chassis over the hex-marked plateau on the centre
     /// line (x ≈ -8.5..-6.3 m) in every installed field package; skipped

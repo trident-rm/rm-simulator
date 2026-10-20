@@ -9,8 +9,8 @@ use crate::collision_mesh::{self, CollisionMesh, CollisionPart, GroundMesh};
 use crate::math::{gltf_child, quat_axis_angle, rotate};
 use anyhow::ensure;
 use rm_simulator_world::{
-    ChassisConfig, ChassisPlacement, Field, FieldConfig, OutpostConfig, Pose, RefereeConfig,
-    RobotKind, RuneConfig, RuneKind, Team, chassis::Tether,
+    ChassisConfig, ChassisPlacement, Field, FieldConfig, Pose, RobotKind, RuneKind, Team,
+    chassis::Tether,
 };
 
 /// Rune face pivots inside the extracted rune asset (glTF axes, metres).
@@ -675,84 +675,15 @@ impl Default for LayoutOptions {
 ///
 /// Panics if the rune asset has no placement.
 pub fn field_config(cad: &CadAssets, options: &LayoutOptions) -> FieldConfig {
-    if cad.rest_pose_only {
-        return FieldConfig {
-            rmuc_2027: options
-                .referee
-                .then(|| cad.rmuc_2027.as_ref().map(|b| b.config()))
-                .flatten(),
-            runes: Vec::new(),
-            outposts: Vec::new(),
-            bases: Vec::new(),
-            chassis: Vec::new(),
-            zones: Vec::new(),
-            referee: None,
-            floor_height_m: if options.terrain { CATCH_FLOOR_M } else { 0.0 },
-            projectile_policy: options.projectile_policy,
-        };
-    }
-    let rune_root = &cad.rune.placements[0];
-    let runes: Vec<RuneConfig> = options
-        .rune
-        .map(|kind| {
-            (0..2)
-                .map(|face| RuneConfig {
-                    kind,
-                    hub_pose: rune_hub_at(
-                        rune_root,
-                        face,
-                        cad.rune
-                            .visual_semantics()
-                            .and_then(|s| {
-                                s.joints
-                                    .iter()
-                                    .find(|j| j.id == format!("rune.face.{face}.spin"))
-                            })
-                            .map_or(RUNE_FACE_PIVOTS_M[face], |j| j.origin_m),
-                    ),
-                    cad_orbit: true,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let outposts: Vec<OutpostConfig> = cad
-        .outpost
-        .placements
-        .iter()
-        .map(|root| OutpostConfig {
-            pivot_cad_m: cad
-                .outpost
-                .visual_semantics()
-                .and_then(|s| s.joints.iter().find(|j| j.id == "outpost.spin"))
-                .map(|j| j.origin_m),
-            origin: cad_outpost_origin(root),
-            speed_rad_s: options.outpost_speed_rad_s,
-        })
-        .collect();
     FieldConfig {
-        rmuc_2027: None,
-        bases: vec![],
-        floor_height_m: if options.terrain { CATCH_FLOOR_M } else { 0.0 },
-        chassis: Vec::new(),
-        referee: options.referee.then(|| {
-            RefereeConfig::owned(
-                runes.iter().map(|rune| rune_team(&rune.hub_pose)).collect(),
-                outposts
-                    .iter()
-                    .map(|outpost| outpost_team(&outpost.origin))
-                    .collect(),
-            )
-        }),
-        runes,
-        outposts,
-        projectile_policy: options.projectile_policy,
-        // The footprints were read off the RMUC 2026 field drawing, so they
-        // only fit the loaded arena.
-        zones: if options.terrain {
-            rm_simulator_world::zones::rmuc_2026()
+        rmuc_2027: if options.referee {
+            cad.rmuc_2027.as_ref().map(|b| b.config())
         } else {
-            Vec::new()
+            None
         },
+        floor_height_m: if options.terrain { CATCH_FLOOR_M } else { 0.0 },
+        projectile_policy: options.projectile_policy,
+        ..FieldConfig::default()
     }
 }
 
@@ -1083,24 +1014,9 @@ mod tests {
             projectile_policy: Default::default(),
         };
         let config = field_config(&cad, &options);
-        assert_eq!(config.runes.len(), 2);
-        assert!(
-            config
-                .runes
-                .iter()
-                .all(|r| r.kind == RuneKind::Big && r.cad_orbit)
-        );
-        assert_eq!(config.outposts.len(), 2);
+        assert!(config.runes.is_empty() && config.outposts.is_empty());
+        assert!(config.referee.is_none() && config.rmuc_2027.is_none());
         assert_eq!(config.floor_height_m, CATCH_FLOOR_M);
-        let referee = config.referee.unwrap();
-        // The rune stands across the field as in `cad_rune_faces`: face 0
-        // looks towards -x (blue's half), face 1 towards +x. The outposts
-        // stand at x = 3 and x = -3.
-        assert_eq!(referee.rune_teams, [Team::Blue, Team::Red]);
-        assert_eq!(referee.outpost_teams, [Team::Red, Team::Blue]);
-        for (rune, team) in config.runes.iter().zip(&referee.rune_teams) {
-            assert_eq!(rune_team(&rune.hub_pose), *team);
-        }
         assert_eq!(side_team(0.0), Team::Red);
         assert_eq!(side_team(-0.1), Team::Blue);
         assert_eq!(default_spawn(Team::Red).0[0], 9.0);
@@ -1119,50 +1035,6 @@ mod tests {
         assert!(plain.runes.is_empty());
         assert!(plain.referee.is_none());
         assert_eq!(plain.floor_height_m, 0.0);
-    }
-    /// With the shipped package each team owns one rune face and one outpost,
-    /// red on the +x half where the CAD paints its red markings.
-    #[test]
-    fn the_field_package_gives_each_team_one_rune_face_and_one_outpost() {
-        let Some(home) = std::env::var_os("HOME") else {
-            return;
-        };
-        let root = std::path::PathBuf::from(home).join("dev/RM/assets/rm2026-field");
-        if !root.join("manifest.json").is_file() {
-            return;
-        }
-        let cad = crate::cad_assets::load(&root).unwrap();
-        let config = field_config(
-            &cad,
-            &LayoutOptions {
-                rune: Some(RuneKind::Small),
-                outpost_speed_rad_s: 1.0,
-                terrain: false,
-                referee: true,
-                projectile_policy: Default::default(),
-            },
-        );
-        let referee = config.referee.unwrap();
-        let mut rune_teams = referee.rune_teams.clone();
-        rune_teams.sort_by_key(|team| team.index());
-        assert_eq!(rune_teams, [Team::Red, Team::Blue]);
-        let mut outpost_teams = referee.outpost_teams.clone();
-        outpost_teams.sort_by_key(|team| team.index());
-        assert_eq!(outpost_teams, [Team::Red, Team::Blue]);
-        for (outpost, team) in config.outposts.iter().zip(&referee.outpost_teams) {
-            let x = outpost.origin.translation_m[0];
-            assert_eq!(*team == Team::Red, x > 0.0, "outpost at x = {x}");
-        }
-        eprintln!(
-            "rune faces {:?}, outposts {:?} at x = {:?}",
-            referee.rune_teams,
-            referee.outpost_teams,
-            config
-                .outposts
-                .iter()
-                .map(|o| o.origin.translation_m[0])
-                .collect::<Vec<_>>()
-        );
     }
 
     fn asset(placements: usize) -> CadAsset {

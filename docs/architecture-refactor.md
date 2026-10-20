@@ -52,7 +52,7 @@ For an active physical world, `Field::step` performs these operations in order:
 7. Observe outpost destruction, resolve changed mechanisms, disable defeated
    chassis, and expire old hit reports.
 
-With no bodies and no referee, rune state advances directly to the target tick.
+With no bodies and no native authority, the field jumps to the target tick.
 A referee keeps the tick loop active even when physics is idle. Mechanism state
 is resolved only when articulated scenery exists. Commands and hits can change
 motion at the current timestamp, so each tick rebuilds start poses from current
@@ -68,8 +68,8 @@ projectile touched-armor cache; these retain their documented residuals.
 Rebuild when the checkpoint changes, not once per rendered frame.
 
 The extracted types retain the existing world import paths where practical.
-Outpost checkpoints keep their serialized field names through the flattened
-`RotorMotion`. Raw wire IDs and `ArmorTarget` remain unchanged. See the reuse
+Native match checkpoints carry geometry bindings and rules; shared presentation
+records do not execute historical rules. Raw wire IDs and `ArmorTarget` remain unchanged. See the reuse
 guide for the replacement of referee-dependent geometry queries with
 `StaticGeometry::at_mechanisms`.
 
@@ -85,6 +85,6 @@ consume changed components. Existing part markers remain available, and absent
 scene input leaves the visuals untouched. Projectile spheres retain their pool.
 
 Tests cover unchanged transforms, first-frame poses, wheel visibility, light
-states, chassis removal, legacy outpost serialization, tick partitioning and
+states, chassis removal, native authority validation, tick partitioning and
 complete-world replay. Use the [performance probes](performance.md) to measure
 new builds on their target hardware.

@@ -52,8 +52,8 @@ without rebuilding the corresponding physical target bodies.
 
 `RotorMotion` produces outpost angles and armor poses without HP. Set
 `stopped_at_ns` when the consuming application decides motion should stop.
-`SinusoidalMotion` computes the Big Rune speed profile; the world layer retains
-rule-range validation, seeded selection and activation transitions. Rune pose
+`SinusoidalMotion` computes the Big Rune speed profile; the native 2027 authority owns
+seeded selection and activation transitions. Rune pose
 helpers are available under `motion::rune`. `MechanismState` carries already
 resolved door states and dart-rail position. Physics never asks a referee why
 those states changed.

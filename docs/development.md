@@ -49,7 +49,7 @@ The shell sets `CARGO_TARGET_DIR="$PWD/target/nix"`, so Nix builds land in
 The `prek` hook set in `prek.toml` formats the Rust workspace and checks
 whitespace, end-of-file, merge conflicts, YAML/JSON/TOML validity, line endings,
 large files, `typos`, `actionlint` and commit messages. It excludes `target/`
-and the LFS `field/` and `field-2027/` packages. Clippy remains in `just verify` and CI's full workspace gate.
+and the LFS `field-2027/` package. Clippy remains in `just verify` and CI's full workspace gate.
 
 ## `just verify`
 
@@ -63,7 +63,7 @@ and the LFS `field/` and `field-2027/` packages. Clippy remains in `just verify`
 6. `python3 scripts/check-runtime.py`, current runtime admission and native rules
 7. `python3 scripts/check-module-dependencies.py`
 8. `python3 scripts/check-mpl-compliance.py`
-9. `python3 scripts/stage-release-field.py --all --verify-only --allow-lfs-pointers`, the field inventory CI checks (also `just field-check`)
+9. `python3 scripts/stage-release-field.py --verify-only --allow-lfs-pointers`, the field inventory CI checks (also `just field-check`)
 10. `python3 -m unittest discover -s scripts/tests`, every Python regression test
 11. `python3 -m doctest scripts/check-mpl-compliance.py`
 12. `cargo deny check advisories bans licenses sources`

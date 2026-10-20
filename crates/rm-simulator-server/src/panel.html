@@ -48,20 +48,11 @@
     </div>
     <div id="result" class="muted"></div>
     <div class="row">
-      <button class="red" onclick="referee({Adjudicate:{winner:'Red'}})">Red wins</button>
-      <button class="blue" onclick="referee({Adjudicate:{winner:'Blue'}})">Blue wins</button>
-      <button onclick="referee({Adjudicate:{winner:null}})">Draw</button>
-    </div>
-    <div class="row">
-      <button onclick="skip(180)">Skip to 3:00</button>
-      <button onclick="skip(255)">4:15</button>
-      <button onclick="skip(330)">5:30</button>
-      <button onclick="skip(415)">6:55</button>
     </div>
     <div class="row">
       <button id="pause" onclick="togglePause()">Pause</button>
-      <button onclick="command({Step:{ticks:16}})">Step 16 ms</button>
-      <button onclick="command({Step:{ticks:1000}})">Step 1 s</button>
+      <button onclick="command({Step:{ticks:2}})">Step 2 ticks</button>
+      <button onclick="command({Step:{ticks:128}})">Step 1 s</button>
     </div>
   </div>
   <div class="card">
@@ -93,8 +84,6 @@
       <button class="blue" onclick="referee({ActivateRune:{team:'Blue'}})">Activate blue rune</button>
     </div>
     <div class="row">
-      <button class="red" onclick="referee({GrantRuneOpportunity:{team:'Red'}})">Grant red opportunity</button>
-      <button class="blue" onclick="referee({GrantRuneOpportunity:{team:'Blue'}})">Grant blue opportunity</button>
     </div>
   </div>
   <div class="card">
@@ -111,10 +100,9 @@
     <h2>Bases</h2>
     <table id="bases"></table>
     <label>Team <select id="baseTeam"><option>Red</option><option>Blue</option></select></label>
-    <label>HP <input id="baseHp" type="number" min="0" max="5000" value="5000"></label>
-    <label>Shield <input id="baseShield" type="number" min="0" max="5000" value="150"></label>
+    <label>HP <input id="baseHp" type="number" min="0" max="10000" value="10000"></label>
+    <label>Shield <input id="baseShield" type="number" min="0" max="0" value="0" disabled></label>
     <button onclick="referee({SetBaseHp:{team:$('baseTeam').value,hp:Number($('baseHp').value),shield_hp:Number($('baseShield').value)}})">Set base HP</button>
-    <p class="muted">Idle practice permits damage. During matches, destroy the defending outpost first. Open base covers below to expose lower armor. Dart plate accepts projectiles for training.</p>
   </div>
   <div class="card">
     <h2>Outposts</h2>
@@ -122,11 +110,6 @@
   </div>
   <div class="card">
     <h2>Rules and economy</h2>
-    <form onsubmit="event.preventDefault(); submit(savePolicy)">
-      <label><input id="enforceAmmo" type="checkbox"> Enforce ammo allowance</label>
-      <label><input id="exchangeZone" type="checkbox"> Exchange only in a service zone</label>
-      <div class="row"><button>Apply policy</button></div>
-    </form>
     <div id="policyStatus" class="muted"></div>
     <div id="resources"></div>
     <form onsubmit="event.preventDefault(); submit(saveGold)">
@@ -143,7 +126,6 @@
     <div id="robotDetail" class="muted"></div>
     <form onsubmit="event.preventDefault(); submit(saveAllowance)">
       <label>17 mm left <input id="ammo17" type="number" min="0" max="4294967295" required value="0"></label>
-      <label>42 mm left <input id="ammo42" type="number" min="0" max="4294967295" required value="0"></label>
       <button>Set allowance</button>
     </form>
     <form onsubmit="event.preventDefault(); submit(buyAmmo)">
@@ -153,8 +135,6 @@
     </form>
     <form onsubmit="event.preventDefault(); submit(savePerformance)">
       <label>Performance <select id="performance">
-        <option value='{"Hero":"LongRangeFocused"}'>Hero, long-range</option>
-        <option value='{"Hero":"MeleeFocused"}'>Hero, melee</option>
         <option value='{"Infantry":{"chassis":"HpFocused","launcher":"CoolingFocused"}}'>Infantry, HP + cooling</option>
         <option value='{"Infantry":{"chassis":"HpFocused","launcher":"BurstFocused"}}'>Infantry, HP + burst</option>
         <option value='{"Infantry":{"chassis":"PowerFocused","launcher":"CoolingFocused"}}'>Infantry, power + cooling</option>
@@ -164,41 +144,22 @@
     </form>
     <div class="row">
       <button onclick="submit(()=>referee({InstantRespawn:{robot:selectedRobot()}}))">Instant respawn (gold)</button>
-      <button onclick="submit(()=>referee({ClearWeakened:{robot:selectedRobot()}}))">Clear weakened</button>
     </div>
-    <p class="muted">Table 5-6 exchange units: 17 mm in tens. Performance types are fixed once a round runs.</p>
+    <p class="muted">Native 2027 exchange: tens in a service zone, hundreds with a six-second delivery elsewhere. Running performance selections lock after confirmation or change.</p>
   </div>
   <div class="card">
     <h2>Equipment overrides</h2>
     <form onsubmit="event.preventDefault(); submit(saveOutpost)">
       <label>Outpost <select id="editOutpost" onchange="loadOutpost()"></select></label>
-      <label>HP <input id="outpostHp" type="number" min="0" max="1500" required value="1500"></label>
+      <label>HP <input id="outpostHp" type="number" min="0" max="1000" required value="1000"></label>
       <button>Set HP</button><button type="button" onclick="loadOutpost()">Load current</button>
     </form>
-    <p class="muted">Zero destroys the outpost and disables its armor. In a match the rotor stops at its first destruction and at 3:00, and a robot standing in a destroyed outpost&#39;s zone rebuilds it when the team has a rebuild opportunity. Outside a match restoring HP resumes rotation.</p>
     <div>
       <label>Mechanism team <select id="mechanismTeam"><option>Red</option><option>Blue</option></select></label>
-      <button onclick="submit(()=>setMechanism('SetDartDoorOpen',true))">Open dart door</button>
-      <button onclick="submit(()=>setMechanism('SetDartDoorOpen',false))">Close dart door</button>
       <button onclick="submit(()=>setMechanism('SetBaseOpen',true))">Open base</button>
       <button onclick="submit(()=>setMechanism('SetBaseOpen',false))">Close base</button>
-      <button onclick="submit(()=>referee({SetDartTargetMoving:{moving:true}}))">Sweep dart targets</button>
-      <button onclick="submit(()=>referee({SetDartTargetMoving:{moving:false}}))">Rest dart targets</button>
       <p id="mechanismState" class="muted"></p>
     </div>
-    <form onsubmit="event.preventDefault(); submit(saveOpportunities)">
-      <label>Rune team <select id="runeTeam"><option>Red</option><option>Blue</option></select></label>
-      <label>Opportunities <input id="opportunities" type="number" min="0" max="4294967295" required value="1"></label>
-      <button>Set opportunities</button>
-    </form>
-    <form onsubmit="event.preventDefault(); submit(saveBuff)">
-      <label>Defense % <input id="buffDefense" type="number" min="0" max="100" required value="25"></label>
-      <label>Attack % <input id="buffAttack" type="number" min="0" max="1000" required value="100"></label>
-      <label>Cooling multiplier <input id="buffCooling" type="number" min="0" max="100" required value="1"></label>
-      <label>Duration seconds <input id="buffDuration" type="number" min="0" max="86400" required value="45"></label>
-      <button>Override selected team buff</button>
-    </form>
-    <p class="muted">During Running only. Zero seconds clears the buff. Overrides cancel an activation attempt without spending an opportunity. Attack, defense and cooling apply to the match rules.</p>
   </div>
   <div class="card" style="grid-column: 1 / -1">
     <h2>Events</h2>
@@ -214,39 +175,21 @@ function number(id) {
   return value;
 }
 async function submit(action) { try { await action(); } catch(e) { $('error').textContent = String(e); } }
-function savePolicy() { return referee({SetPolicy:{enforce_allowance:$('enforceAmmo').checked, exchange_requires_zone:$('exchangeZone').checked, enforce_air_support:false}}); }
 function selectedRobot() { if ($('resourceRobot').value === '') throw new Error('No robot selected'); return number('resourceRobot'); }
-function saveAllowance() { return referee({SetAllowance:{robot:selectedRobot(), allowance:[number('ammo17'),number('ammo42')]}}); }
+function saveAllowance() { return referee({SetAllowance:{robot:selectedRobot(), allowance:[number('ammo17'),0]}}); }
 function buyAmmo() { return referee({BuyAmmo:{robot:selectedRobot(),caliber:$('purchaseCaliber').value,amount:number('purchaseAmount')}}); }
 function saveGold() { return referee({SetGold:{team:$('goldTeam').value,gold:number('goldValue')}}); }
 function savePerformance() { return referee({SetPerformance:{robot:selectedRobot(),performance:JSON.parse($('performance').value)}}); }
-function gameRobot(id) { return latest?.field.referee?.game.robots.find(r => String(r.config.id) === String(id)); }
+function gameRobot(id) { return latest?.field.rmuc_2027?.game.robots.find(r => String(r.id) === String(id)); }
 function setMechanism(command,open) { return referee({[command]:{team:$('mechanismTeam').value,open}}); }
 function saveOutpost() { return referee({SetOutpostHp:{outpost:number('editOutpost'),hp:number('outpostHp')}}); }
-function saveOpportunities() { return referee({SetRuneOpportunities:{team:$('runeTeam').value,opportunities:number('opportunities')}}); }
-function saveBuff() { return referee({SetRuneBuff:{team:$('runeTeam').value,defense_pct:number('buffDefense'),attack_pct:number('buffAttack'),cooling_multiplier:number('buffCooling'),duration_ns:number('buffDuration')*1e9}}); }
 function loadRobot() {
   const r = gameRobot($('resourceRobot').value); if (!r) return;
-  $('ammo17').value = r.allowance[0]; $('ammo42').value = r.allowance[1];
-  const p = JSON.stringify(r.config.performance), option = [...$('performance').options].find(o => JSON.stringify(JSON.parse(o.value)) === p);
+  $('ammo17').value = r.combat.allowance;
+  const p = JSON.stringify({Infantry:{chassis:r.combat.chassis,launcher:r.combat.launcher}}), option = [...$('performance').options].find(o => JSON.stringify(JSON.parse(o.value)) === p);
   if (option) $('performance').value = option.value;
 }
-function robotStatus(r, now) {
-  const tags = [];
-  if (r.respawn) tags.push(`respawn ${Math.floor(100 * r.respawn.progress_ticks / Math.max(1, r.respawn.required_ticks))}%`);
-  if (r.weakened) tags.push('weakened');
-  if (r.invincible_until_ticks > now) tags.push(`invincible ${Math.ceil((r.invincible_until_ticks - now) / 1000)}s`);
-  if (r.overheated) tags.push('overheated');
-  if (r.rebuild_progress_ticks > 0) tags.push(`rebuilding ${Math.floor(r.rebuild_progress_ticks / 1000)}s`);
-  return tags.join(', ');
-}
-function resultText(result) {
-  if (!result) return '';
-  if (result === 'NeedsRefereeDecision') return 'Result: awaiting a referee decision';
-  const d = result.Decided;
-  return `Result: ${d.winner ? d.winner + ' wins' : 'draw'} (${d.reason})`;
-}
-function loadOutpost() { const index=Number($('editOutpost').value), native=latest?.field.rmuc_2027?.game; const hp=native ? native.outpost_hp[index] : latest?.field.outposts[index]?.hp; if(hp != null) $('outpostHp').value=hp; }
+function loadOutpost() { const index=Number($('editOutpost').value), native=latest?.field.rmuc_2027?.game; const hp=native?.outpost_hp[index]; if(hp != null) $('outpostHp').value=hp; }
 function options(id, entries) {
   const select=$(id), old=select.value, key=JSON.stringify(entries);
   if (select.dataset.key === key) return false;
@@ -255,7 +198,6 @@ function options(id, entries) {
   return old !== select.value;
 }
 function fmt(ns) { const s = Math.floor(ns / 1e9); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
-function teamClass(t) { return t === 'Red' ? 'team-red' : 'team-blue'; }
 async function command(cmd) {
   try {
     const r = await fetch('/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cmd) });
@@ -265,46 +207,18 @@ async function command(cmd) {
   await refresh();
 }
 function referee(c) { return command({ Referee: c }); }
-function skip(seconds) { return referee({ SkipTo: { match_time_ns: seconds * 1e9 } }); }
 function togglePause() { return command({ Pause: { paused: !paused } }); }
-function describe(ev) {
-  if (typeof ev === 'string') return ev;
-  const [name, v] = Object.entries(ev)[0];
-  switch (name) {
-    case 'RuneStage': return `rune stage: ${v}`;
-    case 'RuneOpportunity': return `${v.team} gets a ${v.stage} rune opportunity (${v.total})`;
-    case 'RuneActivating': return `${v.team} rune activating`;
-    case 'RuneActivationExpired': return `${v.team} rune activation expired`;
-    case 'RuneActivated': return `${v.team} activated the ${v.stage} rune: ${v.arms} arms, avg ring ${v.average_ring.toFixed(1)}, atk ${v.buff.attack_pct}% def ${v.buff.defense_pct}% cooling x${v.buff.cooling_multiplier} for ${fmt(v.buff.expires_ns - v.buff.started_ns)}`;
-    case 'BuffExpired': return `${v.team} buff expired`;
-    case 'RobotDamaged': return `robot ${v.robot} -${v.amount} HP (${v.hp})` + (v.shooter == null ? '' : ` by robot ${v.shooter}`);
-    case 'RobotDefeated': return `robot ${v.robot} defeated`;
-    case 'RobotRevived': return `robot ${v.robot} revived`;
-    case 'RobotJoined': return `robot ${v.robot} joined ${v.team}`;
-    case 'RobotLeft': return `robot ${v.robot} left`;
-    case 'OutpostDestroyed': return `${v.team} outpost ${v.outpost} destroyed`;
-    case 'OutpostRebuilt': return `${v.team} outpost rebuilt`;
-    case 'BaseDamaged': return `${v.team} base -${v.amount} (${v.hp} +${v.shield_hp})` + (v.shooter == null ? '' : ` by robot ${v.shooter}`);
-    case 'BaseDestroyed': return `${v.team} base destroyed`;
-    case 'RobotRespawned': return `robot ${v.robot} respawned`;
-    case 'WeaknessCleared': return `robot ${v.robot} no longer weakened`;
-    case 'LevelUp': return `robot ${v.robot} reached level ${v.level}`;
-    case 'TerrainCrossing': return `robot ${v.robot} crossed the ${v.kind}`;
-    case 'BaseArmorExpanded': return `${v.team} base armor expanded`;
-    case 'RoundResult': return resultText(v);
-    default: return JSON.stringify(ev);
-  }
-}
 function render2027(state,g) {
   const c=g.control.state, teams=['Red','Blue'];
   $('phase').textContent=`${g.phase} · RMUC 2027 V1.0.0 control/structures`;
   $('clock').textContent=fmt(g.phase==='Countdown' ? g.countdown_ns : Math.max(0,420e9-c.elapsed_ns));
   $('result').textContent=g.result ? `${g.result.winner || 'Draw'} · ${g.result.reason}` : '';
   $('resources').textContent=teams.map((t,i)=>`${t}: ${c.points[i]} control, ${g.gold[i]} gold, ${g.adaptive.launches[i]} launches`).join(' · ');
-  $('policyStatus').textContent='Native 2027 combat, control, field/Rune effects and virtual assembly progression. Heavy equipment remains unavailable.';
+  $('policyStatus').textContent='Native 2027 combat, control, field/Rune effects and prototype Heavy assembly progression.';
   $('assemblyState').textContent=teams.map((t,i)=>{const a=g.assembly[i];return `${t}: ${a.outcome}, difficulty ${a.difficulty}, highest ${a.completions.filter(n=>n>0).length}, +${a.income_per_10s} gold/10s${a.outcome==='Active'?`, ${Math.max(0,(a.deadline_ns-c.elapsed_ns)/1e9).toFixed(1)}s left`:''}`;}).join(' · ');
-  $('runes').textContent='Power Rune rules are not enabled for this subset.';
+  $('runes').textContent=teams.map((t,i)=>`${t}: ${g.runes[i].phase}, ${g.runes[i].stage}, opportunities ${g.runes[i].opportunities.join('/')}`).join(' · ');
   $('armorState').textContent=teams.map((t,i)=>{const a=g.adaptive,s=a.selected[i],hits=a.impacts.filter(h=>h.attacker===t&&h.victim!==t).length;return `${t}: ${a.opportunities[i]} opportunities, ${hits}/10 hits; ${s ? `center (${s.center_um.map(v=>v/1000).join(', ')}) mm, frozen area ${s.area_share_ppb==null?'undefined: default 1×':`${(s.area_share_ppb/1e7).toFixed(2)}%`}`:'default armor'}`;}).join(' · ');
+  if(options('resourceRobot',g.robots.map(r=>[r.id,`${r.team} #${r.id}`]))) loadRobot();
   $('robotDetail').textContent='Infantry uses native 2027 performance tables and the initial level cap of five.';
   $('baseHp').max=10000; $('baseShield').value=0; $('baseShield').disabled=true;
   if(!settingsLoaded) { $('baseHp').value=10000;settingsLoaded=true; }
@@ -322,47 +236,13 @@ function render2027(state,g) {
 }
 function render(state) {
   latest = state;
-  const s = state.field, r = s.referee;
+  const s = state.field;
   paused = state.paused;
   $('pause').textContent = paused ? 'Resume' : 'Pause';
   $('conn').textContent = `tick ${s.tick}${paused ? ' (paused)' : ''}`;
   const native=s.rmuc_2027?.game;
   if (native) { render2027(state,native); return; }
-  if (!r) { $('phase').textContent = 'no referee on this field'; return; }
-  const g = r.game, now = g.round_elapsed_ticks;
-  $('policyStatus').textContent = `Current: ammo limits ${g.policy.enforce_allowance ? 'on' : 'off'}, exchange ${g.policy.exchange_requires_zone ? 'in zones only' : 'anywhere'}.`;
-  $('resources').textContent = g.teams.map(t => `${t.team} ${t.gold} gold, ${t.outpost_rebuild_opportunities} rebuild${t.outpost_rebuild_opportunities === 1 ? '' : 's'}`).join(' · ');
-  $('result').textContent = resultText(g.result);
-  if (options('resourceRobot', r.robots.map(b => [b.id, `${b.team} #${b.id}`]))) loadRobot();
-  const sel = gameRobot($('resourceRobot').value);
-  $('robotDetail').textContent = sel ? `LV ${sel.level}, XP ${(sel.experience_tenths / 10).toFixed(1)}, heat ${Math.floor(sel.heat_tenths / 10)}, ammo ${sel.allowance.join('/')}, fired ${sel.shots_launched.join('/')}` : '';
-  if (!settingsLoaded) { $('enforceAmmo').checked = g.policy.enforce_allowance; $('exchangeZone').checked = g.policy.exchange_requires_zone; settingsLoaded = true; }
-  if(options('editOutpost',s.outposts.map((o,i)=>[i,`${r.outpost_teams[i]} #${i}`]))) loadOutpost();
-  $('clock').textContent = r.phase === 'Idle' ? '--:--'
-    : r.phase === 'Countdown' ? String(Math.max(1, Math.ceil(r.countdown_remaining_ns / 1e9)))
-    : fmt(r.remaining_ns);
-  $('phase').textContent = `${r.phase} · ${r.stage} rune stage`;
-  $('runes').innerHTML = r.teams.map((t, i) => {
-    const rune = s.runes[r.rune_teams.indexOf(t.team)];
-    const state = rune ? rune.state : 'none';
-    const act = t.rune_activating_since_ns != null ? ` · activating for ${fmt(r.match_time_ns - t.rune_activating_since_ns)}` : '';
-    const buff = t.buff ? ` · buff atk ${t.buff.attack_pct}% def ${t.buff.defense_pct}% ×${t.buff.cooling_multiplier} cooling, ${fmt(Math.max(0, t.buff.expires_ns - r.match_time_ns))} left` : '';
-    return `<div><b class="${teamClass(t.team)}">${t.team}</b> rune ${state} · ${t.rune_opportunities} opportunit${t.rune_opportunities === 1 ? 'y' : 'ies'} · ${t.big_rune_activations} big activations${act}${buff}</div>`;
-  }).join('');
-  $('bots').innerHTML = (state.bots || []).map(id=>`Bot #${id} <button onclick="command({RemoveBot:{chassis:${id}}})">Remove</button>`).join(' · ');
-  $('robots').innerHTML = '<tr><th>id</th><th>team</th><th>kind</th><th>LV</th><th>HP</th><th>state</th><th></th></tr>' + r.robots.map(b =>
-    `<tr><td>${b.id}</td><td class="${teamClass(b.team)}">${b.team}</td><td>${b.kind}</td><td>${b.level}</td>
-     <td style="min-width:120px">${b.hp}/${b.max_hp}<div class="bar"><i style="width:${100 * b.hp / b.max_hp}%"></i></div></td>
-     <td class="muted">${gameRobot(b.id) ? robotStatus(gameRobot(b.id), now) : ''}</td>
-     <td><button onclick="referee({DamageRobot:{robot:${b.id},amount:Number($('dmg').value)}})">hit</button>
-         <button onclick="referee({ReviveRobot:{robot:${b.id}}})">revive</button></td></tr>`).join('');
-  $('mechanismState').textContent = ['Red','Blue'].map((team,i)=>`${team}: base ${r.base_open[i]?'open':'closed'}, dart door ${r.dart_door_open[i]?'open':'closed'}`).join('; ') + `; dart targets ${r.dart_target_since_ns == null ? 'resting' : 'sweeping'}`;
-  $('bases').innerHTML = '<tr><th>Team</th><th>HP</th><th>Shield</th></tr>' + (s.bases || []).map(b=>`<tr><td>${b.config.team}</td><td>${b.hp}/5000</td><td>${b.shield_hp}</td></tr>`).join('');
-  $('outposts').innerHTML = '<tr><th>#</th><th>team</th><th>HP</th></tr>' + s.outposts.map((o, i) =>
-    `<tr><td>${i}</td><td class="${teamClass(r.outpost_teams[i])}">${r.outpost_teams[i]}</td>
-     <td style="min-width:120px">${o.hp}/1500${o.destroyed ? ' destroyed' : ''}<div class="bar"><i style="width:${100 * o.hp / 1500}%"></i></div></td></tr>`).join('');
-  $('events').textContent = r.events.slice().reverse().map(e =>
-    `${e.match_time_ns != null ? fmt(e.match_time_ns) : ' idle'}  ${describe(e.event)}`).join('\n');
+  $('phase').textContent = 'Practice · no native match bindings';
 }
 async function refresh() {
   try {

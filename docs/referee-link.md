@@ -2,6 +2,13 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Referee link
 
+The bridge projects native RMUC 2027 state onto the existing custom-client
+Protobuf schema. Heavy maps to its Engineer type; unsupported energy, series and
+launch-counter telemetry stays absent, and shield fields are absent because
+2027 has no virtual Base shield. This compatibility interface does not run a
+2026 referee.
+
+
 The referee link lets a RoboMaster custom client, such as trident-rm
 `custom-client-27`, run against the simulator instead of the referee system.
 The app embeds an MQTT broker and publishes the official custom-client state

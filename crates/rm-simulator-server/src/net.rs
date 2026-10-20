@@ -1180,10 +1180,7 @@ impl Client {
 mod tests {
     use super::*;
     use crate::layout::ChassisSpawner;
-    use rm_simulator_world::{
-        ChassisCommand, ChassisConfig, Field, FieldConfig, MatchPhase, RefereeCommand,
-        RefereeConfig,
-    };
+    use rm_simulator_world::{ChassisCommand, ChassisConfig, Field, FieldConfig, RefereeCommand};
 
     #[test]
     fn navigation_sentry_routes_team_intents_and_reports_paths_over_both_transports() {
@@ -1359,10 +1356,7 @@ mod tests {
     }
 
     fn host() -> (Server, HostHandle) {
-        let config = FieldConfig {
-            referee: Some(RefereeConfig::alternating(1, 2)),
-            ..FieldConfig::default()
-        };
+        let config = crate::workload::field_config();
         let field = Field::new(&config).unwrap();
         let simulation = Simulation::new(field, true).with_spawner(ChassisSpawner {
             config: ChassisConfig::default(),
@@ -1408,7 +1402,7 @@ mod tests {
             assert!(client.welcome().chassis.is_none());
             let deploy = |position_m| Command::Deploy {
                 team: Team::Blue,
-                robot: Robot::Hero,
+                robot: Robot::Engineer,
                 chassis: crate::protocol::Chassis::Mecanum,
                 position_m,
             };
@@ -1432,7 +1426,7 @@ mod tests {
             assert_eq!(client.welcome().team, Some(Team::Blue));
             let assignment = client.welcome().chassis.as_ref().unwrap();
             let id = assignment.id;
-            assert_eq!(assignment.robot, Robot::Hero);
+            assert_eq!(assignment.robot, Robot::Engineer);
             assert!(assignment.config.mecanum);
             let roster = client
                 .roster()
@@ -2325,7 +2319,8 @@ mod tests {
             .unwrap();
         referee.send(Command::Step { ticks: 5_500 }).unwrap();
         wait_until("match never started", || {
-            simulation.snapshot().unwrap().referee.unwrap().phase == MatchPhase::Running
+            simulation.snapshot().unwrap().rmuc_2027.unwrap().game.phase
+                == rm_simulator_world::rmuc_2027::match_rules::Phase::Running
         });
         server.broadcast_snapshot();
         let state = watcher
@@ -2333,8 +2328,8 @@ mod tests {
             .expect("snapshot");
         assert!(state.paused);
         assert_eq!(
-            state.field.referee.as_ref().unwrap().phase,
-            MatchPhase::Running
+            state.field.rmuc_2027.as_ref().unwrap().game.phase,
+            rm_simulator_world::rmuc_2027::match_rules::Phase::Running
         );
         assert_eq!(state.field.tick, 5_500);
         assert_eq!(state.field.chassis.len(), 2);
@@ -2442,7 +2437,7 @@ mod tests {
             Client::connect_udp(server.local_addr(), "pilot", None, Role::Pilot).unwrap();
         let mut referee =
             Client::connect_udp(server.local_addr(), "referee", None, Role::Referee).unwrap();
-        let initial_gold = simulation.snapshot().unwrap().referee.unwrap().game.teams[0].gold;
+        let initial_gold = simulation.snapshot().unwrap().rmuc_2027.unwrap().game.gold[0];
         for json in [
             r#"{"Referee":{"SetGold":{"team":"Red","gold":777}}}"#,
             r#"{"Referee":{"SetOutpostHp":{"outpost":0,"hp":1}}}"#,
@@ -2461,7 +2456,7 @@ mod tests {
                     .any(|n| n.contains("only the referee"))
             );
             assert_eq!(
-                simulation.snapshot().unwrap().referee.unwrap().game.teams[0].gold,
+                simulation.snapshot().unwrap().rmuc_2027.unwrap().game.gold[0],
                 initial_gold
             );
         }
@@ -2476,10 +2471,19 @@ mod tests {
             referee.commands_confirmed()
         });
         assert_eq!(
-            simulation.snapshot().unwrap().referee.unwrap().game.teams[0].gold,
+            simulation.snapshot().unwrap().rmuc_2027.unwrap().game.gold[0],
             777
         );
-        assert_eq!(simulation.snapshot().unwrap().outposts[0].hp, 1500);
+        assert_eq!(
+            simulation
+                .snapshot()
+                .unwrap()
+                .rmuc_2027
+                .unwrap()
+                .game
+                .outpost_hp[0],
+            1000
+        );
     }
 }
 

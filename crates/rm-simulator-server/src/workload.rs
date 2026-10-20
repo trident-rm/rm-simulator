@@ -14,7 +14,7 @@
 //! calls it, and it reads no assets.
 use crate::layout::ChassisSpawner;
 use crate::simulation::Simulation;
-use rm_simulator_world::{ChassisCommand, ChassisConfig, Field, FieldConfig, RefereeConfig, Team};
+use rm_simulator_world::{ChassisCommand, ChassisConfig, Field, FieldConfig, Team};
 
 /// Build one measurement field and its chassis.
 ///
@@ -32,11 +32,7 @@ use rm_simulator_world::{ChassisCommand, ChassisConfig, Field, FieldConfig, Refe
 /// assert_eq!(simulation.state().field.chassis.len(), 2);
 /// ```
 pub fn simulation(players: usize) -> (Simulation, Vec<u32>) {
-    let mut config = FieldConfig {
-        referee: Some(RefereeConfig::alternating(2, 2)),
-        ..Default::default()
-    };
-    config.runes.push(config.runes[0]);
+    let config = field_config();
     let mut simulation = Simulation::new(
         Field::new(&config).expect("the measurement field configuration is valid"),
         false,
@@ -58,6 +54,54 @@ pub fn simulation(players: usize) -> (Simulation, Vec<u32>) {
         })
         .collect();
     (simulation, chassis)
+}
+
+/// Synthetic native field for repeatable no-CAD measurements and protocol fixtures.
+/// Geometry is deliberately artificial and must never substitute for a verified
+/// arena package. Coordinates are metres in FLU; the clock remains 128 Hz.
+///
+/// ```
+/// let config = rm_simulator_server::workload::field_config();
+/// assert!(config.rmuc_2027.is_some());
+/// rm_simulator_world::Field::new(&config).unwrap();
+/// ```
+pub fn field_config() -> FieldConfig {
+    use rm_simulator_world::{
+        Pose,
+        rmuc_2027::{Config, Detector, RuneGeometry, Tower},
+    };
+    let detector = |x, y| Detector {
+        pose: Pose::at([x, y, 1.0]),
+        half_m: [0.045, 0.044],
+    };
+    FieldConfig {
+        rmuc_2027: Some(Config {
+            bases: [vec![detector(12., 0.)], vec![detector(-12., 0.)]],
+            outposts: [1., -1.].map(|side| Tower {
+                pivot_m: [side * 3., 0., 1.],
+                axis: [0., 0., 1.],
+                detectors: (0..3)
+                    .map(|i| detector(side * 3., i as f64 * 0.3))
+                    .collect(),
+            }),
+            zones: vec![],
+            supply_zones: vec![],
+            vantage_zones: vec![],
+            terrain_zones: vec![],
+            runes: [1., -1.]
+                .map(|side| RuneGeometry {
+                    pivot_m: [0., side * 6., 1.],
+                    axis: [0., 1., 0.],
+                    targets: std::array::from_fn(|i| {
+                        let a = i as f64 * std::f64::consts::TAU / 5.;
+                        Pose::at([a.cos() * 0.7, side * 6., 1. + a.sin() * 0.7])
+                    }),
+                })
+                .to_vec(),
+            rotor_direction: 1,
+        }),
+        ..FieldConfig::default()
+    }
 }
 
 /// The command the constant-drive measurement workloads apply to every chassis:
@@ -96,10 +140,14 @@ mod tests {
     }
 
     #[test]
-    fn the_field_carries_two_runes_and_a_referee() {
+    fn the_field_carries_two_native_runes_and_authority() {
         let (simulation, _) = simulation(1);
         let state = simulation.state();
-        assert_eq!(state.field.runes.len(), 2);
-        assert!(state.field.referee.is_some());
+        assert!(state.field.runes.is_empty());
+        assert_eq!(
+            state.field.rmuc_2027.as_ref().unwrap().config.runes.len(),
+            2
+        );
+        assert!(state.field.referee.is_none());
     }
 }

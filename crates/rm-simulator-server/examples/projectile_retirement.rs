@@ -16,7 +16,7 @@
 //! Usage: `projectile_retirement --cad <package> --out <dir> [--reps 5]
 //! [--warmup-s 10] [--measure-s 60] [--arms a,b,c] [--trajectories]`.
 use rm_simulator_server::{
-    base_layout, cad_assets,
+    cad_assets,
     layout::{self, LayoutOptions},
     protocol::ServerMessage,
     simulation::{SimulationState, TickSchedule},
@@ -380,8 +380,7 @@ fn run_arm(
         referee: false,
         projectile_policy: arm.policy,
     };
-    let mut config = layout::field_config(cad, &options);
-    config.bases = base_layout::load(cad)?;
+    let config = layout::field_config(cad, &options);
     let mut field = Field::new(&config)?;
     layout::add_terrain(&mut field, terrain)?;
 

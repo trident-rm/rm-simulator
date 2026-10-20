@@ -117,12 +117,9 @@ impl Exclusion {
 }
 /// Approximate Road card envelope from the registered 2027 diagram, with 15 cm
 /// survey allowance. This is a navigation exclusion, never a referee zone.
-pub(crate) fn road_exclusions(season: rm_simulator_world::season::Season) -> Vec<Exclusion> {
-    use rm_simulator_world::{Team, season::Season};
-    if season != Season::Rm2027 {
-        return vec![];
-    }
-    let areas = crate::zone_catalog::areas(season);
+pub(crate) fn road_exclusions() -> Vec<Exclusion> {
+    use rm_simulator_world::Team;
+    let areas = crate::zone_catalog::areas();
     [Team::Red, Team::Blue]
         .into_iter()
         .map(|side| {
@@ -846,14 +843,13 @@ mod tests {
         assert!(path.windows(2).all(|p| !region.crosses(p[0], p[1])));
         assert!(map.plan([-2., 0., 0.], [0., 0.], &[], &geometry).is_err());
         assert!(region.crosses([0.6, 0., 0.], [0.6, 0., 0.]));
-        let roads = road_exclusions(rm_simulator_world::season::Season::Rm2027);
+        let roads = road_exclusions();
         assert_eq!(roads.len(), 2);
         assert!(
             roads
                 .iter()
                 .all(|r| (0..2).all(|i| r.min[i].is_finite() && r.min[i] < r.max[i]))
         );
-        assert!(road_exclusions(rm_simulator_world::season::Season::Rm2026).is_empty());
     }
     #[test]
     fn failed_approach_is_remembered_and_recovery_is_bounded() {

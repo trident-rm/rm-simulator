@@ -3,9 +3,7 @@
 //! Small reproducible wall-clock comparison of the world's main stepping paths.
 //! Run with `cargo run --release -p rm-simulator-world --example step_cost`.
 
-use rm_simulator_world::{
-    ChassisConfig, ChassisPlacement, Field, FieldConfig, RefereeConfig, Team,
-};
+use rm_simulator_world::{ChassisConfig, ChassisPlacement, Field, FieldConfig, Team};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -34,13 +32,6 @@ fn report(name: &str, elapsed: Duration) {
 
 fn main() {
     let empty = measure(|| Field::new(&FieldConfig::default()).unwrap());
-    let referee = measure(|| {
-        Field::new(&FieldConfig {
-            referee: Some(RefereeConfig::alternating(1, 2)),
-            ..FieldConfig::default()
-        })
-        .unwrap()
-    });
     let chassis = measure(|| {
         let config = ChassisConfig::default();
         Field::new(&FieldConfig {
@@ -58,6 +49,5 @@ fn main() {
 
     println!("best of {REPEATS}, {TICKS} ticks each");
     report("empty fast-forward", empty);
-    report("referee only", referee);
     report("one chassis", chassis);
 }

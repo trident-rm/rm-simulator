@@ -3,17 +3,15 @@
 //! Competitor manual (July 2026), main interface pp. 1 and 3: mirrored
 //! per-robot health slots, with unoccupied and defeated robots dimmed.
 use super::*;
-use rm_simulator_world::{RobotKind, RobotSnapshot};
+use rm_simulator_world::RobotKind;
 
 use rm_simulator_server::roster::{Slot, slots};
-use rm_simulator_world::season::Season;
 const DIM: Color = Color::srgb(0.38, 0.42, 0.46);
 
 /// One team's robot slot row, holding a chassis id per slot or `None` when empty.
 #[derive(Component)]
 pub(super) struct TeamSlots {
     team: Team,
-    season: Season,
     // Bind to chassis identity rather than position in a received snapshot.
     occupants: Vec<Option<u32>>,
 }
@@ -50,10 +48,9 @@ pub(super) fn spawn(commands: &mut Commands, parent: Entity, team: Team) {
     );
     commands.entity(row).insert(TeamSlots {
         team,
-        season: Season::Rm2026,
-        occupants: vec![None; slots(Season::Rm2026).len()],
+        occupants: vec![None; slots().len()],
     });
-    for index in 0..slots(Season::Rm2026).len() {
+    for index in 0..slots().len() {
         spawn_slot(commands, row, team, index);
     }
 }
@@ -182,16 +179,7 @@ pub(super) fn update(
         return;
     };
     for (entity, mut row) in &mut rows {
-        let slots = slots(session.season);
-        if row.season != session.season {
-            commands.entity(entity).despawn_children();
-            row.season = session.season;
-            row.occupants = vec![None; slots.len()];
-            for index in 0..slots.len() {
-                spawn_slot(&mut commands, entity, row.team, index);
-            }
-            continue;
-        }
+        let slots = slots();
         // The chassis and HP come from the same authoritative snapshot. A roster
         // update can arrive separately; spectators never create health slots.
         let robots: Vec<_> = session
@@ -200,9 +188,6 @@ pub(super) fn update(
             .iter()
             .filter(|c| c.team == row.team)
             .map(|c| {
-                let health: Option<&RobotSnapshot> = session
-                    .referee()
-                    .and_then(|r| r.robots.iter().find(|r| r.id == c.id && r.team == row.team));
                 let native_kind = session
                     .rmuc_2027()
                     .and_then(|s| s.game.robots.iter().find(|r| r.id == c.id))
@@ -219,17 +204,12 @@ pub(super) fn update(
                     });
                 RobotStatus {
                     id: c.id,
-                    kind: health.map_or_else(
-                        || {
-                            session
-                                .roster
-                                .iter()
-                                .find(|p| p.chassis == Some(c.id))
-                                .and_then(|p| p.robot)
-                                .map_or(native_kind.unwrap_or(RobotKind::Infantry), |r| r.kind())
-                        },
-                        |r| r.kind,
-                    ),
+                    kind: session
+                        .roster
+                        .iter()
+                        .find(|p| p.chassis == Some(c.id))
+                        .and_then(|p| p.robot)
+                        .map_or(native_kind.unwrap_or(RobotKind::Infantry), |r| r.kind()),
                     number: session
                         .roster
                         .iter()
@@ -241,12 +221,12 @@ pub(super) fn update(
                                 .find(|s| s.prototype == Some(r))
                                 .map_or(r.number(), |s| s.number)
                         }),
-                    hp: health.map(|r| (r.hp, r.max_hp)).or_else(|| {
+                    hp: {
                         session
                             .rmuc_2027()
                             .and_then(|s| s.game.robots.iter().find(|r| r.id == c.id))
                             .map(|r| (r.hp, r.max_hp))
-                    }),
+                    },
                 }
             })
             .collect();
@@ -292,16 +272,14 @@ mod tests {
         let mut session = crate::session::test_session(true);
         let template = session.snapshot.chassis[0].clone();
         session.snapshot.chassis.clear();
-        let mut field = rm_simulator_world::Field::new(&rm_simulator_world::FieldConfig {
-            referee: Some(rm_simulator_world::RefereeConfig::default()),
-            ..default()
-        })
-        .unwrap()
-        .snapshot();
-        let referee = field.referee.as_mut().unwrap();
+        let mut field =
+            rm_simulator_world::Field::new(&rm_simulator_server::workload::field_config())
+                .unwrap()
+                .snapshot();
+        let native = field.rmuc_2027.as_mut().unwrap();
         for (id, team, kind, hp) in [
             (0, Team::Red, RobotKind::Infantry, 150),
-            (1, Team::Blue, RobotKind::Hero, 200),
+            (1, Team::Blue, RobotKind::Engineer, 200),
             (2, Team::Red, RobotKind::Infantry, 0),
             (3, Team::Blue, RobotKind::Infantry, 40),
             (4, Team::Red, RobotKind::Infantry, 200),
@@ -310,17 +288,20 @@ mod tests {
             chassis.id = id;
             chassis.team = team;
             session.snapshot.chassis.push(chassis);
-            referee.robots.push(RobotSnapshot {
-                id,
-                team,
-                kind,
-                hp,
-                max_hp: 200,
-                level: 1,
-                weakened: false,
-            });
+            let role = match kind {
+                RobotKind::Engineer => {
+                    rm_simulator_world::rmuc_2027::match_rules::GroundRole::Heavy
+                }
+                _ => rm_simulator_world::rmuc_2027::match_rules::GroundRole::Infantry,
+            };
+            native
+                .game
+                .add_robot(id, rm_simulator_world::referee::game_team(team), role);
+            let robot = native.game.robots.iter_mut().find(|r| r.id == id).unwrap();
+            robot.hp = hp;
+            robot.max_hp = 200;
         }
-        session.snapshot.referee = field.referee;
+        session.snapshot.rmuc_2027 = field.rmuc_2027;
         session.roster.clear(); // Simulate a roster message that has not arrived yet.
         session
     }
@@ -358,9 +339,10 @@ mod tests {
             session.snapshot.chassis.retain(|c| c.id != 0);
             session
                 .snapshot
-                .referee
+                .rmuc_2027
                 .as_mut()
                 .unwrap()
+                .game
                 .robots
                 .iter_mut()
                 .find(|r| r.id == 3)
@@ -388,15 +370,14 @@ mod tests {
         let mut infantry4 = robot(2, RobotKind::Infantry, 200);
         infantry4.number = Some(4);
         let mut occupants = vec![None; 7];
-        reconcile(&mut occupants, &[infantry4], slots(Season::Rm2027));
+        reconcile(&mut occupants, &[infantry4], slots());
         assert_eq!(occupants[1], None);
         assert_eq!(occupants[2], Some(2));
     }
 
     #[test]
     fn season_2027_has_complete_equipment_without_legacy_hero_alias() {
-        let mut session = populated_session();
-        session.season = Season::Rm2027;
+        let session = populated_session();
         let mut app = App::new();
         app.insert_resource(session)
             .add_systems(Startup, |mut commands: Commands| {
@@ -496,28 +477,18 @@ mod tests {
     }
     #[test]
     fn duplicate_types_overflow_and_departure_does_not_move_survivors() {
-        let mut occupants = vec![None; 9];
-        let slots = slots(Season::Rm2026);
+        let mut occupants = vec![None; slots().len()];
+        let slots = slots();
         let robots = vec![
             robot(7, RobotKind::Infantry, 200),
             robot(2, RobotKind::Infantry, 100),
             robot(9, RobotKind::Infantry, 0),
-            robot(1, RobotKind::Hero, 200),
+            robot(1, RobotKind::Engineer, 200),
         ];
         reconcile(&mut occupants, &robots, slots);
         assert_eq!(
             occupants,
-            vec![
-                Some(1),
-                None,
-                Some(2),
-                Some(7),
-                Some(9),
-                None,
-                None,
-                None,
-                None
-            ]
+            vec![Some(1), Some(2), Some(7), None, None, None, None, Some(9)]
         );
         reconcile(
             &mut occupants,
@@ -526,7 +497,7 @@ mod tests {
         );
         assert_eq!(
             occupants,
-            vec![None, None, None, Some(7), Some(9), None, None, None, None]
+            vec![None, None, Some(7), None, None, None, None, Some(9)]
         );
         reconcile(
             &mut occupants,
@@ -537,19 +508,19 @@ mod tests {
             ],
             slots,
         );
-        assert_eq!(occupants[2], Some(12));
+        assert_eq!(occupants[1], Some(12));
     }
     #[test]
     fn empty_dead_and_damaged_are_distinct() {
-        let (empty, fill, color) = presentation(0, None, Team::Red, slots(Season::Rm2026));
+        let (empty, fill, color) = presentation(0, None, Team::Red, slots());
         assert!(empty.contains("EMPTY"));
         assert_eq!(fill, 0.);
         assert_eq!(color, DIM);
         let (dead, fill, color) = presentation(
             0,
-            Some(&robot(4, RobotKind::Hero, 0)),
+            Some(&robot(4, RobotKind::Engineer, 0)),
             Team::Red,
-            slots(Season::Rm2026),
+            slots(),
         );
         assert!(dead.contains("DOWN"));
         assert!(dead.starts_with("1 DOWN"));
@@ -557,9 +528,9 @@ mod tests {
         assert_eq!(color, DIM);
         let (_, fill, color) = presentation(
             0,
-            Some(&robot(4, RobotKind::Hero, 50)),
+            Some(&robot(4, RobotKind::Engineer, 50)),
             Team::Blue,
-            slots(Season::Rm2026),
+            slots(),
         );
         assert_eq!(fill, 0.25);
         assert_eq!(color, team_color(Team::Blue));

@@ -36,14 +36,14 @@ The fitted outpost geometry and rune pose helpers now in
 `crates/rm-simulator-physics/src/motion.rs` were moved from the world crate.
 They carry the same `rm-vision-sim` provenance described above.
 
-The RMUC 2026 field geometry is loaded at run time from exported glTF files.
-The approved runtime package is stored in `field/` through Git LFS. Its geometry,
+The historical RMUC 2026 field geometry and `field/` LFS package are preserved
+at Git tag `rm2026-final`; they are no longer shipped on main. Its geometry,
 textures and source data remain the property of DJI / RoboMaster under their
-original terms, not this workspace's software license. `field/CAD-NOTICE.md`
-retains the rm-map-tools upstream notice verbatim; the repository it names there
+original terms, not this workspace's software license. The archived
+`field/CAD-NOTICE.md` retains the rm-map-tools upstream notice verbatim; the repository it names there
 is the exporter that produced this package, not this simulator.
 The original archive URL and checksum are retained as import provenance in
-`scripts/release-field.json`. The CAD scene plugin follows the `cad_scene`
+the `rm2026-final` archive’s `scripts/release-field.json`. The CAD scene plugin follows the `cad_scene`
 module of `rm-vision-sim`.
 
 The offline `scripts/generate-minimap.py` tool imports GLB scene traversal from

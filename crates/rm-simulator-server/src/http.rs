@@ -350,14 +350,11 @@ mod tests {
     use super::*;
     use crate::host::Host;
     use crate::simulation::Simulation;
-    use rm_simulator_world::{Field, FieldConfig, MatchPhase, RefereeConfig};
+    use rm_simulator_world::{Field, FieldConfig};
     use std::io::Read;
 
     fn simulation() -> (Host, HostHandle) {
-        let config = FieldConfig {
-            referee: Some(RefereeConfig::alternating(1, 2)),
-            ..FieldConfig::default()
-        };
+        let config = crate::workload::field_config();
         let host = Host::new(Simulation::new(Field::new(&config).unwrap(), true), true).unwrap();
         let handle = host.handle();
         (host, handle)
@@ -402,7 +399,7 @@ mod tests {
         let state = respond(&request("GET /api/state HTTP/1.1\r\n\r\n"), &simulation);
         let json: serde_json::Value = serde_json::from_slice(&state.body).unwrap();
         assert_eq!(json["paused"], true);
-        assert_eq!(json["field"]["referee"]["phase"], "Idle");
+        assert_eq!(json["field"]["rmuc_2027"]["game"]["phase"], "Idle");
         let journal = respond(
             &request("GET /api/fire-records HTTP/1.1\r\n\r\n"),
             &simulation,
@@ -416,17 +413,20 @@ mod tests {
         );
         assert_eq!(respond(&request(&post), &simulation).status, 200);
         assert_eq!(
-            simulation.state().unwrap().field.referee.unwrap().phase,
-            MatchPhase::Countdown
+            simulation
+                .state()
+                .unwrap()
+                .field
+                .rmuc_2027
+                .unwrap()
+                .game
+                .phase,
+            rm_simulator_world::rmuc_2027::match_rules::Phase::Countdown
         );
         // A second start is refused with the referee's reason.
         let again = respond(&request(&post), &simulation);
         assert_eq!(again.status, 400);
-        assert!(
-            std::str::from_utf8(&again.body)
-                .unwrap()
-                .contains("already")
-        );
+        assert!(std::str::from_utf8(&again.body).unwrap().contains("reset"));
         let body = r#"{"Step":{"ticks":5500}}"#;
         let step = format!(
             "POST /api/command HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}",
@@ -526,10 +526,7 @@ mod tests {
     }
     #[test]
     fn http_edits_live_resources_equipment_and_rejects_invalid_purchases() {
-        let config = FieldConfig {
-            referee: Some(RefereeConfig::alternating(1, 2)),
-            ..FieldConfig::default()
-        };
+        let config = crate::workload::field_config();
         let mut field = Field::new(&config).unwrap();
         let id = field
             .add_chassis(&rm_simulator_world::ChassisPlacement {
@@ -552,17 +549,22 @@ mod tests {
                 &simulation,
             )
         };
-        assert_eq!(post(serde_json::json!({"SetPolicy":{"enforce_allowance":true,"exchange_requires_zone":false}})).status, 200);
+        assert_eq!(post(serde_json::json!({"SetPolicy":{"enforce_allowance":true,"exchange_requires_zone":false}})).status, 400);
         assert_eq!(post(serde_json::json!("StartMatch")).status, 200);
         simulation.apply(&Command::Step { ticks: 6000 }).unwrap();
-        let game = || simulation.state().unwrap().field.referee.unwrap().game;
-        let gold = game().teams[0].gold;
+        let game = || simulation.state().unwrap().field.rmuc_2027.unwrap().game;
         assert_eq!(
-            post(serde_json::json!({"BuyAmmo":{"robot":id,"caliber":"Mm17","amount":20}})).status,
+            post(serde_json::json!({"SetGold":{"team":"Red","gold":1000}})).status,
             200
         );
-        assert_eq!(game().teams[0].gold, gold - 20);
-        assert_eq!(game().robots[0].allowance, [20, 0]);
+        let gold = game().gold[0];
+        assert_eq!(
+            post(serde_json::json!({"BuyAmmo":{"robot":id,"caliber":"Mm17","amount":100}})).status,
+            200
+        );
+        simulation.apply(&Command::Step { ticks: 768 }).unwrap();
+        assert_eq!(game().gold[0], gold - 150);
+        assert_eq!(game().robots[0].combat.allowance, 100);
         let before = simulation.state().unwrap();
         assert_eq!(
             post(serde_json::json!({"BuyAmmo":{"robot":id,"caliber":"Mm42","amount":2}})).status,
@@ -570,7 +572,7 @@ mod tests {
         );
         assert_eq!(simulation.state().unwrap(), before);
         assert_eq!(
-            post(serde_json::json!({"SetAllowance":{"robot":id,"allowance":[50,6]}})).status,
+            post(serde_json::json!({"SetAllowance":{"robot":id,"allowance":[50,0]}})).status,
             200
         );
         assert_eq!(
@@ -584,16 +586,16 @@ mod tests {
         assert_eq!(
             post(serde_json::json!({"SetRuneOpportunities":{"team":"Red","opportunities":3}}))
                 .status,
-            200
+            400
         );
-        assert_eq!(post(serde_json::json!({"SetRuneBuff":{"team":"Red","defense_pct":100,"attack_pct":100,"cooling_multiplier":1,"duration_ns":1000000000_u64}})).status, 200);
+        assert_eq!(post(serde_json::json!({"SetRuneBuff":{"team":"Red","defense_pct":100,"attack_pct":100,"cooling_multiplier":1,"duration_ns":1000000000_u64}})).status, 400);
         assert_eq!(
             post(serde_json::json!({"SetBaseOpen":{"team":"Red","open":true}})).status,
             200
         );
         assert_eq!(
             post(serde_json::json!({"SetDartDoorOpen":{"team":"Blue","open":false}})).status,
-            200
+            400
         );
         assert_eq!(
             post(serde_json::json!({"SetBaseOpen":{"team":"Green","open":true}})).status,
@@ -608,20 +610,11 @@ mod tests {
             &simulation,
         );
         let json: serde_json::Value = serde_json::from_slice(&state.body).unwrap();
-        assert_eq!(json["field"]["referee"]["game"]["teams"][1]["gold"], 123);
-        assert_eq!(
-            json["field"]["referee"]["game"]["robots"][0]["allowance"],
-            serde_json::json!([50, 6])
-        );
-        assert_eq!(json["field"]["outposts"][0]["hp"], 750);
-        assert_eq!(
-            json["field"]["referee"]["base_open"],
-            serde_json::json!([true, false])
-        );
-        assert_eq!(
-            json["field"]["referee"]["dart_door_open"],
-            serde_json::json!([true, false])
-        );
+        let game = &json["field"]["rmuc_2027"]["game"];
+        assert_eq!(game["gold"][1], 123);
+        assert_eq!(game["robots"][0]["combat"]["allowance"], 50);
+        assert_eq!(game["outpost_hp"][0], 750);
+        assert_eq!(game["base_open"], serde_json::json!([true, false]));
         let before = simulation.state().unwrap();
         assert_eq!(post(serde_json::json!({"SetRuneBuff":{"team":"Red","defense_pct":101,"attack_pct":100,"cooling_multiplier":1,"duration_ns":1000000000_u64}})).status, 400);
         assert_eq!(simulation.state().unwrap(), before);

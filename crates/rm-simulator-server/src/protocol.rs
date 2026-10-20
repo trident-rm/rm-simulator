@@ -112,7 +112,7 @@ use serde::{Deserialize, Serialize};
 /// Version 72 adds native Heavy conversion and historical launcher permission.
 /// Version 73 adds authenticated team map interaction events.
 /// Version 74 adds host-owned Sentry navigation commands and path diagnostics.
-pub const PROTOCOL_VERSION: u32 = 74;
+pub const PROTOCOL_VERSION: u32 = 75;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///
@@ -1382,14 +1382,11 @@ pub enum ServerMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rm_simulator_world::{Caliber, Field, FieldConfig, RefereeConfig};
+    use rm_simulator_world::{Caliber, Field};
 
     #[test]
     fn snapshots_survive_the_wire() {
-        let config = FieldConfig {
-            referee: Some(RefereeConfig::alternating(1, 2)),
-            ..FieldConfig::default()
-        };
+        let config = crate::workload::field_config();
         let mut field = Field::new(&config).unwrap();
         field.referee_command(RefereeCommand::StartMatch).unwrap();
         field.step(5_500).unwrap();

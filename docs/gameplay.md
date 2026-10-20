@@ -1,45 +1,36 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
-# Gameplay engines
+# Native RMUC 2027 gameplay
 
-The application now targets RMUC 2027 only. The native sections below describe
-its live authority; the remaining 2026 `Game` sections document retained shared
-kernels and regression scenarios, not another playable application season.
-
-`rm-simulator-gameplay` runs a match without Bevy, Rapier, CAD, networking or
-host time. It is pinned to the English RoboMaster 2026 University Championship
-Rule Manual V2.1.0, dated 2026-07-17. It does not silently adopt later releases.
-The [2027 rules reference](rules-2027.md) is a separate implementation baseline.
-The [live 2027 control/structure subset](rmuc2027-field.md#enable-the-live-controlstructure-subset)
-uses `rmuc_2027::match_rules::Match`, not the 2026 `Game`; [runtime admission](seasons.md) describes the single-season application and retained kernels.
+`rm-simulator-gameplay` runs RMUC 2027 V1.0.0 rules without Bevy, Rapier, CAD,
+networking or host time. The only match authority is
+`rmuc_2027::match_rules::Match`; the 2026 engine is archived at `rm2026-final`.
+See [manual interpretations](rules-2027.md) and [runtime admission](seasons.md).
 
 ```sh
 just gameplay-test
 just gameplay-demo
+just control-test
 ```
 
-The demo runs a native 2027 round: countdown, Outpost destruction, RFID capture,
-control scoring and Base destruction. The historical `Game` tests below also
-cover timed purchases, income, respawns, rebuilding, heat and tick partitioning.
+## Integration and clock
 
-Read this guide before changing either gameplay integration.
+The engine accepts explicit nanosecond durations and external observations.
+The world adapter runs it alongside shared physics at a fixed 128 Hz. Never read
+a host clock in either crate. Snapshots preserve hidden rule state so restore and
+prediction follow the same command/step paths as the host.
 
-## Contents
-
-- [RMUC 2027 control component](#rmuc-2027-control-component)
-- [Live integration and ownership](#live-integration-and-ownership)
-- [API and clock](#api-and-clock)
-- [Rule coverage and unsupported elements](#rule-coverage-and-unsupported-elements)
-- [Implemented consequences](#implemented-consequences)
-- [Result comparison](#result-comparison)
-- [Ambiguities and application choices](#ambiguities-and-application-choices)
+`FieldConfig::default()` is a bare physical world. Native source bindings are
+required for match construction; historical rule configurations are rejected.
+Shared identity, command and presentation records remain data, not a second
+engine. Remaining unsupported rules are listed in the
+[field guide](rmuc2027-field.md) and [rules reference](rules-2027.md).
 
 ## RMUC 2027 control component
 
 `rm_simulator_gameplay::rmuc_2027::Control` implements the UC V1.0.0 territory
-state machine separately from the legacy `Game`. The native 2027 match adapter
-now consumes it; live world admission requires native source bindings. The 2026 rule
-inventory and engine below retain their existing meaning.
+state machine. The native match adapter consumes it; live world admission requires
+native source bindings.
 
 The component implements UC §5.6.2, Tables 5-20–5-21, and the ownership-transfer
 part of §5.6.1:
@@ -137,215 +128,6 @@ and reserve spending are checkpoint authority, not recomputed from current HP.
 See [the Fortress reserve policy](rules-2027.md#uc-territory-logistics-and-victory)
 for its explicit per-side/per-round lifetime.
 
-## Live integration and ownership
-
-The world referee runs one `Game` as the live match authority for both the app
-and the server. It steps the engine to the round time at the start of every
-128 Hz world tick, so the engine's 1 ms clock never runs ahead of the world.
-
-| Owner | Responsibility |
-|---|---|
-| World referee | Phase changes, round clock, rune schedule and activation; translating engine events |
-| `Game` | HP, damage, heat, allowance, gold, experience, levels, performance, respawn, weakness, invincibility, buffs, base shield and outpost protection, rebuild opportunities, round result |
-| World `Field` | Detection (speed, area, interval) and scoring geometry; mirrors base and outpost HP into the physical objects; stops rotors; reports buff point contacts from the Figure 5-24 areas (`zones.rs`) and armor collisions |
-| `rm-simulator-physics` | Dynamics, raw contacts, armor collision speeds and prescribed rotor motion |
-
-`StartMatch` resets the engine and begins its countdown; `ResetMatch` returns it
-to Idle. Idle is free practice. The live policy defaults to
-`enforce_allowance: false, exchange_requires_zone: false`, and survives resets.
-A field without a referee keeps the physical damage path and no engine.
-
-`RefereeSnapshot.game` carries the engine snapshot over GNS UDP and
-`GET /api/state`. The HTTP page sends referee commands through
-`POST /api/command` or `POST /api/referee`. Clients and hosts must use matching
-builds; `PROTOCOL_VERSION` in the server's `protocol.rs` is authoritative.
-Pilots and spectators cannot submit referee commands; a pilot may only buy
-ammunition, pick its own performance type and fire.
-
-| Live control | Behavior |
-|---|---|
-| Policy | Toggle allowance enforcement and whether exchanges need a service zone. |
-| Team gold | Set either team's balance. |
-| Robot | Set allowance, performance type (not while Running), clear weakness, paid instant respawn, revive, set HP or apply penalty damage. |
-| Exchange | Buy Table 5-6 units for a robot from team gold. |
-| Result | `Adjudicate` a finished round the comparison could not decide. |
-| Outpost and base HP | Set through the engine; zero outpost HP counts as a destruction. |
-| Rune opportunities and buff | Set a team's opportunity count; override or clear its rune buff. |
-
-The selectable Drone is a fixed-altitude flight prototype with a 17 mm launcher,
-tethered to its section 4.5 Aerial Safety Rope.
-The live referee starts with `enforce_air_support: false`, so the prototype
-can fire during a round without unsupported activation controls. Heat, caliber,
-allowance policy and firing cadence still apply. The standalone game defaults
-to requiring air support under section 5.6.3; callers can retain that policy.
-Drone air-support controls and mission mechanics remain outside the live integration.
-
-### Outside the live integration
-
-The Assembly Zone, remote exchanges and HP purchases, power enforcement,
-assembly, drone, dart, radar, engineer and sentry equipment, penalties,
-disconnection and multi-round series are not connected. The engine still
-implements several of them for headless scenarios.
-
-## API and clock
-
-Construct `Game::new(Config)` with a fixed roster and explicit performance
-parameters. Robot ids must be unique and HP positive. The roster supports
-Hero, Engineer, Infantry, Drone, Sentry, Dart and Radar. These records do not
-create chassis, so unsupported equipment can exist in a headless scenario.
-The app also offers manually driven Engineer and Sentry chassis prototypes;
-the Sentry radar remains decorative. A source PIE Engineer/Heavy additionally
-supports [automatic L1–L3 assembly](assembly-workbench.md#in-game-automatic-assembly)
-on the bound 2027 field, with manual parking and measured manipulation completion.
-An optional [Hero conversion](#temporary-hero-conversion-for-heavy) supplies approximate Heavy combat after launcher permission unlocks.
-There is no referee robot. `AddRobot` and `RemoveRobot` admit and drop robots
-at any phase; the live referee uses them as pilots join and leave.
-
-`Game::command(Command)` validates an input and commits it atomically. An error
-leaves the game unchanged, including pending deliveries and event ids.
-`Game::can_launch` includes match phase as well as robot permissions.
-`Game::step(ticks)` advances an explicit number of 1 ms ticks. Withholding ticks
-pauses the game. Splitting the same elapsed ticks cannot change the result.
-`BeginRound` runs 180 s setup, 15 s initialization and 5 s countdown before the
-420 s round. `BeginCountdown` is an explicit practice shortcut. `EndRound`
-ends a running round early; `ConfirmResult` records its result once.
-
-A BO2 ends after two confirmed rounds. A BO3 or BO5 ends after two or three
-wins respectively; draws require another round. `BeginRound` after confirmation
-clears round resources, timers and observations while retaining result history.
-`ResetMatch` clears that history and restores the configured roster. The global
-simulation tick never goes backwards. Event ids restart on match reset.
-
-Snapshots expose teams, robots, pending purchases, buffs, observations, round
-results and the latest 512 events. Event retention is an application policy;
-record input commands and their tick positions if you need a complete replay.
-Snapshots and commands serialize through serde. Snapshots are read-only views,
-not a trusted save-game loading API; clone a `Game` to branch a scenario.
-
-`Game::step` skips directly across setup, initialization, countdown, and phases
-whose state is frozen. Running gameplay retains exact 1 ms processing. Pending
-deliveries remain ordered by due tick, so the running loop only removes the due
-prefix instead of rebuilding the complete queue each millisecond.
-
-`Game::command` validates and commits combat-state observations,
-disconnections, validated launches, and observed launches without cloning the
-whole game. These paths have no fallible operation after their validation.
-Commands with several dependent writes retain the clone-and-commit transaction,
-which keeps rejection atomic without a general rollback system.
-
-Run the standard-library microbenchmark with:
-
-```sh
-cargo run -p rm-simulator-gameplay --release --example benchmark
-```
-
-On the development machine on 2026-09-11, three runs put one coarse 200,000-tick
-setup-to-running advance at 93-104 us, versus 631-666 us for 200,000 one-tick
-calls. Twenty thousand direct combat-state commands took 5.54-5.62 ms; wrapping
-each in the former full-clone transaction pattern took 21.9-23.8 ms with a full
-512-event history. This is a reproducible microbenchmark rather than a stable
-performance target; hardware and allocator results will differ.
-
-## Rule coverage and unsupported elements
-
-[`coverage::RULES`](../crates/rm-simulator-gameplay/src/coverage.rs) is the
-complete inventory of gameplay mechanism groups in sections 5.1 through 5.8,
-plus the competition process and human adjudication in sections 6 through 9.
-It names each source section, implementation status and remaining work.
-
-| Status | Meaning |
-|---|---|
-| `Implemented` | The engine executes the listed state transitions. The entry also names exclusions. |
-| `External` | An authoritative caller must supply the specified observation; the engine applies the listed consequences. |
-| `Tracked` | State can be recorded but the mechanic's consequences are not automatically executed. |
-
-`Observe` records a mechanic, optional team and robot, a state name and named
-measurements. Include units in measurement keys. The engine stamps the current
-round tick and replaces the previous observation for the same mechanic/team/
-robot. Missing observations mean **unknown**, not inactive or unsupported
-hardware absent. Consult the coverage register separately to determine support.
-Observations never grant rewards, inflict damage or change permissions.
-
-All field buff point types have structured zone contacts, including base,
-resupply, outpost, central and trapezoid highlands, road, elevated crossing,
-launch ramp, tunnel, assembly and fortress. Radar decoding, dart windows,
-engineer assemblies, sentry poses, hero deployment, drone counters, module
-faults, power telemetry, inspections, timeouts, penalties and appeals can be
-recorded even when there is no simulated equipment or sensor for them.
-
-Mechanics outside the live integration are named under
-[Outside the live integration](#outside-the-live-integration).
-
-## Implemented consequences
-
-- Income follows Table 5-5 at elapsed 1, 61, 121, 181, 241, 301 and 361 seconds.
-  Table 5-6 purchases enforce costs and per-team ammo limits. Remote ammo and
-  HP arrive six seconds later. Defeat cancels pending HP without refund.
-- Sections 5.2.1 and 5.2.2 provide resupply healing, normal and paid respawn,
-  accelerated respawn progress, weakened launch restrictions and invincibility.
-  The caller supplies out-of-combat and irregular-disconnection observations.
-- Section 5.3.2 supplies initial ammo, launch consumption and accumulated sentry
-  resupply. The Hero's special 42 mm immunity mechanism is not yet enforced.
-- Section 5.3.3 certified assembly completions provide recurring income,
-  level-cap increases, defense, base HP and overflow shield. Availability times,
-  preceding level completion and the single level-4 completion are checked.
-  Robotic arm poses, shared-core exclusion and assembly failure penalties are
-  still external; a player must not be allowed to certify their own completion.
-- Section 5.4.1 and Table 5-11 apply launch, damage and kill experience,
-  shared unattributed awards and rune rewards up to the current cap. Section
-  5.4.2 and Tables 5-12 to 5-14 select HP, heat limit and cooling by Hero or
-  Infantry performance type and level; other robots use fixed values.
-- Section 5.5.1 supplies base HP, virtual shield, outpost protection, destruction,
-  cumulative base-loss rebuild opportunities and individual uninterrupted
-  rebuild scans, with a strict five-minute cutoff. Rotation remains outside
-  this crate; the world starts and stops the rotor.
-- Section 5.5.3.1 applies the strongest attack, defense and vulnerability
-  independently. `ProjectileHit` computes Table 5-2 damage, the centre-square
-  bonus, attack and defense; `Damage` takes an amount that already includes
-  attacker effects. Penalties, disconnection and darts bypass defense.
-- Section 5.1.3 adds heat per detected launch, cools at 10 Hz and maintains
-  independent temporary and permanent launch locks. Table 5-3 speed observations
-  set independent launch locks. `Launch` is a validated action; `ObserveLaunch`
-  accounts for an actual shot even if it happened while locked or over allowance.
-  Both update launch counters. An adapter must report each shot only once.
-- Section 5.6.3 supplies drone air-support time, minute grants, paid continuation
-  and a launch gate. Landing-pad checks, laser and radar countermeasures remain
-  external. Section 5.6.7 tracks chassis energy and resupply recharge, but does
-  not alter physical motor limits. Buffer power and instant-respawn power boosts
-  remain unsupported.
-
-## Result comparison
-
-The section 5.8 result comparison excludes virtual shields from base HP,
-counts effective attack damage including shield loss and penalties, and
-excludes collision/disconnection damage from the attack total. Confirming an
-ambiguous result requires `Adjudicate`; the engine never guesses a winner.
-
-## Ambiguities and application choices
-
-- The printed section 5.8 only compares unequal base HP when a base is destroyed.
-  It does not state how unequal surviving bases decide a round. It also does
-  not clarify comparisons after destroyed outposts have been rebuilt. These
-  cases return `NeedsRefereeDecision` rather than inventing a corrected rule.
-- Section 5.1.3's prose says `Q1 > Q2`, while Figure 5-1 says `Q1 >= Q2`.
-  The engine follows the figure for the permanent heat lock.
-- Assembly income settles on round-aligned ten-second boundaries. The manual
-  specifies the interval but not its phase relative to each assembly completion.
-- Respawn progress accrues continuously on the world clock. The remaining-time
-  input to its formula is rounded to seconds as section 5.2.2 specifies;
-  fractional timer units are retained. Low maximum HP configurations respawn
-  with at least one HP so a positive recovery cannot leave them defeated.
-- Resupply recovery uses round-aligned one-second boundaries. Cooling uses
-  round-aligned 100 ms boundaries. Expirations are processed before other timed
-  effects, and round end takes precedence over a delivery at exactly 7:00.
-- A destroyed base ends the round immediately after that damage command.
-  Simultaneous physical hits must be ordered by the caller; batching simultaneous
-  destruction is not implemented.
-- Outpost rebuild requires continuous detected RFID contact. The two-second
-  occupation grace period does not count as continued scanning.
-
-These choices are documented and tested where they affect observable state.
-
 ## Live RMUC 2027 control and structures
 
 `rmuc_2027::match_rules::Match` owns the explicit RMUC 2027 V1.0.0 subset:
@@ -355,7 +137,7 @@ permanent rotor stops, attack totals and single-round results. Native combat
 adds 10 Hz heat/cooling, launch locks and allowance, delayed logistics, healing,
 respawn/weakness/invincibility, combat XP and Infantry performance. The initial
 level cap starts at five and virtual assembly raises it to seven/ten. Adaptive
-observations and statistics are carried but reinforcement effects are inactive.
+reinforcement uses frozen selection-time areas and native observations/statistics.
 The user-selected permanent heat-lock boundary is Figure 5-1's `>=`.
 It receives
 physical contact observations and explicit nanosecond durations only.
@@ -364,9 +146,9 @@ height-aware polygon contacts, with the whole state in `FieldRestore`.
 
 The [field guide](rmuc2027-field.md#enable-the-live-controlstructure-subset)
 documents startup, approximations, tie ordering and intentionally unsupported
-mechanics. Historical 2026 balance tables and referee kernels remain for shared
-fixtures. 2027 component types always compile for a stable protocol
-schema; native creation and restore validate the complete 2027 authority.
+mechanics. Shared serialized records and physical model descriptors remain available;
+the 2026 rule engine and referee are archived at `rm2026-final`. Native creation
+and restore validate the complete 2027 authority.
 
 The native `FieldSnapshot.rmuc_2027` presentation state remains available when a
 viewer drops `restore`. Checkpoints encode the authority once and reconstruct

@@ -212,7 +212,7 @@ impl Bindings {
     /// Geometry with the reviewed figure footprints installed as antenna approximations.
     pub fn config(&self) -> Config {
         let mut config = self.world.clone();
-        config.zones = crate::zone_catalog::areas(rm_simulator_world::season::Season::Rm2027)
+        config.zones = crate::zone_catalog::areas()
             .into_iter()
             .filter_map(|a| {
                 let point = a.control_point()?;
@@ -238,7 +238,7 @@ impl Bindings {
                 },
             })
             .collect();
-        for a in crate::zone_catalog::areas(rm_simulator_world::season::Season::Rm2027) {
+        for a in crate::zone_catalog::areas() {
             let supply = a.id.ends_with("supply");
             if !supply && !a.id.ends_with("vantage") {
                 continue;

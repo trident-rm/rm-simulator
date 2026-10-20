@@ -7,49 +7,11 @@ package. Discovery checks beside installed `bin/` and then the checkout;
 `--cad-assets` overrides that location. Live matches require native bindings.
 See [2027 integration](rmuc2027-field.md#default-bound-repaired-low-package).
 
-The directory and collision contracts below remain shared with historical
-`field/` fixtures. The 2026 composition/discovery notes are historical: current
-sessions reject 2026 packages, and release staging defaults to
-`scripts/release-field-2027.json`. `--all --verify-only` verifies both the active
-package and historical fixture inventory. Use Git tag `rm2026-final` for the old
-playable runtime. See [runtime admission](seasons.md).
-
-## Historical 2026 composition
-
-The default package is built by the sibling `rm-map-tools` project
-(`python/export_field_package.py`) from DJI's RMUC2026 V1.2.0 STEP, the
-release that still carries the arena's face colours. The floor slab and the
-385 placed arena solids are tessellated part by part with their STEP colours
-(dark grey slab top, dark plate tops, beige plate sides, white lettering, red
-and blue markings), one glTF node per solid, and the manifest records the
-slab top as `floor_top_source_z_m` so the simulator puts it at height zero.
-The rune and the outposts are carried over from the earlier V2.0.0 extraction
-(`~/dev/RM/assets/rm2026-extracted`); the bases and tech cores come from the
-V1.2.0 equipment package. Both releases share
-the arena frame, and the equipment placements land on the V1.2.0 plates. The
-older extraction still loads with `--cad-assets`; its manifest has no slab
-height, so its crowned slab is referenced to the level pads near
-(±12.8, ±3.0) m.
-
-The exported runtime package is versioned in `field/` through Git LFS with its
-upstream ownership notice retained. The loader discovers it in this order:
-`--cad-assets` when supplied, `field/` beside an installed `bin/` directory,
-the build checkout's `local-assets/field`, the checkout's LFS `field/`, then
-`~/dev/RM/assets/rm2026-field`. The selected directory must contain
-`manifest.json`, the `*.glb` visuals and `*-collision.glb` proxies it lists,
-and `equipment/manifest.json` with `base.glb` and `tech-core.glb`. Every file
-is checked against the SHA-256 recorded in its manifest during loading. The
-manifest's `floor_top_source_z_m` is the slab top in the arena frame; when
-absent the V2.0.0 pad height applies. Keep original STEP files and
-intermediate exports outside Git; only the approved runtime package belongs
-in LFS.
-
-The package's `static_assets` list adds ten entries: the centre platform, both
-dart stations, both resource-zone structures, both outpost footings and six
-energy units, with
-source colours and triangle-mesh collisions. The existing rune and outpost
-assets retain their animation hierarchy. Older packages without this list
-still load.
+The directory and collision contracts below are shared with offline tools.
+Historical 2026 composition and deployment instructions are archived at
+`rm2026-final`. Its `field/` package and inventory have been removed from main.
+The active pipeline pins `scripts/release-field-2027.json`; `just field-check`
+verifies that single package.
 
 ## Textures and semantic assets
 
@@ -67,19 +29,17 @@ version, geometry counts and remaining fitted detector data.
 
 ## Deployment
 
-To assemble the complete simulator package from the field and element exports,
-run the standard-library deployment utility in `rm-map-tools`:
+The approved native 2027 source adapter and reproduction steps are documented in
+[the field guide](rmuc2027-field.md). Staging verifies the pinned LFS files and
+refuses to overwrite a destination:
 
 ```sh
-python3 ../rm-map-tools/python/deploy_field.py --replace
+python3 scripts/stage-release-field.py --verify-only
+python3 scripts/stage-release-field.py
 ```
 
-Its defaults read `~/dev/RM/assets/rm2026-field` and
-`~/dev/RM/assets/rm2026-field-elements`, verify their checksums and matching
-arena, and install at `~/dev/RM/assets/rm2026-field`. It builds in a temporary
-directory first and retains the previous installation as a dated backup.
-Use `--field`, `--elements` and `--out` for other locations. No CAD import or
-re-tessellation is needed. Restart the app and server after deployment.
+The staged package is `dist/field-2027/`. Development overrides use
+`--cad-assets PATH`; restart the app/server after replacing a package.
 
 ## Collision contracts
 

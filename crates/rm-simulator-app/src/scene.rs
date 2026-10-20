@@ -1031,12 +1031,7 @@ fn scene_state_with_hits(
             ArmorTarget::Chassis { .. } | ArmorTarget::Base { .. } => {}
         }
     }
-    let dart_position = snapshot
-        .referee
-        .as_ref()
-        .map_or(rm_simulator_world::referee::DART_TARGET_REST, |r| {
-            r.dart_target_position(presentation_ns)
-        });
+    let dart_position = rm_simulator_world::referee::DART_TARGET_REST;
     SceneState {
         bases: snapshot
             .bases
@@ -1057,13 +1052,8 @@ fn scene_state_with_hits(
             })
             .collect(),
         dart_target_fraction: dart_position as f32,
-        base_open_fraction: snapshot.referee.as_ref().map_or([0.0; 2], |r| {
-            std::array::from_fn(|i| r.base_open_fraction(i, presentation_ns) as f32)
-        }),
-        dart_door_open: snapshot
-            .referee
-            .as_ref()
-            .map_or([true; 2], |r| r.dart_door_open),
+        base_open_fraction: [0.; 2],
+        dart_door_open: [true; 2],
         source: SourceTime {
             tick: snapshot.tick,
             time_ns: snapshot.time_ns,
@@ -1141,7 +1131,7 @@ fn scene_state_with_hits(
 mod tests {
     use super::*;
     use bevy::math::DVec3;
-    use rm_simulator_world::{Caliber, ChassisConfig, Field, Pose, Shot, tick_ns};
+    use rm_simulator_world::{Caliber, ChassisConfig, Field, Pose, tick_ns};
 
     fn close(a: [f64; 3], b: [f64; 3]) -> bool {
         a.iter().zip(&b).all(|(a, b)| (a - b).abs() < 1e-4)
@@ -1153,23 +1143,24 @@ mod tests {
     }
     #[test]
     fn presentation_reconstructs_motion_without_changing_source_or_authority() {
-        let mut field = Field::new(&rm_simulator_world::FieldConfig::default()).unwrap();
-        let checkpoint = field.snapshot();
+        let mut checkpoint = Field::new(&Default::default()).unwrap().snapshot();
+        checkpoint
+            .runes
+            .push(crate::test_fixtures::rune(Pose::at([6., 0., 1.6])));
+        checkpoint
+            .outposts
+            .push(crate::test_fixtures::outpost(Pose::at([7., 0., 0.])));
         let flash = FlashSettings {
             hit_flash_ns: 50_000_000,
-            rune_flash_hz: 2.0,
+            rune_flash_hz: 2.,
             rune_flashes: 3,
         };
         let at = 123_000_000 / tick_ns() * tick_ns();
         let presented = scene_state_at(&checkpoint, flash, at);
-        field.step(at / tick_ns()).unwrap();
-        let actual = scene_state(&field.snapshot(), flash);
-        assert!((presented.runes[0].angle_rad - actual.runes[0].angle_rad).abs() < 1e-12);
-        assert_eq!(
-            presented.outposts[0].angle_rad,
-            actual.outposts[0].angle_rad
+        assert!(
+            (presented.runes[0].angle_rad - checkpoint.runes[0].presentation_angle_rad(at)).abs()
+                < 1e-12
         );
-        assert_eq!(presented.outposts[0].armors, actual.outposts[0].armors);
         assert_eq!(presented.source.tick, checkpoint.tick);
         assert_eq!(presented.source.time_ns, checkpoint.time_ns);
         let exact = scene_state_at(&checkpoint, flash, checkpoint.time_ns);
@@ -1181,30 +1172,23 @@ mod tests {
 
     #[test]
     fn rune_state_masks_clear_on_failure_deactivation_and_big_completion_blinks() {
-        let mut field = Field::new(&rm_simulator_world::FieldConfig::default()).unwrap();
+        let mut snapshot = Field::new(&Default::default()).unwrap().snapshot();
+        snapshot.time_ns = 3_000_000_000;
+        snapshot
+            .runes
+            .push(crate::test_fixtures::rune(Pose::at([6., 0., 1.6])));
         let flash = FlashSettings {
             hit_flash_ns: 50_000_000,
-            rune_flash_hz: 2.0,
+            rune_flash_hz: 2.,
             rune_flashes: 3,
         };
-        let view = |field: &Field| scene_state(&field.snapshot(), flash).runes[0].clone();
-        field.rune_mut(0).unwrap().hit(0, 0).unwrap();
-        assert!(view(&field).activated_blades[0]);
-        field.rune_mut(0).unwrap().hit(0, 0).unwrap();
-        assert_eq!(view(&field).activated_blades, [false; 5]);
-        field.rune_mut(0).unwrap().hit(0, 0).unwrap();
-        let deactivate_at = 2_501_000_000_u64.div_ceil(tick_ns()) * tick_ns();
-        field.step(deactivate_at / tick_ns()).unwrap();
-        assert_eq!(view(&field).activated_blades, [false; 5]);
-        field
-            .rune_mut(0)
-            .unwrap()
-            .deactivate(deactivate_at)
-            .unwrap();
-        assert_eq!(view(&field).active_blades, [false; 5]);
-        assert_eq!(view(&field).progress_stages, [false; 5]);
-        assert!(!view(&field).fully_activated);
-        let mut snapshot = field.snapshot();
+        snapshot.runes[0].activated[0] = true;
+        assert!(scene_state(&snapshot, flash).runes[0].activated_blades[0]);
+        snapshot.runes[0].activated = [false; 5];
+        assert_eq!(
+            scene_state(&snapshot, flash).runes[0].activated_blades,
+            [false; 5]
+        );
         let rune = &mut snapshot.runes[0];
         rune.kind = RuneKind::Big;
         rune.state = RuneState::Activated;
@@ -1296,18 +1280,12 @@ mod tests {
         assert!(rune_lit(1_000_000_000, 1_300_000_000, 0.0, 3));
         assert!(rune_lit(5_000_000_000, 1_000_000_000, 2.0, 3));
         // The scene adaptation applies it to the activated arms only.
-        let mut field = Field::new(&rm_simulator_world::FieldConfig::default()).unwrap();
-        loop {
-            field.step(100).unwrap();
-            let rune = field.snapshot().runes[0].clone();
-            if rune.state == RuneState::Activated {
-                break;
-            }
-            let blade = rune.active_blade.unwrap();
-            let now = field.time_ns();
-            field.rune_mut(0).unwrap().hit(now, blade).unwrap();
-        }
-        let snapshot = field.snapshot();
+        let mut snapshot = Field::new(&Default::default()).unwrap().snapshot();
+        let mut rune = crate::test_fixtures::rune(Pose::at([6., 0., 1.6]));
+        rune.state = RuneState::Activated;
+        rune.activated = [true; 5];
+        rune.active_blades = [false; 5];
+        snapshot.runes.push(rune);
         let since = snapshot.runes[0].state_since_ns;
         let flash = |hz| FlashSettings {
             hit_flash_ns: 50_000_000,
@@ -1321,42 +1299,37 @@ mod tests {
         let period = 500_000_000;
         let mut dark_at = since + 300_000_000;
         dark_at += (snapshot.time_ns.saturating_sub(dark_at) / period + 1) * period;
-        field
-            .step((dark_at - snapshot.time_ns) / rm_simulator_world::tick_ns())
-            .unwrap();
-        let dark = scene_state(&field.snapshot(), flash(2.0));
+        snapshot.time_ns = dark_at;
+        let dark = scene_state(&snapshot, flash(2.0));
         assert_eq!(dark.runes[0].activated_blades, [false; 5]);
-        let still_lit = scene_state(&field.snapshot(), flash(0.0));
+        let still_lit = scene_state(&snapshot, flash(0.0));
         assert_eq!(still_lit.runes[0].activated_blades, [true; 5]);
     }
     #[test]
     fn hit_flash_window_follows_the_setting() {
-        let (config, muzzle) = {
-            let config = rm_simulator_world::FieldConfig {
-                runes: Vec::new(),
-                outposts: vec![rm_simulator_world::OutpostConfig {
-                    pivot_cad_m: None,
-                    origin: Pose::at([4.0, 0.0, 0.0]),
-                    speed_rad_s: 0.0,
-                }],
-                ..Default::default()
-            };
-            let field = Field::new(&config).unwrap();
-            let face = field.snapshot().outposts[0].armors[0].pose;
-            let muzzle = Pose::at([
-                face.translation_m[0] - 1.5,
-                face.translation_m[1],
-                face.translation_m[2] + 0.005,
-            ]);
-            (config, muzzle)
-        };
-        let mut field = Field::new(&config).unwrap();
-        field
-            .fire(muzzle, Shot::at_limit(Caliber::Mm17), None)
-            .unwrap();
-        field.step(300_000_000 / tick_ns()).unwrap();
-        let snapshot = field.snapshot();
-        let hit = snapshot.hits.iter().find(|hit| hit.detected).unwrap();
+        let mut snapshot = Field::new(&Default::default()).unwrap().snapshot();
+        snapshot.time_ns = 300_000_000;
+        snapshot
+            .outposts
+            .push(crate::test_fixtures::outpost(Pose::at([4., 0., 0.])));
+        snapshot.hits.push(rm_simulator_world::ArmorHit {
+            time_ns: 100_000_000,
+            projectile: 0,
+            shooter: None,
+            caliber: Caliber::Mm17,
+            target: ArmorTarget::Outpost {
+                outpost: 0,
+                face: 0,
+            },
+            position_m: [0.; 3],
+            local_offset_m: [0.; 2],
+            normal_speed_m_s: 25.,
+            detected: true,
+            rejection: None,
+            rune_outcome: None,
+            damage: 0,
+        });
+        let hit = &snapshot.hits[0];
         let age_ns = snapshot.time_ns - hit.time_ns;
         assert!(age_ns > 50_000_000, "{age_ns}");
         let short = FlashSettings {

@@ -4,6 +4,9 @@
 //! RoboMaster custom-client protocol for the robot this app pilots, so a real
 //! custom client can be tested against the simulation.
 //!
+//! This retains the older custom-client wire schema as a compatibility bridge,
+//! projecting native 2027 state. It does not implement a 2026 referee.
+//!
 //! Enabled by the `referee-link` Cargo feature and `--referee-link`. A custom
 //! client connects to the broker as it would to the referee system and
 //! receives the state topics below, built from the session's newest host
@@ -13,8 +16,8 @@
 //!
 //! | Topic | Rate | Source |
 //! |---|---|---|
-//! | `GameStatus` | 5 Hz | referee phase, clock, round and round wins |
-//! | `GlobalUnitStatus` | 1 Hz | base, shield and outpost HP; robot HP by number |
+//! | `GameStatus` | 5 Hz | native phase and single-round clock |
+//! | `GlobalUnitStatus` | 1 Hz | Base/Outpost HP; robot HP by compatibility number |
 //! | `RobotStaticStatus` | 1 Hz | own robot id, type, level and limits |
 //! | `RobotDynamicStatus` | 10 Hz | own robot HP, heat, allowance, energy, experience |
 //! | `RobotPosition` | 1 Hz | own chassis position |
@@ -33,9 +36,9 @@ use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 use rm_simulator_server::layout::FIELD_HALF_LENGTH_M;
 use rm_simulator_server::protocol::PlayerInfo;
-use rm_simulator_world::gameplay::{Caliber, RobotState, RoundResult, TeamState};
 use rm_simulator_world::referee::game_team;
-use rm_simulator_world::{FieldSnapshot, MatchPhase, RobotKind, RobotSnapshot, Team};
+use rm_simulator_world::rmuc_2027::match_rules::{GroundRole, Phase, Robot};
+use rm_simulator_world::{FieldSnapshot, Team};
 
 use crate::loading::Screen;
 use crate::session::Session;
@@ -254,18 +257,16 @@ pub fn to_protocol_frame(x_m: f64, y_m: f64) -> (f64, f64) {
 
 /// Referee id, red 1-7 and blue 101-107: from the roster, which knows the
 /// Infantry numbers, else from the kind when only one number fits.
-fn referee_number(roster: &[PlayerInfo], robot: &RobotSnapshot) -> Option<u8> {
+fn referee_number(roster: &[PlayerInfo], robot: &Robot) -> Option<u8> {
     roster
         .iter()
         .find(|player| player.chassis == Some(robot.id))
         .and_then(|player| player.robot)
         .map(|robot| robot.number())
-        .or(match robot.kind {
-            RobotKind::Hero => Some(1),
-            RobotKind::Engineer => Some(2),
-            RobotKind::Drone => Some(6),
-            RobotKind::Sentry => Some(7),
-            RobotKind::Infantry => None,
+        .or(match robot.role {
+            GroundRole::Heavy => Some(2),
+            GroundRole::Sentry => Some(7),
+            GroundRole::Infantry => None,
         })
 }
 
@@ -280,40 +281,27 @@ fn whole_seconds(ns: u64) -> i32 {
     i32::try_from(ns.div_ceil(1_000_000_000)).unwrap_or(i32::MAX)
 }
 
-fn team_state(game: &rm_simulator_world::gameplay::Snapshot, team: Team) -> Option<&TeamState> {
-    game.teams
-        .iter()
-        .find(|state| state.team == game_team(team))
-}
-
-/// `GameStatus`, or `None` without a referee. The simulation plays single
-/// rounds, so the series length stays absent and the scores count round wins.
+/// Compatibility projection onto the custom-client wire schema. The current
+/// simulator runs one 2027 round; series fields and unsupported telemetry stay absent.
 pub fn game_status(view: &View) -> Option<wire::GameStatus> {
-    let referee = view.field.referee.as_ref()?;
-    let (stage, countdown, elapsed) = match referee.phase {
-        MatchPhase::Idle => (0, None, None),
-        MatchPhase::Countdown => (3, Some(whole_seconds(referee.countdown_remaining_ns)), None),
-        MatchPhase::Running => (
+    let game = &view.field.rmuc_2027.as_ref()?.game;
+    let (stage, countdown, elapsed) = match game.phase {
+        Phase::Idle => (0, None, None),
+        Phase::Countdown => (3, Some(whole_seconds(game.countdown_ns)), None),
+        Phase::Running => (
             4,
-            Some(whole_seconds(referee.remaining_ns)),
-            Some(whole_seconds(referee.match_time_ns)),
+            Some(whole_seconds(
+                420_000_000_000u64.saturating_sub(game.elapsed_ns()),
+            )),
+            Some(whole_seconds(game.elapsed_ns())),
         ),
-        MatchPhase::Finished => (5, None, None),
-    };
-    let wins = |team: Team| {
-        let won = |result: &RoundResult| matches!(result, RoundResult::Decided { winner: Some(winner), .. } if *winner == game_team(team));
-        referee
-            .game
-            .rounds
-            .iter()
-            .filter(|round| won(&round.result))
-            .count() as u32
+        Phase::Finished => (5, None, None),
     };
     Some(wire::GameStatus {
-        current_round: (referee.game.round > 0).then_some(referee.game.round),
+        current_round: (game.phase != Phase::Idle).then_some(1),
         total_rounds: None,
-        red_score: Some(wins(Team::Red)),
-        blue_score: Some(wins(Team::Blue)),
+        red_score: None,
+        blue_score: None,
         current_stage: Some(stage),
         stage_countdown_sec: countdown,
         stage_elapsed_sec: elapsed,
@@ -321,66 +309,64 @@ pub fn game_status(view: &View) -> Option<wire::GameStatus> {
     })
 }
 
-/// `GlobalUnitStatus` from this app's side, or `None` without a referee.
-/// Numbers with no robot on the field report 0 HP.
+/// Native HP projected onto the compatibility message's fixed robot slots.
+/// Shield fields stay absent because RMUC 2027 has no virtual Base shield.
 pub fn global_units(view: &View) -> Option<wire::GlobalUnitStatus> {
-    let referee = view.field.referee.as_ref()?;
-    let own = team_state(&referee.game, view.team)?;
-    let enemy = team_state(&referee.game, view.team.other())?;
+    let game = &view.field.rmuc_2027.as_ref()?.game;
+    let own = game_team(view.team).index();
+    let enemy = game_team(view.team.other()).index();
     let health = |team: Team, number: u8| {
-        referee
-            .robots
+        game.robots
             .iter()
-            .find(|robot| robot.team == team && referee_number(view.roster, robot) == Some(number))
-            .map_or(0, |robot| robot.hp)
+            .find(|r| r.team == game_team(team) && referee_number(view.roster, r) == Some(number))
+            .map_or(0, |r| r.hp)
     };
-    let robot_health = [view.team, view.team.other()]
-        .into_iter()
-        .flat_map(|team| UNIT_NUMBERS.map(|number| health(team, number)))
-        .collect();
-    let damage = |team: &TeamState| u32::try_from(team.attack_damage).unwrap_or(u32::MAX);
     Some(wire::GlobalUnitStatus {
-        base_health: Some(own.base_hp),
-        base_shield: Some(own.base_shield_hp),
-        outpost_health: Some(own.outpost_hp),
-        enemy_base_health: Some(enemy.base_hp),
-        enemy_base_shield: Some(enemy.base_shield_hp),
-        enemy_outpost_health: Some(enemy.outpost_hp),
-        robot_health,
-        total_damage_ally: Some(damage(own)),
-        total_damage_enemy: Some(damage(enemy)),
+        base_health: Some(game.base_hp[own]),
+        base_shield: None,
+        outpost_health: Some(game.outpost_hp[own]),
+        enemy_base_health: Some(game.base_hp[enemy]),
+        enemy_base_shield: None,
+        enemy_outpost_health: Some(game.outpost_hp[enemy]),
+        robot_health: [view.team, view.team.other()]
+            .into_iter()
+            .flat_map(|team| UNIT_NUMBERS.map(|n| health(team, n)))
+            .collect(),
+        total_damage_ally: Some(u32::try_from(game.attack_damage[own]).unwrap_or(u32::MAX)),
+        total_damage_enemy: Some(u32::try_from(game.attack_damage[enemy]).unwrap_or(u32::MAX)),
     })
 }
 
-/// The piloted robot's referee record and rules state.
-fn own_robot<'a>(view: &View<'a>) -> Option<(&'a RobotSnapshot, &'a RobotState)> {
-    let chassis = view.chassis?;
-    let referee = view.field.referee.as_ref()?;
-    let snapshot = referee.robots.iter().find(|robot| robot.id == chassis)?;
-    let state = referee
+/// Current native rules state for the piloted chassis.
+fn own_robot<'a>(view: &View<'a>) -> Option<&'a Robot> {
+    view.field
+        .rmuc_2027
+        .as_ref()?
         .game
         .robots
         .iter()
-        .find(|robot| robot.config.id == chassis)?;
-    Some((snapshot, state))
+        .find(|r| Some(r.id) == view.chassis)
 }
 
-/// `RobotStaticStatus` for the piloted robot.
+/// Native role and limits; Heavy maps to the compatibility Engineer type.
 pub fn robot_static(view: &View) -> Option<wire::RobotStaticStatus> {
-    let (robot, state) = own_robot(view)?;
-    let stats = state.stats();
+    let robot = own_robot(view)?;
+    let stats = robot.stats(view.field.rmuc_2027.as_ref()?.game.elapsed_ns());
+    let team = if robot.team == game_team(Team::Red) {
+        Team::Red
+    } else {
+        Team::Blue
+    };
     Some(wire::RobotStaticStatus {
         connection_state: Some(1),
-        alive_state: Some(if robot.alive() { 1 } else { 2 }),
-        robot_id: referee_number(view.roster, robot).map(|number| referee_id(robot.team, number)),
-        robot_type: Some(match robot.kind {
-            RobotKind::Hero => 1,
-            RobotKind::Engineer => 2,
-            RobotKind::Infantry => 3,
-            RobotKind::Drone => 4,
-            RobotKind::Sentry => 5,
+        alive_state: Some(if robot.hp > 0 { 1 } else { 2 }),
+        robot_id: referee_number(view.roster, robot).map(|n| referee_id(team, n)),
+        robot_type: Some(match robot.role {
+            GroundRole::Heavy => 2,
+            GroundRole::Infantry => 3,
+            GroundRole::Sentry => 5,
         }),
-        level: Some(u32::from(robot.level)),
+        level: Some(u32::from(robot.combat.level)),
         max_health: Some(robot.max_hp),
         max_heat: Some(stats.heat_limit),
         heat_cooldown_rate: Some(stats.cooling_per_s as f32),
@@ -388,23 +374,22 @@ pub fn robot_static(view: &View) -> Option<wire::RobotStaticStatus> {
     })
 }
 
-/// `RobotDynamicStatus` for the piloted robot. Buffer energy and the last
-/// launch speed are not in the field snapshot and stay absent.
+/// Native live state. Energy and launch counters unavailable in this authority
+/// remain absent instead of synthesizing measurements.
 pub fn robot_dynamic(view: &View) -> Option<wire::RobotDynamicStatus> {
-    let (robot, state) = own_robot(view)?;
-    let caliber = match robot.kind {
-        RobotKind::Hero => Caliber::Mm42,
-        _ => Caliber::Mm17,
-    };
-    let fired: u64 = state.shots_launched.iter().sum();
+    let robot = own_robot(view)?;
     Some(wire::RobotDynamicStatus {
         current_health: Some(robot.hp),
-        current_heat: Some(state.heat_tenths as f32 / 10.0),
-        current_chassis_energy: state.chassis_energy_j,
-        current_experience: Some(state.experience_tenths / 10),
-        total_projectiles_fired: Some(u32::try_from(fired).unwrap_or(u32::MAX)),
-        remaining_ammo: Some(state.allowance[caliber.index()]),
-        is_out_of_combat: Some(state.out_of_combat),
+        current_heat: Some(robot.combat.heat_tenths as f32 / 10.0),
+        current_chassis_energy: None,
+        current_experience: Some(
+            u32::try_from(robot.combat.experience_tenths / 10).unwrap_or(u32::MAX),
+        ),
+        total_projectiles_fired: None,
+        remaining_ammo: Some(robot.combat.allowance),
+        is_out_of_combat: Some(
+            robot.out_of_combat(view.field.rmuc_2027.as_ref()?.game.elapsed_ns()),
+        ),
     })
 }
 
@@ -426,10 +411,10 @@ pub fn robot_position(view: &View) -> Option<wire::RobotPosition> {
 
 /// `RadarInfoToClient`: opponent then own robots by number.
 pub fn radar(view: &View) -> Option<wire::RadarInfoToClient> {
-    let referee = view.field.referee.as_ref()?;
+    let game = &view.field.rmuc_2027.as_ref()?.game;
     let position = |team: Team, number: u8| {
-        let robot = referee.robots.iter().find(|robot| {
-            robot.team == team && referee_number(view.roster, robot) == Some(number)
+        let robot = game.robots.iter().find(|robot| {
+            robot.team == game_team(team) && referee_number(view.roster, robot) == Some(number)
         })?;
         let chassis = view
             .field
