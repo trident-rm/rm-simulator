@@ -173,37 +173,75 @@ impl StaticGeometry {
             translation: vector(from_m),
             rotation: Rotation::from_rotation_x(std::f64::consts::FRAC_PI_2),
         };
-        let velocity = vector(to_m) - vector(from_m);
-        let extents = [radius_m, radius_m, half_height_m];
+        self.shape_sweep_clear(start, &cylinder, to_m)
+    }
+    /// Translate an oriented FLU cuboid to `to_m` without changing its rotation.
+    /// Half extents are metres in the cuboid frame. Includes both endpoints;
+    /// invalid dimensions, non-unit quaternions and unsupported queries fail closed.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{WorldPhysics, Pose};
+    /// let mut world = WorldPhysics::new(&[], 0.);
+    /// world.add_static_box(Pose::at([0.,0.5,0.2]), [4.,0.1,0.4]);
+    /// let scene = world.static_geometry_snapshot(true);
+    /// assert!(scene.cuboid_sweep_clear(Pose::at([-1.,0.,0.2]), [1.,0.,0.2], [0.35,0.35,0.1]));
+    /// assert!(!scene.cylinder_sweep_clear([-1.,0.,0.2],[1.,0.,0.2],0.49,0.1));
+    /// ```
+    pub fn cuboid_sweep_clear(&self, from: crate::Pose, to_m: [f64; 3], half_m: [f64; 3]) -> bool {
+        if !from
+            .translation_m
+            .into_iter()
+            .chain(from.rotation_wxyz)
+            .chain(to_m)
+            .chain(half_m)
+            .all(f64::is_finite)
+            || half_m.iter().any(|&x| x <= 0.)
+            || (from.rotation_wxyz.iter().map(|x| x * x).sum::<f64>() - 1.).abs() > 1e-6
+        {
+            return false;
+        }
+        self.shape_sweep_clear(pose(from), &Cuboid::new(vector(half_m)), to_m)
+    }
+    fn shape_sweep_clear(
+        &self,
+        start: rapier3d_f64::prelude::Pose,
+        volume: &dyn Shape,
+        to_m: [f64; 3],
+    ) -> bool {
+        let velocity = vector(to_m) - start.translation;
+        let swept = volume.compute_aabb(&start).merged(&volume.compute_aabb(
+            &rapier3d_f64::prelude::Pose {
+                translation: vector(to_m),
+                rotation: start.rotation,
+            },
+        ));
         let bounds = self
             .bounds
             .get_or_init(|| self.shapes.iter().map(|(p, s)| s.compute_aabb(p)).collect());
         self.shapes
             .iter()
             .zip(bounds.iter())
-            .all(|((pose, shape), bounds)| {
-                if (0..3).any(|i| {
-                    from_m[i].max(to_m[i]) + extents[i] < bounds.mins[i]
-                        || from_m[i].min(to_m[i]) - extents[i] > bounds.maxs[i]
-                }) {
+            .all(|((p, s), bounds)| {
+                if (0..3).any(|i| swept.maxs[i] < bounds.mins[i] || swept.mins[i] > bounds.maxs[i])
+                {
                     return true;
                 }
                 if velocity.length_squared() < 1e-16 {
                     return rapier3d_f64::parry::query::intersection_test(
                         &start,
-                        &cylinder,
-                        pose,
-                        shape.as_ref(),
+                        volume,
+                        p,
+                        s.as_ref(),
                     )
                     .is_ok_and(|hit| !hit);
                 }
                 rapier3d_f64::parry::query::cast_shapes(
                     &start,
                     velocity,
-                    &cylinder,
-                    pose,
+                    volume,
+                    p,
                     Vector::ZERO,
-                    shape.as_ref(),
+                    s.as_ref(),
                     rapier3d_f64::parry::query::ShapeCastOptions::with_max_time_of_impact(1.),
                 )
                 .is_ok_and(|hit| hit.is_none())
@@ -289,5 +327,29 @@ impl StaticGeometry {
             triangles.extend(indices.iter().map(|t| t.map(|i| i + base)));
         }
         (vertices_m, triangles)
+    }
+}
+
+#[cfg(test)]
+mod clearance_tests {
+    use crate::{Pose, WorldPhysics};
+    #[test]
+    fn oriented_box_preserves_its_heading_and_checks_the_entire_sweep() {
+        let mut world = WorldPhysics::new(&[], 0.);
+        world.add_static_box(Pose::at([0., 0.3, 0.2]), [4., 0.1, 0.4]);
+        let scene = world.static_geometry_snapshot(true);
+        let mut start = Pose::at([-1., 0., 0.2]);
+        assert!(scene.cuboid_sweep_clear(start, [1., 0., 0.2], [0.4, 0.1, 0.1]));
+        let half_angle = std::f64::consts::FRAC_PI_4;
+        start.rotation_wxyz = [half_angle.cos(), 0., 0., half_angle.sin()];
+        assert!(!scene.cuboid_sweep_clear(start, [1., 0., 0.2], [0.4, 0.1, 0.1]));
+        start.rotation_wxyz = [0.; 4];
+        assert!(!scene.cuboid_sweep_clear(start, [1., 0., 0.2], [0.4, 0.1, 0.1]));
+        let mut world = WorldPhysics::new(&[], 0.);
+        world.add_static_box(Pose::at([0., 0., 0.2]), [0.1, 1., 0.4]);
+        let scene = world.static_geometry_snapshot(true);
+        let start = Pose::at([-1., 0., 0.2]);
+        assert!(scene.cuboid_sweep_clear(start, start.translation_m, [0.1; 3]));
+        assert!(!scene.cuboid_sweep_clear(start, [1., 0., 0.2], [0.1; 3]));
     }
 }

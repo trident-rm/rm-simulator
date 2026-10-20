@@ -461,8 +461,12 @@ filling empty space above the stowed arm.
 
 The temporary SaltWave Sentry is not certified for the tunnel: its fixed upper
 structure is too tall and no source folding mechanism has been identified. EGA's
-native SolidWorks assembly still needs a complete STEP conversion before a
-source-faithful tunnel Sentry can be bound.
+user-supplied STEP now has a
+[fitted Sentry package](hardware-models.md#ega-tunnel-sentry-runtime-package),
+including source-fitted pitch/UWB parallelograms and source-mounted armor. Its
+corrected fold passes the 250 mm fixture with the assumed suspension settling,
+and clears the current 650 mm passages. The endpoint and spring parameters
+remain simulator policies, with measured geometry and clearance results in that guide.
 
 Rebuild the packages with rm-map-tools' `bind_tunnel.py`. Export the ordinary
 Engineer config as the documented baseline rather than copying a live snapshot:
@@ -498,8 +502,10 @@ Run the complete positive/negative fixture matrix with:
 python3 scripts/tunnel-mechanism-scenarios.py
 ```
 
-It additionally checks Future against a 240 mm roof and the Hero in both open
-and folded poses. The generated packages and visual reviews remain local;
+It additionally checks Future against a 240 mm roof, the Hero in both open
+and folded poses, and EGA stowed versus raised under 250 mm. EGA must block
+unfolding and report interior collider heights below the roof (2 mm solver
+tolerance); the measured EGA peak is about 246.6 mm. The generated packages and visual reviews remain local;
 committed code contains recipes and fitted simulation configuration contracts.
 
 Record the tunnel fixture at 32 fps (every fourth 128 Hz tick) by supplying a

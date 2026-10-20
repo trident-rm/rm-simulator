@@ -58,8 +58,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let frames = TargetFrames::new(vec![]);
     let mut restored = false;
-    let check_stow = stowed && cfg.articulation.as_ref().is_some_and(|a| a.limit_rad > 0.);
+    let open_height = cfg
+        .transform_collision_parts(Pose::at([0., 0., cfg.rest_height_m()]), [0.; 2], 0.)
+        .iter()
+        .map(|(p, h)| {
+            let [w, x, y, z] = p.rotation_wxyz;
+            let q = bevy::math::DQuat::from_xyzw(x, y, z, w);
+            p.translation_m[2]
+                + (q * bevy::math::DVec3::X).z.abs() * h[0]
+                + (q * bevy::math::DVec3::Y).z.abs() * h[1]
+                + (q * bevy::math::DVec3::Z).z.abs() * h[2]
+        })
+        .fold(0., f64::max);
+    let roof_blocks_open = roof < open_height;
+    let check_stow =
+        stowed && roof_blocks_open && cfg.articulation.as_ref().is_some_and(|a| a.limit_rad > 0.);
     let mut blocked_unfold = false;
+    let mut interior_samples = 0_u32;
+    let mut max_interior_height_m = 0_f64;
     for tick in 0..=1800 {
         if tick == 0 || tick == 384 {
             w.command_chassis(
@@ -72,6 +88,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
         }
         w.step(tick * tick_ns(), &frames)?;
+        if (0.5..1.5).contains(&w.chassis_snapshot(id).unwrap().pose.translation_m[0]) {
+            interior_samples += 1;
+            for vertex in w.dynamic_geometry_snapshot().into_triangles().0 {
+                max_interior_height_m = max_interior_height_m.max(vertex[2]);
+            }
+        }
         if check_stow && tick == 700 {
             w.command_chassis(id, ChassisCommand::default())?;
         }
@@ -134,12 +156,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let passed = s.pose.translation_m[0] > 2.5;
     println!(
         "{}",
-        serde_json::json!({"passed":passed,"stowed":stowed,"roof_m":roof,"restored_mid_transform":restored,"blocked_unfold":blocked_unfold,"final_x_m":s.pose.translation_m[0],"final_z_m":s.pose.translation_m[2],"input_rad":s.fold_angle_rad})
+        serde_json::json!({"passed":passed,"stowed":stowed,"roof_m":roof,"restored_mid_transform":restored,"blocked_unfold":blocked_unfold,"final_x_m":s.pose.translation_m[0],"final_z_m":s.pose.translation_m[2],"input_rad":s.fold_angle_rad,"interior_samples":interior_samples,"max_interior_height_m":max_interior_height_m})
     );
     if stowed && !passed {
         return Err("stowed robot did not exit the tunnel".into());
     }
-    if !stowed && cfg.transform_limit_rad() > 0. && passed {
+    if stowed && passed && (interior_samples == 0 || max_interior_height_m > roof + 0.002) {
+        return Err("robot exited without respecting the roof clearance".into());
+    }
+    if !stowed && roof_blocks_open && cfg.transform_limit_rad() > 0. && passed {
         return Err("open robot unexpectedly passed the low roof".into());
     }
     Ok(())

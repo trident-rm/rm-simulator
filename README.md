@@ -274,7 +274,11 @@ uv run --with numpy --with pillow python scripts/generate-minimap.py
 
 An optional source-derived team robot loads with `--robot-assets DIR`; see
 [hardware models](docs/hardware-models.md) for the external package, credits and
-physics approximations. A headless host selects its fitted dimensions with `--team-cad`.
+physics approximations. The EGA Sentry uses `--robot sentry` with its
+[bound package](docs/hardware-models.md#ega-tunnel-sentry-runtime-package) and
+`--chassis tunnel-omni`; T folds its head. Sentry deployment also retains the
+ordinary Omni option. Host-owned EGA navigation bots fold for low-clearance paths.
+A headless host selects its fitted dimensions with `--team-cad`.
 
 Use `--cad-assets PATH` and `--map-tools PATH` for other locations. The generator
 writes `minimap.png` and `minimap.json` beside the external field manifest.
@@ -499,7 +503,7 @@ does not acknowledge its execution by the host.
 The console can spawn a host-owned navigation Sentry and send it map destinations.
 See [navigation commands and prototype limits](docs/app-options.md#console-spawned-navigation-sentry).
 
-The current protocol version is 74, defined by `PROTOCOL_VERSION` in
+The current protocol version is 76, defined by `PROTOCOL_VERSION` in
 `crates/rm-simulator-server/src/protocol.rs`. GNS sends redundant controls
 and retried shot intents unreliably; scheduling receipts and terminal shot results
 remain reliable. There is no shooter-view fire path or input-acknowledgement

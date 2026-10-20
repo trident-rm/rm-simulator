@@ -288,7 +288,7 @@ impl Simulation {
                     && nav.owns(id)
                 {
                     let _ = nav.goal(id, position_m);
-                    let _ = self.field.command_chassis(id, Default::default());
+                    let _ = crate::navigation::brake(&mut self.field, id);
                 }
             }
         }
@@ -582,12 +582,21 @@ impl Simulation {
         chassis: crate::protocol::Chassis,
     ) -> Result<ChassisConfig, String> {
         let config = chassis.config(robot)?;
+        let ega = self
+            .spawner_config()
+            .is_some_and(crate::navigation::tunnel_capable);
+        if chassis == crate::protocol::Chassis::TunnelOmni && !ega {
+            return Err("EGA tunnel Sentry requires its verified --robot-assets package".into());
+        }
         Ok(
             if self
                 .spawner_config()
                 .and_then(|c| c.articulation.as_ref())
                 .is_some_and(|a| match a.profile.as_str() {
                     "pie-tunnel-heavy-v1" => robot == Robot::Engineer,
+                    "ega-tunnel-sentry-v1" => {
+                        robot == Robot::Sentry && chassis != crate::protocol::Chassis::Omni
+                    }
                     "future-tunnel-infantry-v1" => matches!(
                         robot,
                         Robot::Infantry3 | Robot::Infantry4 | Robot::Infantry5
@@ -1206,9 +1215,7 @@ impl Simulation {
                     .as_mut()
                     .ok_or("no navigation Sentry")?
                     .goal(*chassis, *position_m)?;
-                self.field
-                    .command_chassis(*chassis, Default::default())
-                    .map_err(|e| e.to_string())
+                crate::navigation::brake(&mut self.field, *chassis)
             }
             Command::StopSentry { chassis } => {
                 let nav = self
@@ -1217,9 +1224,7 @@ impl Simulation {
                     .filter(|n| n.owns(*chassis))
                     .ok_or("not a navigation Sentry")?;
                 nav.stop(*chassis);
-                self.field
-                    .command_chassis(*chassis, Default::default())
-                    .map_err(|e| e.to_string())
+                crate::navigation::brake(&mut self.field, *chassis)
             }
             Command::MapInteraction(_) => {
                 Err("map interactions require a connected team pilot".into())
@@ -1818,6 +1823,57 @@ mod tests {
         assert_eq!(sim.pilot_weapons[&shooter], weapon);
         sim.remove_chassis(shooter).unwrap();
         assert!(!sim.pilot_weapons.contains_key(&shooter));
+    }
+
+    #[test]
+    fn ega_profile_is_selected_for_sentries_only() {
+        let mut config = ChassisConfig::default();
+        config.omni_frame = None;
+        config.articulation = Some(
+            serde_json::from_value(serde_json::json!({
+                "profile": "ega-tunnel-sentry-v1", "limit_rad": 0., "speed_rad_s": 0.65,
+                "muzzle_offset_m": [0.2,0.,0.], "camera_offset_m": [0.1,0.,0.],
+                "armor_faces": config.armor_faces(),
+                "joints": [{"name": "source-body", "parent": null,
+                    "pivot_m": [0.,0.,0.], "axis": [0.,0.,1.], "angle_rad": 0.,
+                    "translation_m": [0.,0.,0.], "drive": "Transform", "collision": null}]
+            }))
+            .unwrap(),
+        );
+        config.validate().unwrap();
+        let sim = simulation().with_spawner(ChassisSpawner {
+            config: config.clone(),
+            terrain: None,
+        });
+        assert_eq!(
+            sim.robot_config(Robot::Sentry, crate::protocol::Chassis::Auto)
+                .unwrap(),
+            config
+        );
+        assert_eq!(
+            sim.robot_config(Robot::Sentry, crate::protocol::Chassis::TunnelOmni)
+                .unwrap(),
+            config
+        );
+        assert!(
+            sim.robot_config(Robot::Sentry, crate::protocol::Chassis::Omni)
+                .unwrap()
+                .articulation
+                .is_none()
+        );
+        assert!(
+            simulation()
+                .robot_config(Robot::Sentry, crate::protocol::Chassis::TunnelOmni)
+                .is_err()
+        );
+        for robot in [Robot::Infantry3, Robot::Engineer] {
+            assert!(
+                sim.robot_config(robot, crate::protocol::Chassis::Auto)
+                    .unwrap()
+                    .articulation
+                    .is_none()
+            );
+        }
     }
 
     #[test]

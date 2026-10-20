@@ -22,11 +22,11 @@ joined with `--connect` takes those from the server.
 | `--referee-video [ADDR]` | With the `referee-link` feature, send the pilot's view as HEVC over UDP, default `127.0.0.1:3334`; needs `ffmpeg` with libx265; see [referee link](referee-link.md) |
 | `--window-mode normal\|unfocused\|headless` | Normal visible window, visible without requesting focus, or GPU rendering without an OS window |
 | `--robot hero\|engineer\|infantry-3\|infantry-4\|infantry-5\|sentry\|drone` | Robot you drive on any host. Hero fires 42 mm; Infantry (default), Sentry and Drone fire 17 mm. Engineer has a fixed decorative arm; Drone flies at fixed altitude. Engineer has no launcher |
-| `--chassis auto\|omni\|balance\|mecanum\|flight` | Default `auto`: Infantry/Sentry use omni, Hero/Engineer use mecanum; Drone uses fixed-altitude flight. Infantry also offers balance (two wheels, mock balance assist and jump). Incompatible choices are rejected |
+| `--chassis auto\|omni\|balance\|mecanum\|flight\|tunnel-omni` | Default `auto`: Infantry/Sentry use omni, Hero/Engineer use mecanum; Drone uses fixed-altitude flight. Infantry also offers balance (two wheels, mock balance assist and jump). Sentry also offers `tunnel-omni` (verified EGA package required); explicit `omni` retains the standard model. Incompatible choices are rejected |
 | `--performance TYPE` | Section 5.4.2 performance type requested after joining: `long-range` or `melee` for the Hero, `hp-cooling`, `hp-burst`, `power-cooling` or `power-burst` for an infantry. Unset keeps the rulebook default; a host refuses a type for the other class or during a running round |
 | `--assembly-assets DIR` / `--assembly-area DIR` | Verified in-game Engineer/Core rig and matching station terrain; see [assembly workbench](assembly-workbench.md#in-game-automatic-assembly) |
 | `--assembly-hints FILE` | Optional completed source recording for warm IK seeds; every new path is validated |
-| `--robot-assets DIR` | Optional verified source-derived Omni, folding Hero, stair Heavy or tunnel package; selects its fitted local physics and validated replacement armor when supplied |
+| `--robot-assets DIR` | Optional verified source-derived Omni, folding Hero, stair Heavy or tunnel Infantry/Heavy/EGA Sentry package; selects its fitted local physics and validated replacement armor when supplied |
 | `--stair-heavy` | Host selects the DreamChaser stair linkage; pilot with `--robot engineer` |
 | `--folding-hero` | Host selects the reference folding Hero preset; live 2027 deployment uses Heavy |
 | `--team-cad` | Host option selecting the fitted team Omni dimensions without requiring visual assets |
@@ -415,6 +415,58 @@ not attempt the bumpy road. This approximate navigation mask is not a rule zone.
 These are simulator settings, not rulebook constants or a full swept source-CAD
 robot model.
 
+With the EGA package supplied through `--robot-assets`, Sentry deployment offers
+**EGA tunnel Sentry** (`--chassis tunnel-omni`), alongside ordinary **Omni**.
+`Auto` and console-spawned Sentries use EGA when that package is loaded; explicit
+`omni` keeps the standard model. A missing EGA package causes a clear host rejection.
+Manual EGA pilots still use T; only host-owned navigation bots fold automatically.
+
+The bake also retains low-clearance edges, distinct from ordinary driving.
+It samples additional negative height bands for the crowned floor and uses only
+upward-facing CAD support faces, preventing slab bottoms and roof undersides
+from becoming floors. These are geometric navigation links, not RFID traversal
+identities: diagram locations alone cannot authorize a passage.
+Only the fitted EGA controller may use them. Its stowed sweep is an oriented
+700 × 700 mm upper-body box, from 140 to 248 mm above support; this approximates the loaded
+source envelope with margin. The box follows the sampled support-plane tilt, so
+the crowned floor does not consume headroom in a roof with the same slope.
+Ordinary navigation retains its larger inflated
+cylinder. Support and live obstacles apply to both kinds of edge. Tunnel actions admit
+approaches up to 16° (the manual's §4.4 diagram includes a 15° ramp) and inflate
+the Road exclusion by the oriented box extent, instead of the large ordinary
+circle. The lower body still uses source collision physics and the nine support
+tracks reject curbs and support discontinuities; this is a navigation approximation.
+A* charges for folding/slow travel and path shortcuts preserve the low-clearance
+action. Six off-grid centreline fits use 50 mm lateral intervals: the 250 mm
+grid alone can miss a narrow opening. The Road seeds come from the diagram;
+the adjacent near-/far-highland lanes use CAD survey hints at FLU Y ≈ 5.93 and
+6.93 m, X ≈ ±1.45 m, plus their point mirrors (UC §4.4, Figures 4-4 and 4-35–38).
+The old inferred Highland RFID pad pairs run diagonally and are unsuitable as
+navigation axes. These hints never authorize a passage: every fit checks the
+source support profile, headroom and connections to full-height staging nodes.
+The connectors also use checked stowed edges, allowing a narrow approach
+without requiring the ordinary 980 mm footprint inside an 800 mm lane.
+`tunnel_links` counts low edges; `passages` counts these accepted off-grid fits.
+The source-axis body box also identifies chassis forward independently of its
+resting barrel, so EGA's X-wheel stance approaches the ramp correctly.
+Snapshots expose `tunnel_segments` aligned with `path_m` and the bake's
+low-edge and passage counts; world overlays highlight selected tunnel segments blue.
+
+At the safe approach the controller folds to its real actuator endpoint,
+levels the firing pitch and aligns the chassis to the longest segment in the
+contiguous stowed section. Bounded, collision-checked position corrections hold
+that staging point against drift while preparing; forward travel waits for the
+fold and alignment to finish. It holds that heading through short lateral exit
+connectors, using omni strafing instead of trying to turn inside the lane.
+It uses a nominal 0.30 m/s crossing speed with bounded lateral centering,
+checking clearance before movement and small yaw changes, and unfolds after
+its whole footprint clears the roof. Preparation has a ten-second timeout.
+Stop, defeat and replanning retain the current fold target; they cannot request
+an unsafe opening. Goals inside low-clearance interiors are currently rejected;
+choose a supported exit-side destination. Search is conservative and does not yet
+carry orientation as an A* state, so some physically possible curved passages
+may be rejected or stop for recovery.
+
 Current geometry and other robot footprints are checked during search and ahead
 of motion. The follower requests at most 0.65 m/s through ordinary chassis
 commands at 16 Hz, inside the explicit 128 Hz simulation loop. Defeat stops the
@@ -428,7 +480,7 @@ are replanned from current positions without learning a permanent region. If no
 safe route exists or recovery is exhausted, it stays stopped; a new goal resets
 the recovery budget. No teleport or prescribed chassis movement is used.
 Low bumpers, curbs, wheel slip and complex terrain may still invalidate an
-approximate route. Stair/tunnel mechanisms, target pursuit, aiming, firing,
+approximate route. Stair mechanisms, target pursuit, aiming, firing,
 strategic decisions and coordinated traffic recovery are not included.
 
 Arena regression checks now complete `[4,-3] → [12,3]`, `[4,-3] → [10,3]`
@@ -437,10 +489,58 @@ reverse. The curb destination `[10,-3]`, cross-arena `[10,0] → [-10,0]`
 and sampled perimeter crossings are rejected by this conservative profile;
 full-arena connectivity is not yet supported.
 
+The headless `sentry_navigation` example exercises the same host controller:
+
+```sh
+nix develop -c cargo run -p rm-simulator-server --example sentry_navigation --locked -- \
+  fixture local-assets/robot-cad-survey/bound-tunnel-sentry/chassis.json -1 0 3 0
+nix develop -c cargo run -p rm-simulator-server --example sentry_navigation --locked -- \
+  field-2027 local-assets/robot-cad-survey/bound-tunnel-sentry/chassis.json 4.7 3.5 4.5 6.8
+# Adjacent far-highland and ramp-side near-highland passages:
+nix develop -c cargo run -p rm-simulator-server --example sentry_navigation --locked -- \
+  field-2027 local-assets/robot-cad-survey/bound-tunnel-sentry/chassis.json 2.5 6.93 -2.5 6.93
+nix develop -c cargo run -p rm-simulator-server --example sentry_navigation --locked -- \
+  field-2027 local-assets/robot-cad-survey/bound-tunnel-sentry/chassis.json 3.5 5.7 -3.5 5.7
+```
+
+The fixture forces a 250 mm passage. The loaded-map cases exercise Road,
+far-highland and near-highland tunnels. Reverse the endpoints or negate all four
+coordinates for the opposite direction or team-side mirror. The current bake
+admits all six explicit passages; this is a geometric fit, not a guarantee of
+successful driving from arbitrary poses or a surveyed RFID traversal binding.
+
+A continuous three-type tour is available through the live app console:
+
+```sh
+# Uses the built app, one freshly spawned Sentry and ordinary host goals:
+python3 scripts/render-sentry-navigation-video.py --check-only
+# Rendering additionally needs Pillow and FFmpeg (the map-tools venv has Pillow):
+../rm-map-tools/ocpenv/bin/python scripts/render-sentry-navigation-video.py \
+  --out local-assets/sentry-three-tunnel-tour.mp4
+```
+
+The runner owns and closes its app process, uses an ephemeral loopback console,
+checks Road/near-/far-highland crossings from actual folded chassis poses under
+source roofs and opposite-side exits, and rejects repositioning or a failed leg.
+It spawns once and never injects poses or joint playback. The chosen tour starts
+at the Road entrance, crosses the far-highland lane, then lets the planner return
+through that lane to approach the near-highland lane from the road deck. This is
+four physical crossings across three tunnel types; the backtrack avoids a slope
+outside the configured vehicle limit. Slope admission uses the source support
+face's full gradient, so diagonal A* edges cannot disguise an excessive slope.
+
+A JSON audit beside the video records the initial CAD bake, every command-to-path
+wall latency, paths/replans, arrivals and sampled poses. Warm query latency
+includes console transport/polling and is an upper bound on search time. The
+default query deadline is five seconds, separate from the initial bake/model
+readiness deadline. Video uses real in-game scenery/path overlays and 128 Hz
+frame-stepped physics at 1× playback, including observed planning delays. The
+headless check still starts the real app but skips screenshots and encoding.
+
 The bake is cached in memory for the current loaded scene; no generated field
 asset is committed or written. Map processing/search run on one bounded worker,
 with latest-goal generations discarding stale results. Pose, command and path
-presentation travel through the existing multiplayer codec (protocol 75).
+presentation travel through the existing multiplayer codec (protocol 76).
 Controller state is host-side external input, like a remote pilot; `Field::restore`
 continues to restore the complete physical/rule world, while a new host must
 recreate the controller and bake. There is no portable on-disk bake yet.

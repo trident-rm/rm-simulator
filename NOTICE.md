@@ -156,3 +156,16 @@ noncommercial RoboMaster team exchange. The original article links, source
 checksums and notices accompany generated candidates. No third-party robot CAD
 is relicensed under this workspace's software license. Graphite display materials
 are simulator presentation choices, with source appearance retained separately.
+
+
+### EGA tunnel Sentry
+
+The optional external EGA Sentry package derives from Fudan University Nebula
+EGA / alumls' [RM2026 tunnel Infantry/Sentry release](https://bbs.herkules.dev/articles/01M0Z2DS984MGKHD6CFKNF39BB),
+using the user-supplied SolidWorks AP214 export `EGA_TunnelSentry.step` dated
+2026-10-20. Original rights and final interpretation remain with the authors;
+the release permits technical exchange and prohibits commercial use without
+author permission. Generated packages retain their source notice and embedded
+credit. These CAD assets are not relicensed under MIT OR Apache-2.0 and are not
+embedded in the software. Export checksums, binding approximations and the
+runtime command are documented in [hardware models](docs/hardware-models.md#ega-tunnel-sentry-runtime-package).

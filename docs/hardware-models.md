@@ -295,15 +295,15 @@ migration; it does not add unrequested manipulation or assembly gameplay.
 
 The source intake inventory is
 `../rm-map-tools/benchmarks/2026-10-18-team-robot/roster.json`. Runtime binding
-and visual review are separate gates: the existing app still accepts only the
-previously fitted Omni and Hero packages. Do not present raw candidate GLBs as
-playable models or remove the existing rendering path before replacements work.
+and visual review are separate gates: the app accepts the fitted Omni, Hero,
+Heavy, tunnel Infantry and EGA Sentry profiles described here. Raw candidate
+GLBs remain inspection exports until their own motion and collision are bound.
 
 | New donor | Source | Intake status |
 | --- | --- | --- |
 | Tunnel Heavy | [Capital Normal University PIE / H3](https://bbs.herkules.dev/articles/01M0YXED5X9S8DKY2BBCT220PZ) | Complete STEP; source-bound stow mechanism and fitted Engineer practice package |
 | Stair Heavy | [Beijing Institute of Technology DreamChaser / L1u_Yuz3ng](https://bbs.herkules.dev/articles/01M0YXED625E111Y2BP1XG6KS2) | Complete national-finals single-arm STEP; 337,237-triangle review package; other released variants retained |
-| Tunnel Sentry | [Fudan University Nebula EGA / alumls](https://bbs.herkules.dev/articles/01M0Z2DS984MGKHD6CFKNF39BB) | Complete native SolidWorks assemblies acquired; complete STEP conversion required |
+| Tunnel Sentry | [Fudan University Nebula EGA / alumls](https://bbs.herkules.dev/articles/01M0Z2DS984MGKHD6CFKNF39BB) | User-supplied STEP exported 2026-10-20; fitted EGA Sentry package, yaw/pitch, prescribed stow and replacement armor |
 | Temporary Sentry | [Yancheng Institute of Technology SaltWave](https://bbs.herkules.dev/articles/01M0Z7ERF51MMHVCHRX05H2P13) | Complete half-swerve/half-omni STEP; 218,879-triangle review package; user-approved alternative while EGA awaits conversion; tunnel capability unverified |
 
 The user downloaded the two Baidu releases on Metis and authorized their copy
@@ -414,3 +414,86 @@ just run --robot-assets local-assets/robot-cad-survey/assembled-armored
 Use `bound-hero` / `bound-hero-armored` in that command for the Hero, then run
 with `--cad-assets field` for 2026 practice. Generated packages remain local;
 no new model assets are embedded in the binary or checked into Git.
+
+
+## EGA tunnel Sentry runtime package
+
+The user-supplied `EGA_TunnelSentry.step` is a SolidWorks 2025 AP214 export of
+Fudan University Nebula EGA / alumls' `底盘总装V2-哨ver-0517.SLDASM`.
+Original release: [EGA tunnel Infantry/Sentry](https://bbs.herkules.dev/articles/01M0Z2DS984MGKHD6CFKNF39BB).
+The STEP SHA-256 is `c3aafbe2b06bd678a66cb769f2fcc825a851c56b4644d6b1d84a6389ad73b65b`.
+The source and generated geometry remain external; source rights and the author's
+noncommercial technical-exchange terms accompany the GLB and `CAD-NOTICE.md`.
+
+```sh
+just run --play --robot sentry --cad-assets field-2027 \
+  --robot-assets local-assets/robot-cad-survey/bound-tunnel-sentry --third-person
+```
+
+This schema-four `ega-tunnel-sentry-v1` package selects the fitted physics only
+for Sentries, including an operator-spawned navigation Sentry. Other robot roles
+retain their own presets. Four independent omni wheels use the existing motor,
+slip, wheelspin and spring/damper model. Mass (20 kg), suspension and actuator
+speed are simulator assumptions. Four source-mounted AM02 replacements provide
+collision, scoring artwork and live team/hit lights. Original brackets remain.
+Source-painted colors are preserved; unstyled physical parts use the existing
+material classifications, including EGA's named rubber rollers.
+
+The source has 1,172 hierarchy entries, 1,626 solids and 14 cooked shell groups.
+A 1 mm / 0.8 rad tessellation and 1 mm simplification metric yields 229,282
+triangles before exclusions; four explicitly named wheel clearance volumes are
+removed, along with the standalone 300 mm firing-axis tube (solid 1038) in the
+SM01 model. The author CAD screenshot includes that tube; the real robot photo
+does not. Removing it also moves the authoritative muzzle back to the physical
+module front. Armor shells/faces/diffusers are then replaced. The bound CAD contributes
+**222,900 triangles**, excluding the separately rendered simulator armor modules.
+Mesh buffers are unchanged by binding; neutral placed coordinates are checked
+against the cooked source to 0.1 micrometre. This is a transform/binding check,
+not a certified STEP simplification error bound.
+
+**T** follows the source-fitted pitch and UWB parallelograms. The main lift
+endpoint is 100° with a counter-rotating firing carrier. The pitch tie-rod's
+lower crank follows gun pitch while its long rod stays parallel to the lift;
+the UWB lower follower and upper carrier close the second four-bar. There is
+no independent UWB stow actuator. Both rod endpoints are checked at 21 fold
+fractions and three yaw/pitch pairs; the maximum mathematical closure residual
+is below 1e-12 m. This verifies the fitted rigid linkage, not exact CAD bearing
+metrology. The 100° endpoint and speed remain simulator policies.
+
+Source paint, pivots and mesh scale are unchanged. At the nominal source wheel
+pose the raised envelope is about 383 mm and the corrected stowed envelope
+250.4 mm. The source wheel anchors are treated as unloaded; ordinary gravity
+produces about 4.9 mm spring sag under the assumed 20 kg mass and four 10 kN/m
+springs. No preload height is added to cancel that sag. The resulting simulated
+stowed height is about **245.5 mm**, with a peak collider height of **246.6 mm**
+over 270 fully interior tick samples in the 250 mm roof fixture. Actual EGA
+suspension calibration and the mechanical endpoint have not been measured.
+
+The contact fixture passes stowed, rejects the raised control, blocks an attempt
+to unfold beneath the roof, retracts again and exits after a mid-motion restore.
+The same package passes the current map's 650 mm passages. The renderer and
+physics consume the same source joint frames; see the tunnel clip recipe in
+[robot equipment](robot-equipment.md#tunnel-capable-source-packages).
+
+Rebuild with rm-map-tools' checksum-pinned `candidates.json`,
+`audit_source.py --faces`, `prepare_source.py --split-shells --low-only`, `package_candidates.py`
+and `bind_sentry.py`; see that repository's referee hardware guide. The source
+file is the only non-generated CAD input; hierarchy/cooked/bound packages are
+reproducible local artifacts. Live console validation checks T in both directions,
+source-scene readiness, driving, aiming and 17 mm firing.
+
+For explicit selection use `--robot sentry --chassis tunnel-omni --robot-assets
+local-assets/robot-cad-survey/bound-tunnel-sentry` (one command line). The Sentry
+chassis menu also retains ordinary Omni. The fitted source package is required
+on the host; `Auto` chooses EGA when loaded. Automatic tunnel actions belong only
+to console-spawned navigation Sentries, not manual pilots; see
+[the navigation controller](app-options.md#console-spawned-navigation-sentry).
+
+The fixed body's collision envelope uses the source chassis axes, clocked -32°
+from the barrel-rest body frame. Its planar half extents are about 292 mm,
+instead of the 335 mm barrel-frame AABB. Every source vertex remains enclosed;
+only empty box corners are removed. This is not a visual simplification.
+The navigation controller derives chassis forward from that box rotation,
+placing the real wheel layout in its X stance for a ramp. Following the resting
+barrel frame had unloaded one diagonal pair at the approach and stalled the
+omni drive. Suspension calibration and the rendered meshes remain as documented.

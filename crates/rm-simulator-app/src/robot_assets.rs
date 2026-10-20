@@ -25,10 +25,15 @@ pub fn verify(root: &Path) -> std::io::Result<bool> {
         && manifest["profile"] == "future-tunnel-infantry-v1"
         && manifest["source"]["cad_sha256"]
             == "d82b2c6950ec29d1d9609e1b5973d7981500be95bfb5f22b41b5eb68ced4bbbd";
+    let sentry = manifest["schema"] == 4
+        && manifest["profile"] == "ega-tunnel-sentry-v1"
+        && manifest["source"]["cad_sha256"]
+            == "c3aafbe2b06bd678a66cb769f2fcc825a851c56b4644d6b1d84a6389ad73b65b";
     if !folding_hero
         && !stair
         && !tunnel
         && !future
+        && !sentry
         && (manifest["schema"] != 1
             || manifest["sources"]["chassis"]["cad_sha256"] != chassis
             || manifest["sources"]["gimbal"]["cad_sha256"] != gimbal

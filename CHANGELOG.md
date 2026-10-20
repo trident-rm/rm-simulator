@@ -4,6 +4,30 @@
 
 ## Unreleased
 
+- Add a reproducible continuous Sentry tour through Road, near-highland and
+  far-highland tunnels, with live in-game video capture and a physical-crossing
+  audit. Measure warm goal-to-path latency separately from the initial bake.
+  Reject terrain above the configured full source-face grade even when a
+  diagonal path edge appears shallow, avoiding unusable ramp shortcuts.
+
+- Offer the source-bound EGA as a Sentry chassis option alongside standard Omni.
+  Add capability-gated low-clearance navigation edges, oriented stowed box sweeps,
+  automatic brake/fold/alignment/traverse/unfold control and blue tunnel overlays.
+  Fit off-grid tunnel centrelines and align the source chassis axes for ramps;
+  tighten the fixed body box while enclosing every CAD vertex. Find both adjacent
+  near-/far-highland tunnels from CAD, align stowed sweeps to the crowned floor,
+  hold the staging position during preparation, and keep a stable passage heading
+  while strafing through narrow exit connectors.
+  Preserve stow on stops/replans and reject underside support faces. Protocol 76
+  carries the chassis choice and per-segment tunnel actions.
+
+- Add the source-bound EGA tunnel Sentry: four omni wheels, fitted armor,
+  yaw/pitch aiming and T-controlled linked head/UWB stow. Preserve source
+  paint and credits; remove source wheel-clearance volumes and the extra muzzle
+  reference tube. Carry the muzzle and camera with the articulated pitch hinge.
+  Fit both four-bars, allow ordinary suspension sag, and validate 250 mm passage
+  traversal, raised-pose obstruction and obstacle-blocked unfolding.
+
 - Speed up source-arm assembly planning with an analytical serial Jacobian,
   bounded exact IK/contact reuse, chunk BVHs and early collision rejection.
   Use 62.5 ms live keyframes and 0.025 rad / 5 mm articulated collision sweeps,

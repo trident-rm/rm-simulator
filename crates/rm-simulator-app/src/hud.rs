@@ -1761,6 +1761,23 @@ pub(crate) fn navigation_paths(session: Res<Session>, mut gizmos: Gizmos) {
         {
             continue;
         }
+        for (i, segment) in nav.path_m.windows(2).enumerate() {
+            if nav.tunnel_segments.get(i + 1) == Some(&true) {
+                gizmos.line(
+                    rm_simulator_render::flu_position([
+                        segment[0][0],
+                        segment[0][1],
+                        segment[0][2] + 0.07,
+                    ]),
+                    rm_simulator_render::flu_position([
+                        segment[1][0],
+                        segment[1][1],
+                        segment[1][2] + 0.07,
+                    ]),
+                    Color::srgb(0.2, 0.6, 1.),
+                );
+            }
+        }
         gizmos.linestrip(
             nav.path_m
                 .iter()

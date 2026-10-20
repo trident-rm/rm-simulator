@@ -112,7 +112,8 @@ use serde::{Deserialize, Serialize};
 /// Version 72 adds native Heavy conversion and historical launcher permission.
 /// Version 73 adds authenticated team map interaction events.
 /// Version 74 adds host-owned Sentry navigation commands and path diagnostics.
-pub const PROTOCOL_VERSION: u32 = 75;
+/// Version 76 adds the EGA Sentry choice and explicit tunnel navigation segments.
+pub const PROTOCOL_VERSION: u32 = 76;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///
@@ -626,6 +627,8 @@ pub enum Chassis {
     Mecanum,
     /// Quadcopter held on its spawn-height horizontal plane.
     Flight,
+    /// Source-fitted EGA folding Sentry; requires the verified host CAD package.
+    TunnelOmni,
 }
 impl Chassis {
     /// Menu label for this drivetrain.
@@ -633,6 +636,7 @@ impl Chassis {
         match self {
             Self::Auto => "Default",
             Self::Omni => "Omni",
+            Self::TunnelOmni => "EGA tunnel Sentry",
             Self::Balance => "Balance (assisted)",
             Self::Mecanum => "Mecanum",
             Self::Flight => "Flight (fixed altitude)",
@@ -677,7 +681,7 @@ impl Robot {
                 &[Chassis::Omni, Chassis::Balance]
             }
             Self::Hero | Self::Engineer => &[Chassis::Mecanum],
-            Self::Sentry => &[Chassis::Omni],
+            Self::Sentry => &[Chassis::Omni, Chassis::TunnelOmni],
             Self::Drone => &[Chassis::Flight],
         }
     }

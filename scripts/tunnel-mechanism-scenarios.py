@@ -32,6 +32,12 @@ def main():
     run('pie_open',heavy,'open',.25,False)
     run('future_neutral',infantry,'stowed',.25,True)
     run('future_lower_roof_control',infantry,'stowed',.24,False)
+    sentry=args.sources/'bound-tunnel-sentry/chassis.json'
+    run('ega_stowed',sentry,'stowed',.25,True)
+    assert results['ega_stowed']['blocked_unfold'],results['ega_stowed']
+    assert results['ega_stowed']['interior_samples']>0,results['ega_stowed']
+    assert results['ega_stowed']['max_interior_height_m']<=.252,results['ega_stowed']
+    run('ega_open_control',sentry,'open',.25,False)
     with tempfile.TemporaryDirectory(prefix='rm-tunnel-') as folder:
         hero=Path(folder)/'hero.json'
         subprocess.run([str(args.binary.resolve()),'export-hero',str(hero)],check=True)

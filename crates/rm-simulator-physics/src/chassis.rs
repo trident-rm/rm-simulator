@@ -1788,6 +1788,30 @@ impl Chassis {
                 .poses(pose_of(body), self.aim_rad, self.fold_angle_rad)
                 .head;
         }
+        if let Some(a) = &self.config.articulation
+            && let Some(index) = a.joints.iter().position(|j| j.name == "pitch")
+        {
+            let local = body.position().rotation.inverse()
+                * Vector::new(
+                    self.aim_rad[1].cos() * self.aim_rad[0].cos(),
+                    self.aim_rad[1].cos() * self.aim_rad[0].sin(),
+                    self.aim_rad[1].sin(),
+                );
+            let frames = a.poses(
+                self.fold_angle_rad,
+                [local.y.atan2(local.x), local.z.clamp(-1., 1.).asin()],
+            );
+            let head = body.position() * rapier_pose(frames[index]);
+            return Pose {
+                translation_m: head.translation.to_array(),
+                rotation_wxyz: [
+                    head.rotation.w,
+                    head.rotation.x,
+                    head.rotation.y,
+                    head.rotation.z,
+                ],
+            };
+        }
         Pose {
             translation_m: body
                 .position()

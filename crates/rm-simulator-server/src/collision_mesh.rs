@@ -237,6 +237,58 @@ impl std::ops::Deref for GroundMesh {
 }
 
 impl GroundMesh {
+    /// Highest upward-facing support surface below a FLU point, metres.
+    /// Navigation uses source outward winding to reject slab bottoms and roof
+    /// undersides as floors. General two-sided collision and spawn queries are unchanged.
+    ///
+    /// ```
+    /// use rm_simulator_server::collision_mesh::{CollisionMesh, GroundMesh};
+    /// let mesh: GroundMesh = CollisionMesh {
+    ///     vertices_m: vec![[0.,0.,0.],[1.,0.,0.],[0.,1.,0.]],
+    ///     triangles: vec![[0,2,1]], // underside
+    /// }.into();
+    /// assert_eq!(mesh.support_height_below(0.1,0.1,1.), None);
+    /// ```
+    pub fn support_height_below(&self, x: f64, y: f64, z_max: f64) -> Option<f64> {
+        let mut best: Option<f64> = None;
+        self.root.visit(x, y, &mut |index| {
+            let [a, b, c] = self.mesh.triangles[index].map(|i| self.mesh.vertices_m[i as usize]);
+            let normal_z = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+            if normal_z > 1e-12
+                && let Some(z) =
+                    triangle_height(&self.mesh, &self.mesh.triangles[index], x, y, z_max)
+            {
+                best = Some(best.map_or(z, |old| old.max(z)));
+            }
+        });
+        best
+    }
+    /// Magnitude of the highest upward support face's XY gradient (rise/run).
+    /// Navigation uses the full grade, so diagonal travel cannot disguise an
+    /// unsupported slope. At equal-height seams prefer the steeper face.
+    pub(crate) fn support_grade_below(&self, x: f64, y: f64, z_max: f64) -> Option<f64> {
+        let mut best: Option<(f64, f64)> = None;
+        self.root.visit(x, y, &mut |index| {
+            let [a, b, c] = self.mesh.triangles[index].map(|i| self.mesh.vertices_m[i as usize]);
+            let u = std::array::from_fn(|i| b[i] - a[i]);
+            let v = std::array::from_fn(|i| c[i] - a[i]);
+            let normal = crate::math::cross(u, v);
+            if normal[2] > 1e-12
+                && let Some(z) =
+                    triangle_height(&self.mesh, &self.mesh.triangles[index], x, y, z_max)
+            {
+                let grade = normal[0].hypot(normal[1]) / normal[2];
+                best = Some(match best {
+                    Some((old_z, old_grade)) if (z - old_z).abs() < 1e-7 => {
+                        (old_z.max(z), old_grade.max(grade))
+                    }
+                    Some(old) if old.0 > z => old,
+                    _ => (z, grade),
+                });
+            }
+        });
+        best.map(|(_, grade)| grade)
+    }
     /// Highest surface below the point, using the same triangle test and
     /// tolerances as CollisionMesh, with unrelated footprints pruned.
     pub fn ground_height_below(&self, x: f64, y: f64, z_max: f64) -> Option<f64> {

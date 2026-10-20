@@ -308,7 +308,9 @@ pub struct ArticulationConfig {
     pub limit_rad: f64,
     /// Prescribed primary input rate, radians per second; positive.
     pub speed_rad_s: f64,
-    /// Topologically ordered joints. Parents must precede children.
+    /// Topologically ordered joints. Parents must precede children. A joint named
+    /// `pitch` is the firing hinge: its composed pose carries the muzzle and eye.
+    /// Without it, the chassis retains its fixed turret-center mounting convention.
     pub joints: Vec<SourceJoint>,
     /// Four source-fitted armor scoring face poses, body-local FLU.
     pub armor_faces: [Pose; 4],
@@ -544,6 +546,33 @@ mod serial_tests {
         c.joints[0].drive = JointDrive::Yaw;
         assert_eq!(c.poses(0., [0.; 2])[0], c.poses(1., [0.; 2])[0]);
         assert_ne!(c.poses(0., [0.; 2])[0], c.poses(0., [0.5, 0.])[0]);
+    }
+    #[test]
+    fn source_pitch_muzzle_follows_the_moving_hinge_and_survives_restore() {
+        use crate::{TargetFrames, Team, WorldPhysics, chassis::ChassisConfig, tick_ns};
+        let mut source = fixture();
+        source.joints[1].name = "pitch".into();
+        let config = ChassisConfig {
+            articulation: Some(source.clone()),
+            omni_frame: None,
+            ..Default::default()
+        };
+        let mut world = WorldPhysics::new(&[], 0.);
+        let id = world
+            .add_chassis(Team::Red, config, Pose::at([0., 0., 3.]))
+            .unwrap();
+        let mut snapshot = world.chassis_snapshot(id).unwrap();
+        snapshot.fold_angle_rad = 0.7;
+        world = WorldPhysics::new(&[], 0.);
+        world.restore_chassis(&snapshot).unwrap();
+        world.step(tick_ns(), &TargetFrames::new(vec![])).unwrap();
+        let snapshot = world.chassis_snapshot(id).unwrap();
+        let head = rigid(snapshot.pose) * rigid(source.poses(snapshot.fold_angle_rad, [0.; 2])[1]);
+        let expected = head * rigid(Pose::at(source.muzzle_offset_m));
+        let actual = rigid(world.chassis_muzzle_pose(id).unwrap());
+        assert!((expected.translation - actual.translation).length() < 1e-8);
+        assert!(expected.rotation.dot(actual.rotation).abs() > 1. - 1e-12);
+        assert!((rigid(snapshot.turret).translation - head.translation).length() < 1e-8);
     }
     #[test]
     fn serial_chassis_restore_replays_the_current_primary_input() {

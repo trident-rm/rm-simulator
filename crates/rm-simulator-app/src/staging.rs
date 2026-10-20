@@ -404,6 +404,7 @@ fn button(commands: &mut Commands, parent: Entity, caption: impl Into<String>, a
 }
 fn ui(
     mut commands: Commands,
+    config: Res<StagingConfig>,
     stage: Res<Stage>,
     session: Res<Session>,
     roots: Query<Entity, With<StageUi>>,
@@ -528,7 +529,21 @@ fn ui(
                         panel,
                         format!(
                             "{} {}",
-                            if stage.chassis.resolved(stage.robot) == chassis {
+                            if (if stage.chassis == Chassis::Auto
+                                && stage.robot == Robot::Sentry
+                                && config
+                                    .0
+                                    .host
+                                    .source_chassis
+                                    .as_ref()
+                                    .and_then(|c| c.articulation.as_ref())
+                                    .is_some_and(|a| a.profile == "ega-tunnel-sentry-v1")
+                            {
+                                Chassis::TunnelOmni
+                            } else {
+                                stage.chassis.resolved(stage.robot)
+                            }) == chassis
+                            {
                                 "[x]"
                             } else {
                                 "[ ]"
