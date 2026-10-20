@@ -15,7 +15,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::time::{Duration, Instant};
 
-use anyhow::Context as _;
+use anyhow::Context;
 use bevy::camera::{Exposure, RenderTarget};
 use bevy::prelude::*;
 use bevy::render::gpu_readback::{Readback, ReadbackComplete};
@@ -67,17 +67,19 @@ pub fn start(address: SocketAddr) -> anyhow::Result<RefereeVideo> {
     // Zero latency: no B-frames or lookahead, a keyframe every second, and an
     // access unit delimiter in front of every frame to split the stream on.
     let x265 = format!("keyint={FPS}:aud=1:repeat-headers=1:log-level=error");
-    let mut encoder = Command::new("ffmpeg")
-        .args(["-hide_banner", "-loglevel", "error", "-f", "rawvideo"])
-        .args(["-pix_fmt", "rgba", "-s", &size, "-framerate", &rate])
-        .args(["-i", "pipe:0", "-an", "-c:v", "libx265"])
-        .args(["-preset", "ultrafast", "-tune", "zerolatency", "-b:v", "3M"])
-        .args(["-x265-params", &x265, "-pix_fmt", "yuv420p"])
-        .args(["-flush_packets", "1", "-f", "hevc", "pipe:1"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .context("cannot start ffmpeg; referee video needs ffmpeg with libx265 on PATH")?;
+    let mut encoder = Context::context(
+        Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-f", "rawvideo"])
+            .args(["-pix_fmt", "rgba", "-s", &size, "-framerate", &rate])
+            .args(["-i", "pipe:0", "-an", "-c:v", "libx265"])
+            .args(["-preset", "ultrafast", "-tune", "zerolatency", "-b:v", "3M"])
+            .args(["-x265-params", &x265, "-pix_fmt", "yuv420p"])
+            .args(["-flush_packets", "1", "-f", "hevc", "pipe:1"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn(),
+        "cannot start ffmpeg; referee video needs ffmpeg with libx265 on PATH",
+    )?;
     let stdin = encoder.stdin.take().expect("stdin is piped");
     let stdout = encoder.stdout.take().expect("stdout is piped");
     let (frames, queued) = sync_channel(QUEUE);

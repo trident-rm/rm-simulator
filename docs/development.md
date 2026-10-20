@@ -135,8 +135,11 @@ and asset hashes.
 Use `cargo update --dry-run` to inspect compatible lockfile updates, then run
 `just verify` after applying them. Keep Bevy and its UI/render integrations on
 compatible release lines; a Bevy migration is separate from a lockfile refresh.
+The current compatible set is Bevy 0.20, Flair 0.9 and wgpu 30. The benchmark
+uses the same wgpu major as Bevy; a second wgpu major cannot share its GPU handles.
+Custom UI shaders use WESL imports and the `.wesl` extension.
 
-The workspace expands Bevy 0.19's `3d`, `3d_bevy_render` and `3d_api` feature
+The workspace expands Bevy 0.20's `3d`, `3d_bevy_render` and `3d_api` feature
 bundles to select `zstd_c` for KTX2 textures. This reuses the native Zstd backend
 already used for network compression and preserves the other rendering features.
 Those bundles force `zstd_rust` and vulnerable `ruzstd` 0.8

@@ -6,9 +6,10 @@ use crate::{
     assets::Loaded,
     config::{Args, Case, Geometry},
 };
+use bevy::render::view::Tonemapping;
 use bevy::{
     camera::{Exposure, Hdr},
-    core_pipeline::{prepass::DepthPrepass, tonemapping::Tonemapping},
+    core_pipeline::prepass::DepthPrepass,
     light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap},
     post_process::bloom::Bloom,
     prelude::*,

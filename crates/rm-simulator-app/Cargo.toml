@@ -32,7 +32,7 @@ rm-simulator-render = { version = "0.1.0", path = "../rm-simulator-render" }
 rm-simulator-server = { version = "0.1.0", path = "../rm-simulator-server", default-features = false }
 anyhow.workspace = true
 bevy = { workspace = true, features = ["bevy_feathers", "bevy_ui_widgets", "serialize"] }
-bevy_flair = "0.8.1"
+bevy_flair = "0.9.0"
 clap.workspace = true
 serde = { workspace = true, features = ["std"] }
 serde_json.workspace = true

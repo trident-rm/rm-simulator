@@ -248,8 +248,8 @@ fn end(
     };
     let written = frame.cpu.map(|t| t.is_some());
     // Finish pending encoders before appending the end marker. Otherwise their
-    // commands would be appended after it by PendingCommandBuffers::take.
-    let buffers = pending.take();
+    // commands would be appended after it by PendingCommandBuffers::finish.
+    let buffers = pending.finish().collect::<Vec<_>>();
     pending.push(buffers);
     let slot = &timer.slots[index];
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -293,8 +293,10 @@ fn readback(mut timer: ResMut<Timer>, capture: Res<Capture>, queue: Res<RenderQu
     slot.read
         .slice(..)
         .map_async(wgpu::MapMode::Read, move |result| {
-            if result.is_ok() {
-                let bytes = read.slice(..).get_mapped_range();
+            let bytes = result
+                .ok()
+                .and_then(|()| read.slice(..).get_mapped_range().ok());
+            if let Some(bytes) = bytes {
                 let ticks = std::array::from_fn(|i| {
                     u64::from_le_bytes(bytes[i * 8..i * 8 + 8].try_into().expect("eight bytes"))
                 });
@@ -306,10 +308,10 @@ fn readback(mut timer: ResMut<Timer>, capture: Res<Capture>, queue: Res<RenderQu
                     push(&shared, value);
                 }
                 drop(bytes);
-                read.unmap();
             } else if frame.measured {
                 shared.invalid.fetch_add(1, Ordering::Relaxed);
             }
+            read.unmap();
             if frame.measured {
                 shared.pending.fetch_sub(1, Ordering::AcqRel);
             }

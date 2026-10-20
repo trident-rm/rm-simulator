@@ -2,7 +2,7 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 // Heat ring: a circle stroke inscribed in the node, filled clockwise from the
 // top up to `fraction`, antialiased across the stroke and the fill edge.
-#import bevy_ui::ui_vertex_output::UiVertexOutput
+import bevy_ui_render::ui_vertex_output::UiVertexOutput;
 
 struct HeatRing {
     fill: vec4<f32>,

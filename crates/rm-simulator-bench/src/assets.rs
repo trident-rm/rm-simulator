@@ -49,9 +49,10 @@ pub fn hash(path: &Path) -> anyhow::Result<String> {
     Ok(format!("{:x}", Sha256::digest(std::fs::read(path)?)))
 }
 fn read(path: &Path) -> anyhow::Result<Manifest> {
-    let data: Manifest = serde_json::from_slice(
-        &std::fs::read(path).with_context(|| format!("reading {}", path.display()))?,
-    )?;
+    let data: Manifest =
+        serde_json::from_slice(&Context::with_context(std::fs::read(path), || {
+            format!("reading {}", path.display())
+        })?)?;
     ensure!(
         data.schema_version == 1 && data.units == "metres",
         "unsupported manifest units/schema"
@@ -107,10 +108,9 @@ pub fn load(root: &Path) -> anyhow::Result<Loaded> {
         ),
     ] {
         for name in names {
-            let asset = manifest
-                .assets
-                .get(&name)
-                .with_context(|| format!("missing asset {name}"))?;
+            let asset = Context::with_context(manifest.assets.get(&name), || {
+                format!("missing asset {name}")
+            })?;
             let file = format!("{prefix}{}", asset.visual);
             let actual = hash(&safe(root, &file)?)?;
             ensure!(

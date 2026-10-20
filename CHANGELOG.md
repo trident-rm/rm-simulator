@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Migrate rendering and UI to Bevy 0.20, Flair 0.9 and shared wgpu 30, preparing
+  the graphics foundation for rxui embedding. Update pointer events, controlled
+  sliders, the heat-ring WESL shader and benchmark timestamp readbacks.
+
 - Spawn host-owned Sentries through the console, bake a shared terrain/clearance
   graph from the loaded CAD, and follow team map goals through A*, checked
   shortcuts and ordinary wheel commands. Add route/status overlays and safe

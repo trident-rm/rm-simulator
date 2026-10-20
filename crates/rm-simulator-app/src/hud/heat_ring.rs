@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! Barrel heat ring around the reticle: one UI node drawn by `heat_ring.wgsl`
+//! Barrel heat ring around the reticle: one UI node drawn by `heat_ring.wesl`
 //! as an antialiased circle that fills clockwise from the top.
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
@@ -29,12 +29,12 @@ pub struct HeatRingMaterial {
 
 impl UiMaterial for HeatRingMaterial {
     fn fragment_shader() -> ShaderRef {
-        "embedded://rm_simulator/hud/heat_ring.wgsl".into()
+        "embedded://rm_simulator/hud/heat_ring.wesl".into()
     }
 }
 
 /// Register the embedded shader and the material pipeline.
 pub(super) fn register(app: &mut App) {
-    bevy::asset::embedded_asset!(app, "heat_ring.wgsl");
+    bevy::asset::embedded_asset!(app, "heat_ring.wesl");
     app.add_plugins(UiMaterialPlugin::<HeatRingMaterial>::default());
 }

@@ -18,9 +18,9 @@ pub mod targets;
 pub mod team_robot;
 use bevy::{
     camera::{Exposure, Hdr},
-    core_pipeline::tonemapping::Tonemapping,
     post_process::bloom::Bloom,
     prelude::*,
+    render::view::Tonemapping,
 };
 
 /// Floor height in renderer Y-up metres. World FLU z=0 is the floor.

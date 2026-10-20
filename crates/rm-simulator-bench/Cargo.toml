@@ -18,4 +18,4 @@ serde_json.workspace = true
 clap.workspace = true
 sha2.workspace = true
 anyhow.workspace = true
-wgpu = { version = "29.0.3", default-features = false }
+wgpu = { version = "30.0.1", default-features = false }

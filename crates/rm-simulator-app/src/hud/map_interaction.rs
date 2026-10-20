@@ -73,7 +73,7 @@ pub(super) fn choose(action: Action, ui: &mut HudState, session: &mut Session) {
 /// Picking supplies locations for both window and image-target UI cameras.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn press(
-    event: On<Pointer<Press>>,
+    event: On<PointerPress>,
     player: Res<crate::controls::Player>,
     mut ui: ResMut<HudState>,
     session: Res<Session>,
@@ -95,7 +95,7 @@ pub(crate) fn press(
     let (Ok((node, transform)), Ok(camera)) = (map.single(), cameras.get(event.hit.camera)) else {
         return;
     };
-    let point = event.pointer_location.position * camera.target_scaling_factor().unwrap_or(1.)
+    let point = event.pointer.position * camera.target_scaling_factor().unwrap_or(1.)
         - camera
             .physical_viewport_rect()
             .map_or(Vec2::ZERO, |rect| rect.min.as_vec2());

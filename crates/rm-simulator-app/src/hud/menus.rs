@@ -333,7 +333,8 @@ fn spawn_menus(
     ));
     commands
         .spawn_scene(bsn! {
-            @FeathersSlider { @value: 100.0, @min: 20.0, @max: 200.0 }
+            @FeathersSlider { @min: 20.0, @max: 200.0 }
+            SliderValue(100.0)
             SliderPrecision(0)
             SliderStep(5.0)
             AccessibleLabel("Mouse sensitivity percent")
@@ -351,7 +352,8 @@ fn spawn_menus(
     ));
     commands
         .spawn_scene(bsn! {
-            @FeathersSlider { @value: 100.0, @min: 0.0, @max: 100.0 }
+            @FeathersSlider { @min: 0.0, @max: 100.0 }
+            SliderValue(100.0)
             SliderPrecision(0)
             SliderStep(5.0)
             AccessibleLabel("Balance stabilization percent")
@@ -841,13 +843,13 @@ mod section_tests {
     }
 }
 
-/// Bevy 0.19's ScrollArea observer checks the original target. A wheel event
+/// Bevy's ScrollArea observer checks the original target. A wheel event
 /// over a button must be retargeted to the containing settings card once.
 #[derive(Component)]
 struct SettingsScroll;
 #[allow(clippy::type_complexity)]
 fn forward_settings_scroll(
-    mut event: On<Pointer<bevy::picking::events::Scroll>>,
+    mut event: On<PointerScroll>,
     cards: Query<(), Or<(With<SettingsScroll>, With<super::PanelFrame>)>>,
     parents: Query<&ChildOf>,
     mut commands: Commands,
@@ -860,12 +862,9 @@ fn forward_settings_scroll(
         .find(|entity| cards.contains(*entity))
     {
         event.propagate(false);
-        commands.trigger(Pointer::new(
-            event.pointer_id,
-            event.pointer_location.clone(),
-            event.event.clone(),
-            card,
-        ));
+        let mut forwarded = event.event().clone();
+        forwarded.entity = card;
+        commands.trigger(forwarded);
     }
 }
 
@@ -879,7 +878,7 @@ mod scroll_tests {
             input::{mouse::MouseScrollUnit, touch::TouchPhase},
             picking::{
                 backend::HitData,
-                events::Scroll,
+                events::PointerScroll,
                 pointer::{Location, PointerId},
             },
             ui_widgets::{ScrollArea, ScrollAreaPlugin},
@@ -887,6 +886,7 @@ mod scroll_tests {
         let mut app = App::new();
         // DefaultPlugins installs this same driver through UiWidgetsPlugins.
         app.add_plugins(ScrollAreaPlugin)
+            .init_resource::<bevy::input::mouse::MouseScrollPixelsPerLine>()
             .add_observer(forward_settings_scroll);
         let visible_height = 720. * 0.76;
         let panel = app
@@ -914,24 +914,24 @@ mod scroll_tests {
             (row, -10000., 1800. - visible_height),
             (row, 10000., 0.),
         ] {
-            app.world_mut().trigger(Pointer::new(
-                PointerId::Mouse,
-                Location {
-                    target: NormalizedRenderTarget::None {
-                        width: 1280,
-                        height: 720,
+            app.world_mut().trigger(PointerScroll {
+                entity: target,
+                pointer: Pointer::new(
+                    PointerId::Mouse,
+                    Location {
+                        target: NormalizedRenderTarget::None {
+                            width: 1280,
+                            height: 720,
+                        },
+                        position: Vec2::new(500., 500.),
                     },
-                    position: Vec2::new(500., 500.),
-                },
-                Scroll {
-                    unit: MouseScrollUnit::Pixel,
-                    x: 0.,
-                    y: delta,
-                    hit: HitData::new(Entity::PLACEHOLDER, 0., None, None),
-                    phase: TouchPhase::Moved,
-                },
-                target,
-            ));
+                ),
+                unit: MouseScrollUnit::Pixel,
+                x: 0.,
+                y: delta,
+                hit: HitData::new(Entity::PLACEHOLDER, 0., None, None),
+                phase: TouchPhase::Moved,
+            });
             app.world_mut().flush();
             assert!(
                 (app.world().get::<ScrollPosition>(panel).unwrap().y - expected).abs() < 0.01,
@@ -1247,7 +1247,8 @@ fn spawn_weapon_controls(commands: &mut Commands, parent: Entity) {
         };
         commands.spawn((ChildOf(parent), Text::new(label), super::text_style(16.)));
         commands.spawn_scene(bsn! {
-            @FeathersSlider { @value: value, @min: min, @max: max }
+            @FeathersSlider { @min: min, @max: max }
+            SliderValue(value)
             SliderPrecision(2)
             SliderStep(step)
             AccessibleLabel(label)
