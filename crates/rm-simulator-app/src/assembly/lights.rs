@@ -281,7 +281,8 @@ fn indication(phase: Phase, step: Step, difficulty: u8) -> Indication {
         Phase::Positioning => Indication::Positioning,
         Phase::Solving => Indication::Ready,
         Phase::AwaitingTarget | Phase::SolvingTwist => Indication::Aligning,
-        Phase::Completed => Indication::Confirmed,
+        Phase::Completed => Indication::Idle,
+        Phase::BreakingAway | Phase::Recovering => Indication::Confirmed,
         Phase::Actuating => match step {
             Step::Approach | Step::Insert => Indication::Ready,
             Step::Lift => Indication::Inserted,
@@ -360,6 +361,7 @@ fn nearest(angles: &[f32], target: f32) -> Option<f32> {
 fn update(
     session: Res<Session>,
     palette: Res<Palette>,
+    views: Res<super::MotionViews>,
     mut lamps: Query<(&Lamp, &mut MeshMaterial3d<StandardMaterial>)>,
 ) {
     let mut angles: BTreeMap<(u32, u64), Vec<f32>> = BTreeMap::new();
@@ -379,7 +381,53 @@ fn update(
             continue;
         };
         let core = &run.attempt.cores[0];
+        let view = views
+            .0
+            .iter()
+            .find(|v| v.owner == run.owner && v.generation == run.generation);
+        let pose = view.map_or(&run.pose, |v| &v.pose);
+        let cursor = view.map_or(run.cursor, |v| v.cursor);
         let mut state = indication(run.phase, core.step, run.difficulty);
+        if run.phase == Phase::Actuating
+            && let Some(f) = run.frames.get(cursor.saturating_sub(1) as usize)
+        {
+            state = match f.stage {
+                0..=2 => {
+                    if f.guide_m[0] <= -0.05 + 1e-6 {
+                        Indication::Inserted
+                    } else {
+                        Indication::Ready
+                    }
+                }
+                3 => {
+                    if pose.lift_m >= 0.1 - 1e-6 {
+                        Indication::Lifted
+                    } else {
+                        Indication::Inserted
+                    }
+                }
+                4 => {
+                    if pose.p_rad >= std::f64::consts::FRAC_PI_2 - 1e-5 {
+                        Indication::Raised
+                    } else {
+                        Indication::Lifted
+                    }
+                }
+                _ => state,
+            };
+        }
+        if run.phase == Phase::Completed
+            && session.snapshot.restore.as_ref().is_some_and(|r| {
+                !r.energy_units.is_empty()
+                    && !r.energy_units.iter().any(|u| {
+                        u.attachment
+                            == rm_simulator_world::energy_unit::Attachment::Seated(run.owner)
+                            && u.seated_generation == run.generation
+                    })
+            })
+        {
+            state = Indication::Idle;
+        }
         // Between finishing P and starting Q, Table 5-13's step-4 indication.
         if state == Indication::Aligning && run.twist_target_rad.is_none() {
             state = Indication::Raised;
@@ -388,7 +436,7 @@ fn update(
             && run.phase == Phase::Actuating
             && run
                 .frames
-                .get(run.cursor.saturating_sub(1) as usize)
+                .get(cursor.saturating_sub(1) as usize)
                 .is_some_and(|f| f.stage == 4)
         {
             state = Indication::Raised;
@@ -397,16 +445,16 @@ fn update(
             .get(&(lamp.owner, lamp.generation))
             .map_or(&[][..], Vec::as_slice);
         let selected = nearest(a, run.attempt.target_q_rad[0] as f32) == Some(lamp.angle_rad);
-        let current = nearest(a, core.sensors.q_rad as f32) == Some(lamp.angle_rad);
+        let current = nearest(a, pose.q_rad as f32) == Some(lamp.angle_rad);
         // Chase speed is a presentation policy, absent from Table 5-13.
-        let chase =
-            ((session.snapshot.time_ns % 1_000_000_000) as f32 / 1e9 - 0.5) * std::f32::consts::PI;
+        let chase = ((session.presentation_time_ns() % 1_000_000_000) as f32 / 1e9 - 0.5)
+            * std::f32::consts::PI;
         let flowing = nearest(a, chase) == Some(lamp.angle_rad);
         let color = ink(
             state,
             lamp.group,
             run.team,
-            session.snapshot.time_ns,
+            session.presentation_time_ns(),
             selected,
             current,
             flowing,

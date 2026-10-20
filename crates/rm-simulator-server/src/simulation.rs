@@ -1073,6 +1073,28 @@ impl Simulation {
         observer: &mut dyn FnMut(&rm_simulator_world::ArmorHit),
     ) -> Result<(), String> {
         match command {
+            Command::EnergyGrip { chassis } => self
+                .field
+                .toggle_energy_grip(*chassis)
+                .map_err(|e| e.to_string()),
+            Command::EnergyArmJog {
+                chassis,
+                translation_m,
+                rotation_rad,
+            } => {
+                #[cfg(feature = "season-2027")]
+                {
+                    self.assembly
+                        .as_ref()
+                        .ok_or("No source assembly assets installed")?
+                        .jog(&mut self.field, *chassis, *translation_m, *rotation_rad)
+                }
+                #[cfg(not(feature = "season-2027"))]
+                {
+                    let _ = (chassis, translation_m, rotation_rad);
+                    Err("Energy Unit controls require season-2027".into())
+                }
+            }
             Command::AutoAssembly {
                 chassis,
                 difficulty,
@@ -2925,7 +2947,7 @@ impl Simulation {
                 .field
                 .assemblies()
                 .iter()
-                .any(|r| r.active() && (r.owner == owner || r.team == chassis.team))
+                .any(|r| r.station_busy() && (r.owner == owner || r.team == chassis.team))
             {
                 return Err("Assembly station is busy; cancel before restarting".into());
             }
@@ -2965,6 +2987,12 @@ impl Simulation {
                 .iter()
                 .find(|r| r.team == chassis.team)
                 .map(|r| r.pose.clone());
+            let unit = self
+                .field
+                .energy_units()
+                .into_iter()
+                .find(|u| u.attachment == rm_simulator_world::energy_unit::Attachment::Held(owner))
+                .ok_or("Pick up an Energy Unit before starting assembly")?;
             let run = service.start(
                 difficulty,
                 &chassis,
@@ -2972,6 +3000,7 @@ impl Simulation {
                 awards,
                 &arm,
                 previous.as_ref(),
+                &unit,
             )?;
             // Native 45-second assembly admission starts when the Core arrives,
             // not while its positioning mechanism is still moving.

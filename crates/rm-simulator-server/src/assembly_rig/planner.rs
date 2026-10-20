@@ -41,6 +41,10 @@ pub struct Frame {
 pub struct Statistics {
     /// Wall time spent searching and validating this plan, excluding load/playback.
     pub planning_elapsed_s: f64,
+    /// Accepted collision-checked free-approach shortcuts.
+    pub approach_shortcuts: usize,
+    /// Sum of maximum joint changes per edge, radians, before and after shortening.
+    pub approach_travel_rad: [f64; 2],
     pub candidates: usize,
     pub ik_queries: usize,
     pub nearby_ik_hints: usize,
@@ -122,6 +126,7 @@ fn same_guard_state(a: &Rig, b: &Rig) -> bool {
         && a.core_q == b.core_q
         && a.tool == b.tool
         && a.unit_pose == b.unit_pose
+        && a.held_grasp == b.held_grasp
         && a.lift_m == b.lift_m
         && a.p_rad == b.p_rad
         && a.q_rad == b.q_rad
@@ -1689,6 +1694,49 @@ fn route_order(setup: usize, route: usize, linear: usize, total: usize) -> (bool
     };
     (nonlinear, (ordinal as u64).wrapping_mul(0x9e3779b97f4a7c15))
 }
+// Validate exactly the quantized, speed-limited samples sent to the world.
+fn breakaway_edge(
+    state: &mut Rig,
+    target: Rig,
+    search: &mut Search,
+    last: &rm_simulator_world::assembly::Frame,
+    frames: &mut Vec<rm_simulator_world::assembly::Frame>,
+) -> Result<(), &'static str> {
+    use rm_simulator_world::assembly::{JAW_SPEED_RAD_S, JOINT_SPEED_RAD_S};
+    let from = state.clone();
+    let dt = rm_simulator_physics::tick_ns() as f64 * 1e-9;
+    let n = (0..6)
+        .map(|j| {
+            ((target.engineer_q[j] - from.engineer_q[j]).abs() / (JOINT_SPEED_RAD_S[j] * dt)).ceil()
+                as usize
+        })
+        .chain((0..2).map(|j| {
+            ((target.jaw_angles[j] - from.jaw_angles[j]).abs() / (JAW_SPEED_RAD_S * dt)).ceil()
+                as usize
+        }))
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let mix = |a: f64, b: f64, t: f64| ((a + (b - a) * t) * 1e6).round() / 1e6;
+    for i in 1..=n {
+        let t = i as f64 / n as f64;
+        let mut next = at(
+            state.clone(),
+            std::array::from_fn(|j| mix(from.engineer_q[j], target.engineer_q[j], t)),
+        );
+        next.jaw_angles = (0..2)
+            .map(|j| mix(from.jaw_angles[j], target.jaw_angles[j], t))
+            .collect();
+        *state = search.check(state, next)?;
+        let mut frame = last.clone();
+        frame.joints_rad = state.engineer_q;
+        frame.jaws_rad = [state.jaw_angles[0], state.jaw_angles[1]];
+        frame.gripped = false;
+        frame.stage = 7;
+        frames.push(frame);
+    }
+    Ok(())
+}
 // Escape the narrow grasp neighbourhood in Cartesian space before asking
 // a global joint sampler to choose directions. A held payload follows the wrist;
 // an ungripped offline fixture stays parked.
@@ -1750,6 +1798,70 @@ fn free_retreat(
         }
     }
     Ok((original.clone(), vec![]))
+}
+// Greedy bounded shortcutting optimizes free joint travel only. Insertion,
+// lift, P/Q motion and the online reveal boundary are untouched.
+fn shorten_approach(
+    model: &Rig,
+    path: Vec<[f64; 6]>,
+    search: &mut Search,
+) -> Result<Vec<[f64; 6]>, &'static str> {
+    let travel = |p: &[[f64; 6]]| {
+        p.windows(2)
+            .map(|e| (0..6).map(|j| (e[1][j] - e[0][j]).abs()).fold(0., f64::max))
+            .sum::<f64>()
+    };
+    search.stats.approach_travel_rad[0] += travel(&path);
+    if path.len() < 3 {
+        search.stats.approach_travel_rad[1] += travel(&path);
+        return Ok(path);
+    }
+    let mut output = vec![path[0]];
+    let mut i = 0;
+    let mut attempts = 0;
+    while i + 1 < path.len() {
+        let mut selected = i + 1;
+        if attempts < 12 && search.stats.collision_checks + 256 < search.budget {
+            for j in (i + 2..path.len()).rev() {
+                if attempts >= 12 {
+                    break;
+                }
+                attempts += 1;
+                let n = ((0..6)
+                    .map(|k| (path[j][k] - path[i][k]).abs())
+                    .fold(0., f64::max)
+                    / 0.1)
+                    .ceil()
+                    .max(1.) as usize;
+                let mut state = at(model.clone(), path[i]);
+                let mut clear = true;
+                for step in 1..=n {
+                    let t = step as f64 / n as f64;
+                    let next = at(
+                        model.clone(),
+                        std::array::from_fn(|k| path[i][k] + (path[j][k] - path[i][k]) * t),
+                    );
+                    match search.check(&state, next) {
+                        Ok(next) => state = next,
+                        Err(e) if search.stats.collision_checks >= search.budget => return Err(e),
+                        Err(_) => {
+                            clear = false;
+                            break;
+                        }
+                    }
+                }
+                if clear {
+                    selected = j;
+                    search.stats.approach_shortcuts += 1;
+                    break;
+                }
+            }
+        }
+        output.push(path[selected]);
+        i = selected;
+    }
+    search.stats.approach_travel_rad[1] += travel(&output);
+    Ok(output)
 }
 // Prefer a loaded Cartesian clearance route over a broad six-joint search.
 // Every accepted edge still passes the ordinary articulated swept guard.
@@ -1954,11 +2066,22 @@ fn build(
             )
             .map_err(|_| "free approach joint search exhausted or obstructed")?
         };
+        let path = if carried_entry {
+            shorten_approach(&model, path, search)?
+        } else {
+            path
+        };
         for pair in path.windows(2) {
             let n = ((0..6)
                 .map(|i| (pair[1][i] - pair[0][i]).abs())
                 .fold(0., f64::max)
-                / (0.6 * dt))
+                / (if carried_entry {
+                    rm_simulator_world::assembly::JOINT_SPEED_RAD_S
+                        .into_iter()
+                        .fold(f64::INFINITY, f64::min)
+                } else {
+                    0.6
+                } * dt))
                 .ceil()
                 .max(1.) as usize;
             for i in 1..=n {
@@ -2017,6 +2140,133 @@ fn build(
 }
 
 impl Rig {
+    /// Release the seated Unit, clear the socket and return through swept-clear motion.
+    pub(crate) fn runtime_breakaway_frames(
+        &self,
+        last: &rm_simulator_world::assembly::Frame,
+        signal: std::sync::Arc<Signal>,
+    ) -> Result<Vec<rm_simulator_world::assembly::Frame>, &'static str> {
+        use rm_simulator_world::assembly::NEUTRAL_JOINTS_RAD;
+        let mut search = Search {
+            stats: Statistics::default(),
+            budget: 2500,
+            ik_table: IkTable::default(),
+            transitions: TransitionTable::default(),
+            last: None,
+            last_checked: None,
+            stage: Stage::Approach,
+            signal: Some(signal),
+        };
+        let mut root = at(self.clone(), last.joints_rad);
+        root.jaw_angles = last.jaws_rad.to_vec();
+        root.unit_pose = pose(position(last.unit), quaternion(last.unit).normalize());
+        root.gripped = false;
+        root.grip_requested = false;
+        // Opening fully beside the flipped Core can strike its housing. Search
+        // a partial pad opening, withdraw, then finish opening in clear space.
+        for fraction in [1., 0.5, 0.25, 0.125] {
+            let mut opened = root.clone();
+            let mut opening = Vec::new();
+            let mut target = root.clone();
+            for (i, jaw) in root.config.engineer_jaws.iter().enumerate() {
+                target.jaw_angles[i] =
+                    root.jaw_angles[i] + (jaw.open_rad - root.jaw_angles[i]) * fraction;
+            }
+            if breakaway_edge(&mut opened, target, &mut search, last, &mut opening).is_err() {
+                continue;
+            }
+            let rotation = quaternion(opened.tool);
+            for escape in [
+                None,
+                Some(rotation * glam::DVec3::Z),
+                Some(-(rotation * glam::DVec3::Z)),
+                Some(-(rotation * glam::DVec3::X)),
+                Some(rotation * glam::DVec3::X),
+                Some(glam::DVec3::Z),
+            ] {
+                let mut trial = opened.clone();
+                let mut frames = opening.clone();
+                let mut clear = true;
+                if let Some(direction) = escape {
+                    for i in 1..=40 {
+                        let desired = pose(
+                            position(opened.tool) + direction * (0.12 * i as f64 / 40.),
+                            rotation,
+                        );
+                        let Ok(q) = trial.config.engineer.solve(
+                            compose(inverse(trial.engineer_body), desired),
+                            trial.engineer_q,
+                        ) else {
+                            clear = false;
+                            break;
+                        };
+                        let next = at(trial.clone(), q);
+                        if breakaway_edge(&mut trial, next, &mut search, last, &mut frames).is_err()
+                        {
+                            clear = false;
+                            break;
+                        }
+                    }
+                }
+                if !clear {
+                    continue;
+                }
+                let mut target = trial.clone();
+                for (a, j) in target
+                    .jaw_angles
+                    .iter_mut()
+                    .zip(&target.config.engineer_jaws)
+                {
+                    *a = j.open_rad;
+                }
+                if breakaway_edge(&mut trial, target, &mut search, last, &mut frames).is_err() {
+                    continue;
+                }
+                let model = trial.clone();
+                let path = joint_path(
+                    model.config.engineer.axes.map(|a| a.range_rad),
+                    model.engineer_q,
+                    NEUTRAL_JOINTS_RAD,
+                    JointSearch {
+                        samples: 96,
+                        ..Default::default()
+                    },
+                    |a, b| {
+                        let n = ((0..6).map(|j| (b[j] - a[j]).abs()).fold(0., f64::max) / 0.1)
+                            .ceil()
+                            .max(1.) as usize;
+                        let mut previous = at(model.clone(), a);
+                        for i in 1..=n {
+                            let next = at(
+                                model.clone(),
+                                std::array::from_fn(|j| a[j] + (b[j] - a[j]) * i as f64 / n as f64),
+                            );
+                            match search.check(&previous, next) {
+                                Ok(r) => previous = r,
+                                Err("motion blocked by collision") => return Ok(false),
+                                Err(_) => return Err(PlanError::CollisionQuery),
+                            }
+                        }
+                        Ok(true)
+                    },
+                );
+                let Ok(path) = path else {
+                    continue;
+                };
+                for q in path.into_iter().skip(1) {
+                    let next = at(trial.clone(), q);
+                    if breakaway_edge(&mut trial, next, &mut search, last, &mut frames).is_err() {
+                        clear = false;
+                        break;
+                    }
+                }
+                if clear {
+                    return Ok(frames);
+                }
+            }
+        }
+        Err("no collision-free breakaway and neutral return found")
+    }
     /// Retime validated motion along its existing joint path. No IK goal or
     /// endpoint is projected; slow joints lengthen the corresponding segment.
     pub(crate) fn runtime_limited_frames(

@@ -108,7 +108,8 @@ use serde::{Deserialize, Serialize};
 /// Version 66 adds persistent Heavy arm joints and bounded joint-rate playback.
 /// Version 67 carries the pre-planning Core positioning phase and its restorable motion.
 /// Version 68 carries post-flip Q reveal and the separate attached twist search.
-pub const PROTOCOL_VERSION: u32 = 68;
+/// Version 69 carries persistent physical Energy Units and owned gripper/jog commands.
+pub const PROTOCOL_VERSION: u32 = 71;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///
@@ -801,6 +802,20 @@ pub fn check_map_marker(kind: MapMarkerKind, position_m: [f64; 2]) -> Result<(),
 /// Anything that changes the simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Command {
+    /// Open/release or close/pick up an existing nearby Energy Unit.
+    EnergyGrip {
+        /// Requesting pilot's chassis; checked by the host.
+        chassis: u32,
+    },
+    /// Bounded Cartesian wrist jog for physical Unit pickup.
+    EnergyArmJog {
+        /// Requesting pilot's chassis.
+        chassis: u32,
+        /// Robot-local translation, at most 20 mm per coordinate.
+        translation_m: [f64; 3],
+        /// Robot-local XYZ rotation, at most 0.1 rad per coordinate.
+        rotation_rad: [f64; 3],
+    },
     /// Solve and actuate an assembly at the pilot's current parking pose.
     AutoAssembly {
         /// Requesting pilot's chassis; ownership is checked by the host.

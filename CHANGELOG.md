@@ -4,6 +4,18 @@
 
 ## Unreleased
 
+- Recover successfully assembled Units automatically: retract and tip the Core
+  over its collection opening, release under gravity, then reset to idle. Keep
+  consumed Units physical and prevent their reuse under UC R60.
+
+- Automatically release a successfully assembled Unit and follow a validated,
+  speed-limited return to neutral, with resumable breakaway progress.
+
+- Keep Energy Units visible and persistent from Heavy deployment. Add gravity,
+  robot/field collision, proximity grip/release and collision-checked wrist jogs.
+- Synchronize Tech Core lights with accepted motion presentation, end recovery
+  flashing on Unit retrieval, and shorten free arm approaches within joint limits.
+
 - Start automatic assembly with the Unit carried by the actual gripper; preserve
   its grasp and check payload collisions through approach before insertion.
 

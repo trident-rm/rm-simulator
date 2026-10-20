@@ -341,7 +341,9 @@ The manual does not define flash duty cycle, phase origin, luminous intensity,
 flowing-light speed or overlapping angular-indicator priority. Simulator display
 policies use a 50% duty cycle on explicit field time, nearest source strip per
 angular marker, and team-target priority if current and target choose the same
-strip. A paused simulation freezes the lights. No special failure pattern is
+strip. A paused simulation freezes the lights. The live prototype samples light angles
+and accepted motion from the same presentation clock. Recovery flashing ends when automatic Core discharge and reset finish; that
+lifecycle boundary is simulator policy. No special failure pattern is
 specified; cancelled/failed attempts return to idle indication.
 
 Live source-CAD assembly binds these effects to accepted manipulation steps,
@@ -354,10 +356,41 @@ The native 45-second attempt begins at arrival. For live L3, the final
 Q target remains unavailable through insertion/lift/P flip. The world samples
 and reveals it only at the completed flip; target LEDs then guide a separate
 attached solve. The initial path never sees that target. Failed late planning
-does not resample it or retroactively change the grasp. Confirmed indication is shown after acceptance; physical
-Unit recovery motion remains unimplemented. These effects currently apply to
+does not resample it or retroactively change the grasp. Confirmed indication is shown after acceptance and throughout the live Core
+recovery described below. These effects currently apply to
 the articulated source Core loaded for a live assembly, not the untouched
 static arena Core or the standalone workbench renderer.
+
+### Successful Core recovery and spent Units
+
+UC §5.4.3 step 6 requires recovery after accepted assembly and grants the
+corresponding reward. It does not specify the recovery trajectory, discharge
+location or timings. R60 prohibits obtaining, carrying or reusing an already
+successfully assembled Unit. The manual's initial Core pose is
+OXYZ (−200, 200, 800) mm, θ=0°, φ=90°, α=0° (§5.4.3, after Figure 5-10).
+Figure 4-39 describes the Unit as 400±50 g; free-body dynamics use 400 g.
+
+The live simulator waits for the Engineer's validated jaw-release and neutral
+return before moving the Core. It retracts to that initial pose, then positions
+the entire Core wrist above the recessed collection opening behind the curved
+front wall, with the shaft pointing down. The fitted discharge post centre is
+OXYZ (−450, 0, 650) mm in the verified Figure 4-29 arena adapter. This is a
+source-layout fit and simulator policy, outside the assembly-pose selection
+domain, not an official recovery coordinate. The central bay floor is 250 mm
+below the standing deck in the source crop. The P hinge is reset to zero;
+discharge turns the six-axis Core wrist rather than reversing the P hinge.
+
+A 250 ms stationary hold removes wrist momentum before release. The **same**
+Unit then becomes a free Rapier body and falls through the opening under gravity.
+After a 500 ms clearance dwell, the Core returns to its initial pose and idle
+lights. These delays and the 1 rad/s Core rotary / 0.1 m/s carriage limits are
+simulator defaults. Motion, attachment, spent state and progress survive restore.
+The Engineer can drive away or disconnect during Core recovery without stopping
+it. Recovery reserves the station and does not re-award success or consume the
+attempt deadline. Spent Units remain physical scenery and cannot be gripped;
+R60's match forfeiture penalty is not automated. Base inventory and recovery of
+failed/interrupted attempts remain separate future work. Core travel remains
+prescribed, without obstacle/overload response, as documented for positioning.
 
 ### Virtual assembly prototype
 

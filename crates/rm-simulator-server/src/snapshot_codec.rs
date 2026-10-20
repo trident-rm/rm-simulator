@@ -114,9 +114,28 @@ struct AssemblyData {
     header: rm_simulator_world::assembly::Run,
     columns: [Vec<i32>; 21],
     flags: Vec<u8>,
+    derived_units: bool,
+}
+fn carried_frame_pose(
+    run: &rm_simulator_world::assembly::Run,
+    joints: [f64; 6],
+) -> Option<rm_simulator_world::Pose> {
+    run.carried_unit_pose(joints)
+        .map(|p| rm_simulator_world::Pose {
+            translation_m: p.translation_m.map(|v| (v * 1e6).round() / 1e6),
+            rotation_wxyz: p.rotation_wxyz.map(|v| (v * 1e7).round() / 1e7),
+        })
 }
 impl AssemblyData {
     fn new(run: &rm_simulator_world::assembly::Run) -> Self {
+        let mut held_pose = None;
+        let derived_units = run.unit_grasp.is_some()
+            && run.frames.iter().all(|f| {
+                if f.gripped {
+                    held_pose = carried_frame_pose(run, f.joints_rad);
+                }
+                held_pose == Some(f.unit)
+            });
         let mut header = run.clone();
         let frames = std::mem::take(&mut header.frames);
         let mut columns: [Vec<i32>; 21] = std::array::from_fn(|_| Vec::with_capacity(frames.len()));
@@ -136,6 +155,9 @@ impl AssemblyData {
                 )
                 .enumerate()
             {
+                if derived_units && (8..15).contains(&j) {
+                    continue;
+                }
                 let scale = if (11..15).contains(&j) { 1e7 } else { 1e6 };
                 let value = (value * scale).round() as i32;
                 column.push(value - previous[j]);
@@ -147,29 +169,65 @@ impl AssemblyData {
             header,
             columns,
             flags,
+            derived_units,
         }
     }
     fn into_run(mut self) -> Result<rm_simulator_world::assembly::Run, &'static str> {
         if self.flags.len() > 4096
-            || self.columns.iter().any(|v| v.len() != self.flags.len())
+            || self.columns.iter().enumerate().any(|(i, v)| {
+                v.len()
+                    != if self.derived_units && (8..15).contains(&i) {
+                        0
+                    } else {
+                        self.flags.len()
+                    }
+            })
+            || self.derived_units
+                && (self.header.unit_grasp.is_none()
+                    || self.flags.first().is_some_and(|v| v & 8 == 0))
             || self.flags.iter().any(|v| *v > 15)
             || !self.header.frames.is_empty()
         {
             return Err("invalid packed assembly trajectory");
         }
+        self.header.model.validate()?;
+        let valid = |p: rm_simulator_world::Pose| {
+            p.translation_m
+                .into_iter()
+                .chain(p.rotation_wxyz)
+                .all(f64::is_finite)
+                && (p.rotation_wxyz.into_iter().map(|v| v * v).sum::<f64>() - 1.).abs() < 1e-6
+        };
+        if !valid(self.header.pose.engineer_body)
+            || self.header.unit_grasp.is_some_and(|g| !valid(g))
+        {
+            return Err("invalid carried Unit transform");
+        }
         let mut previous = [0_i64; 21];
+        let mut held_pose = None;
         self.header.frames = (0..self.flags.len())
             .map(|i| {
                 let v: [f64; 21] = std::array::from_fn(|j| {
+                    if self.derived_units && (8..15).contains(&j) {
+                        return 0.;
+                    }
                     previous[j] += i64::from(self.columns[j][i]);
                     previous[j] as f64 / if (11..15).contains(&j) { 1e7 } else { 1e6 }
                 });
                 rm_simulator_world::assembly::Frame {
                     joints_rad: std::array::from_fn(|j| v[j]),
                     jaws_rad: [v[6], v[7]],
-                    unit: rm_simulator_world::Pose {
-                        translation_m: [v[8], v[9], v[10]],
-                        rotation_wxyz: [v[11], v[12], v[13], v[14]],
+                    unit: if self.derived_units {
+                        if self.flags[i] & 8 != 0 {
+                            held_pose =
+                                carried_frame_pose(&self.header, std::array::from_fn(|j| v[j]));
+                        }
+                        held_pose.unwrap()
+                    } else {
+                        rm_simulator_world::Pose {
+                            translation_m: [v[8], v[9], v[10]],
+                            rotation_wxyz: [v[11], v[12], v[13], v[14]],
+                        }
                     },
                     guide_m: [v[15], v[16], v[17]],
                     angles_rad: [v[18], v[19], v[20]],
@@ -212,10 +270,126 @@ impl<'de> Deserialize<'de> for AssemblyWire {
         deserializer.deserialize_bytes(Visitor)
     }
 }
+// Immutable payload hulls travel separately from changing poses, using exact
+// delta-coded micrometre coordinates. Host proxy generation uses the same grid.
+#[derive(Serialize, Deserialize)]
+struct EnergyUnitWire {
+    header: Aligned<rm_simulator_world::energy_unit::EnergyUnit>,
+    geometry: UnitGeometryWire,
+}
+struct UnitGeometryWire(Vec<Vec<[f64; 3]>>);
+#[derive(Serialize, Deserialize)]
+struct UnitGeometryData {
+    lengths: Vec<u16>,
+    columns: [Vec<i32>; 3],
+}
+impl EnergyUnitWire {
+    fn new(unit: &rm_simulator_world::energy_unit::EnergyUnit) -> Self {
+        let mut header = unit.clone();
+        let geometry = UnitGeometryWire(std::mem::take(&mut header.physical.shape.hulls_m));
+        Self {
+            header: Aligned(header),
+            geometry,
+        }
+    }
+    fn into_unit(mut self) -> rm_simulator_world::energy_unit::EnergyUnit {
+        self.header.0.physical.shape.hulls_m = self.geometry.0;
+        self.header.0
+    }
+}
+impl Serialize for UnitGeometryWire {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::Error;
+        let mut data = UnitGeometryData {
+            lengths: Vec::new(),
+            columns: std::array::from_fn(|_| Vec::new()),
+        };
+        if self.0.len() > 32 || self.0.iter().map(Vec::len).sum::<usize>() > 8192 {
+            return Err(S::Error::custom("oversized Unit geometry"));
+        }
+        for hull in &self.0 {
+            data.lengths.push(hull.len() as u16);
+            let mut previous = [0i32; 3];
+            for p in hull {
+                for i in 0..3 {
+                    let scaled = p[i] * 1e6;
+                    if !scaled.is_finite()
+                        || scaled < i32::MIN as f64
+                        || scaled > i32::MAX as f64
+                        || scaled.round() / 1e6 != p[i]
+                    {
+                        return Err(S::Error::custom(
+                            "Unit geometry is not on its canonical grid",
+                        ));
+                    }
+                    let value = scaled.round() as i32;
+                    data.columns[i].push(
+                        value
+                            .checked_sub(previous[i])
+                            .ok_or_else(|| S::Error::custom("Unit geometry delta overflow"))?,
+                    );
+                    previous[i] = value;
+                }
+            }
+        }
+        let packed = bitpack::to_bytes(&data).map_err(S::Error::custom)?;
+        let bytes = zstd::bulk::compress(&packed, 3).map_err(S::Error::custom)?;
+        serializer.serialize_bytes(&bytes)
+    }
+}
+impl<'de> Deserialize<'de> for UnitGeometryWire {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = UnitGeometryWire;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("bounded canonical Unit collision hulls")
+            }
+            fn visit_bytes<E: serde::de::Error>(self, bytes: &[u8]) -> Result<Self::Value, E> {
+                let packed = zstd::bulk::decompress(bytes, 256 * 1024).map_err(E::custom)?;
+                let data: UnitGeometryData = bitpack::from_bytes(&packed).map_err(E::custom)?;
+                let count = data.lengths.iter().map(|v| usize::from(*v)).sum::<usize>();
+                if data.lengths.is_empty()
+                    || data.lengths.len() > 32
+                    || count > 8192
+                    || data.lengths.iter().any(|v| *v < 4)
+                    || data.columns.iter().any(|v| v.len() != count)
+                {
+                    return Err(E::custom("invalid Unit hull columns"));
+                }
+                let mut offset = 0;
+                let mut hulls = Vec::new();
+                for length in data.lengths {
+                    let mut previous = [0i64; 3];
+                    let mut hull = Vec::new();
+                    for j in offset..offset + usize::from(length) {
+                        let mut p = [0.; 3];
+                        for i in 0..3 {
+                            previous[i] += i64::from(data.columns[i][j]);
+                            if i32::try_from(previous[i]).is_err() {
+                                return Err(E::custom("Unit vertex overflow"));
+                            }
+                            p[i] = previous[i] as f64 / 1e6;
+                        }
+                        hull.push(p);
+                    }
+                    offset += usize::from(length);
+                    hulls.push(hull);
+                }
+                Ok(UnitGeometryWire(hulls))
+            }
+            fn visit_byte_buf<E: serde::de::Error>(self, bytes: Vec<u8>) -> Result<Self::Value, E> {
+                self.visit_bytes(&bytes)
+            }
+        }
+        deserializer.deserialize_bytes(Visitor)
+    }
+}
 #[derive(Serialize, Deserialize)]
 struct DerivedRules {
     assemblies: Vec<AssemblyWire>,
     arms: Vec<rm_simulator_world::assembly::ArmState>,
+    energy_units: Vec<EnergyUnitWire>,
     rmuc_2027: Option<rm_simulator_world::rmuc_2027::State>,
     runes: Vec<Aligned<rm_simulator_world::Rune>>,
     outposts: Vec<Aligned<rm_simulator_world::Outpost>>,
@@ -228,6 +402,11 @@ impl DerivedRules {
     fn new(restore: &rm_simulator_world::FieldRestore) -> Self {
         Self {
             arms: restore.arms.clone(),
+            energy_units: restore
+                .energy_units
+                .iter()
+                .map(EnergyUnitWire::new)
+                .collect(),
             assemblies: restore
                 .assemblies
                 .iter()
@@ -247,6 +426,11 @@ impl DerivedRules {
         rm_simulator_world::FieldRestore {
             assemblies: self.assemblies.into_iter().map(|a| a.0).collect(),
             arms: self.arms,
+            energy_units: self
+                .energy_units
+                .into_iter()
+                .map(EnergyUnitWire::into_unit)
+                .collect(),
             rmuc_2027: self.rmuc_2027,
             runes: self.runes.into_iter().map(|rune| rune.0).collect(),
             outposts: self.outposts.into_iter().map(|outpost| outpost.0).collect(),
@@ -1257,6 +1441,51 @@ pub fn decode_checkpoint_with(
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "season-2027")]
+    #[test]
+    fn canonical_unit_geometry_roundtrips_and_does_not_change_with_motion() {
+        use rm_simulator_world::{
+            Pose,
+            energy_unit::{Attachment, EnergyUnit},
+            projectile::{PayloadShape, PayloadSnapshot},
+        };
+        let shape = PayloadShape::from_parts(
+            &[
+                rm_simulator_physics::manipulator_collision::CollisionPart::Box {
+                    half_m: [0.03; 3],
+                },
+            ],
+            0.25,
+        )
+        .unwrap();
+        let unit = EnergyUnit {
+            physical: PayloadSnapshot {
+                id: 3,
+                shape,
+                pose: Pose::at([1., 2., 0.5]),
+                velocity_m_s: [0.; 3],
+                angular_velocity_rad_s: [0.; 3],
+                prescribed: true,
+            },
+            attachment: Attachment::Held(3),
+            spent: false,
+            grasp: Pose::default(),
+            seated_generation: 0,
+        };
+        let wire = EnergyUnitWire::new(&unit);
+        let bytes = bitpack::to_bytes(&wire).unwrap();
+        let decoded: EnergyUnitWire = bitpack::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded.into_unit(), unit);
+        let mut moved = unit.clone();
+        moved.physical.pose.translation_m[0] += 0.5;
+        let moved = EnergyUnitWire::new(&moved);
+        assert_eq!(
+            bitpack::to_bytes(&wire.geometry).unwrap(),
+            bitpack::to_bytes(&moved.geometry).unwrap()
+        );
+        let mut invalid = unit;
+        invalid.physical.shape.hulls_m[0][0][0] += 1e-7;
+        assert!(bitpack::to_bytes(&EnergyUnitWire::new(&invalid)).is_err());
+    }
     #[test]
     fn live_2027_checkpoint_keeps_capture_expiry_ownership_and_source_bindings() {
         use rm_simulator_world::{

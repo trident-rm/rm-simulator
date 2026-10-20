@@ -18,6 +18,10 @@ import subprocess
 import tempfile
 import time
 from console import ConsoleClient
+import importlib.util
+_grip_spec=importlib.util.spec_from_file_location('energy_unit_helpers',Path(__file__).with_name('energy-unit-game-console.py'))
+_grip_helpers=importlib.util.module_from_spec(_grip_spec)
+_grip_spec.loader.exec_module(_grip_helpers)
 
 
 def capture(client, args, temporary):
@@ -45,6 +49,10 @@ def capture(client, args, temporary):
     owner = state['chassis_id']
     if owner is None:
         raise RuntimeError('requires a source PIE Heavy pilot')
+    initial_unit=next((u for u in state.get('energy_units',[]) if u['attachment']=={'Held':owner}),None)
+    if initial_unit is None:
+        raise RuntimeError('recording requires the existing held Energy Unit')
+    unit_id=initial_unit['physical']['id']
     segments = []
     audit = []
 
@@ -124,12 +132,12 @@ def capture(client, args, temporary):
             if target>job['cursor']:
                 state=client.call({'type':'step','ticks':target-job['cursor']})
                 job=next(r for r in state['assemblies'] if r['owner']==owner)
-            if job['phase']!='Actuating':raise RuntimeError(job['message'])
+            if job['phase'] not in ['Actuating','BreakingAway']:raise RuntimeError(job['message'])
             screenshot(1/args.fps)
             audit.append({'phase':job['phase'],'cursor':job['cursor'],'stage':job['message'],'target_q_rad':job['twist_target_rad']})
         state=client.call({'type':'step','ticks':total-job['cursor']})
         job=next(r for r in state['assemblies'] if r['owner']==owner)
-        if job['phase']=='Completed':break
+        if job['phase'] in ['Completed','Recovering']:break
         if job['phase'] not in ['AwaitingTarget','SolvingTwist']:raise RuntimeError(job['message'])
         assert job['twist_target_rad'] is not None
         assert abs(job['pose']['p_rad']-math.pi/2)<1e-5 and job['pose']['gripped']
@@ -146,13 +154,34 @@ def capture(client, args, temporary):
             state=client.call({'type':'state'});job=next(r for r in state['assemblies'] if r['owner']==owner)
         twist_solving_s+=time.monotonic()-started
         if previous is not None:segments[previous[0]][1]=max(1/args.fps,time.monotonic()-previous[1])
-        if job['phase']!='Actuating':raise RuntimeError(job['message'])
+        if job['phase'] not in ['Actuating','BreakingAway']:raise RuntimeError(job['message'])
         actual=next(a for a in state['arms'] if a['owner']==owner)
         assert actual['joints_rad']==held['joints_rad']
+    recovery_ticks=0
+    recovery_trace=[]
+    neutral=next(a for a in state['arms'] if a['owner']==owner)['joints_rad']
+    while job['phase']=='Recovering':
+        ticks=max(1,round(128/args.fps))
+        state=client.call({'type':'step','ticks':ticks})
+        recovery_ticks+=ticks
+        if recovery_ticks>8192:raise RuntimeError('Core recovery timed out')
+        job=next(r for r in state['assemblies'] if r['owner']==owner)
+        unit=next(u for u in state['energy_units'] if u['physical']['id']==unit_id)
+        local=_grip_helpers.compose(_grip_helpers.inverse(job['world_from_rig']),unit['physical']['pose'])
+        recovery_trace.append({'tick':recovery_ticks,'attachment':unit['attachment'],'position_rig_m':local['translation_m']})
+        assert next(a for a in state['arms'] if a['owner']==owner)['joints_rad']==neutral
+        screenshot(ticks/128)
+    assert job['phase']=='Completed',job['message']
     total=sum(segment_ticks)
     end_joints = next(a for a in state['arms'] if a['owner'] == owner)['joints_rad']
     state = client.call({'type': 'step', 'ticks': 128})
     assert next(a for a in state['arms'] if a['owner'] == owner)['joints_rad'] == end_joints
+    final_unit=next(u for u in state['energy_units'] if u['physical']['id']==unit_id)
+    assert final_unit['attachment']=='Free' and final_unit['spent'], 'Core did not drop the same spent Unit'
+    local=_grip_helpers.compose(_grip_helpers.inverse(job['world_from_rig']),final_unit['physical']['pose'])['translation_m']
+    rim=job['model']['assembly_frame']['translation_m']
+    assert local[2]<rim[2], ('Unit did not fall below the collection opening',local,rim)
+    assert abs(local[0]-(rim[0]-.45))<.2 and abs(local[1]-rim[1])<.25, ('Unit missed collection opening',local,rim)
     screenshot(1.5)
     listing = temporary / 'frames.txt'
     # TemporaryDirectory gives plain generated basenames, without shell quoting.
@@ -165,11 +194,13 @@ def capture(client, args, temporary):
     args.out.with_suffix('.json').write_text(json.dumps({
         'source': 'rm-simulator live app console/GPU screenshots', 'level': args.level,
         'operator_reference_parking': args.reference_parking,
+        'energy_unit_id':unit_id,'initial_unit_attachment':initial_unit['attachment'],'final_unit_attachment':final_unit['attachment'],
         'positioning_ticks':positioning_ticks, 'show_postures': args.show_postures,
         'max_joint_rad_s': max_joint_rad_s, 'max_jaw_rad_s': max_jaw_rad_s,
         'initial_joints_rad': initial_arm['joints_rad'], 'held_final_joints_rad': end_joints,
         'solving_elapsed_s': solve_s,
         'actuation_ticks': total, 'segment_ticks':segment_ticks, 'twist_solving_s':twist_solving_s, 'revealed_target_rad':job['twist_target_rad'], 'tick_hz': 128, 'fps': args.fps, 'completed': True,
+        'core_recovery_ticks':recovery_ticks,'recovery_trace':recovery_trace,'final_unit_spent':final_unit['spent'],'unit_below_collection_rim':True,
         'duration_s': sum(duration for _, duration in segments), 'samples': audit,
     }, indent=2) + '\n')
     print(args.out, flush=True)

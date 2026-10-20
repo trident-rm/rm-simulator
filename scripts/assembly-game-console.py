@@ -15,6 +15,10 @@ from pathlib import Path
 import socket
 import time
 from console import ConsoleClient
+import importlib.util
+_grip_spec=importlib.util.spec_from_file_location('energy_unit_helpers',Path(__file__).with_name('energy-unit-game-console.py'))
+_grip_helpers=importlib.util.module_from_spec(_grip_spec)
+_grip_spec.loader.exec_module(_grip_helpers)
 
 
 def run(client, args):
@@ -45,7 +49,9 @@ def run(client, args):
     client.call({'type': 'key', 'key': 'j', 'pressed': False})
     args.out.mkdir(parents=True, exist_ok=True)
     results = []
-    for level in [1, 2, 3]:
+    # A completed Unit stays on the Core after automatic withdrawal. Run one
+    # requested level per deployment; never conjure a replacement for the next.
+    for level in [args.level]:
         started = time.monotonic()
         client.call({'type': 'world', 'command': {'AutoAssembly': {'chassis': chassis, 'difficulty': level}}})
         deadline = time.monotonic() + 90
@@ -69,13 +75,15 @@ def run(client, args):
             client.call({'type': 'screenshot', 'path': str((args.out / f'l{level}-ready.png').resolve())})
         twist_started=None
         held=None
-        while job['phase'] in ['Actuating','AwaitingTarget','SolvingTwist']:
-            if job['phase']=='Actuating':
+        while job['phase'] in ['Actuating','BreakingAway','Recovering','AwaitingTarget','SolvingTwist']:
+            if job['phase'] in ['Actuating','BreakingAway']:
                 if held is not None:
                     actual=next(a for a in state['arms'] if a['owner']==chassis)
                     assert actual['joints_rad']==held['joints_rad'],'twist solve moved the arm'
                     held=None
                 state=client.call({'type':'step','ticks':min(64,len(job['frames'])-job['cursor'])})
+            elif job['phase']=='Recovering':
+                state=client.call({'type':'step','ticks':32})
             else:
                 assert job['twist_target_rad'] is not None
                 assert abs(job['pose']['p_rad']-math.pi/2)<1e-5
@@ -89,15 +97,18 @@ def run(client, args):
                 state=client.call({'type':'state'})
             job=next(r for r in state['assemblies'] if r['owner']==chassis)
         assert job['phase'] == 'Completed', job['message']
+        state=client.call({'type':'step','ticks':128})
+        unit=next(u for u in state['energy_units'] if u['spent'])
+        assert unit['attachment']=='Free'
+        local=_grip_helpers.compose(_grip_helpers.inverse(job['world_from_rig']),unit['physical']['pose'])['translation_m']
+        rim=job['model']['assembly_frame']['translation_m']
+        assert local[2]<rim[2], ('Unit did not pass below collection rim',local,rim)
+        assert abs(local[0]-(rim[0]-.45))<.2 and abs(local[1]-rim[1])<.25, ('Unit missed collection opening',local,rim)
         if args.screenshots:
             client.call({'type': 'screenshot', 'path': str((args.out / f'l{level}-complete.png').resolve())})
-        result = {'level': level, 'positioning_ticks': positioning_ticks, 'solving_s': elapsed, 'frames': len(job['frames']), 'checks': job['checks'], 'phase': job['phase'], 'revealed_target_rad':job['twist_target_rad']}
+        result = {'level': level, 'positioning_ticks': positioning_ticks, 'solving_s': elapsed, 'frames': len(job['frames']), 'checks': job['checks'], 'phase': job['phase'], 'revealed_target_rad':job['twist_target_rad'],'spent_unit_rig_m':local,'unit_below_collection_rim':True}
         results.append(result)
         print(json.dumps(result), flush=True)
-    client.call({'type': 'world', 'command': {'AutoAssembly': {'chassis': chassis, 'difficulty': 3}}})
-    client.call({'type': 'world', 'command': {'CancelAutoAssembly': {'chassis': chassis}}})
-    state = client.call({'type': 'state'})
-    assert next(r for r in state['assemblies'] if r['owner'] == chassis)['phase'] == 'Cancelled'
     (args.out / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
 
 
@@ -109,6 +120,7 @@ def main():
     parser.add_argument('--area', type=Path, default=Path('local-assets/assembly-cad/area'))
     parser.add_argument('--floor-source-z-m', type=float, default=-1.640343675041)
     parser.add_argument('--out', type=Path, default=Path('local-assets/assembly-cad/in-game'))
+    parser.add_argument('--level', type=int, choices=[1, 2, 3], default=1)
     args = parser.parse_args()
     with socket.create_connection(('127.0.0.1', args.port), 120) as connection:
         with connection.makefile('rwb') as stream:

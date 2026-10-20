@@ -8,6 +8,7 @@
 
 pub mod assembly;
 pub mod base;
+pub mod energy_unit;
 pub use base::{BaseConfig, BaseSnapshot};
 pub mod chassis;
 pub mod outpost;
@@ -233,6 +234,9 @@ pub struct FieldRestore {
     /// Persistent articulated arm authority for deployed source Heavy robots.
     #[serde(default)]
     pub arms: Vec<assembly::ArmState>,
+    /// Persistent physical Energy Units, including loose and socket-seated objects.
+    #[serde(default)]
+    pub energy_units: Vec<energy_unit::EnergyUnit>,
     /// Complete RMUC 2027 authority and geometry, absent for 2026.
     pub rmuc_2027: Option<rmuc_2027::State>,
     /// Every rune's activation state, held angle and seeded target stream.
@@ -303,6 +307,7 @@ pub struct FieldSnapshot {
 /// assert_eq!(field.time_ns(), tick_ns());
 /// ```
 pub struct Field {
+    energy_units: Vec<energy_unit::EnergyUnit>,
     arms: Vec<assembly::ArmState>,
     assemblies: Vec<assembly::Run>,
     rmuc_2027: Option<rmuc_2027::State>,
@@ -465,6 +470,7 @@ impl Field {
             &mut faces,
         );
         let mut field = Self {
+            energy_units: Vec::new(),
             arms: Vec::new(),
             assemblies: Vec::new(),
             rmuc_2027,
@@ -851,6 +857,7 @@ impl Field {
     /// Take a chassis off the field, with its robot record.
     pub fn remove_chassis(&mut self, id: u32) -> Result<(), FieldError> {
         self.cancel_assembly(id, "Assembly owner disconnected");
+        self.release_energy_units(id);
         self.arms.retain(|a| a.owner != id);
         self.physics
             .remove_chassis(id)
@@ -1406,6 +1413,7 @@ impl Field {
                 .physics
                 .step(prev_ns, &self.target_frames)
                 .map_err(FieldError::Ballistics)?;
+            self.sync_energy_units();
             for contact in contacts {
                 if self.armor_disabled(contact.target) {
                     continue;
@@ -1600,6 +1608,7 @@ impl Field {
             restore: Some(FieldRestore {
                 assemblies: self.assemblies.clone(),
                 arms: self.arms.clone(),
+                energy_units: self.energy_units(),
                 rmuc_2027: self.rmuc_2027.clone(),
                 runes: self.runes.clone(),
                 outposts: self.outposts.clone(),
@@ -1755,6 +1764,7 @@ impl Field {
         let mut field = Self {
             assemblies: rules.assemblies.clone(),
             arms: rules.arms.clone(),
+            energy_units: rules.energy_units.clone(),
             rmuc_2027: rules.rmuc_2027.clone(),
             bases: snapshot.bases.clone(),
             floor_height_m,
@@ -1775,6 +1785,7 @@ impl Field {
                 .restore_chassis(chassis)
                 .map_err(FieldError::Chassis)?;
         }
+        field.restore_energy_units()?;
         for projectile in &snapshot.projectiles {
             field
                 .physics

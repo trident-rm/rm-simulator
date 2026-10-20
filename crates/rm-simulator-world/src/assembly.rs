@@ -359,7 +359,11 @@ pub enum Phase {
     SolvingTwist,
     /// A validated trajectory is being applied one frame per tick.
     Actuating,
-    /// The manipulation evaluator accepted confirmation.
+    /// Confirmation succeeded; opening jaws and following the validated return path.
+    BreakingAway,
+    /// Engineer is clear; the Core retracts, tips and drops the spent Unit.
+    Recovering,
+    /// Assembly succeeded and the Core finished recovery and reset.
     Completed,
     /// Planning, parking, timeout or evaluation failed.
     Failed,
@@ -381,7 +385,7 @@ pub struct Frame {
     pub angles_rad: [f64; 3],
     /// Actual kinematic grasp attachment.
     pub gripped: bool,
-    /// Planner stage identifier: approach, grasp, insert, lift, flip, align, settle.
+    /// Planner stage identifier: approach, grasp, insert, lift, flip, align, settle, breakaway.
     pub stage: u8,
 }
 /// Restorable source Core travel before the robot planner is released.
@@ -499,6 +503,90 @@ impl CorePositioning {
     }
 }
 
+/// Prescribed post-success Core recovery. UC §5.4.3 step 6 requires recovery,
+/// but its route, tip and delays here are simulator policies, not measured hardware.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CoreRecovery {
+    /// Retraction to the manual initial pose, using the existing 1 rad/s, 0.1 m/s policy.
+    pub motion: CorePositioning,
+    /// Whole-Core wrist motion to point the shaft downward, without reversing the P hinge.
+    pub tip: CorePositioning,
+    /// Elapsed explicit field time, nanoseconds, through retract/tip/drop/reset.
+    pub elapsed_ns: u64,
+}
+impl CoreRecovery {
+    /// Prepare fixed idle/discharge branches; withdrawal captures the actual Core state.
+    pub fn new(pose: &RigPose, idle_rad: [f64; 6], drop_rad: [f64; 6]) -> Self {
+        let motion = CorePositioning::new(pose, idle_rad);
+        let mut idle = pose.clone();
+        idle.core_q = idle_rad;
+        idle.lift_m = 0.;
+        idle.p_rad = 0.;
+        idle.q_rad = 0.;
+        Self {
+            motion,
+            tip: CorePositioning::new(&idle, drop_rad),
+            elapsed_ns: 0,
+        }
+    }
+    fn begin(&mut self, pose: &RigPose) {
+        *self = Self::new(pose, self.motion.target_rad, self.tip.target_rad);
+    }
+    /// Total prescribed duration, nanoseconds, including a 250 ms stationary release hold and 500 ms gravity clearance dwell.
+    pub fn duration_ns(&self) -> u64 {
+        self.motion.duration_ns + 2 * self.tip.duration_ns + 750_000_000
+    }
+    /// Whether the shaft has tipped down and released the Unit into rigid-body physics.
+    pub fn released(&self) -> bool {
+        self.elapsed_ns >= self.motion.duration_ns + self.tip.duration_ns + 250_000_000
+    }
+    /// Fraction of the full recovery completed, inclusive zero through one.
+    pub fn progress(&self) -> f32 {
+        self.elapsed_ns as f32 / self.duration_ns() as f32
+    }
+    /// Advance one normal 128 Hz tick. The Engineer and its jaws remain untouched.
+    pub fn advance(&mut self, pose: &mut RigPose) -> bool {
+        self.elapsed_ns = (self.elapsed_ns + crate::tick_ns()).min(self.duration_ns());
+        if self.elapsed_ns <= self.motion.duration_ns {
+            self.motion.advance(pose);
+        } else {
+            let elapsed = self.elapsed_ns - self.motion.duration_ns;
+            if elapsed <= self.tip.duration_ns {
+                self.tip.advance(pose);
+            } else if elapsed > self.tip.duration_ns + 750_000_000 {
+                let t = (elapsed - self.tip.duration_ns - 750_000_000) as f64
+                    / self.tip.duration_ns as f64;
+                pose.core_q = std::array::from_fn(|i| {
+                    self.tip.target_rad[i] + (self.tip.from_rad[i] - self.tip.target_rad[i]) * t
+                });
+                if self.elapsed_ns == self.duration_ns() {
+                    pose.core_q = self.motion.target_rad;
+                }
+            }
+        }
+        self.elapsed_ns == self.duration_ns()
+    }
+    fn validate(&self, model: &Model) -> Result<(), &'static str> {
+        self.motion.validate(model)?;
+        self.tip.validate(model)?;
+        if self.tip.from_rad != self.motion.target_rad
+            || self.tip.lift_m != 0.
+            || self.tip.angles_rad != [0.; 2]
+            || self.motion.elapsed_ns != self.elapsed_ns.min(self.motion.duration_ns)
+            || self.tip.elapsed_ns
+                != self
+                    .elapsed_ns
+                    .saturating_sub(self.motion.duration_ns)
+                    .min(self.tip.duration_ns)
+            || self.elapsed_ns > self.duration_ns()
+            || !self.elapsed_ns.is_multiple_of(crate::tick_ns())
+        {
+            return Err("invalid Core recovery time or branches");
+        }
+        Ok(())
+    }
+}
+
 /// Complete assembly authority, including the remaining trajectory for restore.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Run {
@@ -516,9 +604,15 @@ pub struct Run {
     pub phase: Phase,
     /// Persistent pre-planning Core motion, retained for progress and restore.
     pub positioning: Option<CorePositioning>,
+    /// Optional live post-success recovery; contains its fixed idle branch and restorable progress.
+    #[serde(default)]
+    pub recovery: Option<CoreRecovery>,
     /// Observed Q target, radians; absent until a level-three Unit is inserted,
     /// lifted and fully flipped. No initial plan may consume this value.
     pub twist_target_rad: Option<f64>,
+    /// Fixed wrist-to-Unit transform for loaded motion; absent for legacy/offline fixtures.
+    #[serde(default)]
+    pub unit_grasp: Option<Pose>,
     /// Guarded search queries consumed, not an estimate of solution completion.
     pub checks: u32,
     /// Maximum guarded search queries.
@@ -552,7 +646,12 @@ impl Run {
                 | Phase::AwaitingTarget
                 | Phase::SolvingTwist
                 | Phase::Actuating
+                | Phase::BreakingAway
         )
+    }
+    /// Whether this station is reserved by manipulation or automatic equipment recovery.
+    pub fn station_busy(&self) -> bool {
+        self.active() || self.phase == Phase::Recovering
     }
     /// Source rig Engineer body expressed in world FLU metres and wxyz.
     pub fn body_world(&self) -> Pose {
@@ -574,6 +673,12 @@ impl Run {
             return Err("invalid automatic assembly state");
         }
         self.model.validate()?;
+        if let Some(recovery) = &self.recovery {
+            recovery.validate(&self.model)?;
+        }
+        if self.phase == Phase::Recovering && self.recovery.is_none() {
+            return Err("missing Core recovery motion");
+        }
         if self.phase == Phase::Positioning && self.positioning.is_none() {
             return Err("missing Core positioning motion");
         }
@@ -586,6 +691,7 @@ impl Run {
                         | Phase::AwaitingTarget
                         | Phase::SolvingTwist
                         | Phase::Actuating
+                        | Phase::BreakingAway
                         | Phase::Completed
                 ) && motion.elapsed_ns != motion.duration_ns)
             {
@@ -602,6 +708,7 @@ impl Run {
         if !valid(self.world_from_rig)
             || !valid(self.pose.engineer_body)
             || !valid(self.pose.unit_pose)
+            || self.unit_grasp.is_some_and(|g| !valid(g))
             || !self
                 .pose
                 .engineer_q
@@ -624,7 +731,14 @@ impl Run {
         {
             return Err("invalid or premature Q target");
         }
+        let mut returning = false;
         for f in &self.frames {
+            if f.stage == 7 {
+                returning = true;
+            }
+            if returning && (f.stage != 7 || f.gripped) {
+                return Err("invalid breakaway trajectory suffix");
+            }
             if self.difficulty == 3 && self.twist_target_rad.is_none() && f.stage >= 5 {
                 return Err("unobserved Q target cannot enter a planned alignment");
             }
@@ -641,7 +755,7 @@ impl Run {
                     .iter()
                     .zip(&self.model.engineer.axes)
                     .any(|(q, a)| *q < a.range_rad[0] - 1e-6 || *q > a.range_rad[1] + 1e-6)
-                || f.stage > 6
+                || f.stage > 7
             {
                 return Err("invalid assembly trajectory");
             }
@@ -651,6 +765,24 @@ impl Run {
     /// Apply one validated sample and observe measured manipulation on field time.
     pub fn advance(&mut self, now_ns: u64) {
         use crate::gameplay::rmuc_2027::manipulation::Sensors;
+        if self.phase == Phase::Recovering {
+            if self
+                .recovery
+                .as_mut()
+                .is_some_and(|r| r.advance(&mut self.pose))
+            {
+                self.phase = Phase::Completed;
+                self.message = "Assembly complete; Unit recovered, Core idle".into();
+            } else {
+                self.message = if self.recovery.as_ref().is_some_and(CoreRecovery::released) {
+                    "Unit dropped; resetting Core"
+                } else {
+                    "Recovering spent Unit"
+                }
+                .into();
+            }
+            return;
+        }
         if self.phase == Phase::Positioning {
             if let Some(motion) = &mut self.positioning
                 && motion.advance(&mut self.pose)
@@ -661,7 +793,7 @@ impl Run {
             }
             return;
         }
-        if self.phase != Phase::Actuating {
+        if !matches!(self.phase, Phase::Actuating | Phase::BreakingAway) {
             return;
         }
         if let Some(f) = self.frames.get(self.cursor as usize) {
@@ -691,9 +823,10 @@ impl Run {
                 axis_error_rad: f.angles_rad[2].abs(),
                 lateral_error_m: (f.guide_m[1] - 0.2).abs(),
             };
-            if let Err(reason) =
-                self.attempt
-                    .observe(now_ns, [sensors, Sensors::default()], true, true)
+            if self.phase == Phase::Actuating
+                && let Err(reason) =
+                    self.attempt
+                        .observe(now_ns, [sensors, Sensors::default()], true, true)
             {
                 self.phase = Phase::Failed;
                 self.message = reason.into();
@@ -719,10 +852,28 @@ impl Run {
                 "Flipping",
                 "Aligning",
                 "Settling",
+                "Releasing and returning to neutral",
             ][f.stage as usize]
                 .into();
         }
-        if self.cursor as usize == self.frames.len() {
+        if self.phase == Phase::BreakingAway {
+            if self.cursor as usize == self.frames.len() {
+                if let Some(recovery) = &mut self.recovery {
+                    recovery.begin(&self.pose);
+                    self.phase = Phase::Recovering;
+                    self.message = "Engineer clear; recovering spent Unit".into();
+                } else {
+                    self.phase = Phase::Completed;
+                    self.message = "Assembly complete; arm neutral".into();
+                }
+            }
+            return;
+        }
+        let release = self
+            .frames
+            .get(self.cursor as usize)
+            .is_some_and(|f| f.stage == 7);
+        if self.cursor as usize == self.frames.len() || release {
             if self.difficulty == 3 && self.twist_target_rad.is_none() {
                 use crate::gameplay::rmuc_2027::{assembly_pose::Targets, manipulation::Step};
                 let core = &self.attempt.cores[0];
@@ -744,8 +895,18 @@ impl Run {
             }
             match self.attempt.confirm(0) {
                 Ok(()) => {
-                    self.phase = Phase::Completed;
-                    self.message = "Assembly complete".into();
+                    self.phase = if release {
+                        Phase::BreakingAway
+                    } else {
+                        Phase::Completed
+                    };
+                    self.pose.gripped = false;
+                    self.message = if release {
+                        "Assembly confirmed; releasing gripper"
+                    } else {
+                        "Assembly complete"
+                    }
+                    .into();
                 }
                 Err(reason) => {
                     self.phase = Phase::Failed;
@@ -761,11 +922,27 @@ impl Run {
     }
     /// Field time remaining before the prototype 45-second attempt deadline.
     pub fn timed_out(&self, now_ns: u64) -> bool {
-        self.phase != Phase::Positioning && now_ns.saturating_sub(self.started_ns) >= 45_000_000_000
+        !matches!(
+            self.phase,
+            Phase::Positioning | Phase::BreakingAway | Phase::Recovering
+        ) && now_ns.saturating_sub(self.started_ns) >= 45_000_000_000
     }
 }
 
 impl Run {
+    /// Derive a carried Unit pose from calibrated joint FK and the fixed grasp.
+    /// Returns `None` for a fixture without a rigid loaded grasp. No state advances.
+    pub fn carried_unit_pose(&self, joints_rad: [f64; 6]) -> Option<Pose> {
+        self.unit_grasp.map(|grasp| {
+            compose(
+                compose(
+                    self.pose.engineer_body,
+                    self.model.engineer.tool_pose(joints_rad),
+                ),
+                grasp,
+            )
+        })
+    }
     /// Whether the chassis remains within the stationary fixture's 20 mm/0.03 rad
     /// allowance. This is a simulator stability allowance, not a rulebook limit.
     pub fn parking_matches(&self, actual: Pose) -> bool {
@@ -824,7 +1001,7 @@ impl crate::Field {
             if self
                 .assemblies
                 .iter()
-                .any(|r| r.active() && r.team == run.team)
+                .any(|r| r.station_busy() && r.team == run.team)
             {
                 return Err(crate::FieldError::Chassis("assembly station is busy"));
             }
@@ -842,14 +1019,23 @@ impl crate::Field {
             && let Some(arm) = self.arms.iter_mut().find(|a| a.owner == owner)
         {
             arm.target_rad = arm.joints_rad;
-            arm.jaw_target_rad = std::array::from_fn(|i| arm.model.engineer_jaws[i].open_rad);
+            if !self
+                .energy_units
+                .iter()
+                .any(|u| u.attachment == crate::energy_unit::Attachment::Held(owner))
+            {
+                arm.jaw_target_rad = std::array::from_fn(|i| arm.model.engineer_jaws[i].open_rad);
+            }
         }
         let team = self
             .assemblies
             .iter_mut()
             .find(|r| r.owner == owner && r.active())
             .and_then(|run| {
-                let admitted = run.phase != Phase::Positioning;
+                let admitted = !matches!(
+                    run.phase,
+                    Phase::Positioning | Phase::BreakingAway | Phase::Recovering
+                );
                 run.cancel(reason);
                 (run.awards_match && admitted).then_some(run.team)
             });
@@ -885,16 +1071,17 @@ impl crate::Field {
         let mut settle = Vec::new();
         let mut begin = Vec::new();
         for run in &mut self.assemblies {
-            if !run.active() {
+            if !run.station_busy() {
                 continue;
             }
             let was_positioning = run.phase == Phase::Positioning;
+            let was_returning = matches!(run.phase, Phase::BreakingAway | Phase::Recovering);
             let valid = self.physics.chassis_snapshot(run.owner).is_some_and(|c| {
                 c.placement_revision == run.placement_revision
                     && !c.defeated
                     && run.parking_matches(c.pose)
             });
-            if !valid {
+            if !valid && run.phase != Phase::Recovering {
                 run.cancel("Parking changed or robot unavailable");
             } else if run.timed_out(now) {
                 run.phase = Phase::Failed;
@@ -919,8 +1106,16 @@ impl crate::Field {
                     }
                 }
             }
-            if !run.active() && run.awards_match && !was_positioning {
-                settle.push((run.team, run.phase == Phase::Completed, run.owner));
+            if ((!run.active() && !was_returning)
+                || (!was_returning && run.phase == Phase::BreakingAway))
+                && run.awards_match
+                && !was_positioning
+            {
+                settle.push((
+                    run.team,
+                    matches!(run.phase, Phase::Completed | Phase::BreakingAway),
+                    run.owner,
+                ));
             }
         }
         for (owner, team, difficulty) in begin {
@@ -954,10 +1149,10 @@ impl crate::Field {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{ChassisConfig, ChassisPlacement, Field, RobotKind, StaticGeometry, tick_ns};
-    fn fixture() -> (Field, Run) {
+    pub(crate) fn fixture() -> (Field, Run) {
         let mut field = Field::new(&Default::default()).unwrap();
         let config = ChassisConfig::default();
         let body = Pose::at([0., 0., config.rest_height_m()]);
@@ -1029,7 +1224,9 @@ mod tests {
             difficulty: 1,
             phase: Phase::Actuating,
             positioning: None,
+            recovery: None,
             twist_target_rad: None,
+            unit_grasp: None,
             checks: 1,
             budget: 10,
             message: String::new(),
@@ -1302,6 +1499,71 @@ mod tests {
         field.step(128).unwrap();
         assert_eq!(field.arms()[0].joints_rad, joints);
         assert_ne!(field.arms()[0].joints_rad, NEUTRAL_JOINTS_RAD);
+    }
+    #[test]
+    fn breakaway_seats_once_returns_with_limits_and_restores_mid_motion() {
+        use crate::energy_unit::Attachment;
+        use crate::projectile::PayloadShape;
+        let (mut field, mut run) = fixture();
+        field.step(256).unwrap();
+        run.pose.engineer_body = field.chassis_snapshot(run.owner).unwrap().pose;
+        let mut arm = ArmState::neutral(run.owner, run.model.clone());
+        arm.joints_rad = run.pose.engineer_q;
+        arm.target_rad = arm.joints_rad;
+        field.add_arm(arm).unwrap();
+        field
+            .preload_energy_unit(
+                run.owner,
+                PayloadShape {
+                    hulls_m: vec![vec![
+                        [0., 0., 0.],
+                        [0.01, 0., 0.],
+                        [0., 0.01, 0.],
+                        [0., 0., 0.01],
+                    ]],
+                    mass_kg: 0.25,
+                    max_expansion_m: 0.,
+                },
+            )
+            .unwrap();
+        run.pose.jaw_angles = field.arms()[0].jaws_rad;
+        for f in &mut run.frames {
+            f.jaws_rad = run.pose.jaw_angles;
+        }
+        // First finish the accepted fixture, then open stationary jaws before
+        // following a bounded return. The seated object must never follow it.
+        let last = run.frames.last().unwrap().clone();
+        for i in 0..160 {
+            let mut f = last.clone();
+            f.stage = 7;
+            f.gripped = false;
+            let t = (i as f64 / 159.).max(0.);
+            f.joints_rad = NEUTRAL_JOINTS_RAD.map(|q| q * t);
+            f.jaws_rad = run.pose.jaw_angles.map(|q| q * (1. - t));
+            run.frames.push(f);
+        }
+        field.set_assembly(run).unwrap();
+        field.step(4).unwrap();
+        assert_eq!(field.assemblies()[0].phase, Phase::BreakingAway);
+        let seated = field.energy_units()[0].clone();
+        assert_eq!(seated.attachment, Attachment::Seated(field.arms()[0].owner));
+        field.step(40).unwrap();
+        let mut restored =
+            Field::restore(&field.snapshot(), &StaticGeometry::default(), 0.).unwrap();
+        for _ in 0..120 {
+            let before = field.arms()[0].joints_rad;
+            field.step(1).unwrap();
+            restored.step(1).unwrap();
+            assert!(
+                (0..6).all(|i| (field.arms()[0].joints_rad[i] - before[i]).abs()
+                    <= JOINT_SPEED_RAD_S[i] * tick_ns() as f64 * 1e-9 + 2e-6)
+            );
+            assert_eq!(field.energy_units()[0].physical.pose, seated.physical.pose);
+        }
+        assert_eq!(field.assemblies()[0].phase, Phase::Completed);
+        assert_eq!(field.arms()[0].joints_rad, NEUTRAL_JOINTS_RAD);
+        assert_eq!(field.arms(), restored.arms());
+        assert_eq!(field.energy_units(), restored.energy_units());
     }
     #[test]
     fn cancel_preserves_intermediate_joints_and_idle_restore() {

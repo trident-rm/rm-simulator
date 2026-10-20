@@ -110,12 +110,13 @@ impl Plugin for AssemblyPlugin {
     fn build(&self, app: &mut App) {
         lights::install(app);
         app.init_resource::<VisualOwners>()
+            .init_resource::<MotionViews>()
             .add_systems(OnEnter(Screen::InMatch), panel)
             .add_systems(OnExit(Screen::InMatch), cleanup)
             .add_observer(loaded)
             .add_systems(
                 Update,
-                (toggle, update_panel, visuals)
+                (toggle, update_panel, sample_motion, visuals)
                     .chain()
                     .after(crate::session::advance_world)
                     .before(crate::scene::publish_scene)
@@ -123,7 +124,8 @@ impl Plugin for AssemblyPlugin {
             )
             .add_systems(
                 Update,
-                align_arms
+                (align_arms, align_carried_units)
+                    .chain()
                     .after(crate::scene::publish_scene)
                     .before(rm_simulator_render::sync::SceneSyncSet)
                     .run_if(in_state(Screen::InMatch)),
@@ -149,6 +151,86 @@ fn align_arms(
         }
     }
 }
+fn sample_idle_arm(
+    arm: &rm_simulator_world::assembly::ArmState,
+    ahead_ns: u64,
+) -> rm_simulator_world::assembly::ArmState {
+    let mut sampled = arm.clone();
+    let dt = ahead_ns as f64 * 1e-9;
+    for i in 0..6 {
+        sampled.joints_rad[i] += (sampled.target_rad[i] - sampled.joints_rad[i]).clamp(-dt, dt);
+    }
+    for i in 0..2 {
+        sampled.jaws_rad[i] += (sampled.jaw_target_rad[i] - sampled.jaws_rad[i]).clamp(-dt, dt);
+    }
+    sampled
+}
+fn align_carried_units(
+    scene: Res<rm_simulator_render::sync::SceneInput>,
+    session: Res<Session>,
+    views: Res<MotionViews>,
+    mut roots: Query<(&Root, &mut Transform)>,
+) {
+    let Some(scene) = &scene.0 else { return };
+    let Some(restore) = &session.snapshot.restore else {
+        return;
+    };
+    for (root, mut transform) in &mut roots {
+        if root.kind != 4 {
+            continue;
+        }
+        let Some(unit) = restore
+            .energy_units
+            .iter()
+            .find(|u| u.physical.id == root.owner)
+        else {
+            continue;
+        };
+        let rm_simulator_world::energy_unit::Attachment::Held(owner) = unit.attachment else {
+            continue;
+        };
+        let Some(chassis) = scene.chassis.iter().find(|c| c.id == owner) else {
+            continue;
+        };
+        let Some(arm) = restore.arms.iter().find(|a| a.owner == owner) else {
+            continue;
+        };
+        let body = Pose {
+            translation_m: chassis.pose.translation_m,
+            rotation_wxyz: chassis.pose.rotation_wxyz,
+        };
+        let local = if let Some(run) = restore
+            .assemblies
+            .iter()
+            .find(|r| r.owner == owner && r.active())
+            && let Some(view) = views
+                .0
+                .iter()
+                .find(|v| v.owner == owner && v.generation == run.generation)
+        {
+            compose(
+                arm.model.engineer.tool_pose(view.pose.engineer_q),
+                unit.grasp,
+            )
+        } else {
+            let ahead = if session.paused {
+                0
+            } else {
+                session
+                    .presentation_time_ns()
+                    .saturating_sub(session.snapshot.time_ns)
+                    .min(100_000_000)
+            };
+            compose(
+                arm.model
+                    .engineer
+                    .tool_pose(sample_idle_arm(arm, ahead).joints_rad),
+                unit.grasp,
+            )
+        };
+        transform.set_if_neq(root_transform(compose(body, local)));
+    }
+}
 #[derive(Component)]
 struct Panel;
 #[derive(Component)]
@@ -172,7 +254,7 @@ struct Link {
 #[derive(Resource, Default)]
 pub(crate) struct VisualOwners(pub BTreeSet<u32>);
 fn panel(mut commands: Commands) {
-    commands.spawn((Panel,Node{position_type:PositionType::Absolute,right:px(18),top:px(160),width:px(330),padding:UiRect::all(px(12)),flex_direction:FlexDirection::Column,row_gap:px(8),..default()},BackgroundColor(Color::srgba(0.025,0.04,0.055,0.94)),Visibility::Hidden,ZIndex(80)))
+    commands.spawn((Panel,Node{position_type:PositionType::Absolute,right:px(18),top:px(160),width:px(330),padding:UiRect::all(px(12)),flex_direction:FlexDirection::Column,row_gap:px(8),..default()},BackgroundColor(Color::srgba(0.025,0.04,0.055,0.94)),Visibility::Hidden,GlobalZIndex(4)))
         .with_children(|p| {
             p.spawn((Text::new("Automatic assembly"),TextFont{font_size:FontSize::Px(18.),..default()}));
             p.spawn((Status,Text::new("Park the Heavy manually and stop.\nChoose level 1, 2 or 3."),TextFont{font_size:FontSize::Px(15.),..default()}));
@@ -188,7 +270,32 @@ fn panel(mut commands: Commands) {
                         .with_child((Text::new(label),TextFont{font_size:FontSize::Px(16.),..default()},Pickable::IGNORE));
                 }
             });
-            p.spawn((Text::new("Driving cancels the operation.\nSearch is asynchronous; actuation uses game time."),TextFont{font_size:FontSize::Px(12.),..default()}));
+            p.spawn(Node{column_gap:px(5),..default()}).with_children(|p| {
+                for (axis,label) in [(0,"X"),(1,"Y"),(2,"Z")] {
+                    for sign in [-1.,1.] {
+                        p.spawn((bevy::ui_widgets::Button,bevy::ui_widgets::ActivateOnPress,Node{padding:UiRect::axes(px(6),px(6)),..default()},BackgroundColor(Color::srgb(0.15,0.22,0.28))))
+                        .observe(move |_:On<bevy::ui_widgets::Activate>,mut session:ResMut<Session>| {
+                            if let Some(chassis)=session.chassis_id {let mut translation_m=[0.;3];translation_m[axis]=sign*0.01;
+                                session.apply(Command::EnergyArmJog{chassis,translation_m,rotation_rad:[0.;3]});}
+                        }).with_child((Text::new(format!("{label}{}",if sign>0. {"+"}else{"-"})),TextFont{font_size:FontSize::Px(13.),..default()},Pickable::IGNORE));
+                    }
+                }
+            });
+            p.spawn(Node{column_gap:px(5),..default()}).with_children(|p| {
+                for (axis,label) in [(0,"R"),(1,"P"),(2,"Y")] {
+                    for sign in [-1.,1.] {
+                        p.spawn((bevy::ui_widgets::Button,bevy::ui_widgets::ActivateOnPress,Node{padding:UiRect::axes(px(6),px(6)),..default()},BackgroundColor(Color::srgb(0.15,0.22,0.28))))
+                        .observe(move |_:On<bevy::ui_widgets::Activate>,mut session:ResMut<Session>| {
+                            if let Some(chassis)=session.chassis_id {let mut rotation_rad=[0.;3];rotation_rad[axis]=sign*5f64.to_radians();
+                                session.apply(Command::EnergyArmJog{chassis,translation_m:[0.;3],rotation_rad});}
+                        }).with_child((Text::new(format!("{label}{}",if sign>0. {"+"}else{"-"})),TextFont{font_size:FontSize::Px(13.),..default()},Pickable::IGNORE));
+                    }
+                }
+            });
+            p.spawn((bevy::ui_widgets::Button,bevy::ui_widgets::ActivateOnPress,Node{padding:UiRect::axes(px(10),px(6)),..default()},BackgroundColor(Color::srgb(0.15,0.22,0.28))))
+                .observe(|_:On<bevy::ui_widgets::Activate>,mut session:ResMut<Session>| {if let Some(chassis)=session.chassis_id {session.apply(Command::EnergyGrip{chassis});}})
+                .with_child((Text::new("Grip / release Unit"),TextFont{font_size:FontSize::Px(14.),..default()},Pickable::IGNORE));
+            p.spawn((Text::new("Driving cancels arm work; Core recovery continues.\nSearch is asynchronous; motion uses game time."),TextFont{font_size:FontSize::Px(12.),..default()}));
         });
 }
 fn toggle(
@@ -210,6 +317,93 @@ fn toggle(
     {
         hud.assembly = !hud.assembly;
         hud.consumed = true;
+    }
+}
+#[derive(Resource, Default)]
+struct MotionViews(Vec<MotionView>);
+struct MotionView {
+    owner: u32,
+    generation: u64,
+    pose: rm_simulator_world::assembly::RigPose,
+    cursor: u32,
+}
+// Present only already supplied motion. This does not advance the evaluator,
+// reveal a target, confirm assembly or start a new worker.
+fn sample_motion(session: Res<Session>, mut views: ResMut<MotionViews>) {
+    views.0.clear();
+    let ahead = if session.paused {
+        0
+    } else {
+        session
+            .presentation_time_ns()
+            .saturating_sub(session.snapshot.time_ns)
+            .min(100_000_000)
+    };
+    for run in runs(&session) {
+        let mut pose = run.pose.clone();
+        let mut cursor = run.cursor;
+        if run.phase == Phase::Recovering {
+            if let Some(recovery) = &run.recovery {
+                let mut sampled = recovery.clone();
+                for _ in 0..ahead / rm_simulator_world::tick_ns() {
+                    let mut next = pose.clone();
+                    let finished = sampled.advance(&mut next);
+                    // Do not predict the transition from prescribed attachment
+                    // to unknown free rigid-body contacts.
+                    if !recovery.released() && sampled.released() {
+                        break;
+                    }
+                    pose = next;
+                    if finished {
+                        break;
+                    }
+                }
+            }
+        } else if run.phase == Phase::Positioning {
+            if let Some(m) = &run.positioning {
+                let t = (m.elapsed_ns.saturating_add(ahead).min(m.duration_ns)) as f64
+                    / m.duration_ns.max(1) as f64;
+                pose.core_q =
+                    std::array::from_fn(|i| m.from_rad[i] + (m.target_rad[i] - m.from_rad[i]) * t);
+                pose.lift_m = m.lift_m * (1. - t);
+                pose.p_rad = m.angles_rad[0] * (1. - t);
+                pose.q_rad = m.angles_rad[1] * (1. - t);
+            }
+        } else if matches!(run.phase, Phase::Actuating | Phase::BreakingAway) {
+            let count = (ahead / rm_simulator_world::tick_ns()) as usize;
+            // Never predict across the unknown-target or completion boundary.
+            let boundary = run
+                .frames
+                .iter()
+                .position(|f| f.stage == 7)
+                .unwrap_or(run.frames.len());
+            let limit = if run.phase == Phase::Actuating {
+                boundary
+            } else {
+                run.frames.len()
+            };
+            let end = (run.cursor as usize + count)
+                .min(limit.saturating_sub(1))
+                .max(run.cursor as usize);
+            if end > run.cursor as usize
+                && let Some(f) = run.frames.get(end - 1)
+            {
+                pose.engineer_q = f.joints_rad;
+                pose.jaw_angles = f.jaws_rad;
+                pose.unit_pose = f.unit;
+                pose.lift_m = f.guide_m[2] - 0.6;
+                pose.p_rad = f.angles_rad[0];
+                pose.q_rad = f.angles_rad[1];
+                pose.gripped = f.gripped;
+                cursor = end as u32;
+            }
+        }
+        views.0.push(MotionView {
+            owner: run.owner,
+            generation: run.generation,
+            pose,
+            cursor,
+        });
     }
 }
 fn runs(session: &Session) -> &[Run] {
@@ -236,14 +430,19 @@ fn update_panel(
             Visibility::Hidden
         });
     }
-    let (message, progress) = if let Some(r) = run {
+    let (mut message, progress) = if let Some(r) = run {
         let progress = match r.phase {
             Phase::Positioning => r.positioning.as_ref().map_or(0., |p| p.progress() as f32),
+            Phase::Recovering => r.recovery.as_ref().map_or(0., |p| p.progress()),
             Phase::Solving | Phase::SolvingTwist => r.checks as f32 / r.budget.max(1) as f32,
-            Phase::Actuating | Phase::Completed => r.cursor as f32 / r.frames.len().max(1) as f32,
+            Phase::Actuating | Phase::BreakingAway | Phase::Completed => {
+                r.cursor as f32 / r.frames.len().max(1) as f32
+            }
             _ => 0.,
         };
-        let label = if r.phase == Phase::Positioning {
+        let label = if r.phase == Phase::Recovering {
+            format!("Core recovery: {:.0}%", progress * 100.)
+        } else if r.phase == Phase::Positioning {
             format!("Core positioning: {:.0}%", progress * 100.)
         } else if matches!(r.phase, Phase::Solving | Phase::SolvingTwist) {
             format!("Search budget: {} / {}", r.checks, r.budget)
@@ -263,6 +462,14 @@ fn update_panel(
             0.,
         )
     };
+    if let Some(restore) = &session.snapshot.restore {
+        let held=restore.energy_units.iter().any(|u|matches!(u.attachment,rm_simulator_world::energy_unit::Attachment::Held(owner) if Some(owner)==session.chassis_id));
+        message.push_str(if held {
+            "\nUnit: held"
+        } else {
+            "\nUnit: not held"
+        });
+    }
     for mut t in &mut text {
         if t.0 != message {
             t.0 = message.clone();
@@ -337,12 +544,12 @@ fn loaded(
 fn visuals(
     mut commands: Commands,
     session: Res<Session>,
+    views: Res<MotionViews>,
     assets: Option<Res<Assets>>,
     server: Res<AssetServer>,
     mut roots: Query<(Entity, &Root, &mut Transform)>,
     mut links: Query<(&Link, &mut Transform), Without<Root>>,
     mut owners: ResMut<VisualOwners>,
-    mut unit_visibility: Query<&mut Visibility>,
     mut replaced: ResMut<rm_simulator_render::team_robot::ReplacedArmOwners>,
     cad: Option<Res<rm_simulator_render::cad::CadSceneConfig>>,
     mut hidden: Option<ResMut<rm_simulator_render::cad::HiddenCadInstances>>,
@@ -364,12 +571,42 @@ fn visuals(
         .iter()
         .filter(|r| r.model.engineer == assets.model.engineer && r.model.core == assets.model.core)
         .collect();
+    let units = session
+        .snapshot
+        .restore
+        .as_ref()
+        .map_or(&[][..], |r| r.energy_units.as_slice());
     for (entity, root, mut t) in &mut roots {
         let pose = if root.kind == 0 {
             arms.iter()
                 .find(|a| a.owner == root.owner)
                 .and_then(|_| session.snapshot.chassis.iter().find(|c| c.id == root.owner))
                 .map(|c| c.pose)
+        } else if root.kind == 4 {
+            units.iter().find(|u| u.physical.id == root.owner).map(|u| {
+                if let rm_simulator_world::energy_unit::Attachment::Held(owner) = u.attachment
+                    && let Some(run) = visible.iter().find(|r| r.owner == owner && r.active())
+                    && let Some(view) = views
+                        .0
+                        .iter()
+                        .find(|v| v.owner == owner && v.generation == run.generation)
+                {
+                    return compose(run.world_from_rig, view.pose.unit_pose);
+                }
+                if let rm_simulator_world::energy_unit::Attachment::Seated(owner) = u.attachment
+                    && let Some(run) = visible
+                        .iter()
+                        .find(|r| r.owner == owner && r.generation == u.seated_generation)
+                    && let Some(view) = views
+                        .0
+                        .iter()
+                        .find(|v| v.owner == owner && v.generation == run.generation)
+                {
+                    let head = view.pose.frames(&run.model)["core/q"];
+                    return compose(compose(run.world_from_rig, head), u.grasp);
+                }
+                u.physical.pose
+            })
         } else {
             visible
                 .iter()
@@ -382,18 +619,6 @@ fn visuals(
                     }
                 })
         };
-        if root.kind == 4 {
-            let shown = visible.iter().any(|r| {
-                r.owner == root.owner && r.generation == root.generation && !r.frames.is_empty()
-            });
-            if let Ok(mut visibility) = unit_visibility.get_mut(entity) {
-                visibility.set_if_neq(if shown {
-                    Visibility::Inherited
-                } else {
-                    Visibility::Hidden
-                });
-            }
-        }
         if let Some(pose) = pose {
             let next = root_transform(pose);
             if *t != next {
@@ -431,7 +656,23 @@ fn visuals(
                 root_transform(chassis.pose),
             ));
         }
-        let frames = arm.frames();
+        let frames = if let Some(view) = views.0.iter().find(|v| v.owner == arm.owner).filter(|v| {
+            visible
+                .iter()
+                .any(|r| r.owner == v.owner && r.generation == v.generation && r.active())
+        }) {
+            view.pose.frames(&arm.model)
+        } else {
+            let ahead = if session.paused || chassis.defeated {
+                0
+            } else {
+                session
+                    .presentation_time_ns()
+                    .saturating_sub(session.snapshot.time_ns)
+                    .min(100_000_000)
+            };
+            sample_idle_arm(arm, ahead).frames()
+        };
         for (link, mut t) in &mut links {
             if link.owner == arm.owner
                 && link.generation == 0
@@ -444,11 +685,30 @@ fn visuals(
             }
         }
     }
+    for unit in units {
+        if !roots
+            .iter()
+            .any(|(_, r, _)| r.kind == 4 && r.owner == unit.physical.id)
+        {
+            commands.spawn((
+                Root {
+                    owner: unit.physical.id,
+                    generation: 0,
+                    kind: 4,
+                    ready: false,
+                },
+                WorldAssetRoot(
+                    server.load(GltfAssetLabel::Scene(0).from_asset("assembly://unit.glb")),
+                ),
+                root_transform(unit.physical.pose),
+            ));
+        }
+    }
     for run in visible {
         let existing: Vec<_> = roots
             .iter()
             .filter(|(_, r, _)| {
-                r.kind != 0 && r.owner == run.owner && r.generation == run.generation
+                r.kind != 0 && r.kind != 4 && r.owner == run.owner && r.generation == run.generation
             })
             .map(|(_, r, _)| r.ready)
             .collect();
@@ -457,7 +717,6 @@ fn visuals(
                 (1, "core-base.glb"),
                 (2, "core-arm.glb"),
                 (3, "core-head.glb"),
-                (4, "unit.glb"),
             ] {
                 commands.spawn((
                     Root {
@@ -484,7 +743,7 @@ fn visuals(
                 ));
             }
         }
-        if existing.len() == 4
+        if existing.len() == 3
             && existing.iter().all(|ready| *ready)
             && let (Some(cad), Some(hidden)) = (cad.as_ref(), hidden.as_mut())
         {
@@ -504,7 +763,12 @@ fn visuals(
                 hidden.0.insert(index);
             }
         }
-        let frames = run.pose.frames(&run.model);
+        let pose = views
+            .0
+            .iter()
+            .find(|v| v.owner == run.owner && v.generation == run.generation)
+            .map_or(&run.pose, |v| &v.pose);
+        let frames = pose.frames(&run.model);
         for (link, mut t) in &mut links {
             if link.owner == run.owner
                 && link.generation == run.generation

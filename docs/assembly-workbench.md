@@ -1165,13 +1165,14 @@ and [acceptance thresholds](https://github.com/HKUAstar/MoveIt-Engineer/blob/555
 ### Live integration still required
 
 This is an isolated workbench, without match networking, Heavy deployment,
-progression or rewards. It cannot certify a live match. The existing referee
-Start/Finish/Cancel path remains the only live assembly progression authority.
+progression or rewards. It cannot certify a live match. The referee Start/Finish/Cancel path remains available; the in-game automatic
+adapter described below separately connects accepted manipulation to progression.
 
 The source rigs prescribe joint positions. They do not solve motor torque,
 loads, donor wiring limits or contact forces. The source gripper
-now has a fitted contact-envelope stop and gated kinematic attachment; a released
-unit remains parked rather than becoming a simulated falling rigid body. Source motion currently follows the fixture's constrained mechanism
+has a fitted contact-envelope stop and gated kinematic attachment. In standalone
+offline workbench fixtures, a released Unit remains parked; the live adapter below
+instead uses persistent dynamic bodies. Offline source motion follows the fixture's constrained mechanism
 coordinates; a contact-based adapter must measure those from actual bodies and
 socket/bearing frames. The default comparison fixture keeps the CAD socket orientation. Seeded targets
 use the exporter's fitted equipment frame and the manual's spherical pose ranges;
@@ -1199,7 +1200,8 @@ just run --play --robot engineer --cad-assets field-2027 \
 
 Drive onto your Assembly Area, park facing the Core, and stop. Press **J**
 (rebindable as Automatic assembly), then choose **L1**, **L2** or **L3**.
-Escape closes the panel. Cancel or manual driving stops the job. No preparation
+Escape closes the panel. Cancel or manual driving stops arm work; automatic Core
+recovery continues independently once the Engineer has withdrawn. No preparation
 command moves the chassis: support height, tilt, motion and reach are checked
 against the current parking. An unsuccessful solve leaves it there.
 
@@ -1220,10 +1222,22 @@ and overload handling remain unimplemented.
 
 Solving holds the current joints, plans a collision-checked approach from them,
 and retimes the trajectory to preserve every waypoint within those limits.
-Completion and cancellation hold the last joint pose; they never reset the arm.
+Cancellation holds the last joint pose. Successful confirmation starts
+`BreakingAway`: the Unit becomes socket-attached, the jaws open while the wrist
+holds still, and a swept-collision-checked unloaded path returns the arm to
+neutral at the same joint/jaw speed limits. Near the flipped housing, the planner can open the pads partially,
+withdraw, then finish opening in clear space. This suffix is planned before
+playback; the Core and seated Unit stay fixed during its collision queries.
+Confirmation settles the reward once, before return; cancellation during return
+does not revoke it. The attempt deadline excludes this post-success movement.
+`Recovering` then moves the Core above the source collection opening, tips its
+whole wrist downward, drops the spent Unit under gravity and returns to its
+manual initial pose. `Completed` means Core recovery/reset has finished. Checkpoints retain the entire
+return suffix and cursor, so restoring midway resumes without a pose jump.
+A blocked return refuses planning rather than executing an unchecked retreat.
 
-This version starts with an operator-loaded Unit at the actual gripper; pickup
-from storage is not implemented. The grasp remains fixed through the loaded
+The live version starts with a deployment-preloaded Unit at the actual gripper;
+base storage pickup is not implemented. The grasp remains fixed through the loaded
 approach and insertion. It uses the canonical frozen Core pose, with the L3 Q
 target revealed only after the P flip. The same source-preserving arm, Core and
 Unit meshes animate through insertion, lift, P flip and Q alignment.
@@ -1243,7 +1257,7 @@ trajectories, source calibration, evaluator state and cursor travel in checkpoin
 so prediction and restore use the same remaining motion. Motion samples use micrometre/microradian grids (0.1 micro-unit for quaternion
 components), far below the collision tolerance. Those samples are column-delta
 packed and compressed losslessly to fit the world-update budget. Persistent idle
-arm state, posture targets and jaws also travel in checkpoints. Protocol 68
+arm state, posture targets and jaws also travel in checkpoints. Protocol 71
 requires matching clients and hosts.
 
 In Idle practice all three levels are available. During a running native match,
@@ -1355,18 +1369,89 @@ The staged +43.7° and +4.6° continuation probes took 3.709 s and 0.361 s
 respectively, including source validation/retiming. Their different targets and
 initial prefixes make them examples, not an average or percentile estimate.
 
-### Preloaded Unit and insertion
+### Persistent Energy Unit and physical pickup
 
-The live prototype starts with an operator-loaded Unit at the actual wrist,
-including while the Core positions and the worker solves. It is not seated on
-the Core. The jaws close at bounded speed before the loaded arm approaches;
-loading from storage and gravity during this fixture closure are not simulated.
-The preload uses the source-validated 135° grasp clock and 20 mm axial pad
-offset, fixed before planning. Offline fixture
-search may vary those, but a live carried plan cannot silently change them.
+The host preloads one source Unit at PIE Heavy deployment, with its own stable
+identity and closed jaws. It is visible before opening J, selecting a difficulty,
+Core positioning or worker planning. Starting another assembly requires the
+existing Unit to be held; it never creates or replaces an object. Base storage
+and fetching inventory from the supply station remain future work.
 
-The free approach checks the Unit alongside the arm against source collision
-geometry. Retimed samples derive the Unit pose from actual joint FK and the
-same rigid grasp. Free approach samples report no insertion evidence. Only the
-subsequent Cartesian entrance/insertion stages advance the assembly evaluator,
-followed by lift, flip and the delayed LED target.
+Released Units are dynamic Rapier bodies in the same scene as chassis,
+projectiles and field collision. They inherit their last carried linear/angular
+velocity, fall under gravity and can rest on a robot. Disconnecting a carrier
+releases its cargo. Identity, shape, attachment, pose, velocities and grasp
+transform survive full checkpoints and prediction restore. There is no flight
+expiry or projectile allowance for an Energy Unit.
+
+The J panel has **Grip / release Unit**, XYZ translation jogs (1 cm) and
+roll/pitch/yaw jogs (5°), also available through `EnergyGrip` and `EnergyArmJog`
+protocol commands. A pickup needs the Unit cylinder within 8 mm of the pad
+section, bore-axis alignment within 5°, and speed at most 0.5 m/s. These are
+prototype interaction allowances, not rulebook constants. Pickup preserves the
+actual object pose and records its wrist-relative transform; it does not snap
+or re-clock the Unit. Source collision sweeps admit jog targets before the normal
+1 rad/s joint controller follows them. Manual jogs use the station/source robot
+collision scene; other robots and scenery outside its terrain crop are not arm
+planning obstacles. Confirmed insertions mark the same Unit spent and socket-coupled until automatic
+Core discharge. UC R60 forbids reclaiming a successfully assembled Unit; grip
+commands reject it even when it is still between the pads.
+
+Held/socket-coupled Units are prescribed poses with collision response disabled;
+the live six-axis arm still has no dynamic contact-force model. The insertion
+planner retains its original source Unit mesh and validates the complete loaded
+path. Free-body dynamics use source-leaf convex outer proxies (bores/concavities
+may be filled), the nominal 0.4 kg mass from UC Figure 4-39, assumed friction 0.6
+and restitution 0.05. Contact-only linear
+and angular damping of 1.5/s approximate rolling resistance; free flight has none.
+Micrometre canonicalization removes CAD seam noise; compact circumscribed hulls
+are admitted only within a 1 mm displacement bound. The contact parameters and proxy policies are simulator assumptions, not donor
+measurements.
+
+Canonical proxy vertices travel as bounded delta-coded micrometre columns in a
+separately compressed immutable geometry record. Loaded trajectories omit Unit
+pose columns only when source FK plus the stored grasp reproduces every original
+quantized pose exactly; otherwise they retain the ordinary explicit columns.
+Decoding reconstructs the same complete world state without a geometry registry
+or a prior checkpoint.
+
+The deployment preload uses a 135° grasp clock and 20 mm axial pad offset.
+After pickup, the actual full wrist-to-Unit transform replaces that preset and
+stays fixed throughout planning. Offline fixture search may vary grasps, but a
+live carried plan cannot. Retimed samples derive the Unit pose from joint FK and
+that same rigid grasp. Only subsequent entrance/insertion travel advances the
+assembly evaluator, followed by lift, flip and the delayed LED target.
+
+Free approaches use bounded collision-checked shortcutting to reduce joint
+travel and may use the configured 1 rad/s limit. Insertion and P/Q segments keep
+their source-constrained paths. This is a heuristic improvement, not a global
+optimality claim; late-Q target coverage remains bounded.
+
+The source animation and LED markers sample the same accepted trajectory on the
+presentation clock. Sampling never advances an evaluator, invents a Q target,
+confirms a job or starts a worker. It stops at information/completion boundaries.
+Table 5-13's team-colored flashing is retained; recovery flashing ends after automatic discharge/reset rather than continuing
+forever after completion.
+
+To exercise live grip, falling pickup without snapping, collision settling and
+rejection of assembly with no held Unit on a fresh paused PIE session:
+
+```sh
+python3 scripts/energy-unit-game-console.py --port 7790 --screenshots
+```
+
+The test uses the deployed object and leaves it loose for manual pickup. Optional
+`--recover` tries a bounded guarded approach and records reach/path failures;
+it cannot retrieve an object that has rolled beyond the stationary arm's workspace.
+
+The live console assembly harness runs one selected `--level 1|2|3` per fresh
+Heavy deployment. A successfully assembled Unit is consumed and discharged into
+the collection bay; another attempt requires an unused Unit from future Base
+inventory, not a replacement spawn or reuse of the spent object.
+
+The recovery fit, rulebook requirements and simulator-only route/timing policies
+are documented in [the 2027 rules digest](rules-2027.md#successful-core-recovery-and-spent-units).
+The discharge point is centred over the verified source bay, with a 250 ms
+stationary hold before gravity release and a 500 ms clearance dwell before the
+Core returns upright. Source positioning/recovery remain prescribed; no Core-arm
+collision avoidance or overload response is added by this animation.

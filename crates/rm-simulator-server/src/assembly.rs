@@ -26,6 +26,8 @@ struct Job {
 }
 pub(crate) struct Service {
     template: Rig,
+    unit_shape: rm_simulator_world::projectile::PayloadShape,
+    recovery_core_rad: [[f64; 6]; 2],
     origins: [Pose; 2],
     generation: u64,
     jobs: BTreeMap<u32, Job>,
@@ -83,8 +85,24 @@ impl Service {
         } else {
             [mirror, origin]
         };
+        let collision: rm_simulator_physics::manipulator_collision::CollisionAsset =
+            serde_json::from_slice(
+                &std::fs::read(package.join("collision.json")).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+        let unit = collision
+            .bodies
+            .iter()
+            .find(|b| b.frame == "unit/unit")
+            .ok_or("missing source Unit collision")?;
+        let recovery_core_rad = template.recovery_core_joints().map_err(str::to_string)?;
+        // UC §4.3, Figure 4-39: Unit mass 400±50 g; use the nominal mass.
+        let unit_shape = rm_simulator_world::projectile::PayloadShape::from_parts(&unit.parts, 0.4)
+            .map_err(str::to_string)?;
         Ok(Self {
             template,
+            unit_shape,
+            recovery_core_rad,
             origins,
             generation: 0,
             jobs: Default::default(),
@@ -92,6 +110,7 @@ impl Service {
             resumes: Default::default(),
         })
     }
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn start(
         &mut self,
         difficulty: u8,
@@ -100,6 +119,7 @@ impl Service {
         awards_match: bool,
         arm: &rm_simulator_world::assembly::ArmState,
         previous: Option<&rm_simulator_world::assembly::RigPose>,
+        unit: &rm_simulator_world::energy_unit::EnergyUnit,
     ) -> Result<Run, String> {
         let owner = arm.owner;
         let team = chassis.team;
@@ -119,6 +139,10 @@ impl Service {
         }
         let origin = self.origins[team.index()];
         let mut rig = self.template.clone();
+        if unit.attachment != rm_simulator_world::energy_unit::Attachment::Held(owner) {
+            return Err("Assembly requires the existing held Unit".into());
+        }
+        rig.use_held_unit(unit);
         if let Some(warm) = &self.warm {
             rig.reuse_runtime_hints(warm);
         }
@@ -140,9 +164,15 @@ impl Service {
             difficulty,
             phase: Phase::Positioning,
             positioning: None,
+            recovery: Some(rm_simulator_world::assembly::CoreRecovery::new(
+                &rig.runtime_pose(),
+                self.recovery_core_rad[0],
+                self.recovery_core_rad[1],
+            )),
             twist_target_rad: None,
+            unit_grasp: Some(unit.grasp),
             checks: 0,
-            budget: 5000,
+            budget: 7500,
             message: "Moving Tech Core into position".into(),
             world_from_rig: origin,
             model: rig.runtime_model(),
@@ -198,6 +228,63 @@ impl Service {
         );
         Ok(run)
     }
+    pub(crate) fn jog(
+        &self,
+        field: &mut rm_simulator_world::Field,
+        owner: u32,
+        translation_m: [f64; 3],
+        rotation_rad: [f64; 3],
+    ) -> Result<(), String> {
+        let target = field
+            .energy_arm_jog_target(owner, translation_m, rotation_rad)
+            .map_err(|e| e.to_string())?;
+        let chassis = field
+            .chassis_snapshot(owner)
+            .ok_or("missing source robot")?;
+        let arm = field
+            .arms()
+            .iter()
+            .find(|a| a.owner == owner)
+            .ok_or("missing source arm")?;
+        let units = field.energy_units();
+        let wrist = compose(chassis.pose, arm.model.engineer.tool_pose(arm.joints_rad));
+        let unit = units
+            .iter()
+            .find(|u| u.attachment == rm_simulator_world::energy_unit::Attachment::Held(owner))
+            .or_else(|| {
+                units.iter().min_by(|a, b| {
+                    let distance = |u: &rm_simulator_world::energy_unit::EnergyUnit| {
+                        u.physical
+                            .pose
+                            .translation_m
+                            .iter()
+                            .zip(wrist.translation_m)
+                            .map(|(a, b)| (a - b).powi(2))
+                            .sum::<f64>()
+                    };
+                    distance(a).total_cmp(&distance(b))
+                })
+            });
+        let origin = self.origins[chassis.team.index()];
+        let station = field
+            .assemblies()
+            .iter()
+            .find(|r| r.team == chassis.team)
+            .map(|r| &r.pose);
+        self.template
+            .validate_live_jog(
+                compose(inverse(origin), chassis.pose),
+                arm,
+                target,
+                unit,
+                origin,
+                station,
+            )
+            .map_err(str::to_string)?;
+        field
+            .command_energy_arm(owner, target)
+            .map_err(|e| e.to_string())
+    }
     pub(crate) fn poll(&mut self, field: &mut rm_simulator_world::Field) {
         for chassis in field.chassis_snapshots() {
             if chassis
@@ -206,11 +293,17 @@ impl Service {
                 .as_ref()
                 .is_some_and(|a| a.profile == "pie-tunnel-heavy-v1")
                 && !field.arms().iter().any(|a| a.owner == chassis.id)
+                && field
+                    .add_arm(rm_simulator_world::assembly::ArmState::neutral(
+                        chassis.id,
+                        self.template.runtime_model(),
+                    ))
+                    .is_ok()
             {
-                let _ = field.add_arm(rm_simulator_world::assembly::ArmState::neutral(
-                    chassis.id,
-                    self.template.runtime_model(),
-                ));
+                let result = field.preload_energy_unit(chassis.id, self.unit_shape.clone());
+                if let Err(error) = result {
+                    eprintln!("Could not initialize Energy Unit: {error}");
+                }
             }
         }
         let waiting: Vec<_> = field
@@ -400,7 +493,7 @@ fn solve_segment(
     if signal.cancelled.load(Ordering::Relaxed) {
         return Err("Assembly cancelled".into());
     }
-    let frames = start
+    let mut frames = start
         .runtime_limited_frames(&plan)
         .map_err(str::to_string)?;
     if frames.len() > 4096 {
@@ -409,6 +502,16 @@ fn solve_segment(
     let mut end = start.runtime_endpoint(&plan).map_err(str::to_string)?;
     start.remember_runtime_plan(&plan);
     end.reuse_runtime_hints(&start);
+    if difficulty != 3 || twist.is_some() {
+        let last = frames.last().ok_or("empty assembly trajectory")?;
+        frames.extend(
+            end.runtime_breakaway_frames(last, signal)
+                .map_err(str::to_string)?,
+        );
+        if frames.len() > 4096 {
+            return Err("Assembly and return exceed the playback capacity".into());
+        }
+    }
     Ok(Solved { start, end, frames })
 }
 impl Drop for Service {
@@ -434,6 +537,15 @@ mod tests {
             -1.640343675041,
         )
         .unwrap();
+        eprintln!(
+            "Unit convex hull vertices: {:?}",
+            service
+                .unit_shape
+                .hulls_m
+                .iter()
+                .map(Vec::len)
+                .collect::<Vec<_>>()
+        );
         let mut rig = service.template.clone();
         rig.set_live_parking(Pose::yawed(
             [1.278000049957, -0.547914948432, 0.383150523114],
@@ -484,6 +596,34 @@ mod tests {
             {
                 continue;
             }
+            for (q, target, normal) in [
+                (service.recovery_core_rad[0], [-0.2, 0.2, 0.8], [1., 0., 0.]),
+                (
+                    service.recovery_core_rad[1],
+                    [-0.45, 0., 0.65],
+                    [0., 0., -1.],
+                ),
+            ] {
+                let local = compose(
+                    inverse(service.template.runtime_model().assembly_frame),
+                    service.template.runtime_model().core.tool_pose(q),
+                );
+                assert!(
+                    local
+                        .translation_m
+                        .into_iter()
+                        .zip(target)
+                        .all(|(a, b)| (a - b).abs() < 1e-4)
+                );
+                let axis = crate::math::rotate(local.rotation_wxyz, [1., 0., 0.]);
+                assert!(
+                    axis.into_iter()
+                        .zip(normal)
+                        .map(|(a, b)| a * b)
+                        .sum::<f64>()
+                        > 0.99999
+                );
+            }
             let config = rm_simulator_world::chassis::ChassisConfig::default();
             let mut field = rm_simulator_world::Field::new(&Default::default()).unwrap();
             let world_body = compose(service.origins[0], body);
@@ -502,8 +642,13 @@ mod tests {
                 service.template.runtime_model(),
             );
             field.add_arm(arm.clone()).unwrap();
+            field
+                .preload_energy_unit(id, service.unit_shape.clone())
+                .unwrap();
+            let arm = field.arms()[0].clone();
+            let unit = field.energy_units().remove(0);
             let mut run = service
-                .start(difficulty, &chassis, 0, false, &arm, None)
+                .start(difficulty, &chassis, 0, false, &arm, None, &unit)
                 .unwrap();
             assert!(
                 run.body_world()
@@ -557,12 +702,12 @@ mod tests {
             run.pose.engineer_q = arm.joints_rad;
             run.pose.jaw_angles = arm.jaws_rad;
             run.frames = solved.frames;
-            assert!(run.frames.iter().all(|f| f.gripped));
+            assert!(run.frames.iter().all(|f| f.gripped == (f.stage < 7)));
             for f in run.frames.iter().filter(|f| f.stage < 2) {
                 assert!(f.guide_m[0] >= 0.05 - 1e-6);
                 assert_eq!(&f.guide_m[1..], &[0.2, 0.6]);
             }
-            for f in &run.frames {
+            for f in run.frames.iter().filter(|f| f.gripped) {
                 let carried = solved.start.clone();
                 // Source replay and retiming must keep the payload rigid to the wrist.
                 let arm = rm_simulator_world::assembly::ArmState {
@@ -591,6 +736,15 @@ mod tests {
                         kind: rm_simulator_world::RobotKind::Engineer,
                         performance: None,
                     })
+                    .unwrap();
+                field
+                    .add_arm(rm_simulator_world::assembly::ArmState::neutral(
+                        other,
+                        run.model.clone(),
+                    ))
+                    .unwrap();
+                field
+                    .preload_energy_unit(other, service.unit_shape.clone())
                     .unwrap();
                 let mut other_run = run.clone();
                 other_run.owner = other;
@@ -686,12 +840,27 @@ mod tests {
                     run.frames.len()
                 );
             }
+            let mut recovery_tick = 0;
+            while run.phase == Phase::Recovering {
+                recovery_tick += 1;
+                assert!(recovery_tick < 8192);
+                let now = run.attempt.now_ns + recovery_tick * rm_simulator_world::tick_ns();
+                run.advance(now);
+                restored.advance(now);
+            }
+            assert_eq!(run, restored);
+            assert!(run.recovery.as_ref().unwrap().released());
             assert_eq!(
                 run.phase,
                 Phase::Completed,
                 "L{difficulty}: {}",
                 run.message
             );
+            assert!((0..6).all(|i| {
+                (run.pose.engineer_q[i] - rm_simulator_world::assembly::NEUTRAL_JOINTS_RAD[i]).abs()
+                    < 1e-6
+            }));
+            assert!(!run.pose.gripped);
             eprintln!(
                 "L{difficulty}: {:.3}s, {} frames",
                 start.elapsed().as_secs_f64(),

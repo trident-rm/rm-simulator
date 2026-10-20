@@ -36,6 +36,7 @@ pub struct Rig {
     fixed_chassis: bool,
     live_parking: bool,
     live_entry: Option<([f64; 6], [f64; 2])>,
+    held_grasp: Option<Pose>,
     ik_hints: std::sync::Arc<Vec<(Pose, [f64; 6])>>,
     requested_spin_deltas_rad: Option<[f64; 5]>,
     preferred_spin_deltas_rad: Option<[f64; 5]>,
@@ -366,6 +367,7 @@ impl Rig {
             fixed_chassis: false,
             live_parking: false,
             live_entry: None,
+            held_grasp: None,
             ik_hints: Default::default(),
             requested_spin_deltas_rad: None,
             preferred_spin_deltas_rad: None,
@@ -455,11 +457,24 @@ impl Rig {
         if self.live_parking {
             allowed.push(["engineer/body", "floor"]);
         }
+        if self.live_parking && !self.gripped {
+            // A loose Unit's existing support contacts are stationary during
+            // an arm jog; they cannot obstruct motion of a different link.
+            allowed.push(["unit/unit", "engineer/body"]);
+            allowed.push(["unit/unit", "floor"]);
+        }
         let target = self.tool_unit_pose();
+        let aligned = if self.live_parking {
+            (quaternion(target) * glam::DVec3::Z).dot(quaternion(self.unit_pose) * glam::DVec3::Z)
+                >= 5f64.to_radians().cos()
+        } else {
+            quaternion(target).angle_between(quaternion(self.unit_pose)) <= 5f64.to_radians()
+        };
         if self.gripped
             || (self.grip_requested || self.live_parking)
-                && position(target).distance(position(self.unit_pose)) <= 0.005
-                && quaternion(target).angle_between(quaternion(self.unit_pose)) <= 5f64.to_radians()
+                && position(target).distance(position(self.unit_pose))
+                    <= if self.live_parking { 0.008 } else { 0.005 }
+                && aligned
         {
             allowed.push(["engineer/jaw-left", "unit/unit"]);
             allowed.push(["engineer/jaw-right", "unit/unit"]);
@@ -488,6 +503,9 @@ impl Rig {
         )
     }
     fn tool_unit_pose(&self) -> Pose {
+        if let Some(grasp) = self.held_grasp {
+            return compose(self.tool, grasp);
+        }
         pose(
             position(self.tool) - quaternion(self.tool) * glam::DVec3::Z * self.grasp_axial_m,
             quaternion(self.tool) * DQuat::from_rotation_z(-self.grasp_roll_rad),
@@ -780,16 +798,25 @@ impl Rig {
         let rotation = pose(
             glam::DVec3::ZERO,
             DQuat::from_rotation_y(std::f64::consts::FRAC_PI_2)
-                * DQuat::from_rotation_z(self.rod_spin_rad + self.grasp_roll_rad)
+                * DQuat::from_rotation_z(
+                    self.rod_spin_rad
+                        + if self.held_grasp.is_some() {
+                            0.
+                        } else {
+                            self.grasp_roll_rad
+                        },
+                )
                 * DQuat::from_rotation_x(angles[2]),
         );
-        compose(
+        let unit = compose(
             self.head_delta(logical[2] - 0.6, angles[0], angles[1]),
-            compose(
-                compose(center, rotation),
-                Pose::at([0., 0., self.grasp_axial_m]),
-            ),
-        )
+            compose(center, rotation),
+        );
+        if let Some(grasp) = self.held_grasp {
+            compose(unit, inverse(grasp))
+        } else {
+            compose(unit, Pose::at([0., 0., self.grasp_axial_m]))
+        }
     }
     fn solve_tool(&mut self, logical: [f64; 3], angles: [f64; 3]) -> Result<(), &'static str> {
         let target = self.target(logical, angles);
@@ -885,6 +912,34 @@ impl Rig {
         *self = candidate;
         Ok(())
     }
+    pub(crate) fn recovery_core_joints(&self) -> Result<[[f64; 6]; 2], &'static str> {
+        // UC §5.4.3 initial OXYZ pose is the return destination. The discharge
+        // point is fitted above the central recessed collection opening behind
+        // Fig4-29's curved front wall: 450 mm behind O, centred laterally, 650 mm
+        // above the standing deck. These recovery offsets are simulator policy.
+        let idle = compose(
+            self.config.assembly_frame,
+            Pose::at(TargetPose::INITIAL.position_m),
+        );
+        let drop = compose(
+            self.config.assembly_frame,
+            pose(
+                glam::DVec3::new(-0.45, 0., 0.65),
+                DQuat::from_rotation_y(std::f64::consts::FRAC_PI_2),
+            ),
+        );
+        let idle_q = self
+            .config
+            .core
+            .solve(idle, self.core_q)
+            .or_else(|_| solve_initial(&self.config.core, idle))?;
+        let drop_q = self
+            .config
+            .core
+            .solve(drop, idle_q)
+            .or_else(|_| solve_initial(&self.config.core, drop))?;
+        Ok([idle_q, drop_q])
+    }
     pub(crate) fn select_live_core_branch(&mut self) -> Result<(), &'static str> {
         for q in rm_simulator_physics::manipulator_plan::ik_candidates(
             &self.config.core,
@@ -904,6 +959,48 @@ impl Rig {
             }
         }
         Err("no clear Core positioning branch within setup budget")
+    }
+    pub(crate) fn validate_live_jog(
+        &self,
+        body: Pose,
+        arm: &rm_simulator_world::assembly::ArmState,
+        target: [f64; 6],
+        unit: Option<&rm_simulator_world::energy_unit::EnergyUnit>,
+        world_from_rig: Pose,
+        station: Option<&rm_simulator_world::assembly::RigPose>,
+    ) -> Result<(), &'static str> {
+        let mut from = self.clone();
+        from.engineer_body = body;
+        from.live_parking = true;
+        from.engineer_q = arm.joints_rad;
+        from.jaw_angles = arm.jaws_rad.to_vec();
+        from.tool = compose(body, from.config.engineer.tool_pose(from.engineer_q));
+        from.gripped = false;
+        from.unit_pose = Pose::at([100.; 3]);
+        if let Some(unit) = unit {
+            from.unit_pose = compose(inverse(world_from_rig), unit.physical.pose);
+            from.gripped =
+                unit.attachment == rm_simulator_world::energy_unit::Attachment::Held(arm.owner);
+            if from.gripped {
+                from.held_grasp = Some(unit.grasp);
+            }
+        }
+        if let Some(station) = station {
+            from.core_q = station.core_q;
+            from.lift_m = station.lift_m;
+            from.p_rad = station.p_rad;
+            from.q_rad = station.q_rad;
+        }
+        let mut next = from.clone();
+        next.engineer_q = target;
+        next.tool = compose(body, next.config.engineer.tool_pose(target));
+        if next.gripped {
+            next.unit_pose = next.tool_unit_pose();
+        }
+        from.accept_candidate(next)
+    }
+    pub(crate) fn use_held_unit(&mut self, unit: &rm_simulator_world::energy_unit::EnergyUnit) {
+        self.held_grasp = Some(unit.grasp);
     }
     pub(crate) fn set_live_entry(&mut self, arm: &rm_simulator_world::assembly::ArmState) {
         self.live_entry = Some((arm.joints_rad, arm.jaws_rad));
@@ -1048,6 +1145,7 @@ mod tests {
             fixed_chassis: false,
             live_parking: false,
             live_entry: None,
+            held_grasp: None,
             ik_hints: Default::default(),
             requested_spin_deltas_rad: None,
             preferred_spin_deltas_rad: None,

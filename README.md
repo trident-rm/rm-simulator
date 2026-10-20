@@ -227,8 +227,11 @@ first moves the Tech Core into position, then solves and plays the articulated
 sequence, with separate positioning, solving and actuation progress bars.
 For L3, the final Q angle is revealed by the LEDs only after insertion, lift and
 flip; the arm holds its grasp while a second solve plans the observed twist. The arm
-starts neutral with an operator-preloaded Unit; it closes the jaws, carries the
-Unit through a collision-checked approach and inserts it before lifting or flipping.
+starts neutral with a persistent Unit already held in its closed jaws. It carries
+that same object through a collision-checked approach and inserts it before lifting or flipping.
+The J panel provides grip/release and 1 cm / 5° wrist jog controls. Released Units
+fall and collide with robots and terrain; pickup requires nearby aligned pads.
+Starting assembly requires a held Unit and never creates a replacement.
 It holds its last pose when finished. T folds it for tunnels or returns it toward neutral;
 joint and jaw motion is limited to 1 rad/s.
 
@@ -526,7 +529,7 @@ does not acknowledge its execution by the host.
 | 50 | Adds the Drone's Aerial Safety Rope to the chassis configuration and the `MapMarker` command. |
 | 52 | Adds connected deployment and the reliable ownership receipt. |
 
-The current protocol version is 55, defined by `PROTOCOL_VERSION` in
+The current protocol version is 71, defined by `PROTOCOL_VERSION` in
 `crates/rm-simulator-server/src/protocol.rs`. GNS sends redundant controls
 and retried shot intents unreliably; scheduling receipts and terminal shot results
 remain reliable. There is no shooter-view fire path or input-acknowledgement

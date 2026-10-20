@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub use crate::geometry::{MovingGeometry, StaticGeometry};
+#[path = "payload.rs"]
+mod payload;
+pub use payload::{PayloadShape, PayloadSnapshot};
 
 fn outside_projectile_bounds(bounds: Option<[[f64; 3]; 2]>, point: Vector, radius_m: f64) -> bool {
     bounds.is_some_and(|[low, high]| {
@@ -559,6 +562,7 @@ pub struct WorldPhysics {
     policy: ProjectilePolicy,
     /// Recent removals, oldest first, bounded to [`REMOVAL_MEMORY`].
     removals: std::collections::VecDeque<Removal>,
+    payloads: Vec<payload::Body>,
     world: PhysicsWorld,
     projectiles: Vec<Projectile>,
     /// Velocities before integration, in the current projectile order.
@@ -650,6 +654,7 @@ impl WorldPhysics {
             None,
         );
         let mut ballistics = Self {
+            payloads: Vec::new(),
             world,
             projectile_bounds_m: None,
             policy: ProjectilePolicy::default(),
@@ -933,7 +938,7 @@ impl WorldPhysics {
     }
     /// Nothing moves on its own: no projectile in flight and no chassis.
     pub fn is_idle(&self) -> bool {
-        self.projectiles.is_empty() && self.chassis.is_empty()
+        self.projectiles.is_empty() && self.chassis.is_empty() && self.payloads.is_empty()
     }
     /// Place a driven chassis in the world and return its id.
     ///
@@ -1532,6 +1537,7 @@ impl WorldPhysics {
                     body.center_of_mass(),
                 ));
             }
+            self.damp_payload_contacts();
             self.world.step();
             for chassis in &self.chassis {
                 chassis.sync_fold_colliders(&mut self.world);

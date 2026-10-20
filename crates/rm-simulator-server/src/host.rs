@@ -965,7 +965,9 @@ impl Owner {
                     Command::PlaceChassis { .. } if !peer.owner => {
                         Some("only the embedded owner places a chassis")
                     }
-                    Command::AutoAssembly { chassis, .. }
+                    Command::EnergyGrip { chassis }
+                    | Command::EnergyArmJog { chassis, .. }
+                    | Command::AutoAssembly { chassis, .. }
                     | Command::CancelAutoAssembly { chassis }
                     | Command::PilotInput { chassis, .. }
                     | Command::Respawn { chassis }
