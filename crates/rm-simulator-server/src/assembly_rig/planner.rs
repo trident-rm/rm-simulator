@@ -3,7 +3,9 @@
 //! Staged workbench planning. Setup search is allowed only before an attempt;
 //! assisted planning preserves the current chassis, Core, payload and arm state.
 use super::*;
-use rm_simulator_physics::manipulator_plan::{JointSearch, PlanError, ik_candidates, joint_path};
+#[cfg(test)]
+use rm_simulator_physics::manipulator_plan::ik_candidates;
+use rm_simulator_physics::manipulator_plan::{JointSearch, PlanError, joint_path};
 use serde::Serialize;
 
 // Source terrain sweeps are expensive. Reserve a small diagnostic allowance for
@@ -25,6 +27,8 @@ pub enum Stage {
 }
 #[derive(Clone)]
 pub struct Frame {
+    /// Minimum playback duration, in 128 Hz ticks (one to eight).
+    pub(super) ticks: u32,
     /// Absolute chassis pose in world FLU metres and wxyz orientation.
     pub chassis: Pose,
     /// Unit rotation around the insertion rod, radians; rigid grip is retained.
@@ -47,6 +51,8 @@ pub struct Statistics {
     pub approach_travel_rad: [f64; 2],
     pub candidates: usize,
     pub ik_queries: usize,
+    /// Exact seed/target/model solves reused, including previous failures.
+    pub ik_cache_hits: usize,
     pub nearby_ik_hints: usize,
     pub exact_ik_hints: usize,
     pub collision_checks: usize,
@@ -142,8 +148,12 @@ impl ValidatedTransition {
         same_guard_state(&self.from, from) && same_guard_state(&self.to, to)
     }
 }
+type ExactIkSolves = std::collections::HashMap<([u64; 55], [u64; 13]), Option<[f64; 6]>>;
 #[derive(Default)]
 struct IkTable {
+    // Exact floating-point coordinates, including winding and imported model.
+    // This table belongs to one bounded search; a miss always invokes real IK.
+    solves: ExactIkSolves,
     entries: Vec<(SerialArm, Pose, Vec<[f64; 6]>)>,
 }
 impl IkTable {
@@ -265,7 +275,51 @@ impl Search {
         let (warm, exact) = self.ik_table.seeds(arm, target);
         self.stats.nearby_ik_hints += usize::from(!warm.is_empty() && !exact);
         self.stats.exact_ik_hints += usize::from(exact);
-        let found = ik_candidates(arm, target, warm.into_iter().chain(seeds), maximum);
+        let model: Vec<_> = arm
+            .axes
+            .iter()
+            .flat_map(|a| a.origin_m.into_iter().chain(a.axis).chain(a.range_rad))
+            .chain(arm.tool.translation_m)
+            .chain(arm.tool.rotation_wxyz)
+            .map(f64::to_bits)
+            .collect();
+        let model: [u64; 55] = model.try_into().unwrap();
+        let mut found: Vec<[f64; 6]> = vec![];
+        for seed in warm.into_iter().chain(seeds) {
+            if found.len() >= maximum {
+                break;
+            }
+            let coordinates: Vec<_> = target
+                .translation_m
+                .into_iter()
+                .chain(target.rotation_wxyz)
+                .chain(seed)
+                .map(f64::to_bits)
+                .collect();
+            let key = (model, coordinates.try_into().unwrap());
+            let result = if let Some(result) = self.ik_table.solves.get(&key) {
+                self.stats.ik_cache_hits += 1;
+                *result
+            } else {
+                let result = arm.solve(target, seed).ok();
+                if self.ik_table.solves.len() >= 32768 {
+                    self.ik_table.solves.clear();
+                }
+                self.ik_table.solves.insert(key, result);
+                result
+            };
+            if let Some(q) = result
+                && !found.iter().any(|p| {
+                    p.iter()
+                        .zip(q)
+                        .map(|(a, b)| (a - b).abs())
+                        .fold(0., f64::max)
+                        < 0.001
+                })
+            {
+                found.push(q);
+            }
+        }
         self.ik_table.insert(arm, target, found.clone());
         found
     }
@@ -314,6 +368,19 @@ impl Search {
     fn frame(&self, r: &Rig, p: [f64; 3], a: [f64; 3], stage: Stage, free: bool) -> Frame {
         let mut frame = sample_frame(r, p, a, stage, free);
         frame.validation = self.last_checked.clone();
+        frame
+    }
+    fn timed_frame(
+        &self,
+        r: &Rig,
+        p: [f64; 3],
+        a: [f64; 3],
+        stage: Stage,
+        free: bool,
+        ticks: u32,
+    ) -> Frame {
+        let mut frame = self.frame(r, p, a, stage, free);
+        frame.ticks = ticks;
         frame
     }
     fn count_hit(&mut self) {
@@ -630,6 +697,7 @@ fn at(mut rig: Rig, q: [f64; 6]) -> Rig {
 }
 fn sample_frame(r: &Rig, logical: [f64; 3], angles: [f64; 3], stage: Stage, free: bool) -> Frame {
     Frame {
+        ticks: 1,
         chassis: r.engineer_body,
         rod_spin_rad: r.rod_spin_rad,
         q: r.engineer_q,
@@ -663,6 +731,9 @@ pub(super) fn branch_seeds(arm: &SerialArm) -> Vec<[f64; 6]> {
 impl Rig {
     /// Validate and apply one precomputed frame through the ordinary atomic guard.
     pub fn follow_plan(&mut self, f: &Frame) -> Result<(), &'static str> {
+        if !(1..=8).contains(&f.ticks) {
+            return Err("invalid planned sample duration");
+        }
         if f.q
             .iter()
             .zip(self.config.engineer.axes)
@@ -675,12 +746,16 @@ impl Rig {
         next.engineer_body = f.chassis;
         if !f.rod_spin_rad.is_finite()
             || (f.rod_spin_rad - self.rod_spin_rad).abs()
-                > super::RATE * rm_simulator_physics::tick_ns() as f64 * 1e-9 + 1e-9
+                > super::RATE * rm_simulator_physics::tick_ns() as f64 * 1e-9 * f.ticks as f64
+                    + 1e-9
         {
             return Err("planned rod spin exceeds workbench cadence");
         }
         next.rod_spin_rad = f.rod_spin_rad;
-        next.advance_gripper(f.close, rm_simulator_physics::tick_ns() as f64 * 1e-9);
+        next.advance_gripper(
+            f.close,
+            rm_simulator_physics::tick_ns() as f64 * 1e-9 * f.ticks as f64,
+        );
         next = at(next, f.q);
         if !f.free {
             let expected = next.target(f.logical, f.angles);
@@ -796,6 +871,7 @@ impl Rig {
                 search.failure("Attached Q planning requires a revealed target and full P flip")
             );
         }
+        let sample_ticks = 8u32;
         let dt = rm_simulator_physics::tick_ns() as f64 * 1e-9;
         let half = std::f64::consts::FRAC_PI_2;
         // Once attached, stay on the actual branch. Short local continuation
@@ -838,11 +914,13 @@ impl Rig {
             ] {
                 let count =
                     (((q1 - q0).abs().max((s1 - s0).abs())) / (super::RATE * dt)).ceil() as usize;
+                let mut tracked = state.clone();
+                let mut samples = Vec::with_capacity(sample_ticks as usize);
                 for i in 1..=count {
                     let t = i as f64 / count as f64;
                     let angles = [self.p_rad, q0 + (q1 - q0) * t, 0.];
                     let logical = [-0.05, 0.2, 0.6 + self.lift_m];
-                    let mut next = state.clone();
+                    let mut next = tracked.clone();
                     next.rod_spin_rad = s0 + (s1 - s0) * t;
                     if let Err(error) = next.solve_tool(logical, angles) {
                         search.stats.ik_rejections += 1;
@@ -857,17 +935,26 @@ impl Rig {
                         clear = false;
                         break;
                     }
-                    match search.check(&state, next) {
-                        Ok(next) => state = next,
-                        Err(error) if search.stats.collision_checks >= budget => {
-                            return Err(search.failure(error));
-                        }
-                        Err(_) => {
-                            clear = false;
-                            break;
+                    tracked = next.clone();
+                    samples.push((next, logical, angles));
+                    if samples.len() == sample_ticks as usize || i == count {
+                        match tracking_block(
+                            &mut state,
+                            &mut samples,
+                            Stage::Align,
+                            &mut search,
+                            &mut frames,
+                        ) {
+                            Ok(()) => tracked = state.clone(),
+                            Err(error) if search.stats.collision_checks >= budget => {
+                                return Err(search.failure(error));
+                            }
+                            Err(_) => {
+                                clear = false;
+                                break;
+                            }
                         }
                     }
-                    frames.push(search.frame(&state, logical, angles, Stage::Align, false));
                 }
                 if !clear {
                     break;
@@ -943,23 +1030,34 @@ impl Rig {
                     let n = ((q1 - q0).abs().max((s1 - s0).abs()) / (super::RATE * dt))
                         .ceil()
                         .max(1.) as usize;
+                    let mut tracked = state.clone();
+                    let mut samples = Vec::with_capacity(sample_ticks as usize);
                     for i in 1..=n {
                         let t = i as f64 / n as f64;
                         let angles = [self.p_rad, q0 + (q1 - q0) * t, 0.];
-                        let mut next = state.clone();
+                        let mut next = tracked.clone();
                         next.rod_spin_rad = s0 + (s1 - s0) * t;
                         if next.solve_tool(logical, angles).is_err() {
                             clear = false;
                             break;
                         }
-                        match search.check(&state, next) {
-                            Ok(next) => state = next,
-                            Err(_) => {
+                        tracked = next.clone();
+                        samples.push((next, logical, angles));
+                        if samples.len() == sample_ticks as usize || i == n {
+                            if tracking_block(
+                                &mut state,
+                                &mut samples,
+                                Stage::Align,
+                                &mut search,
+                                &mut frames,
+                            )
+                            .is_err()
+                            {
                                 clear = false;
                                 break;
                             }
+                            tracked = state.clone();
                         }
-                        frames.push(search.frame(&state, logical, angles, Stage::Align, false));
                     }
                     if !clear {
                         break;
@@ -1575,16 +1673,16 @@ impl Rig {
                         break;
                     }
                     search.charge().map_err(|e| search.failure(e))?;
-                    match probe.collision_contacts() {
-                        Ok(h) if h.is_empty() => {
+                    match probe.first_collision() {
+                        Ok(None) => {
                             search
                                 .stats
                                 .milestone_witnesses
                                 .entry(format!("{stage:?}"))
                                 .or_insert_with(|| Witness::at(&probe));
                         }
-                        Ok(h) => {
-                            search.last = h.into_iter().next();
+                        Ok(Some(h)) => {
+                            search.last = Some(h);
                             if let Some(hit) = &search.last {
                                 search.stats.rejected_milestones.entry(format!("{} / {}",hit.first,hit.second)).or_insert_with(|| serde_json::json!({"stage":stage,"hit":hit,"q_rad":probe.engineer_q,"frames":probe.world_frames(),"query":"static-endpoint"}));
                             }
@@ -1718,22 +1816,42 @@ fn breakaway_edge(
         .unwrap_or(1)
         .max(1);
     let mix = |a: f64, b: f64, t: f64| ((a + (b - a) * t) * 1e6).round() / 1e6;
-    for i in 1..=n {
-        let t = i as f64 / n as f64;
-        let mut next = at(
-            state.clone(),
-            std::array::from_fn(|j| mix(from.engineer_q[j], target.engineer_q[j], t)),
-        );
-        next.jaw_angles = (0..2)
-            .map(|j| mix(from.jaw_angles[j], target.jaw_angles[j], t))
-            .collect();
-        *state = search.check(state, next)?;
-        let mut frame = last.clone();
-        frame.joints_rad = state.engineer_q;
-        frame.jaws_rad = [state.jaw_angles[0], state.jaw_angles[1]];
-        frame.gripped = false;
-        frame.stage = 7;
-        frames.push(frame);
+    let block = if state.live_parking { 8 } else { 1 };
+    for begin in (0..n).step_by(block) {
+        let end = (begin + block).min(n);
+        let sample = |i: usize| {
+            let t = i as f64 / n as f64;
+            let mut next = at(
+                from.clone(),
+                std::array::from_fn(|j| mix(from.engineer_q[j], target.engineer_q[j], t)),
+            );
+            next.jaw_angles = (0..2)
+                .map(|j| mix(from.jaw_angles[j], target.jaw_angles[j], t))
+                .collect();
+            next
+        };
+        if let Err(error) = search
+            .check(state, sample(end))
+            .map(|accepted| *state = accepted)
+        {
+            if search.stats.collision_checks >= search.budget {
+                return Err(error);
+            }
+            // A long rigid sweep can conservatively block a narrow escape.
+            // Retry the actual rounded playback samples before rejecting it.
+            for i in begin + 1..=end {
+                *state = search.check(state, sample(i))?;
+            }
+        }
+        for i in begin + 1..=end {
+            let next = sample(i);
+            let mut frame = last.clone();
+            frame.joints_rad = next.engineer_q;
+            frame.jaws_rad = [next.jaw_angles[0], next.jaw_angles[1]];
+            frame.gripped = false;
+            frame.stage = 7;
+            frames.push(frame);
+        }
     }
     Ok(())
 }
@@ -1933,6 +2051,35 @@ fn carried_clearance_path(
     }
     Ok(None)
 }
+// Follow IK at fine cadence to retain the same local branch, but validate a
+// short keyframe chord for playback. If that chord is blocked, preserve and
+// validate the original fine path instead. No unchecked edge is accepted.
+fn tracking_block(
+    state: &mut Rig,
+    samples: &mut Vec<(Rig, [f64; 3], [f64; 3])>,
+    stage: Stage,
+    search: &mut Search,
+    frames: &mut Vec<Frame>,
+) -> Result<(), &'static str> {
+    let (end, p, a) = samples.last().ok_or("empty tracking block")?;
+    match search.check(state, end.clone()) {
+        Ok(accepted) => {
+            *state = accepted;
+            frames.push(search.timed_frame(state, *p, *a, stage, false, samples.len() as u32));
+        }
+        Err(error) => {
+            if search.stats.collision_checks >= search.budget || samples.len() == 1 {
+                return Err(error);
+            }
+            for (sample, p, a) in samples.iter() {
+                *state = search.check(state, sample.clone())?;
+                frames.push(search.frame(state, *p, *a, stage, false));
+            }
+        }
+    }
+    samples.clear();
+    Ok(())
+}
 #[allow(clippy::too_many_arguments)]
 fn build(
     current: &Rig,
@@ -1945,7 +2092,8 @@ fn build(
     search: &mut Search,
     route: ChassisRoute,
 ) -> Result<(Rig, Vec<Frame>), &'static str> {
-    let dt = rm_simulator_physics::tick_ns() as f64 * 1e-9;
+    let ticks = if current.live_parking { 8 } else { 1 };
+    let dt = rm_simulator_physics::tick_ns() as f64 * 1e-9 * ticks as f64;
     let mut state = if prepare {
         root.clone()
     } else {
@@ -1978,7 +2126,7 @@ fn build(
             let mut next = state.clone();
             next.advance_gripper(true, dt);
             state = search.check(&state, next)?;
-            frames.push(search.frame(&state, logical, angles, Stage::Grasp, true));
+            frames.push(search.timed_frame(&state, logical, angles, Stage::Grasp, true, ticks));
         }
     }
     if (!prepare || entry.is_some()) && !state.gripped {
@@ -1995,7 +2143,7 @@ fn build(
             let mut next = state.clone();
             next.advance_gripper(false, dt);
             state = search.check(&state, next)?;
-            frames.push(search.frame(&state, logical, angles, Stage::Approach, true));
+            frames.push(search.timed_frame(&state, logical, angles, Stage::Approach, true, ticks));
         }
     }
     if (!prepare || entry.is_some())
@@ -2091,9 +2239,18 @@ fn build(
                     std::array::from_fn(|j| pair[0][j] + (pair[1][j] - pair[0][j]) * t),
                 );
                 state = search.check(&state, next)?;
-                frames.push(search.frame(&state, logical, angles, Stage::Approach, true));
+                frames.push(search.timed_frame(
+                    &state,
+                    logical,
+                    angles,
+                    Stage::Approach,
+                    true,
+                    ticks,
+                ));
             }
         }
+        // Arrival samples already have one-tick spacing from free_retreat.
+        // Preserve their timing rather than stretching them by the keyframe stride.
         for q in approach_joints.into_iter().rev().skip(1) {
             state = search.check(&state, at(state.clone(), q))?;
             frames.push(search.frame(&state, logical, angles, Stage::Approach, true));
@@ -2107,7 +2264,7 @@ fn build(
         let mut next = state.clone();
         next.advance_gripper(true, dt);
         state = search.check(&state, next)?;
-        frames.push(search.frame(&state, logical, angles, Stage::Grasp, false));
+        frames.push(search.timed_frame(&state, logical, angles, Stage::Grasp, false, ticks));
     }
     if !state.gripped {
         return Err("gripper could not establish an aligned grasp");
@@ -2115,14 +2272,21 @@ fn build(
     for segment in segments(d, q, logical, angles) {
         let stage = segment.stage;
         search.stage = stage;
-        let n = route.samples(segment, super::SPEED * dt, super::RATE * dt);
+        let fine_dt = rm_simulator_physics::tick_ns() as f64 * 1e-9;
+        let n = route.samples(segment, super::SPEED * fine_dt, super::RATE * fine_dt);
+        let mut tracked = state.clone();
+        let mut samples = Vec::with_capacity(ticks as usize);
         for i in 1..=n {
             let (x, r) = segment.point(i as f64 / n as f64);
-            let mut next = state.clone();
+            let mut next = tracked.clone();
             route_step(&mut next, root.engineer_body, route, x, r)?;
-            chassis_cadence(state.engineer_body, next.engineer_body)?;
-            state = search.check(&state, next)?;
-            frames.push(search.frame(&state, x, r, stage, false));
+            chassis_cadence(tracked.engineer_body, next.engineer_body)?;
+            tracked = next.clone();
+            samples.push((next, x, r));
+            if samples.len() == ticks as usize || i == n {
+                tracking_block(&mut state, &mut samples, stage, search, &mut frames)?;
+                tracked = state.clone();
+            }
         }
         search
             .stats
@@ -2228,7 +2392,9 @@ impl Rig {
                     model.engineer_q,
                     NEUTRAL_JOINTS_RAD,
                     JointSearch {
-                        samples: 96,
+                        // Preserve difficult post-flip return paths; the shared
+                        // collision-check budget still bounds this search.
+                        samples: 256,
                         ..Default::default()
                     },
                     |a, b| {
@@ -2290,7 +2456,7 @@ impl Rig {
         };
         let dt = rm_simulator_physics::tick_ns() as f64 * 1e-9;
         let mut output = Vec::new();
-        for next in source {
+        for (next, planned) in source.into_iter().zip(&plan.frames) {
             let count = (0..6)
                 .map(|i| {
                     ((next.joints_rad[i] - previous.joints_rad[i]).abs()
@@ -2303,7 +2469,7 @@ impl Rig {
                 }))
                 .max()
                 .unwrap_or(1)
-                .max(1);
+                .max(planned.ticks as usize);
             for i in 1..=count {
                 let t = i as f64 / count as f64;
                 let mix = |a: f64, b: f64| ((a + (b - a) * t) * 1e6).round() / 1e6;
@@ -2366,6 +2532,49 @@ impl Rig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn coarse_runtime_keyframes_preserve_duration_and_reject_invalid_ticks() {
+        let mut rig = super::super::tests::mechanism_fixture();
+        rig.config.engineer_jaws = (0..2)
+            .map(|i| Jaw {
+                name: format!("jaw-{i}"),
+                origin_m: [0.; 3],
+                axis: [0., 0., 1.],
+                open_rad: 0.3,
+                closed_rad: 0.,
+            })
+            .collect();
+        rig.jaw_angles = vec![0.3; 2];
+        let mut frame = sample_frame(&rig, [0.09, 0.2, 0.6], [0.; 3], Stage::Approach, true);
+        frame.ticks = 8;
+        let plan = Plan {
+            frames: vec![frame.clone()],
+            statistics: Statistics::default(),
+        };
+        let samples = rig.runtime_limited_frames(&plan).unwrap();
+        assert_eq!(samples.len(), 8);
+        let mut remembered = rig.clone();
+        remembered.remember_runtime_plan(&plan);
+        assert_eq!(remembered.ik_hints.len(), 2);
+        assert!(
+            samples
+                .iter()
+                .all(|f| f.joints_rad == rig.engineer_q.map(|v| (v * 1e6).round() / 1e6))
+        );
+        for ticks in [0, 9] {
+            let mut invalid = frame.clone();
+            invalid.ticks = ticks;
+            let mut copy = rig.clone();
+            let before = copy.report();
+            assert!(copy.follow_plan(&invalid).is_err());
+            assert_eq!(copy.report(), before);
+        }
+        // The clock stays bounded by time represented by the keyframe.
+        frame.rod_spin_rad = rig.rod_spin_rad + 0.02;
+        assert!(rig.clone().follow_plan(&frame).is_ok());
+        frame.ticks = 1;
+        assert!(rig.clone().follow_plan(&frame).is_err());
+    }
     #[test]
     fn preloaded_payload_retiming_preserves_the_actual_grasp() {
         let mut rig = super::super::tests::mechanism_fixture();
@@ -3170,6 +3379,35 @@ mod tests {
         assert!(table.seeds(&arm, target).0.is_empty());
     }
     #[test]
+    fn exact_ik_cache_keeps_failures_but_separates_targets_seeds_and_models() {
+        let arm = super::super::tests::mechanism_fixture().config.engineer;
+        let mut search = Search {
+            stats: Statistics::default(),
+            budget: 8,
+            ik_table: IkTable::default(),
+            transitions: TransitionTable::default(),
+            last: None,
+            last_checked: None,
+            stage: Stage::Approach,
+            signal: None,
+        };
+        let target = Pose::at([100., 0., 0.]);
+        assert!(search.ik(&arm, target, [[0.; 6]], 1).is_empty());
+        assert!(search.ik(&arm, target, [[0.; 6]], 1).is_empty());
+        assert_eq!(search.stats.ik_cache_hits, 1);
+        let mut changed = arm.clone();
+        changed.axes[0].range_rad = [-1., 1.];
+        search.ik(&changed, target, [[0.; 6]], 1);
+        search.ik(&arm, Pose::at([101., 0., 0.]), [[0.; 6]], 1);
+        search.ik(&arm, target, [[0.1; 6]], 1);
+        assert_eq!(search.stats.ik_cache_hits, 1);
+        let q = [0.; 6];
+        let target = arm.tool_pose(q);
+        assert_eq!(search.ik(&arm, target, [q], 1), vec![q]);
+        assert_eq!(search.ik(&arm, target, [q], 1), vec![q]);
+        assert!(search.stats.ik_cache_hits >= 2);
+    }
+    #[test]
     fn exact_transition_cache_rejects_mutated_state_configuration_and_geometry() {
         let rig = super::super::tests::mechanism_fixture();
         let mut search = Search {
@@ -3508,6 +3746,7 @@ mod tests {
         );
         assert_eq!(rig.report(), before);
         let frame = Frame {
+            ticks: 1,
             validation: None,
             chassis: rig.engineer_body,
             rod_spin_rad: rig.rod_spin_rad,

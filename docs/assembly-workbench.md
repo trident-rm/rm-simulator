@@ -368,7 +368,7 @@ use a 0.5 mm penetration tolerance; surface crossings and swept near-contact
 (with a 2 µm numerical margin) still block. A swept diagnostic point is a link
 origin, not an exact impact location.
 
-The adapter subdivides joint changes to at most 0.01 rad and payload/lift travel
+The offline adapter subdivides joint changes to at most 0.01 rad and payload/lift travel
 to at most 2 mm, then sweeps each frame between samples. This is a piecewise
 rigid approximation of the joint path, not an exact continuous articulated
 collision certificate. A transition exceeding 256 subdivisions is rejected.
@@ -757,7 +757,7 @@ parking throughout. `route_trials`, `unsupported_route_samples` and the selected
 Every planned frame carries its absolute chassis pose. Building and replaying a
 complete plan limit chassis translation to 0.25 m/s and yaw to 0.35 rad/s at
 128 Hz. These are workbench settings, not certified drivetrain limits. The
-ordinary collision guard now interpolates chassis pose together with arm joints,
+ordinary workbench collision guard interpolates chassis pose together with arm joints,
 subdividing translation to at most 2 mm and rotation to at most 0.01 rad before
 sweeping source geometry. Its level-footprint check runs at each intermediate
 pose, rejecting unsupported patches and crossings to another floor height.
@@ -1482,3 +1482,26 @@ incremented so prediction does not interpolate between shapes. Source arm meshes
 are removed; the Unit remains a physical object. There is no reverse conversion.
 Starting a new round retains the chosen Hero shape but clears installation,
 ammunition and unlock history; use the same button after unlocking again.
+
+### Live planner performance policy
+
+The calibrated serial solver uses an analytical Jacobian and bounded exact IK
+reuse. Collision queries use chunk BVHs, exact endpoint histories and early
+first-contact rejection. Live collision geometry retains its existing policy:
+Engineer j1–j5 use conservative chunk hulls; the remaining source geometry retains fine surfaces.
+
+IK tracks at fine cadence; live collision/path keyframes up to 62.5 ms apart
+use articulated subdivisions of 0.025 rad / 5 mm plus continuous rigid-frame CCD, then generate speed-limited
+128 Hz commands. Grouped return-motion rejection retries the original rounded
+playback samples. Offline workbench inspection retains 0.01 rad / 2 mm sweeps
+and its original cadence. This is an approximate game collision policy.
+
+The two existing parked source fixtures reach approximately 3.4–3.6 s for the
+initial L3 solve, with successful revealed-Q/return jobs around 1.9–2.9 s on
+the targeted cases.
+L1/L2 jobs including return take approximately 3.1–3.8 s. The -32.47° Q case
+remains bounded and unresolved, rather than a completed assembly.
+Warm hints remain spaced by playback time. Neutral return uses 256 candidate
+samples within its existing 2,500-check budget. These are fixture timings, not
+coverage or worst-case guarantees. Manual parking, actual starting joints, the held Unit and post-P Q reveal remain mandatory.
+See [serial arm search](serial-arm-search.md) for implementation and reproduction.

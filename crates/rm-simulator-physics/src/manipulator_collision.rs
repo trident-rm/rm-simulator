@@ -12,7 +12,7 @@ use rapier3d_f64::{
     prelude::SharedShape,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// Serializable collision geometry in one source link's local FLU coordinates.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -77,22 +77,100 @@ struct Body {
     name: String,
     shapes: Vec<SharedShape>,
     envelopes: Vec<SharedShape>,
+    part_tree: std::sync::Arc<PartTree>,
     radius_m: f64,
     approximate: bool,
+}
+// A BVH across source chunks, in addition to the BVH inside each chunk. This
+// avoids testing every terrain chunk against every small robot part.
+#[derive(Clone)]
+struct PartTree {
+    bounds: Aabb,
+    children: Option<Box<[PartTree; 2]>>,
+    indices: Vec<usize>,
+}
+impl PartTree {
+    fn build(bounds: &[Aabb], mut indices: Vec<usize>) -> Self {
+        let total = indices
+            .iter()
+            .map(|&i| bounds[i])
+            .reduce(|a, b| a.merged(&b))
+            .unwrap();
+        if indices.len() <= 8 {
+            return Self {
+                bounds: total,
+                children: None,
+                indices,
+            };
+        }
+        let size = total.extents();
+        let axis = if size.x >= size.y && size.x >= size.z {
+            0
+        } else if size.y >= size.z {
+            1
+        } else {
+            2
+        };
+        let mid = indices.len() / 2;
+        indices.select_nth_unstable_by(mid, |&a, &b| {
+            bounds[a].center()[axis].total_cmp(&bounds[b].center()[axis])
+        });
+        let right = indices.split_off(mid);
+        Self {
+            bounds: total,
+            children: Some(Box::new([
+                Self::build(bounds, indices),
+                Self::build(bounds, right),
+            ])),
+            indices: vec![],
+        }
+    }
+    fn query(&self, bounds: &Aabb, out: &mut Vec<usize>) {
+        if !self.bounds.intersects(bounds) {
+            return;
+        }
+        if let Some(children) = &self.children {
+            for child in children.iter() {
+                child.query(bounds, out);
+            }
+        } else {
+            out.extend_from_slice(&self.indices);
+        }
+    }
+}
+impl Body {
+    fn candidates(
+        &self,
+        world_bounds: Aabb,
+        pose: rapier3d_f64::math::Pose,
+        travel_m: f64,
+    ) -> Vec<usize> {
+        if self.shapes.len() <= 8 {
+            return (0..self.shapes.len()).collect();
+        }
+        let query = world_bounds
+            .loosened(travel_m + 1e-9)
+            .transform_by(&pose.inverse());
+        let mut result = vec![];
+        self.part_tree.query(&query, &mut result);
+        result.sort_unstable(); // Preserve deterministic first-contact ordering.
+        result
+    }
 }
 /// Shared, immutable BVHs and convex shapes, cheap to clone for transactional IK.
 #[derive(Clone)]
 pub struct CollisionScene {
     bodies: Vec<Body>,
-    excluded: BTreeSet<(String, String)>,
-    // One exact endpoint result per pair: stationary fixture/terrain contacts
-    // need not be recomputed for every moving arm sample. No nearby-pose reuse.
-    contacts_cache: std::sync::Arc<std::sync::Mutex<BTreeMap<(usize, usize), PairContacts>>>,
+    excluded: Vec<Vec<bool>>,
+    // Bounded exact endpoint history per pair. Revisited branches retain source
+    // checks; winding/poses and tolerance must match, with no nearby-pose reuse.
+    contacts_cache: std::sync::Arc<std::sync::Mutex<ContactHistory>>,
     // Two exact placed states per body retain both endpoints of short sweeps.
     // Geometry belongs to this immutable scene; convex replacements reset it.
     bounds_cache: std::sync::Arc<std::sync::Mutex<Vec<Vec<PlacedBounds>>>>,
     approximate: bool,
 }
+type ContactHistory = BTreeMap<(usize, usize), VecDeque<PairContacts>>;
 #[derive(Clone)]
 struct PlacedBounds {
     pose: rapier3d_f64::math::Pose,
@@ -193,6 +271,7 @@ impl CollisionScene {
     /// let scene=CollisionScene::new(CollisionAsset{schema:1,bodies:vec![body("tool"),body("wall")],excluded_pairs:vec![]}).unwrap();
     /// let frames=BTreeMap::from([("tool".into(),Pose::default()),("wall".into(),Pose::at([0.15,0.,0.]))]);
     /// assert_eq!(scene.contacts(&frames,&[],0.).unwrap().len(),1);
+    /// assert_eq!(scene.first_contact(&frames,&[],0.).unwrap(), scene.contacts(&frames,&[],0.).unwrap().into_iter().next());
     /// let fast=scene.convex_approximation(|name| name == "tool");
     /// assert!(fast.uses_convex_approximation());
     /// assert!(fast.contacts(&frames,&[],0.).unwrap()[0].conservative);
@@ -281,7 +360,14 @@ impl CollisionScene {
             if !vertices.is_empty() {
                 mesh_chunks(&vertices, indices, &mut shapes)?;
             }
+            let local_bounds: Vec<_> = shapes
+                .iter()
+                .map(|shape| shape.compute_local_aabb())
+                .collect();
+            let part_tree =
+                std::sync::Arc::new(PartTree::build(&local_bounds, (0..shapes.len()).collect()));
             bodies.push(Body {
+                part_tree,
                 name: body.frame,
                 envelopes: shapes.iter().map(shape_envelope).collect(),
                 shapes,
@@ -296,6 +382,15 @@ impl CollisionScene {
             }
             excluded.insert(pair(&a, &b));
         }
+        let excluded = bodies
+            .iter()
+            .map(|a| {
+                bodies
+                    .iter()
+                    .map(|b| excluded.contains(&pair(&a.name, &b.name)))
+                    .collect()
+            })
+            .collect();
         Ok(Self {
             bodies,
             excluded,
@@ -316,6 +411,9 @@ impl CollisionScene {
         for body in &mut scene.bodies {
             if select(&body.name) {
                 body.shapes.clone_from(&body.envelopes);
+                let bounds: Vec<_> = body.shapes.iter().map(|s| s.compute_local_aabb()).collect();
+                body.part_tree =
+                    std::sync::Arc::new(PartTree::build(&bounds, (0..body.shapes.len()).collect()));
                 body.approximate = true;
             }
         }
@@ -343,8 +441,10 @@ impl CollisionScene {
             })
             .collect()
     }
-    fn skipped(&self, a: &Body, b: &Body, allowed: &[[&str; 2]]) -> bool {
-        self.excluded.contains(&pair(&a.name, &b.name))
+    fn skipped(&self, i: usize, j: usize, allowed: &[[&str; 2]]) -> bool {
+        let a = &self.bodies[i];
+        let b = &self.bodies[j];
+        self.excluded[i][j]
             || allowed
                 .iter()
                 .any(|[x, y]| (a.name == *x && b.name == *y) || (a.name == *y && b.name == *x))
@@ -390,15 +490,43 @@ impl CollisionScene {
         allowed: &[[&str; 2]],
         tolerance_m: f64,
     ) -> Result<Vec<CollisionHit>, &'static str> {
+        self.contacts_until(frames, allowed, tolerance_m, false)
+    }
+    /// First contact in the same deterministic order as [`Self::contacts`].
+    /// Stops after the first obstructing pair; clearance still checks every pair.
+    /// Units, required frames and tolerance semantics match [`Self::contacts`].
+    pub fn first_contact(
+        &self,
+        frames: &BTreeMap<String, Pose>,
+        allowed: &[[&str; 2]],
+        tolerance_m: f64,
+    ) -> Result<Option<CollisionHit>, &'static str> {
+        Ok(self
+            .contacts_until(frames, allowed, tolerance_m, true)?
+            .into_iter()
+            .next())
+    }
+    fn contacts_until(
+        &self,
+        frames: &BTreeMap<String, Pose>,
+        allowed: &[[&str; 2]],
+        tolerance_m: f64,
+        first_only: bool,
+    ) -> Result<Vec<CollisionHit>, &'static str> {
         if !tolerance_m.is_finite() || tolerance_m < 0. {
             return Err("invalid collision tolerance");
         }
         let poses = self.poses(frames)?;
         let bounds = self.placed_bounds(&poses)?;
+        let body_bounds: Vec<_> = bounds
+            .iter()
+            .map(|parts| parts.iter().copied().reduce(|a, b| a.merged(&b)).unwrap())
+            .collect();
         let mut result = Vec::new();
         for (i, a) in self.bodies.iter().enumerate() {
             for (j, b) in self.bodies.iter().enumerate().skip(i + 1) {
-                if self.skipped(a, b, allowed)
+                if self.skipped(i, j, allowed)
+                    || !body_bounds[i].intersects(&body_bounds[j])
                     || (poses[i].translation - poses[j].translation).length()
                         > a.radius_m + b.radius_m
                 {
@@ -409,17 +537,25 @@ impl CollisionScene {
                     .lock()
                     .map_err(|_| "collision cache poisoned")?
                     .get(&(i, j))
-                    .filter(|c| c.poses == [poses[i], poses[j]] && c.tolerance_m == tolerance_m)
+                    .and_then(|entries| {
+                        entries.iter().rev().find(|c| {
+                            c.poses == [poses[i], poses[j]] && c.tolerance_m == tolerance_m
+                        })
+                    })
                     .cloned();
                 if let Some(cached) = cached {
                     result.extend(cached.hits);
+                    if first_only && !result.is_empty() {
+                        return Ok(result);
+                    }
                     continue;
                 }
                 let first_hit = result.len();
                 let mut deepest = None;
                 let mut surface_hit = false;
                 for (xi, x) in a.shapes.iter().enumerate() {
-                    for (yi, y) in b.shapes.iter().enumerate() {
+                    for yi in b.candidates(bounds[i][xi], poses[j], 0.) {
+                        let y = &b.shapes[yi];
                         if !bounds[i][xi].intersects(&bounds[j][yi]) {
                             continue;
                         }
@@ -479,17 +615,22 @@ impl CollisionScene {
                         conservative: a.approximate || b.approximate,
                     });
                 }
-                self.contacts_cache
+                let mut cache = self
+                    .contacts_cache
                     .lock()
-                    .map_err(|_| "collision cache poisoned")?
-                    .insert(
-                        (i, j),
-                        PairContacts {
-                            poses: [poses[i], poses[j]],
-                            tolerance_m,
-                            hits: result[first_hit..].to_vec(),
-                        },
-                    );
+                    .map_err(|_| "collision cache poisoned")?;
+                let entries = cache.entry((i, j)).or_default();
+                if entries.len() >= 32 {
+                    entries.pop_front();
+                }
+                entries.push_back(PairContacts {
+                    poses: [poses[i], poses[j]],
+                    tolerance_m,
+                    hits: result[first_hit..].to_vec(),
+                });
+                if first_only && !result.is_empty() {
+                    return Ok(result);
+                }
             }
         }
         Ok(result)
@@ -505,7 +646,7 @@ impl CollisionScene {
         allowed: &[[&str; 2]],
         tolerance_m: f64,
     ) -> Result<Option<CollisionHit>, &'static str> {
-        if let Some(hit) = self.contacts(to, allowed, tolerance_m)?.into_iter().next() {
+        if let Some(hit) = self.first_contact(to, allowed, tolerance_m)? {
             return Ok(Some(hit));
         }
         let before = self.poses(from)?;
@@ -552,9 +693,17 @@ impl CollisionScene {
             })
             .collect();
 
+        let body_bounds: Vec<_> = bounds
+            .iter()
+            .map(|parts| parts.iter().copied().reduce(|a, b| a.merged(&b)).unwrap())
+            .collect();
+
         for (i, a) in self.bodies.iter().enumerate() {
             for (j, b) in self.bodies.iter().enumerate().skip(i + 1) {
-                if self.skipped(a, b, allowed) || (before[i] == after[i] && before[j] == after[j]) {
+                if self.skipped(i, j, allowed)
+                    || !body_bounds[i].intersects(&body_bounds[j])
+                    || (before[i] == after[i] && before[j] == after[j])
+                {
                     continue;
                 }
                 // Origin-centred spheres enclose all orientations over the sweep.
@@ -568,7 +717,12 @@ impl CollisionScene {
                 let ma = &motions[i];
                 let mb = &motions[j];
                 for (xi, x) in a.shapes.iter().enumerate() {
-                    for (yi, y) in b.shapes.iter().enumerate() {
+                    for yi in b.candidates(
+                        bounds[i][xi],
+                        before[j],
+                        motions[j].linvel.length() + b.radius_m * motions[j].angvel.length(),
+                    ) {
+                        let y = &b.shapes[yi];
                         if !bounds[i][xi].intersects(&bounds[j][yi]) {
                             continue;
                         }
@@ -652,6 +806,89 @@ mod tests {
     }
     fn frames(a: Pose, b: Pose) -> BTreeMap<String, Pose> {
         BTreeMap::from([("arm".into(), a), ("wall".into(), b)])
+    }
+    #[test]
+    fn chunk_tree_contains_all_endpoint_and_swept_candidates() {
+        let shapes: Vec<_> = (0..80)
+            .map(|i| {
+                SharedShape::compound(vec![(
+                    rapier3d_f64::math::Pose::from_translation(Vector::new(
+                        i as f64 * 0.03 - 1.2,
+                        0.,
+                        0.,
+                    )),
+                    SharedShape::cuboid(0.01, 0.01, 0.01),
+                )])
+            })
+            .collect();
+        let bounds: Vec<_> = shapes.iter().map(|s| s.compute_local_aabb()).collect();
+        let b = Body {
+            name: "chunks".into(),
+            part_tree: std::sync::Arc::new(PartTree::build(&bounds, (0..shapes.len()).collect())),
+            envelopes: shapes.clone(),
+            shapes,
+            radius_m: 1.3,
+            approximate: false,
+        };
+        for angle in [0., 0.4, 1.5, 3.] {
+            let before = rigid_pose(Pose::yawed([0.1, -0.2, 0.3], angle));
+            let query = Aabb::new(Vector::new(-0.3, -0.4, 0.2), Vector::new(0.4, 0.2, 0.4));
+            let candidates = b.candidates(query, before, 0.);
+            for (i, shape) in b.shapes.iter().enumerate() {
+                if shape.compute_aabb(&before).intersects(&query) {
+                    assert!(candidates.contains(&i));
+                }
+            }
+            let travel = 0.08 + b.radius_m * 0.3;
+            let candidates = b.candidates(query, before, travel);
+            for sample in 0..=10 {
+                let t = sample as f64 / 10.;
+                let pose = rigid_pose(Pose::yawed([0.1 + 0.08 * t, -0.2, 0.3], angle + 0.3 * t));
+                for (i, shape) in b.shapes.iter().enumerate() {
+                    if shape.compute_aabb(&pose).intersects(&query) {
+                        assert!(candidates.contains(&i));
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn first_contact_and_bounded_history_preserve_order_and_policy() {
+        let cached = scene(vec![body("arm", [0.1; 3]), body("wall", [0.1; 3])]);
+        for i in 0..50 {
+            let f = frames(Pose::at([i as f64 * 0.001, 0., 0.]), Pose::default());
+            let all = cached.contacts(&f, &[], 0.).unwrap();
+            assert_eq!(
+                cached.first_contact(&f, &[], 0.).unwrap(),
+                all.into_iter().next()
+            );
+            assert_eq!(
+                cached.first_contact(&f, &[["arm", "wall"]], 0.).unwrap(),
+                None
+            );
+        }
+        assert!(
+            cached
+                .contacts_cache
+                .lock()
+                .unwrap()
+                .values()
+                .all(|v| v.len() <= 32)
+        );
+        for tolerance in [0., 0.3] {
+            let f = frames(Pose::default(), Pose::default());
+            let reference = scene(vec![body("arm", [0.1; 3]), body("wall", [0.1; 3])]);
+            assert_eq!(
+                cached.first_contact(&f, &[], tolerance).unwrap(),
+                reference.first_contact(&f, &[], tolerance).unwrap()
+            );
+        }
+        assert!(cached.first_contact(&BTreeMap::new(), &[], 0.).is_err());
+        assert!(
+            cached
+                .first_contact(&frames(Pose::default(), Pose::default()), &[], f64::NAN)
+                .is_err()
+        );
     }
     #[test]
     fn placed_bounds_reuse_exact_endpoints_and_keep_decisions_unchanged() {

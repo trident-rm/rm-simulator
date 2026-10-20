@@ -178,11 +178,24 @@ impl SerialArm {
         {
             return Err("invalid serial arm target or seed");
         }
-        let residual = |q| {
-            let p = rigid_pose(self.tool_pose(q));
-            let t = rigid_pose(target);
+        // Reuse imported bearings and the constant target/tool transforms.
+        // Keep the original left-to-right composition order: regrouping suffix
+        // products changes rounding in difficult numerical IK branches.
+        let origins = self.axes.map(|a| Vector::from_array(a.origin_m));
+        let bearings = self.axes.map(|a| Vector::from_array(a.axis));
+        let rest = rapier3d_f64::math::Pose::from_translation(origins[5]);
+        let inverse_rest = rest.inverse();
+        let tool = rigid_pose(self.tool);
+        let t = rigid_pose(target);
+        let target_inverse = t.rotation.inverse();
+        let joint = |i: usize, angle: f64| {
+            let r = Rotation::from_scaled_axis(bearings[i] * angle);
+            rapier3d_f64::math::Pose::from_parts(origins[i] - r * origins[i], r)
+        };
+        let residual_delta = |delta: rapier3d_f64::math::Pose| {
+            let p = delta * rest * inverse_rest * tool;
             let position = (p.translation - t.translation) * 4.;
-            let mut rotation = p.rotation * t.rotation.inverse();
+            let mut rotation = p.rotation * target_inverse;
             if rotation.w < 0. {
                 rotation = -rotation;
             }
@@ -196,23 +209,36 @@ impl SerialArm {
             };
             [position.x, position.y, position.z, v.x, v.y, v.z]
         };
+        let residual = |q: [f64; 6]| {
+            let mut delta = rapier3d_f64::math::Pose::IDENTITY;
+            for (i, angle) in q.into_iter().enumerate() {
+                delta *= joint(i, angle);
+            }
+            residual_delta(delta)
+        };
         let norm = |r: [f64; 6]| r.into_iter().map(|v| v * v).sum::<f64>();
         let mut q = std::array::from_fn(|i| {
             seed[i].clamp(self.axes[i].range_rad[0], self.axes[i].range_rad[1])
         });
         for _ in 0..120 {
-            let r = residual(q);
+            let factors: [_; 6] = std::array::from_fn(|i| joint(i, q[i]));
+            let mut prefix = [rapier3d_f64::math::Pose::IDENTITY; 7];
+            for i in 0..6 {
+                prefix[i + 1] = prefix[i] * factors[i];
+            }
+            let r = residual_delta(prefix[6]);
             if r[..3].iter().map(|v| v * v).sum::<f64>() < 1.6e-9
                 && r[3..].iter().map(|v| v * v).sum::<f64>() < 1e-8
             {
                 return Ok(q);
             }
-            let jac: [[f64; 6]; 6] = std::array::from_fn(|col| {
-                let mut trial = q;
-                trial[col] += 1e-5;
-                let b = residual(trial);
-                std::array::from_fn(|row| (b[row] - r[row]) / 1e-5)
-            });
+            let jac = serial_jacobian(
+                &prefix,
+                origins,
+                bearings,
+                (prefix[6] * rest * inverse_rest * tool).translation,
+                [r[3], r[4], r[5]],
+            );
             let mut system = [[0.; 7]; 6];
             for i in 0..6 {
                 for j in 0..6 {
@@ -241,6 +267,33 @@ impl SerialArm {
         }
         Err("serial arm target did not converge within its joint limits")
     }
+}
+// Spatial revolute Jacobian followed by the inverse left Jacobian of SO(3).
+// This differentiates the actual imported axes and logarithmic residual; no
+// concurrent-wrist or ideal robot geometry is assumed.
+fn serial_jacobian(
+    prefix: &[rapier3d_f64::math::Pose; 7],
+    origins: [Vector; 6],
+    bearings: [Vector; 6],
+    tool: Vector,
+    rotation_error: [f64; 3],
+) -> [[f64; 6]; 6] {
+    let v = Vector::from_array(rotation_error);
+    let theta = v.length();
+    let coefficient = if theta < 1e-4 {
+        1. / 12. + theta * theta / 720.
+    } else {
+        (1. - 0.5 * theta / (0.5 * theta).tan()) / (theta * theta)
+    };
+    std::array::from_fn(|i| {
+        let axis = prefix[i].rotation * bearings[i];
+        let origin = prefix[i].translation + prefix[i].rotation * origins[i];
+        let linear = axis.cross(tool - origin) * 4.;
+        let angular = axis - v.cross(axis) * 0.5 + v.cross(v.cross(axis)) * coefficient;
+        [
+            linear.x, linear.y, linear.z, angular.x, angular.y, angular.z,
+        ]
+    })
 }
 fn solve_six(mut a: [[f64; 7]; 6]) -> Option<[f64; 6]> {
     for col in 0..6 {
@@ -365,6 +418,69 @@ mod tests {
         assert!(arm.solve(Pose::at([10., 0., 0.]), q).is_err());
     }
     #[test]
+    fn analytic_serial_jacobian_matches_central_differences() {
+        let arm = serial_fixture();
+        let origins = arm.axes.map(|a| Vector::from_array(a.origin_m));
+        let bearings = arm.axes.map(|a| Vector::from_array(a.axis));
+        for q in [[0.; 6], [0.2, 0.4, -0.8, 0.3, 0.7, -0.2]] {
+            for error in [[0.; 3], [1e-7, -2e-7, 3e-7], [2.9, 0.2, -0.3]] {
+                let actual = rigid_pose(arm.tool_pose(q));
+                let target = Rotation::from_scaled_axis(Vector::from_array(error)).inverse()
+                    * actual.rotation;
+                let residual = |q| {
+                    let p = rigid_pose(arm.tool_pose(q));
+                    let mut r = p.rotation * target.inverse();
+                    if r.w < 0. {
+                        r = -r;
+                    }
+                    let v = Vector::new(r.x, r.y, r.z);
+                    let n = v.length();
+                    let v = if n > 1e-12 {
+                        v * (2. * n.atan2(r.w) / n)
+                    } else {
+                        v * 2.
+                    };
+                    [
+                        p.translation.x * 4.,
+                        p.translation.y * 4.,
+                        p.translation.z * 4.,
+                        v.x,
+                        v.y,
+                        v.z,
+                    ]
+                };
+                let mut prefix = [rapier3d_f64::math::Pose::IDENTITY; 7];
+                for i in 0..6 {
+                    let r = Rotation::from_scaled_axis(bearings[i] * q[i]);
+                    prefix[i + 1] = prefix[i]
+                        * rapier3d_f64::math::Pose::from_parts(origins[i] - r * origins[i], r);
+                }
+                let r = residual(q);
+                let jac = serial_jacobian(
+                    &prefix,
+                    origins,
+                    bearings,
+                    actual.translation,
+                    [r[3], r[4], r[5]],
+                );
+                for col in 0..6 {
+                    let mut a = q;
+                    let mut b = q;
+                    a[col] += 1e-6;
+                    b[col] -= 1e-6;
+                    let a = residual(a);
+                    let b = residual(b);
+                    for row in 0..6 {
+                        assert!(
+                            (jac[col][row] - (a[row] - b[row]) / 2e-6).abs() < 1e-6,
+                            "column {col}, row {row}, error {error:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    #[test]
     fn serial_frames_follow_reference_axis_lines() {
         let arm = serial_fixture();
         let angles = [0.1, 0.2, -0.3, 0.4, -0.5, 0.6];
@@ -384,5 +500,32 @@ mod tests {
         let mut invalid = arm;
         invalid.axes[0].axis = [0.; 3];
         assert!(invalid.validate().is_err());
+    }
+    #[test]
+    fn serial_reused_jacobian_rejects_invalid_inputs_and_preserves_limits() {
+        let arm = serial_fixture();
+        let q = [0.2, 0.4, -0.8, 0.3, 0.7, -0.2];
+        let target = arm.tool_pose(q);
+        let mut bad = target;
+        bad.translation_m[0] = f64::NAN;
+        assert!(arm.solve(bad, q).is_err());
+        let mut bad_seed = q;
+        bad_seed[2] = f64::INFINITY;
+        assert!(arm.solve(target, bad_seed).is_err());
+        for seed in [[8.; 6], [-8.; 6], q] {
+            if let Ok(found) = arm.solve(target, seed) {
+                assert!(
+                    found
+                        .iter()
+                        .zip(arm.axes)
+                        .all(|(v, a)| *v >= a.range_rad[0] && *v <= a.range_rad[1])
+                );
+                assert!(
+                    Vector::from_array(arm.tool_pose(found).translation_m)
+                        .distance(Vector::from_array(target.translation_m))
+                        < 1e-5
+                );
+            }
+        }
     }
 }

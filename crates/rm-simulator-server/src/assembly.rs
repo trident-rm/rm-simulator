@@ -698,6 +698,10 @@ mod tests {
                 .recv_timeout(std::time::Duration::from_secs(120))
                 .unwrap()
                 .unwrap();
+            eprintln!(
+                "L{difficulty} initial solve: {:.3}s",
+                start.elapsed().as_secs_f64()
+            );
             run.pose = solved.start.runtime_pose();
             run.pose.engineer_q = arm.joints_rad;
             run.pose.jaw_angles = arm.jaws_rad;

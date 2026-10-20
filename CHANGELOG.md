@@ -4,6 +4,14 @@
 
 ## Unreleased
 
+- Speed up source-arm assembly planning with an analytical serial Jacobian,
+  bounded exact IK/contact reuse, chunk BVHs and early collision rejection.
+  Use 62.5 ms live keyframes and 0.025 rad / 5 mm articulated collision sweeps,
+  then generate speed-limited 128 Hz playback. Preserve fine IK continuation,
+  time-uniform warm hints and the existing live collision geometry. Retain a
+  larger bounded return search for constrained post-flip exits.
+  Keep manual parking, the preloaded Unit and delayed L3 Q reveal.
+
 - Remove the 2026 gameplay engine, referee scheduler, Rune/Outpost controllers,
   old zone effects and damage paths. Keep shared types, model descriptors and
   physics; default worlds are bare physics and native bindings are required for

@@ -502,6 +502,11 @@ impl Rig {
             |scene| scene.contacts(&self.world_frames(), &self.allowed_contacts(), 0.0005),
         )
     }
+    fn first_collision(&self) -> Result<Option<CollisionHit>, &'static str> {
+        self.collision.as_ref().map_or(Ok(None), |scene| {
+            scene.first_contact(&self.world_frames(), &self.allowed_contacts(), 0.0005)
+        })
+    }
     fn tool_unit_pose(&self) -> Pose {
         if let Some(grasp) = self.held_grasp {
             return compose(self.tool, grasp);
@@ -680,8 +685,16 @@ impl Rig {
                 .abs()
                 .max(position(self.unit_pose).distance(position(candidate.unit_pose)))
                 .max(position(self.engineer_body).distance(position(body)));
-            let count = (joint_travel / 0.01)
-                .max(linear_travel / 0.002)
+            // Simulator policy: live source-CAD sweeps use 1.43-degree / 5 mm
+            // articulated subdivisions, with continuous rigid-frame CCD inside
+            // each subdivision. Offline inspection retains 0.01 rad / 2 mm.
+            let (angular_step_rad, linear_step_m) = if self.live_parking {
+                (0.025, 0.005)
+            } else {
+                (0.01, 0.002)
+            };
+            let count = (joint_travel / angular_step_rad)
+                .max(linear_travel / linear_step_m)
                 .ceil()
                 .max(1.) as usize;
             if count > 256 {
@@ -1103,12 +1116,19 @@ impl Rig {
 impl Rig {
     pub(crate) fn remember_runtime_plan(&mut self, plan: &AssemblyPlan) {
         let mut hints = (*self.ik_hints).clone();
-        hints.extend(
-            plan.frames
-                .iter()
-                .step_by(4)
-                .map(|f| (self.config.engineer.tool_pose(f.q), f.q)),
-        );
+        let mut previous = self.engineer_q;
+        let mut tick = 0usize;
+        for frame in &plan.frames {
+            for i in 1..=frame.ticks {
+                if tick.is_multiple_of(4) {
+                    let t = i as f64 / frame.ticks as f64;
+                    let q = std::array::from_fn(|j| previous[j] + (frame.q[j] - previous[j]) * t);
+                    hints.push((self.config.engineer.tool_pose(q), q));
+                }
+                tick += 1;
+            }
+            previous = frame.q;
+        }
         hints.truncate(4096);
         self.ik_hints = std::sync::Arc::new(hints);
     }
