@@ -256,6 +256,7 @@ impl Replayer {
     /// Step the owner's robot up to `target_time_ns`, at most `horizon_ns` past
     /// the checkpoint. `rewind` forces a rebuild even when the checkpoint is
     /// unchanged, for a caller that must revisit an already replayed tick.
+    /// Rejects nondefault field steps until network timing supports them.
     pub fn advance(
         &mut self,
         epoch: u64,
@@ -264,6 +265,11 @@ impl Replayer {
         rewind: bool,
         observer: &mut dyn FnMut(ReplayEvent),
     ) -> Result<ChassisSnapshot, &'static str> {
+        if replay.snapshot.restore.as_ref().is_some_and(|restore| {
+            restore.step_duration != rm_simulator_world::StepDuration::default()
+        }) {
+            return Err("network prediction supports only the default 128 Hz field step");
+        }
         let start_ns = replay.snapshot_time_ns / tick_ns() * tick_ns();
         let baseline = (epoch, replay.snapshot_id, replay.context_id);
         if rewind || self.baseline != Some(baseline) {
@@ -417,6 +423,29 @@ mod tests {
             .map(|(a, b)| (a - b).powi(2))
             .sum::<f64>()
             .sqrt()
+    }
+    #[test]
+    fn custom_step_prediction_is_rejected_even_at_zero_time() {
+        let host = field();
+        let mut before = host.snapshot();
+        before.restore.as_mut().unwrap().step_duration = rm_simulator_world::StepDuration::HZ_1000;
+        let replay = Replay {
+            snapshot: Arc::new(before.clone()),
+            snapshot_id: 0,
+            chassis: 0,
+            states: before.chassis.clone(),
+            snapshot_time_ns: 0,
+            context_time_ns: 0,
+            context_id: 0,
+            target_time_ns: 1_000_000,
+            inputs: Vec::new(),
+        };
+        assert!(
+            replay
+                .run(&StaticGeometry::default(), 0.)
+                .unwrap_err()
+                .contains("128 Hz")
+        );
     }
     #[test]
     fn finalized_checkpoint_discards_lost_inputs_without_waiting_for_sequence_ack() {

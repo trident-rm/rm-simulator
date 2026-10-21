@@ -29,6 +29,10 @@ assert not any(d.startswith("rm-simulator-") for d in gameplay), gameplay
 physics = dependencies("rm-simulator-physics")
 assert not any(d.startswith("bevy") for d in physics), physics
 assert not any(d.startswith("rm-simulator-") for d in physics), physics
+assets = dependencies("rm-simulator-assets")
+assert not any(d.startswith("bevy") for d in assets), assets
+assert not ({"rm-simulator-world", "rm-simulator-server", "rm-simulator-render",
+             "game-networking-sockets"} & assets), assets
 world = dependencies("rm-simulator-world")
 assert not any(d.startswith("bevy") for d in world), world
 server = dependencies("rm-simulator-server")
@@ -45,5 +49,6 @@ assert not any(d.startswith("rapier") for d in bench), bench
 assert not any(p["name"] in ("rm-sim", "rm-sim-api", "rm-sim-viewer", "rm-vision-world",
                              "rm-vision-runtime", "rm-vision-runner") for p in packages.values())
 print("PASS: physics has no gameplay or renderer, gameplay is independent of physics and the simulator, "
+      "assets have no world, networking or renderer, "
       "world and server have no renderer, renderer has no world or server, "
       "and no sibling simulator crate is imported")

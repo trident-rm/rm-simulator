@@ -17,7 +17,7 @@ mod bandwidth_probe;
 pub mod binary_snapshot;
 pub mod cad_assets;
 pub mod clock;
-pub mod collision_mesh;
+pub use rm_simulator_assets::collision_mesh;
 pub mod compression;
 pub mod deployment;
 pub mod host;
@@ -26,7 +26,7 @@ pub mod http;
 pub mod layout;
 mod lifecycle;
 pub mod map_interaction;
-pub mod math;
+pub use rm_simulator_assets::math;
 pub mod navigation;
 pub mod net;
 pub mod protocol;
@@ -36,7 +36,7 @@ pub mod simulation;
 pub mod snapshot_codec;
 pub mod zone_catalog;
 
-pub mod semantics;
+pub use rm_simulator_assets::semantics;
 
 pub mod prediction;
 

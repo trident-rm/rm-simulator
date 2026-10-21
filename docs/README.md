@@ -16,6 +16,7 @@ Git history.
 | CI checks, validation reuse and releases | [CI and releases](releases.md) |
 | Crate ownership, ticks, restore and ECS | [Simulation architecture](architecture-refactor.md) |
 | Standalone physics and optional rendering | [Physics reuse](physics-reuse.md) |
+| In-process sessions, clocks, controls and future adapters | [Simulation embedding](simulation-embedding.md) |
 | Calibrated serial-arm IK optimization and paired benchmark | [Serial arm search](serial-arm-search.md) |
 | Standalone gameplay and its live integration | [Gameplay](gameplay.md) |
 | Rule sources and historical archive | [Referee rules](referee-rules.md) |

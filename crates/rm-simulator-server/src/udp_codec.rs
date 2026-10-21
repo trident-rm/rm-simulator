@@ -3,7 +3,7 @@
 //! The per-peer UDP codec, with no socket in it.
 //!
 //! One peer's whole wire behaviour lives here: the RMG1 fragment framing, the
-//! RMI6 input batches, the RMC1 compressed commands, the RM10 owner anchor, the
+//! RMI6 input batches, the RMC1 compressed commands, the RM11 owner anchor, the
 //! RMA2 baseline feedback, snapshot delta encoding and the byte pacer. The GNS
 //! reactor in `gns_transport` is a thin wrapper that moves datagrams between a
 //! socket and these structs; a test drives the same structs over a scripted

@@ -250,8 +250,19 @@ impl Simulation {
 
     /// Wrap a field with empty pacing, input and shot state. No player is added
     /// and no prediction scene is advertised.
+    ///
+    /// # Panics
+    /// Panics for a nondefault field step; use [`Self::try_new`] for admission.
     pub fn new(field: Field, paused: bool) -> Self {
-        Self {
+        Self::try_new(field, paused).expect("server simulation requires the default 128 Hz field")
+    }
+    /// Admit a default-rate field. Custom steps are currently API-only in the
+    /// world/physics crates; network prediction and assembly planning use 128 Hz.
+    pub fn try_new(field: Field, paused: bool) -> Result<Self, &'static str> {
+        if field.step_duration() != rm_simulator_world::StepDuration::default() {
+            return Err("server simulation supports only the default 128 Hz field step");
+        }
+        Ok(Self {
             navigation: None,
             sentry_tracking: Default::default(),
             assembly: None,
@@ -277,7 +288,7 @@ impl Simulation {
             fired_ns: BTreeMap::new(),
             pilot_spawns: Default::default(),
             fire_records: VecDeque::new(),
-        }
+        })
     }
     /// Poll the bounded worker without advancing the world, including while paused.
     pub(crate) fn is_sentry_bot(&self, id: u32) -> bool {

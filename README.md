@@ -4,7 +4,9 @@
 
 A first-person RMUC 2027 field simulator written in Rust with Bevy. It loads
 our reviewed CAD field, runs native combat, territory control, Rune and assembly
-mechanics on an explicit 128 Hz clock, and supports local and network play.
+mechanics on an explicit 128 Hz multiplayer clock, and supports local and network play.
+Reusable in-process sessions support configurable stepping, including 1000 Hz,
+without a server or renderer; see [simulation embedding](docs/simulation-embedding.md).
 Drive a chassis over the terrain with a mouse-aimed gun, or explore with `--fly`.
 The final 2026-capable source is preserved at Git tag `rm2026-final`.
 
@@ -508,7 +510,7 @@ does not acknowledge its execution by the host.
 The console can spawn a host-owned navigation Sentry and send it map destinations.
 See [navigation commands and prototype limits](docs/app-options.md#console-spawned-navigation-sentry).
 
-The current protocol version is 76, defined by `PROTOCOL_VERSION` in
+The current protocol version is 79, defined by `PROTOCOL_VERSION` in
 `crates/rm-simulator-server/src/protocol.rs`. GNS sends redundant controls
 and retried shot intents unreliably; scheduling receipts and terminal shot results
 remain reliable. There is no shooter-view fire path or input-acknowledgement

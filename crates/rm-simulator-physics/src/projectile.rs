@@ -8,10 +8,11 @@
 //! Caliber helpers retain the simulator's nominal physical and rule lookup
 //! values for compatibility. Stepping does not apply detection intervals,
 //! damage, buffs or activation. The world crate owns those decisions.
+#[cfg(test)]
+use crate::tick_ns;
 use crate::{
     Pose, Team,
     chassis::{Chassis, ChassisCommand, ChassisConfig, ChassisSnapshot},
-    tick_ns,
 };
 use rapier3d_f64::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -64,8 +65,8 @@ const SUBSTEP_MAX_NS: u64 = 1_000_000;
 /// Solver runs per world tick: the tick split into [`SUBSTEP_MAX_NS`] slices,
 /// so a coarse tick still integrates ballistics at the fine step the contact
 /// margins were tuned at.
-fn substep_count() -> usize {
-    usize::try_from(tick_ns().div_ceil(SUBSTEP_MAX_NS))
+fn substep_count(step_duration: crate::StepDuration) -> usize {
+    usize::try_from(step_duration.as_ns().div_ceil(SUBSTEP_MAX_NS))
         .unwrap_or(1)
         .max(1)
 }
@@ -551,6 +552,7 @@ enum PlateMotion {
 /// score on, the projectiles in flight and every chassis. Stepping is
 /// deterministic for a fixed tick schedule.
 pub struct WorldPhysics {
+    step_duration: crate::StepDuration,
     /// Convex XY slab outside which projectiles are absorbed, in world FLU
     /// metres. `None` means no perimeter absorption. A hit beyond the slab
     /// scores nothing, which also catches a fast shot that crosses a whole
@@ -640,9 +642,25 @@ impl WorldPhysics {
     /// # Ok::<(), &'static str>(())
     /// ```
     pub fn new(faces: &[TargetFace], floor_height_m: f64) -> Self {
+        Self::with_step_duration(faces, floor_height_m, crate::StepDuration::default())
+    }
+    /// Build standalone physics with an immutable, validated integration step.
+    /// Call [`Self::step`] once per duration, passing its starting time in nanoseconds.
+    /// ```
+    /// use rm_simulator_physics::{StepDuration, TargetFrames, WorldPhysics};
+    /// let duration = StepDuration::HZ_1000;
+    /// let mut physics = WorldPhysics::with_step_duration(&[], 0., duration);
+    /// physics.step(0, &TargetFrames::new(vec![])).unwrap();
+    /// assert_eq!(physics.step_duration().as_ns(), 1_000_000);
+    /// ```
+    pub fn with_step_duration(
+        faces: &[TargetFace],
+        floor_height_m: f64,
+        step_duration: crate::StepDuration,
+    ) -> Self {
         let mut world = PhysicsWorld::new();
         world.gravity = Vector::new(0., 0., -GRAVITY_M_S2);
-        let substep_s = tick_ns() as f64 * 1e-9 / substep_count() as f64;
+        let substep_s = step_duration.as_secs_f64() / substep_count(step_duration) as f64;
         world.integration_parameters.dt = substep_s;
         world.integration_parameters.min_ccd_dt = substep_s / 100.;
         world.integration_parameters.max_ccd_substeps = 4;
@@ -654,6 +672,7 @@ impl WorldPhysics {
             None,
         );
         let mut ballistics = Self {
+            step_duration,
             payloads: Vec::new(),
             world,
             projectile_bounds_m: None,
@@ -677,6 +696,10 @@ impl WorldPhysics {
             ballistics.add_target(*face);
         }
         ballistics
+    }
+    /// Immutable integration duration of this physical world.
+    pub fn step_duration(&self) -> crate::StepDuration {
+        self.step_duration
     }
     fn add_target(&mut self, face: TargetFace) {
         let housing_half_m = match face.target {
@@ -1074,6 +1097,27 @@ impl WorldPhysics {
         command: ChassisCommand,
     ) -> Result<(), &'static str> {
         self.chassis_mut(id)?.set_command(command)
+    }
+    /// Hold direct wheel-axis motor torques, in configuration wheel order.
+    /// Rejects a missing chassis, non-finite values, or a mismatched/empty wheel
+    /// roster without changing the previous request. Motor speed/torque limits,
+    /// shared power and defeat/actuation cutoffs still apply. Gimbal/folding
+    /// requests are preserved; `command_chassis` returns to velocity control.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{WorldPhysics, Pose, Team,
+    ///     chassis::ChassisConfig, control::WheelTorques};
+    /// let mut world = WorldPhysics::new(&[], 0.0);
+    /// let id = world.add_chassis(Team::Red, ChassisConfig::default(), Pose::at([0., 0., 0.3]))?;
+    /// world.command_chassis_wheel_torques(id, WheelTorques::new(vec![1.; 4])?)?;
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn command_chassis_wheel_torques(
+        &mut self,
+        id: u32,
+        torques: crate::control::WheelTorques,
+    ) -> Result<(), &'static str> {
+        self.chassis_mut(id)?.set_wheel_torques(torques)
     }
     /// The configuration the chassis was built with, or `None` when no chassis
     /// has that id.
@@ -1479,7 +1523,9 @@ impl WorldPhysics {
         prev_ns: u64,
         frames: &TargetFrames,
     ) -> Result<Vec<Contact>, &'static str> {
-        let next_ns = prev_ns + tick_ns();
+        let next_ns = prev_ns
+            .checked_add(self.step_duration.as_ns())
+            .ok_or("physics time overflow")?;
         if frames.start.len() != self.targets.len() {
             return Err("target face count changed");
         }
@@ -1528,8 +1574,8 @@ impl WorldPhysics {
             }
         }
         let policy = self.policy;
-        let substeps = substep_count();
-        let substep_s = tick_ns() as f64 * 1e-9 / substeps as f64;
+        let substeps = substep_count(self.step_duration);
+        let substep_s = self.step_duration.as_secs_f64() / substeps as f64;
         let mut contacts = Vec::new();
         for substep in 0..substeps {
             let frac_prev = substep as f64 / substeps as f64;
@@ -2151,8 +2197,43 @@ mod tests {
             Err("target face count changed")
         );
     }
-    /// Ticks in `n` milliseconds of world time at the configured rate, so the
-    /// tests below state their durations rather than 1 kHz tick counts.
+    #[test]
+    fn standalone_thousand_hz_uses_exact_step_for_solver_and_flight_age() {
+        let duration = crate::StepDuration::HZ_1000;
+        let mut physics = WorldPhysics::with_step_duration(&[], 0., duration);
+        assert_eq!(physics.step_duration(), duration);
+        assert_eq!(physics.world.integration_parameters.dt, 0.001);
+        physics
+            .set_projectile_policy(ProjectilePolicy {
+                max_flight_ns: 100_000_000,
+                ..Default::default()
+            })
+            .unwrap();
+        physics
+            .fire(
+                0,
+                Pose::at([0., 0., 10.]),
+                Shot::at_limit(Caliber::Mm17),
+                None,
+            )
+            .unwrap();
+        let frames = TargetFrames::new(vec![]);
+        for tick in 0..100 {
+            physics.step(tick * duration.as_ns(), &frames).unwrap();
+        }
+        let ball = &physics.snapshot()[0];
+        // Horizontal quadratic drag has a closed-form solution; vertical speed
+        // contributes only a small correction over this 100 ms flight.
+        let k = Caliber::Mm17.drag_factor_per_m();
+        let expected_x = (1. + k * 25. * 0.1).ln() / k;
+        assert!((ball.position_m[0] - expected_x).abs() < 0.002);
+
+        assert!((ball.velocity_m_s[2] + 0.980665).abs() < 0.04);
+        physics.step(100_000_000, &frames).unwrap();
+        assert!(physics.snapshot().is_empty());
+        assert!(physics.step(u64::MAX, &frames).is_err());
+    }
+    /// Default-rate ticks in `n` milliseconds, truncated.
     fn ms(n: u64) -> u64 {
         n * 1_000_000 / tick_ns()
     }

@@ -3,7 +3,8 @@
 # rm-simulator-world
 
 The complete `Field` facade combines native RMUC 2027 rules with shared chassis
-and projectile physics on an explicit **128 Hz** clock. It never reads host time
+and projectile physics on an explicit clock (**128 Hz** by default, configurable
+for in-process callers through `FieldConfig::step_duration`). It never reads host time
 or depends on Bevy, rendering, transport or background workers.
 
 `FieldConfig::default()` creates a bare physical world. A match requires native
@@ -12,6 +13,7 @@ rejected; use `rm2026-final` to run a 2026 match.
 
 | Module | Responsibility |
 |---|---|
+| `session` | Caller-owned stepping, addressed controls, privileged truth, shared-geometry checkpoints and reset |
 | `lib` | Field construction, tick ordering, commands, snapshots and complete restore |
 | `rmuc_2027` | Source detector/zone adapter and native match authority |
 | `assembly`, `energy_unit` | Persistent articulated manipulation and physical Units |
@@ -28,4 +30,5 @@ the requested tick; active matches and bodies step tick by tick.
 Run `just world-test` for native scoring, restore, partitioning, manipulation and
 shared physical integration tests. `examples/step_cost.rs` measures stepping.
 See [architecture](../../docs/architecture-refactor.md),
-[gameplay](../../docs/gameplay.md), and [physics reuse](../../docs/physics-reuse.md).
+[gameplay](../../docs/gameplay.md), [physics reuse](../../docs/physics-reuse.md),
+and [embedding](../../docs/simulation-embedding.md).

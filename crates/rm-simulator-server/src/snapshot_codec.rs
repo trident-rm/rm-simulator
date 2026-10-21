@@ -381,6 +381,7 @@ impl<'de> Deserialize<'de> for UnitGeometryWire {
 }
 #[derive(Serialize, Deserialize)]
 struct DerivedRules {
+    step_duration: rm_simulator_world::StepDuration,
     assemblies: Vec<AssemblyWire>,
     arms: Vec<rm_simulator_world::assembly::ArmState>,
     energy_units: Vec<EnergyUnitWire>,
@@ -392,6 +393,7 @@ struct DerivedRules {
 impl DerivedRules {
     fn new(restore: &rm_simulator_world::FieldRestore) -> Self {
         Self {
+            step_duration: restore.step_duration,
             arms: restore.arms.clone(),
             energy_units: restore
                 .energy_units
@@ -412,6 +414,7 @@ impl DerivedRules {
     }
     fn into_restore(self) -> rm_simulator_world::FieldRestore {
         rm_simulator_world::FieldRestore {
+            step_duration: self.step_duration,
             assemblies: self.assemblies.into_iter().map(|a| a.0).collect(),
             arms: self.arms,
             energy_units: self
@@ -489,6 +492,7 @@ struct ChassisRecord {
     team: rm_simulator_world::Team,
     config: ConfigWire,
     command: rm_simulator_world::ChassisCommand,
+    drive_control: rm_simulator_world::DriveControl,
     jump_held: bool,
     defeated: bool,
 }
@@ -633,7 +637,8 @@ impl PlayerSnapshot {
         let now_ns = field.tick.checked_mul(rm_simulator_world::tick_ns());
         let rules = match &field.restore {
             Some(restore)
-                if now_ns == Some(field.time_ns)
+                if restore.step_duration == rm_simulator_world::StepDuration::default()
+                    && now_ns == Some(field.time_ns)
                     && field.runes.is_empty()
                     && field.outposts.is_empty()
                     && field.bases.is_empty()
@@ -659,6 +664,7 @@ impl PlayerSnapshot {
                     team: chassis.team,
                     config: ConfigWire::new(&chassis.config),
                     command: chassis.command,
+                    drive_control: chassis.drive_control.clone(),
                     jump_held: chassis.jump_held,
                     defeated: chassis.defeated,
                 })
@@ -747,6 +753,11 @@ impl PlayerSnapshot {
     /// physics will use.
     fn into_state(mut self, normalize: bool) -> io::Result<SimulationState> {
         let invalid = |message| io::Error::new(io::ErrorKind::InvalidData, message);
+        if self.rules.step_duration != rm_simulator_world::StepDuration::default() {
+            return Err(invalid(
+                "network checkpoint requires the default 128 Hz field step",
+            ));
+        }
         let mut sub_tick_ns = std::mem::take(&mut self.header.sub_tick_ns);
         let time_ns = self
             .header
@@ -790,6 +801,10 @@ impl PlayerSnapshot {
             {
                 return Err(invalid("checkpoint wheel count does not match the chassis"));
             }
+            record
+                .drive_control
+                .validate(config.wheel_hubs_m.len())
+                .map_err(invalid)?;
             let mut snapshot = rm_simulator_world::ChassisSnapshot {
                 placement_revision: record.placement_revision,
                 id: record.id,
@@ -801,6 +816,7 @@ impl PlayerSnapshot {
                 velocity_m_s: motion.velocity_m_s,
                 angular_velocity_rad_s: motion.angular_velocity_rad_s,
                 command: record.command,
+                drive_control: record.drive_control,
                 jump_held: record.jump_held,
                 held_aim_rad: motion.held_aim_rad,
                 gimbal_velocity_rad_s: motion.gimbal_velocity_rad_s,
@@ -1395,6 +1411,78 @@ pub fn decode_checkpoint_with(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn duration_authority_is_explicit_on_wire_and_network_rejects_custom_rates() {
+        use rm_simulator_world::{Field, FieldConfig, StepDuration};
+        for invalid in [0, 7_812_501, u64::MAX] {
+            assert!(StepDuration::from_ns(invalid).is_err());
+            assert!(serde_json::from_str::<StepDuration>(&invalid.to_string()).is_err());
+        }
+        for valid in [1, 999_999, 1_000_000, 7_812_500] {
+            let duration = StepDuration::from_ns(valid).unwrap();
+            assert_eq!(
+                serde_json::from_str::<StepDuration>(&valid.to_string()).unwrap(),
+                duration
+            );
+        }
+        let field = Field::new(&FieldConfig::default()).unwrap();
+        let rules = field.snapshot().restore.unwrap();
+        let bytes = bitpack::to_bytes(&DerivedRules::new(&rules)).unwrap();
+        let decoded: DerivedRules = bitpack::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded.into_restore(), rules);
+        let mut custom_rules = rules;
+        custom_rules.step_duration = StepDuration::HZ_1000;
+        let bytes = bitpack::to_bytes(&DerivedRules::new(&custom_rules)).unwrap();
+        let decoded: DerivedRules = bitpack::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded.into_restore(), custom_rules);
+        let mut state = crate::simulation::Simulation::new(field, true).state();
+        state.field.restore.as_mut().unwrap().step_duration = StepDuration::HZ_1000;
+        assert!(PlayerSnapshot::from_state(&state).is_err());
+        state.field.restore.as_mut().unwrap().step_duration = StepDuration::default();
+        let mut encoded = PlayerSnapshot::from_state(&state).unwrap();
+        encoded.rules.step_duration = StepDuration::HZ_1000;
+        assert!(encoded.into_state(true).is_err());
+        let custom = Field::new(&FieldConfig {
+            step_duration: StepDuration::HZ_1000,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(crate::simulation::Simulation::try_new(custom, true).is_err());
+    }
+    #[test]
+    fn direct_wheel_torques_survive_player_checkpoint_and_restore() {
+        use rm_simulator_world::{DriveControl, WheelTorques};
+        let (mut simulation, chassis) = crate::workload::simulation(1);
+        let torques = WheelTorques::new(vec![0.123456789012345, -0.7, 0., 1.]).unwrap();
+        simulation
+            .test_field_mut()
+            .command_chassis_wheel_torques(chassis[0], torques.clone())
+            .unwrap();
+        let mut state = self::simulation();
+        state.snapshot_id = 1;
+        state.field = simulation.field().snapshot();
+        let message = ServerMessage::Snapshot(Box::new(state));
+        let ServerMessage::Snapshot(decoded) =
+            decode_player_message(&encode_player_message(&message)).unwrap()
+        else {
+            panic!("expected checkpoint");
+        };
+        assert_eq!(
+            decoded.field.chassis[0].drive_control,
+            DriveControl::WheelTorques(torques)
+        );
+        let restored = rm_simulator_world::Field::restore(
+            &decoded.field,
+            &simulation.field().static_geometry_snapshot(),
+            simulation.field().floor_height_m(),
+        )
+        .unwrap();
+        assert_eq!(
+            restored.snapshot().chassis[0].drive_control,
+            decoded.field.chassis[0].drive_control
+        );
+    }
+
     #[test]
     fn canonical_unit_geometry_roundtrips_and_does_not_change_with_motion() {
         use rm_simulator_world::{

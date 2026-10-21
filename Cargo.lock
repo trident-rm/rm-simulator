@@ -6071,6 +6071,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rm-simulator-assets"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rm-simulator-gameplay",
+ "rm-simulator-physics",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "rm-simulator-bench"
 version = "0.1.0"
 dependencies = [
@@ -6120,6 +6132,7 @@ dependencies = [
  "game-networking-sockets",
  "glam 0.33.12",
  "if-addrs",
+ "rm-simulator-assets",
  "rm-simulator-physics",
  "rm-simulator-world",
  "serde",

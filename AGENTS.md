@@ -4,7 +4,7 @@
 
 A first-person RoboMaster field simulator in Rust with Bevy. It loads the
 RMUC 2027 field from the extracted competition CAD, runs native gameplay and
-projectile rules on an explicit 128 Hz clock, referees a match on top of them, and
+projectile rules on an explicit clock (128 Hz in multiplayer), referees a match on top of them, and
 lets you drive an omni chassis over the terrain (or fly a free camera) and shoot
 at armor. Workspace crates keep gameplay rules, physics, rendering, the headless
 server, the interactive application and the rendering benchmark apart.
@@ -27,6 +27,7 @@ source file.
 | Standalone gameplay engine and its live integration | `docs/gameplay.md` |
 | Crate ownership, ticks, restore, ECS | `docs/architecture-refactor.md` |
 | Physics reuse without a match or server | `docs/physics-reuse.md` |
+| In-process sessions, configurable timing and adapter boundaries | `docs/simulation-embedding.md` |
 | Licensing and third-party provenance | `NOTICE.md` |
 | Every guide, indexed | `docs/README.md` |
 
@@ -135,11 +136,12 @@ shield travel is illustrative. See `docs/rmuc2027-field.md` before extending it.
 
 | Path | Contents |
 |---|---|
+| `crates/rm-simulator-assets` | Verified manifests, collision GLBs, source binding records, articulation semantics and FLU math. Depends on physics/gameplay types, never world, server, rendering or networking. Server compatibility imports preserve native runtime validation. |
 | `crates/rm-simulator-gameplay` | Deterministic match engine the world referee runs as its live rules authority (re-exported as `rm_simulator_world::gameplay`). No physics, rendering or other simulator-crate dependency. |
-| `crates/rm-simulator-physics` | Bevy-free, gameplay-free Rapier library. `chassis.rs` owns wheel/body dynamics, `mechanism.rs` owns prescribed robot folding geometry, `projectile.rs` owns stepping and raw armor contacts, `geometry.rs` owns shared collision captures and clearance queries, and `motion.rs` owns prescribed rotor/rail motion and fitted armor geometry. No other simulator crate dependency. |
-| `crates/rm-simulator-world` | Complete `Field` facade, rune activation, outpost/base HP, referee integration and `scoring.rs` detection/damage. Coordinates physics on explicit ticks and restores the whole world. Re-exports existing physical types through compatibility modules. |
+| `crates/rm-simulator-physics` | Bevy-free, gameplay-free Rapier library. `chassis.rs` owns wheel/body dynamics, `mechanism.rs` owns prescribed robot folding geometry, `projectile.rs` owns stepping and raw armor contacts, `geometry.rs` owns shared collision captures and clearance queries, and `motion.rs` owns prescribed rotor/rail motion and fitted armor geometry. `control.rs` owns direct wheel torque request types. No other simulator crate dependency. |
+| `crates/rm-simulator-world` | Complete `Field` facade, rune activation, outpost/base HP, referee integration and `scoring.rs` detection/damage. Coordinates physics on explicit ticks and restores the whole world. `session.rs` exposes trusted in-process stepping, control, truth, checkpoints and seeded resets. Re-exports existing physical types through compatibility modules. |
 | `crates/rm-simulator-render` | Bevy scene. `cad.rs` (glTF scenery and roles), `rune.rs` and `outpost.rs` (light overlays with lit and struck materials), `projectile.rs` (pooled projectile spheres), `chassis.rs` (body, armor lights, omni wheels, two-axis gimbal), `sync.rs` (`SceneState` in, transforms and materials out), `lighting.rs`. Never depends on the world crate. |
-| `crates/rm-simulator-server` | Bevy-free glue and the `rm-simulator-server` binary. `cad_assets.rs` (manifest parsing, checksums, CAD frame to FLU poses), `collision_mesh.rs` (visual GLBs to named FLU triangle parts, ground lookup), `compression.rs` (the self-identifying wire framing for non-checkpoint messages: ZSTD or, for the loopback transport, raw), `math.rs` (wxyz quaternion and column-major matrix helpers, the glTF root pose convention), `layout.rs` (rune hubs, outpost origins, terrain into the field, team spawn slots and the `ChassisSpawner`, `FieldConfig` from options), `simulation.rs` (`Simulation`: paused flag, bounded real-time advance, command application, chassis spawning per player), `protocol.rs` (`ClientMessage`/`ServerMessage`, roles), `host.rs` (single-owner simulation worker, roster and command authority), `net.rs` (the GNS UDP sockets, the in-process owner's loopback codec link, peer delivery and `Client`), `network_trace.rs` (bounded metadata tracing and local counters), `udp_codec.rs` (the per-peer UDP codec with no socket in it: fragment framing, reassembly, input batches, delta coding and pacing, all on an explicit `now`), `gns_transport.rs` (the GNS sockets that drive that codec), `scripted_link.rs` (a deterministic datagram link with scripted loss, reordering, duplication, delay and blackouts, for tests), `host_args.rs` (the field, rune, weapon and chassis options a host accepts, shared with the app's command line), `workload.rs` (the deterministic no-CAD field the bandwidth probe and the measurement examples drive), `http.rs` and `panel.html` (minimal HTTP/1.1 server and the referee page), `main.rs` (headless binary). Depends on the world crate; the only place besides the app that reads host time. |
+| `crates/rm-simulator-server` | Bevy-free glue and the `rm-simulator-server` binary. asset compatibility imports (verified CAD loading and collision geometry supplied by `rm-simulator-assets`), `compression.rs` (the self-identifying wire framing for non-checkpoint messages: ZSTD or, for the loopback transport, raw), `math.rs` (wxyz quaternion and column-major matrix helpers, the glTF root pose convention), `layout.rs` (rune hubs, outpost origins, terrain into the field, team spawn slots and the `ChassisSpawner`, `FieldConfig` from options), `simulation.rs` (`Simulation`: paused flag, bounded real-time advance, command application, chassis spawning per player), `protocol.rs` (`ClientMessage`/`ServerMessage`, roles), `host.rs` (single-owner simulation worker, roster and command authority), `net.rs` (the GNS UDP sockets, the in-process owner's loopback codec link, peer delivery and `Client`), `network_trace.rs` (bounded metadata tracing and local counters), `udp_codec.rs` (the per-peer UDP codec with no socket in it: fragment framing, reassembly, input batches, delta coding and pacing, all on an explicit `now`), `gns_transport.rs` (the GNS sockets that drive that codec), `scripted_link.rs` (a deterministic datagram link with scripted loss, reordering, duplication, delay and blackouts, for tests), `host_args.rs` (the field, rune, weapon and chassis options a host accepts, shared with the app's command line), `workload.rs` (the deterministic no-CAD field the bandwidth probe and the measurement examples drive), `http.rs` and `panel.html` (minimal HTTP/1.1 server and the referee page), `main.rs` (headless binary). Depends on the world crate; the only place besides the app that reads host time. |
 | `crates/rm-simulator-app` | The `rm-simulator` binary. `main.rs` (app wiring), `args.rs` (clap arguments), `loading.rs` (the `Screen` state and the match lifecycle: entering `Screen::Loading` with a `JoinRequest` prepares a session on a worker behind a splash, `Screen::InMatch` unlocks gameplay, a `LeaveRequest` or any failure tears the match down to `Screen::Title`), `staging.rs` (connected side/robot/position selection over the real scene; deployment uses the host protocol), `title.rs` (the title screen, its `Page` sub-state and the remembered fields; every choice becomes the arguments a command line would have given), `session.rs` (`Session` over a `Client` for both embedded and remote hosts, prediction state and match keys), `controls.rs` (gimbal camera, drive and fly, gun, mouse capture), `scene.rs` (CAD instances, overlay spawning, world-to-scene adaptation and flashes), `hud.rs` (overlay text), `debug.rs` (collision wireframe view), `screenshot.rs` (`--screenshot`), `frames.rs` (FLU-to-Bevy conversions). |
 | `crates/rm-simulator-bench` | Standalone fixed-camera visual CAD benchmark. Shares renderer and graphics presets; never depends on physics, world, server or gameplay. GPU timestamp readbacks, CPU frame distributions, settings cases and optional raw output. See `docs/render-benchmark.md`. |
 | `scripts/check-module-dependencies.py` | Asserts the crate boundaries above. |
@@ -214,6 +216,12 @@ not a refactor.
   failure regions constrain navigation only. Manual Sentry pilots default to manual control and may opt into host optical aim/sweep; operator navigation Sentries default to that controller. It yields to tunnel/stow alignment and never fires.
   The CAD bake is an in-memory host cache; controller state is external input,
   not a second physical world or an addition to the referee rules.
+- **Embedding.** `world::session::Session` is a trusted caller-owned facade over the same
+  `Field` control and step paths. It adds no transport authority or wall-clock pacing.
+  Ground-truth access is explicitly privileged and is not a simulated sensor.
+  Caller adapters own sampling schedules, random generators and task/reward state.
+  Direct wheel torques bypass velocity/balance assistance but preserve physical
+  motor, power, traction and defeat limits; gimbal/folding remain prescribed.
 - **Renderer is passive.** It applies caller-owned `SceneState` and never
   advances rules or reads the physics/world crates. Chassis ingestion resolves
   caller state into pose and light components before applying changes. Keep
@@ -229,8 +237,11 @@ not a refactor.
   there); `layout::side_team`, `rune_team` and `outpost_team` derive
   ownership from that, and the render `TeamColor` follows it.
 - **Time.** World time advances only through explicit ticks (`tick_ns()`,
-  fixed at 128 Hz (7.8125 ms per tick) for every build, host and client; there
-  is no rate selector, environment override or per-match rate). Rule durations
+  defaulting to 128 Hz (7.8125 ms per tick). In-process physics/world sessions
+  may select a validated immutable `StepDuration`, including 1000 Hz. The duration
+  travels in checkpoints and controls both integration and field time. Multiplayer
+  remains 128 Hz and rejects custom-rate admission until peer timing is negotiated;
+  there is no environment override or CLI rate flag). Rule durations
   stay in
   nanoseconds, never tick counts. Never read
   host time in physics, world or gameplay code. Stepping must be deterministic

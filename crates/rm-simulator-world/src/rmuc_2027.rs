@@ -489,6 +489,34 @@ mod tests {
         .unwrap()
     }
     #[test]
+    fn thousand_hz_rules_clock_partitioning_and_restore() {
+        let config = FieldConfig {
+            step_duration: crate::StepDuration::HZ_1000,
+            rmuc_2027: Some(config()),
+            ..Default::default()
+        };
+        let mut whole = Field::new(&config).unwrap();
+        let mut parts = Field::new(&config).unwrap();
+        whole.referee_command(RefereeCommand::StartMatch).unwrap();
+        parts.referee_command(RefereeCommand::StartMatch).unwrap();
+        whole.step(6_123).unwrap();
+        for ticks in [1, 999, 123, 5000] {
+            parts.step(ticks).unwrap();
+        }
+        assert_eq!(whole.time_ns(), 6_123_000_000);
+        assert_eq!(whole.snapshot(), parts.snapshot());
+        let checkpoint = whole.snapshot();
+        let mut restored =
+            Field::restore(&checkpoint, &whole.static_geometry_snapshot(), 0.).unwrap();
+        assert_eq!(restored.step_duration(), crate::StepDuration::HZ_1000);
+        whole.step(1000).unwrap();
+        restored.step(400).unwrap();
+        restored.step(600).unwrap();
+        assert_eq!(whole.snapshot(), restored.snapshot());
+        // The native running clock excludes its five-second preparation.
+        assert_eq!(whole.rmuc_2027().unwrap().game.elapsed_ns(), 2_123_000_000);
+    }
+    #[test]
     fn radar_error_boundaries_localization_sampling_and_full_restore() {
         let mut f = field();
         let id = f

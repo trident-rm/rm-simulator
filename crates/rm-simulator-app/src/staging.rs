@@ -684,6 +684,7 @@ fn preview(
         velocity_m_s: [0.0; 3],
         angular_velocity_rad_s: [0.0; 3],
         command: default(),
+        drive_control: default(),
         jump_held: false,
         held_aim_rad: [yaw, 0.0],
         gimbal_velocity_rad_s: [0.0; 2],

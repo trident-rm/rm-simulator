@@ -106,10 +106,11 @@ material systems consume changed components. Required components keep manually
 spawned chassis parts usable in headless tests; the existing ID/part markers
 remain available. The projectile visual pool remains unchanged.
 
-CAD package parsing remains in the server crate. Consumers that need package
-loading can implement it outside physics or use that existing adapter. This
-refactor does not introduce another asset format, publish crates or add sibling
-repository dependencies.
+CAD package parsing lives in `rm-simulator-assets`, without a server dependency.
+The server retains compatibility imports and runtime-specific validation. No
+additional asset format or sibling repository dependency is required. See
+[simulation embedding](simulation-embedding.md) for caller-owned sessions, direct
+wheel torque control, configurable step durations and future adapter boundaries.
 
 Run the crate's own tests with `cargo test -p rm-simulator-physics --locked`;
 [development](development.md) lists the workspace targets. The architecture

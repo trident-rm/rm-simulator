@@ -76,7 +76,7 @@ pub struct NodeBinding {
 /// primitive sets are filled by validation and skipped by deserialisation.
 ///
 /// ```
-/// use rm_simulator_server::semantics::FileSemantics;
+/// use rm_simulator_assets::semantics::FileSemantics;
 ///
 /// // A file record as it appears in articulation.json.
 /// let file: FileSemantics = serde_json::from_str(
@@ -203,7 +203,7 @@ struct Sidecar {
 /// an absolute path, `.` and `..` are all rejected.
 ///
 /// ```
-/// use rm_simulator_server::semantics::safe_path;
+/// use rm_simulator_assets::semantics::safe_path;
 /// use std::path::Path;
 ///
 /// let root = Path::new("/package");

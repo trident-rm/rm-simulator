@@ -15,6 +15,7 @@ name = "rm-simulator-server"
 path = "src/main.rs"
 
 [dependencies]
+rm-simulator-assets = { version = "0.1.0", path = "../rm-simulator-assets" }
 rm-simulator-physics = { version = "0.1.0", path = "../rm-simulator-physics" }
 glam.workspace = true
 rm-simulator-world = { version = "0.1.0", path = "../rm-simulator-world" }

@@ -565,7 +565,7 @@ headless check still starts the real app but skips screenshots and encoding.
 The bake is cached in memory for the current loaded scene; no generated field
 asset is committed or written. Map processing/search run on one bounded worker,
 with latest-goal generations discarding stale results. Pose, command and path
-presentation travel through the existing multiplayer codec (protocol 78).
+presentation travel through the existing multiplayer codec (protocol 79).
 Controller state is host-side external input, like a remote pilot; `Field::restore`
 continues to restore the complete physical/rule world, while a new host must
 recreate the controller and bake. There is no portable on-disk bake yet.

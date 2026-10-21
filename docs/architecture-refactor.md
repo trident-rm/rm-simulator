@@ -4,7 +4,8 @@
 
 Physics and prescribed motion live in `rm-simulator-physics`. The complete
 `Field` facade in `rm-simulator-world` coordinates them with live rules and the
-referee on one explicit clock (a fixed 128 Hz tick). Rendering consumes caller-owned appearance
+referee on one explicit clock (128 Hz by default, with configurable in-process
+physical/rule stepping). Rendering consumes caller-owned appearance
 and has no dependency on physics or gameplay. The server host worker owns each
 live simulation and roster; app systems and transports submit commands to it.
 
@@ -72,6 +73,19 @@ Native match checkpoints carry geometry bindings and rules; shared presentation
 records do not execute historical rules. Raw wire IDs and `ArmorTarget` remain unchanged. See the reuse
 guide for the replacement of referee-dependent geometry queries with
 `StaticGeometry::at_mechanisms`.
+
+## Embedding boundaries
+
+`world::session` provides caller-paced stepping, addressed controls, explicitly
+privileged truth access and complete in-memory reset points. Per-field
+`StepDuration` travels in checkpoints. Multiplayer admission remains 128 Hz until
+rate negotiation and all peer schedulers support customization.
+
+`rm-simulator-assets` owns verified CAD import and source metadata without a
+dependency on world, networking or rendering. The server retains compatibility
+imports and native runtime validation. The renderer remains a separate passive
+consumer. See [simulation embedding](simulation-embedding.md) for the public API,
+direct wheel controls and subsequent adapter boundaries.
 
 ## App and ECS state
 

@@ -114,7 +114,9 @@ use serde::{Deserialize, Serialize};
 /// Version 74 adds host-owned Sentry navigation commands and path diagnostics.
 /// Version 76 adds the EGA Sentry choice and explicit tunnel navigation segments.
 /// Version 78 carries native Radar intelligence and Sentry aim-controller settings.
-pub const PROTOCOL_VERSION: u32 = 78;
+/// Version 79 carries restorable direct wheel motor torque requests and the
+/// validated field step in checkpoint authority.
+pub const PROTOCOL_VERSION: u32 = 79;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///

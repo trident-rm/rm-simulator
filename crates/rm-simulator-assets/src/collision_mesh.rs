@@ -6,7 +6,7 @@
 use crate::cad_assets::cad_point_to_flu;
 use crate::math::{Mat4, add, gltf_rotation, rotate};
 use anyhow::{Context, anyhow, bail, ensure};
-use rm_simulator_world::Pose;
+use rm_simulator_physics::Pose;
 use serde::Deserialize;
 use std::path::Path;
 
@@ -70,7 +70,7 @@ impl CollisionMesh {
     /// count.
     ///
     /// ```
-    /// use rm_simulator_server::collision_mesh::CollisionMesh;
+    /// use rm_simulator_assets::collision_mesh::CollisionMesh;
     ///
     /// // Two FLU triangles forming a 2 m square pad with its top at 0.5 m.
     /// let mesh = CollisionMesh {
@@ -242,7 +242,7 @@ impl GroundMesh {
     /// undersides as floors. General two-sided collision and spawn queries are unchanged.
     ///
     /// ```
-    /// use rm_simulator_server::collision_mesh::{CollisionMesh, GroundMesh};
+    /// use rm_simulator_assets::collision_mesh::{CollisionMesh, GroundMesh};
     /// let mesh: GroundMesh = CollisionMesh {
     ///     vertices_m: vec![[0.,0.,0.],[1.,0.,0.],[0.,1.,0.]],
     ///     triangles: vec![[0,2,1]], // underside
@@ -266,7 +266,7 @@ impl GroundMesh {
     /// Magnitude of the highest upward support face's XY gradient (rise/run).
     /// Navigation uses the full grade, so diagonal travel cannot disguise an
     /// unsupported slope. At equal-height seams prefer the steeper face.
-    pub(crate) fn support_grade_below(&self, x: f64, y: f64, z_max: f64) -> Option<f64> {
+    pub fn support_grade_below(&self, x: f64, y: f64, z_max: f64) -> Option<f64> {
         let mut best: Option<(f64, f64)> = None;
         self.root.visit(x, y, &mut |index| {
             let [a, b, c] = self.mesh.triangles[index].map(|i| self.mesh.vertices_m[i as usize]);

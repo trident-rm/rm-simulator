@@ -19,6 +19,7 @@
 //! measured.
 use crate::{
     Pose, Team,
+    control::{DriveControl, WheelTorques},
     projectile::{FRICTION, SMALL_ARMOR_HOUSING_HALF_M},
 };
 use rapier3d_f64::parry::bounding_volume::BoundingVolume;
@@ -1289,7 +1290,7 @@ pub struct WheelSnapshot {
     /// Spring compression from full droop, in metres; zero when airborne.
     #[serde(default)]
     pub suspension_compression_m: f64,
-    /// Surface speed the inverse kinematics asked of this wheel.
+    /// Surface speed the inverse kinematics asked of this wheel; zero in direct torque mode.
     pub target_m_s: f64,
     /// Ground contact this tick, or `None` when the ray found no ground.
     pub contact: Option<WheelContact>,
@@ -1319,8 +1320,11 @@ pub struct ChassisSnapshot {
     pub velocity_m_s: [f64; 3],
     /// Body angular velocity in radians per second.
     pub angular_velocity_rad_s: [f64; 3],
-    /// Drive and aim the pilot last requested.
+    /// Last high-level request; drive components are dormant in direct torque mode.
     pub command: ChassisCommand,
+    /// Held drive mode and direct wheel requests, preserved across restoration.
+    #[serde(default)]
+    pub drive_control: DriveControl,
     /// Previous physics slice jump state, retained to prevent replayed launches.
     #[serde(default)]
     pub jump_held: bool,
@@ -1399,6 +1403,7 @@ fn integrate_wheel_drives(
     contacts: &[(f64, f64)],
     dt_s: f64,
     budget_w: f64,
+    torques: Option<&WheelTorques>,
 ) -> (Vec<f64>, f64, f64) {
     let ratio = config.wheel_radius_m
         / if config.mecanum {
@@ -1415,16 +1420,19 @@ fn integrate_wheel_drives(
     for _ in 0..slices {
         let mut mechanical_w = 0.0;
         let mut copper_w = 0.0;
-        for (wheel, motor) in wheels.iter().zip(&mut motors) {
+        for (index, (wheel, motor)) in wheels.iter().zip(&mut motors).enumerate() {
             let speed = wheel.angular_velocity_rad_s * ratio;
-            let error = wheel.target_m_s - speed;
+            let requested_force = torques.map_or_else(
+                || 4.0 * config.slip_stiffness_n_s_m * (wheel.target_m_s - speed),
+                |torques| torques.as_nm()[index] / ratio,
+            );
             let limit = config.wheel_stall_force_n
-                * if error * speed > 0.0 {
+                * if requested_force * speed > 0.0 {
                     (1.0 - speed.abs() / config.wheel_no_load_speed_m_s).clamp(0.0, 1.0)
                 } else {
                     1.0
                 };
-            *motor = (4.0 * config.slip_stiffness_n_s_m * error).clamp(-limit, limit);
+            *motor = requested_force.clamp(-limit, limit);
             mechanical_w += (*motor * speed).max(0.0);
             copper_w +=
                 config.dynamics.motor_stall_loss_w * (*motor / config.wheel_stall_force_n).powi(2);
@@ -1475,6 +1483,7 @@ pub(crate) struct Chassis {
     forces: Vec<(Vector, Vector)>,
     drive_forces: Vec<(Vector, Vector)>,
     command: ChassisCommand,
+    drive_control: DriveControl,
     jump_held: bool,
     balance_gains: [f64; 2],
     /// Actual motor heading and elevation; defeat freezes them.
@@ -1542,6 +1551,7 @@ impl ChassisSnapshot {
     ///     turret: Pose::at([1.0, 2.0, 0.5]),
     ///     velocity_m_s: [0.0; 3],
     ///     angular_velocity_rad_s: [0.0; 3],
+    ///     drive_control: Default::default(),
     ///     jump_held: false,
     ///     command: ChassisCommand { forward_m_s: 1.0, ..Default::default() },
     ///     held_aim_rad: [0.0; 2],
@@ -1558,7 +1568,7 @@ impl ChassisSnapshot {
     /// ```
     pub fn derive_wheel_kinematics(&mut self) {
         let pose = rapier_pose(self.pose);
-        let command = if self.defeated {
+        let command = if self.defeated || self.drive_control != DriveControl::BodyVelocity {
             ChassisCommand::default()
         } else {
             self.command
@@ -1796,6 +1806,7 @@ impl Chassis {
             geometry,
             wheels,
             jump_held: false,
+            drive_control: DriveControl::default(),
             command: ChassisCommand {
                 aim_yaw_rad: yaw_of(spawn),
                 ..Default::default()
@@ -1939,6 +1950,7 @@ impl Chassis {
         body.reset_forces(true);
         body.reset_torques(true);
         self.jump_held = false;
+        self.drive_control = DriveControl::default();
         self.command = ChassisCommand {
             aim_yaw_rad: yaw_of(spawn),
             ..Default::default()
@@ -1964,7 +1976,13 @@ impl Chassis {
             return Err("chassis command must be finite");
         }
         self.command = command;
-
+        self.drive_control = DriveControl::BodyVelocity;
+        Ok(())
+    }
+    /// Select direct wheel drive without changing the held gimbal/folding request.
+    pub(crate) fn set_wheel_torques(&mut self, torques: WheelTorques) -> Result<(), &'static str> {
+        torques.validate(self.wheels.len())?;
+        self.drive_control = DriveControl::WheelTorques(torques);
         Ok(())
     }
     /// Restore observable rigid-body and wheel state for presentation replay.
@@ -1994,6 +2012,7 @@ impl Chassis {
         {
             return Err("non-finite prediction state");
         }
+        state.drive_control.validate(self.wheels.len())?;
         self.place(world, state.pose)?;
         world.bodies[self.body].set_position(exact_rapier_pose(state.pose), true);
         world
@@ -2007,6 +2026,7 @@ impl Chassis {
         self.geometry = wheel_geometry_at(&self.config, self.fold_angle_rad);
         self.placement_revision = state.placement_revision;
         self.set_command(state.command)?;
+        self.drive_control = state.drive_control.clone();
         self.defeated = state.defeated;
         self.jump_held = state.jump_held;
         self.aim_rad = state.held_aim_rad;
@@ -2045,7 +2065,10 @@ impl Chassis {
         };
         let up = pose.rotation * Vector::Z;
         // A defeated robot's drive is cut: the wheels brake to a stop.
-        let command = if self.defeated || self.actuation_cut {
+        let command = if self.defeated
+            || self.actuation_cut
+            || self.drive_control != DriveControl::BodyVelocity
+        {
             ChassisCommand::default()
         } else {
             self.command
@@ -2190,8 +2213,14 @@ impl Chassis {
         } else {
             self.drive_budget_w.min(cfg.dynamics.drive_power_w)
         };
+        let torques = match &self.drive_control {
+            DriveControl::WheelTorques(torques) if !self.defeated && !self.actuation_cut => {
+                Some(torques)
+            }
+            _ => None,
+        };
         let (traction, scale, power) =
-            integrate_wheel_drives(cfg, &mut self.wheels, &tyre_contacts, dt_s, budget);
+            integrate_wheel_drives(cfg, &mut self.wheels, &tyre_contacts, dt_s, budget, torques);
         self.drive_power_w = power;
         for ((wheel, (force, _)), traction) in self
             .wheels
@@ -2209,7 +2238,11 @@ impl Chassis {
             .iter()
             .filter(|wheel| wheel.contact.is_some())
             .count();
-        if cfg.balance_assist && supported > 0 && budget > 0. {
+        if cfg.balance_assist
+            && supported > 0
+            && budget > 0.
+            && self.drive_control == DriveControl::BodyVelocity
+        {
             // Reduced inverted-pendulum LQR, with a small speed-error lean
             // setpoint. The motor/leg plant remains an approximation; this is
             // an assisted body torque, not a firmware wheel-leg controller.
@@ -2401,6 +2434,7 @@ impl Chassis {
             velocity_m_s: body.linvel().to_array(),
             angular_velocity_rad_s: body.angvel().to_array(),
             command: self.command,
+            drive_control: self.drive_control.clone(),
             jump_held: self.jump_held,
             held_aim_rad: self.aim_rad,
             gimbal_velocity_rad_s: self.gimbal_velocity_rad_s,
@@ -2464,6 +2498,9 @@ fn balance_lqr_gains(config: &ChassisConfig) -> [f64; 2] {
 }
 
 fn drive_power_scale(mechanical_w: f64, copper_w: f64, budget_w: f64) -> f64 {
+    if budget_w <= 0.0 {
+        return 0.0;
+    }
     if mechanical_w + copper_w <= budget_w {
         return 1.0;
     }
@@ -2486,6 +2523,189 @@ mod tests {
         let mut ballistics = WorldPhysics::new(&[], 0.0);
         ballistics.add_chassis(Team::Red, config, spawn).unwrap();
         ballistics
+    }
+
+    #[test]
+    fn direct_wheel_requests_validate_switch_and_restore_without_touching_aim() {
+        let cfg = ChassisConfig::default();
+        let mut world = chassis_world(cfg, Pose::at([0., 0., 3.]));
+        let command = ChassisCommand {
+            forward_m_s: 2.,
+            aim_yaw_rad: 0.7,
+            ..Default::default()
+        };
+        world.command_chassis(0, command).unwrap();
+        assert!(WheelTorques::new(vec![f64::NAN; 4]).is_err());
+        assert!(WheelTorques::new(vec![f64::INFINITY; 4]).is_err());
+        assert!(WheelTorques::new(vec![]).is_err());
+        assert!(
+            world
+                .command_chassis_wheel_torques(0, WheelTorques::new(vec![1.; 3]).unwrap())
+                .is_err()
+        );
+        assert_eq!(
+            world.chassis_snapshot(0).unwrap().drive_control,
+            DriveControl::BodyVelocity
+        );
+        let torques = WheelTorques::new(vec![1., -1., 0., 0.5]).unwrap();
+        assert!(
+            world
+                .command_chassis_wheel_torques(99, torques.clone())
+                .is_err()
+        );
+        world
+            .command_chassis_wheel_torques(0, torques.clone())
+            .unwrap();
+        run(&mut world, 8);
+        let saved = world.chassis_snapshot(0).unwrap();
+        assert_eq!(saved.command, command);
+        assert_eq!(saved.drive_control, DriveControl::WheelTorques(torques));
+        assert!(saved.wheels[0].angular_velocity_rad_s > 0.);
+        assert!(saved.wheels[1].angular_velocity_rad_s < 0.);
+        assert_eq!(saved.wheels[2].angular_velocity_rad_s, 0.);
+        assert!(saved.wheels.iter().all(|w| w.target_m_s == 0.));
+        let mut restored = WorldPhysics::new(&[], 0.);
+        restored.restore_chassis(&saved).unwrap();
+        let mut malformed = saved.clone();
+        malformed.drive_control = DriveControl::WheelTorques(WheelTorques::new(vec![1.]).unwrap());
+        assert!(
+            WorldPhysics::new(&[], 0.)
+                .restore_chassis(&malformed)
+                .is_err()
+        );
+        let frames = TargetFrames::new(vec![]);
+        for tick in 8..16 {
+            world.step(tick * tick_ns(), &frames).unwrap();
+            restored.step(tick * tick_ns(), &frames).unwrap();
+        }
+        let a = world.chassis_snapshot(0).unwrap();
+        let b = restored.chassis_snapshot(0).unwrap();
+        assert_eq!(a.drive_control, b.drive_control);
+        for (a, b) in a.wheels.iter().zip(&b.wheels) {
+            assert!((a.angular_velocity_rad_s - b.angular_velocity_rad_s).abs() < 1e-12);
+        }
+        world.command_chassis(0, command).unwrap();
+        assert_eq!(
+            world.chassis_snapshot(0).unwrap().drive_control,
+            DriveControl::BodyVelocity
+        );
+        let mut drone = chassis_world(ChassisConfig::drone(), Pose::at([0., 0., 2.]));
+        assert!(
+            drone
+                .command_chassis_wheel_torques(0, WheelTorques::new(vec![1.]).unwrap())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn direct_motor_torques_respect_axis_units_limits_and_shared_power() {
+        for cfg in [ChassisConfig::default(), ChassisConfig::folding_hero()] {
+            let initial = WheelState {
+                spin_rad: 0.,
+                angular_velocity_rad_s: 0.,
+                suspension_compression_m: 0.,
+                target_m_s: -100.,
+                contact: None,
+            };
+            let contacts = vec![(0., 0.); cfg.wheel_hubs_m.len()];
+            let torques = WheelTorques::new(vec![0.01; contacts.len()]).unwrap();
+            let mut wheels = vec![initial; contacts.len()];
+            integrate_wheel_drives(
+                &cfg,
+                &mut wheels,
+                &contacts,
+                0.001,
+                f64::MAX,
+                Some(&torques),
+            );
+            // Axis torque/inertia is independent of the mecanum contact projection.
+            assert!(
+                (wheels[0].angular_velocity_rad_s - 0.01 / cfg.wheel_inertia_kg_m2 * 0.001).abs()
+                    < 1e-12
+            );
+            let huge = WheelTorques::new(vec![f64::MAX; contacts.len()]).unwrap();
+            let mut limited = vec![initial; contacts.len()];
+            let (_, _, power) =
+                integrate_wheel_drives(&cfg, &mut limited, &contacts, 0.01, 1., Some(&huge));
+            assert!(power > 0. && power <= 1. + 1e-12);
+            assert!(limited[0].angular_velocity_rad_s.is_finite());
+            let zero = WheelTorques::new(vec![0.; contacts.len()]).unwrap();
+            let before = limited[0].angular_velocity_rad_s;
+            integrate_wheel_drives(&cfg, &mut limited, &contacts, 0.01, 1., Some(&zero));
+            assert_eq!(limited[0].angular_velocity_rad_s, before);
+            let ratio = cfg.wheel_radius_m
+                / if cfg.mecanum {
+                    std::f64::consts::SQRT_2
+                } else {
+                    1.
+                };
+            let mut overspeed = vec![
+                WheelState {
+                    angular_velocity_rad_s: 2. * cfg.wheel_no_load_speed_m_s / ratio,
+                    ..initial
+                };
+                contacts.len()
+            ];
+            let before = overspeed[0].angular_velocity_rad_s;
+            integrate_wheel_drives(&cfg, &mut overspeed, &contacts, 0.01, f64::MAX, Some(&huge));
+            assert_eq!(overspeed[0].angular_velocity_rad_s, before);
+            let brake = WheelTorques::new(vec![-0.01; contacts.len()]).unwrap();
+            integrate_wheel_drives(
+                &cfg,
+                &mut overspeed,
+                &contacts,
+                0.01,
+                f64::MAX,
+                Some(&brake),
+            );
+            assert!(overspeed[0].angular_velocity_rad_s < before);
+        }
+    }
+
+    #[test]
+    fn direct_drive_obeys_defeat_power_cut_and_ground_traction() {
+        let cfg = ChassisConfig::default();
+        for (defeated, cut, budget) in [(true, false, 80.), (false, true, 80.), (false, false, 0.)]
+        {
+            let mut world = chassis_world(cfg.clone(), Pose::at([0., 0., 3.]));
+            world
+                .command_chassis_wheel_torques(0, WheelTorques::new(vec![1.; 4]).unwrap())
+                .unwrap();
+            world.set_chassis_defeated(0, defeated);
+            world.set_chassis_power(0, budget, cut);
+            let saved = run(&mut world, 16);
+            assert!(saved.wheels.iter().all(|w| w.angular_velocity_rad_s == 0.));
+            assert_eq!(world.chassis_drive_power_w(0), Some(0.));
+        }
+        let mut world = chassis_world(cfg.clone(), Pose::at([0., 0., cfg.rest_height_m()]));
+        // Default tangential wheel order: these signs drive body +x.
+        world
+            .command_chassis_wheel_torques(0, WheelTorques::new(vec![-1., -1., 1., 1.]).unwrap())
+            .unwrap();
+        let saved = run(&mut world, 128);
+        assert!(saved.pose.translation_m[0] > 0.1, "{:?}", saved.pose);
+        assert!(saved.wheels.iter().any(|w| w.contact.is_some()));
+
+        let balance = ChassisConfig::balance();
+        let mut world = chassis_world(balance.clone(), Pose::at([0., 0., balance.rest_height_m()]));
+        world
+            .command_chassis(
+                0,
+                ChassisCommand {
+                    jump: true,
+                    forward_m_s: 2.,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        world
+            .command_chassis_wheel_torques(0, WheelTorques::new(vec![0.; 2]).unwrap())
+            .unwrap();
+        let saved = run(&mut world, 1);
+        assert!(
+            saved.velocity_m_s[2] < 0.1,
+            "direct mode must bypass assisted jump"
+        );
     }
 
     #[test]
@@ -2814,6 +3034,7 @@ mod tests {
                 &contacts,
                 1.0 / 128.0,
                 cfg.dynamics.drive_power_w,
+                None,
             );
         }
         assert!(wheels[0].angular_velocity_rad_s > wheels[1].angular_velocity_rad_s + 5.0);
@@ -2832,6 +3053,7 @@ mod tests {
                 &contacts,
                 1.0 / 128.0,
                 restricted.dynamics.drive_power_w,
+                None,
             );
             integrate_wheel_drives(
                 &cfg,
@@ -2839,6 +3061,7 @@ mod tests {
                 &contacts,
                 1.0 / 128.0,
                 cfg.dynamics.drive_power_w,
+                None,
             );
         }
         assert!(low[0].angular_velocity_rad_s < high[0].angular_velocity_rad_s);

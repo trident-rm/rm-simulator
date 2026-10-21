@@ -13,6 +13,7 @@ other simulator crate.
 
 | File | Owns |
 |---|---|
+| `src/control.rs` | Validated held drive modes and per-wheel motor torque requests, independent of a transport or controller scheduler. |
 | `src/chassis.rs` | The four-wheel chassis: an octagonal omni deck and compact lower bumper (box on other presets), a turret cuboid, ray-cast spring/damper suspension, independent wheel inertia, motor torque and slip-limited omni tyres, four armor housings, gimbal dynamics and the shared drivetrain power budget. `ChassisConfig` presets are the omni Infantry and the mecanum Hero. |
 | `src/projectile.rs` | `WorldPhysics`, `Shot`, `Caliber`, `Contact`, `TargetFace`, `TargetFrames`, `StaticGeometry` and `ProjectilePolicy`: projectile flight, scoring faces and raw contacts in physical order. |
 | `src/geometry.rs` | Shared collision captures and read-only clearance queries consumed by the world facade. |
@@ -20,8 +21,9 @@ other simulator crate.
 
 `lib.rs` also holds the clock contract: `DEFAULT_TICK_NS` and the `const fn`
 `tick_ns()`, plus the FLU `Pose` and `Team`. Time arguments count ticks of
-`tick_ns()`, which is fixed at 128 Hz (7.8125 ms per tick) with no selector,
-environment override or per-match rate. The step applies no HP, buffs, activation or
+`tick_ns()`, which is 128 Hz by default (7.8125 ms per tick). Standalone callers can select immutable
+`StepDuration` values, including 1000 Hz, through `WorldPhysics::with_step_duration`.
+Use the instance duration to advance timestamps; `tick_ns()` returns the default. The step applies no HP, buffs, activation or
 detection intervals; the world crate owns those decisions.
 
 ## Dependencies

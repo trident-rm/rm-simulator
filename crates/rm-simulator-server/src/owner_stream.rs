@@ -10,14 +10,14 @@
 //! anchor and asks for the configuration again; it never applies a reference it
 //! cannot resolve and never fails the connection over one.
 use crate::simulation::SimulationState;
-use rm_simulator_world::{ChassisConfig, ChassisSnapshot};
+use rm_simulator_world::{ChassisConfig, ChassisSnapshot, DriveControl, WheelTorques};
 use serde::{Deserialize, Serialize};
 use std::io;
 
-/// Anchor magic, `RM10`, checked before any field is read. The tenth revision
-/// adds the held fold request and current folding joint angle.
-/// It keeps the `RMO4` header and configuration reference and quantizes every
-/// dynamic float: translations to millimetres, velocities to 1 cm/s, rates to
+/// Anchor magic, `RM11`, checked before any field is read. The eleventh revision
+/// adds the held drive mode and exact wheel-axis motor torque requests.
+/// It keeps the `RMO4` header and configuration reference and quantizes
+/// motion floats: translations to millimetres, velocities to 1 cm/s, rates to
 /// 1 mrad/s and aims to 0.1 mrad. Quaternions travel smallest-three in six
 /// bytes (see [`crate::binary_snapshot::bitpack::smallest_three`]), where
 /// `RMO5` spent eight on four 1/32767 components. Aims ride
@@ -25,8 +25,9 @@ use std::io;
 /// ranges fit 16 bits with room for violent motion (±327 m/s, ±32 rad/s). A
 /// hostile or corrupt anchor still decodes to finite values, and
 /// out-of-range or non-finite dynamics fail at encode time, so the datagram
-/// size stays fixed whatever the motion.
-pub const MAGIC: &[u8; 4] = b"RM10";
+/// size stays fixed whatever the motion for a given drive mode and wheel count.
+/// Direct torque requests travel as finite, full-precision f64 values.
+pub const MAGIC: &[u8; 4] = b"RM11";
 /// Largest accepted anchor datagram in bytes. An encoding past this fails
 /// rather than fragmenting, because one anchor must fit one datagram.
 pub const MAX_BYTES: usize = 1000;
@@ -155,7 +156,7 @@ impl OwnerAnchor {
     /// Encode the anchor as a little-endian datagram.
     ///
     /// The header (snapshot, epoch, time, placement, chassis, flags and the
-    /// configuration reference) keeps full width; every dynamic float is
+    /// configuration reference) keeps full width; motion floats are
     /// quantized (see [`MAGIC`]), so motion values cannot change the datagram
     /// size. Errors when a dynamic value is non-finite or outside its
     /// quantized range, or when the whole anchor exceeds [`MAX_BYTES`].
@@ -173,6 +174,10 @@ impl OwnerAnchor {
         {
             return Err(invalid());
         }
+        self.owner
+            .drive_control
+            .validate(self.owner.config.wheel_hubs_m.len())
+            .map_err(|_| invalid())?;
         let mut bytes = MAGIC.to_vec();
         for n in [
             self.snapshot_id,
@@ -227,6 +232,15 @@ impl OwnerAnchor {
             bytes.extend(quantize_i16(wheel.target_m_s, VEL_SCALE)?.to_le_bytes());
             bytes.extend(quantize_i32(wheel.angular_velocity_rad_s, RATE_SCALE)?.to_le_bytes());
             bytes.extend(quantize_i16(wheel.suspension_compression_m, POS_MM)?.to_le_bytes());
+        }
+        match &self.owner.drive_control {
+            DriveControl::BodyVelocity => bytes.push(0),
+            DriveControl::WheelTorques(torques) => {
+                bytes.push(1);
+                for torque in torques.as_nm() {
+                    bytes.extend(torque.to_le_bytes());
+                }
+            }
         }
         if bytes.len() > MAX_BYTES {
             return Err(io::Error::other("owner anchor exceeds datagram budget"));
@@ -333,6 +347,16 @@ impl OwnerAnchor {
                 contact: None,
             });
         }
+        let drive_control = match reader.take::<1>()?[0] {
+            0 => DriveControl::BodyVelocity,
+            1 => {
+                let torques = (0..count)
+                    .map(|_| reader.take().map(f64::from_le_bytes))
+                    .collect::<io::Result<Vec<_>>>()?;
+                DriveControl::WheelTorques(WheelTorques::new(torques).map_err(|_| invalid())?)
+            }
+            _ => return Err(invalid()),
+        };
         if !reader.0.is_empty()
             || snapshot_id == 0
             || wheels.iter().any(|w| w.suspension_compression_m < 0.0)
@@ -355,6 +379,7 @@ impl OwnerAnchor {
                 velocity_m_s,
                 angular_velocity_rad_s,
                 command,
+                drive_control,
                 jump_held,
                 held_aim_rad,
                 gimbal_velocity_rad_s,
@@ -364,7 +389,7 @@ impl OwnerAnchor {
         })
     }
 }
-/// Quantizer scales for the `RM10` dynamic body, chosen to mirror the
+/// Quantizer scales for the `RM11` dynamic body, chosen to mirror the
 /// checkpoint precisions: millimetre positions, smallest-three quaternions,
 /// centimetre-per-second velocities, milliradian-per-second rates and
 /// 0.1 mrad aims. Wheel roll keeps 0.1 mrad in 32 bits because roll is
@@ -601,6 +626,7 @@ mod tests {
         {
             close(a, b, 0.001);
         }
+        assert_eq!(expected.owner.drive_control, actual.owner.drive_control);
         assert_eq!(expected.owner.command.jump, actual.owner.command.jump);
         assert_eq!(expected.owner.command.folded, actual.owner.command.folded);
         close(
@@ -729,6 +755,25 @@ mod tests {
             decoded.owner.config.articulation,
             anchor.owner.config.articulation
         );
+    }
+
+    #[test]
+    fn direct_wheel_torques_round_trip_exactly_in_owner_anchor() {
+        let (state, chassis) = anchored(177, 5, 3);
+        let mut anchor = OwnerAnchor::from_state(&state, chassis).unwrap();
+        anchor.owner.drive_control = DriveControl::WheelTorques(
+            WheelTorques::new(vec![0.123456789012345, -2.5, 0., 1.]).unwrap(),
+        );
+        let bytes = anchor.encode().unwrap();
+        let decoded = OwnerAnchor::decode(&bytes, &anchor.owner.config).unwrap();
+        assert_quantized(&anchor, &decoded);
+        let mut invalid = bytes.clone();
+        let offset = invalid.len() - 32;
+        invalid[offset..offset + 8].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(OwnerAnchor::decode(&invalid, &anchor.owner.config).is_err());
+        anchor.owner.drive_control =
+            DriveControl::WheelTorques(WheelTorques::new(vec![1.]).unwrap());
+        assert!(anchor.encode().is_err());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! Native RoboMaster field and shared physics on an explicit 128 Hz clock.
+//! Native RoboMaster field and shared physics on an explicit instance-owned clock.
 //! No renderer, host clock, transport or background threads. Projectiles fly in
 //! the shared `rm-simulator-physics` world. This facade coordinates its contacts and
 //! motion with live rules, scoring, referee decisions and complete restore.
@@ -17,6 +17,7 @@ pub mod referee;
 pub mod rmuc_2027;
 pub mod rune;
 mod scoring;
+pub mod session;
 pub mod zones;
 pub use chassis::{ChassisCommand, ChassisConfig, ChassisSnapshot, WheelContact, WheelSnapshot};
 pub use outpost::{Outpost, OutpostSnapshot};
@@ -29,6 +30,7 @@ pub use referee::{
     BuffState, MatchPhase, Referee, RefereeCommand, RefereeConfig, RefereeEvent, RefereeSnapshot,
     RobotConfig, RobotKind, RobotSnapshot, RuneStage, StampClock, Team, TeamSnapshot, TimedEvent,
 };
+pub use rm_simulator_physics::control::{DriveControl, WheelTorques};
 use rune::RuneError;
 pub use rune::{BigRuneMotion, HitOutcome, Rune, RuneKind, RuneSnapshot, RuneState};
 use serde::{Deserialize, Serialize};
@@ -37,7 +39,7 @@ use serde::{Deserialize, Serialize};
 pub use rm_simulator_gameplay as gameplay;
 /// Season identities and admission checks shared with standalone gameplay.
 pub use rm_simulator_gameplay::season;
-pub use rm_simulator_physics::{Pose, tick_ns};
+pub use rm_simulator_physics::{Pose, StepDuration, tick_ns};
 
 /// One armor module pose on a rotating mechanism, keyed by face index.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -118,6 +120,10 @@ pub struct ChassisPlacement {
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FieldConfig {
+    /// Immutable physical/rules step. Custom rates are API-only; server sessions
+    /// accept only the default until protocol prediction/planning supports them.
+    #[serde(default)]
+    pub step_duration: StepDuration,
     /// Native RMUC 2027 rules and source geometry; absent for bare physics.
     #[serde(default)]
     pub rmuc_2027: Option<rmuc_2027::Config>,
@@ -152,6 +158,7 @@ pub struct FieldConfig {
 impl Default for FieldConfig {
     fn default() -> Self {
         Self {
+            step_duration: StepDuration::default(),
             rmuc_2027: None,
             zones: Vec::new(),
             bases: Vec::new(),
@@ -211,6 +218,9 @@ pub enum FieldError {
 /// against armor registers that touch once more.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FieldRestore {
+    /// Exact simulation step, preserved when restoring the authoritative clock.
+    #[serde(default)]
+    pub step_duration: StepDuration,
     /// Restorable automatic assembly jobs and validated remaining trajectories.
     #[serde(default)]
     pub assemblies: Vec<assembly::Run>,
@@ -245,7 +255,7 @@ pub struct FieldSnapshot {
     pub bases: Vec<BaseSnapshot>,
     /// Ticks elapsed since the field was built.
     pub tick: u64,
-    /// `tick` times `tick_ns()`, the field's own clock in nanoseconds.
+    /// `tick` times the restore's step duration, the field clock in nanoseconds.
     pub time_ns: u64,
     /// One frame per rune, in referee index order.
     pub runes: Vec<RuneSnapshot>,
@@ -334,7 +344,11 @@ impl Field {
             floor_height_m: config.floor_height_m,
             tick: 0,
             physics: {
-                let mut physics = WorldPhysics::new(&faces, config.floor_height_m);
+                let mut physics = WorldPhysics::with_step_duration(
+                    &faces,
+                    config.floor_height_m,
+                    config.step_duration,
+                );
                 physics
                     .set_projectile_policy(config.projectile_policy)
                     .map_err(FieldError::Shot)?;
@@ -736,6 +750,34 @@ impl Field {
             .command_chassis(id, command)
             .map_err(FieldError::Chassis)
     }
+    /// Hold direct wheel-axis motor torques through the ordinary physical plant.
+    /// Valid admission cancels automatic assembly; gimbal and folding targets
+    /// are preserved. Native referee power/defeat constraints remain in force.
+    /// Use [`Self::command_chassis`] to resume body-velocity control.
+    ///
+    /// ```
+    /// use rm_simulator_world::{Field, FieldConfig, ChassisPlacement, ChassisConfig,
+    ///     Pose, Team, RobotKind, WheelTorques, DriveControl};
+    /// let mut field = Field::new(&FieldConfig::default()).unwrap();
+    /// let id = field.add_chassis(&ChassisPlacement {
+    ///     config: ChassisConfig::default(), spawn: Pose::at([0., 0., 0.3]),
+    ///     team: Team::Red, kind: RobotKind::Infantry, performance: None,
+    /// }).unwrap();
+    /// field.command_chassis_wheel_torques(id, WheelTorques::new(vec![0.; 4]).unwrap()).unwrap();
+    /// assert!(matches!(field.chassis_snapshot(id).unwrap().drive_control,
+    ///     DriveControl::WheelTorques(_)));
+    /// ```
+    pub fn command_chassis_wheel_torques(
+        &mut self,
+        id: u32,
+        torques: WheelTorques,
+    ) -> Result<(), FieldError> {
+        self.physics
+            .command_chassis_wheel_torques(id, torques)
+            .map_err(FieldError::Chassis)?;
+        self.cancel_assembly(id, "Cancelled by direct wheel driving");
+        Ok(())
+    }
     /// Convert an eligible native Heavy to a source Hero chassis in place.
     /// Simulator approximation: no workbench installation or confirmation shot.
     pub fn convert_heavy_to_hero(&mut self, id: u32) -> Result<(), FieldError> {
@@ -846,9 +888,13 @@ impl Field {
     pub fn tick(&self) -> u64 {
         self.tick
     }
-    /// `tick` times `tick_ns()`: the field's own clock, never the host's.
+    /// Immutable duration of one physical and rule integration step.
+    pub fn step_duration(&self) -> StepDuration {
+        self.physics.step_duration()
+    }
+    /// `tick` times the instance step duration: never the host clock.
     pub fn time_ns(&self) -> u64 {
-        self.tick * tick_ns()
+        self.tick * self.step_duration().as_ns()
     }
     /// Shared presentation compatibility view; native Runes live in `rmuc_2027`.
     pub fn runes(&self) -> &[RuneSnapshot] {
@@ -1125,7 +1171,7 @@ impl Field {
         }
         Err(FieldError::Referee("no native RMUC 2027 match is bound"))
     }
-    /// Advance exactly `ticks` ticks of `tick_ns()` nanoseconds each. Stepping
+    /// Advance exactly `ticks` instance steps. Stepping
     /// in pieces equals one large step.
     /// Projectiles and chassis are integrated tick by tick. With no active
     /// bodies and no referee, rune state advances directly to the target time.
@@ -1148,7 +1194,7 @@ impl Field {
         self.step_with_hits(ticks, &mut |_| {})
     }
 
-    /// Step `ticks` ticks of `tick_ns()` nanoseconds each, reporting each
+    /// Step `ticks` instance steps, reporting each
     /// scored contact in order.
     /// The observer runs after scoring and before snapshot retention can remove
     /// the contact. It sees only new contacts, never restored history, and must
@@ -1170,7 +1216,7 @@ impl Field {
         let end = self
             .tick
             .checked_add(ticks)
-            .filter(|tick| tick.checked_mul(tick_ns()).is_some())
+            .filter(|tick| tick.checked_mul(self.step_duration().as_ns()).is_some())
             .ok_or(FieldError::TickOverflow)?;
         while self.tick < end {
             let idle = self.physics.is_idle();
@@ -1192,7 +1238,7 @@ impl Field {
             }
             self.tick += 1;
             let next_ns = self.time_ns();
-            self.advance_2027(tick_ns());
+            self.advance_2027(self.step_duration().as_ns());
             self.advance_assemblies();
             self.sync_mechanisms();
             if idle {
@@ -1319,6 +1365,7 @@ impl Field {
             hits_detected: self.hits_detected,
             referee: None,
             restore: Some(FieldRestore {
+                step_duration: self.step_duration(),
                 assemblies: self.assemblies.clone(),
                 arms: self.arms.clone(),
                 energy_units: self.energy_units(),
@@ -1425,7 +1472,8 @@ impl Field {
             return Err(FieldError::Restore("duplicate assembly owner or station"));
         }
         for run in &rules.assemblies {
-            run.validate().map_err(FieldError::Restore)?;
+            run.validate_with_step_duration(rules.step_duration)
+                .map_err(FieldError::Restore)?;
             if run.active()
                 && !snapshot.chassis.iter().any(|c| {
                     c.id == run.owner
@@ -1439,7 +1487,7 @@ impl Field {
         if !floor_height_m.is_finite() {
             return Err(FieldError::Restore("the floor height must be finite"));
         }
-        if snapshot.tick.checked_mul(tick_ns()) != Some(snapshot.time_ns) {
+        if snapshot.tick.checked_mul(rules.step_duration.as_ns()) != Some(snapshot.time_ns) {
             return Err(FieldError::Restore("the snapshot tick and time disagree"));
         }
         for base in &snapshot.bases {
@@ -1451,7 +1499,8 @@ impl Field {
         let time_ns = snapshot.time_ns;
         let mut faces = Vec::new();
         Self::write_target_faces(rules.rmuc_2027.as_ref(), &mut faces);
-        let mut physics = WorldPhysics::new(&faces, floor_height_m);
+        let mut physics =
+            WorldPhysics::with_step_duration(&faces, floor_height_m, rules.step_duration);
         physics
             .set_projectile_policy(rules.projectile_policy)
             .map_err(FieldError::Restore)?;
@@ -1535,11 +1584,83 @@ mod tests {
         assert!(Field::new(&FieldConfig::default()).is_ok());
     }
     use super::*;
-    /// World-time durations as tick counts, so every stepping rhythm here
-    /// keeps its meaning whatever the fixed tick length is. Rounded up: these
-    /// are settling and boundary waits, and a truncated duration advances less
-    /// than the world time it names. A test that needs an exact world time
-    /// steps an explicit tick count instead, the way the partition tests do.
+    #[test]
+    fn instance_steps_preserve_clocks_partitioning_and_restore() {
+        for duration in [
+            StepDuration::default(),
+            StepDuration::from_hz(500).unwrap(),
+            StepDuration::HZ_1000,
+            StepDuration::from_hz(2000).unwrap(),
+        ] {
+            let config = FieldConfig {
+                step_duration: duration,
+                ..Default::default()
+            };
+            let mut whole = Field::new(&config).unwrap();
+            let mut parts = Field::new(&config).unwrap();
+            whole.step(1000).unwrap();
+            parts.step(213).unwrap();
+            parts.step(787).unwrap();
+            assert_eq!(whole.snapshot(), parts.snapshot());
+            assert_eq!(whole.time_ns(), 1000 * duration.as_ns());
+            let snapshot = whole.snapshot();
+            assert_eq!(snapshot.restore.as_ref().unwrap().step_duration, duration);
+            let mut restored =
+                Field::restore(&snapshot, &whole.static_geometry_snapshot(), 0.).unwrap();
+            assert_eq!(restored.step_duration(), duration);
+            restored.step(37).unwrap();
+            whole.step(37).unwrap();
+            assert_eq!(restored.snapshot(), whole.snapshot());
+            let mut wrong = snapshot;
+            wrong.restore.as_mut().unwrap().step_duration = if duration == StepDuration::HZ_1000 {
+                StepDuration::HZ_128
+            } else {
+                StepDuration::HZ_1000
+            };
+            assert!(Field::restore(&wrong, &whole.static_geometry_snapshot(), 0.).is_err());
+        }
+    }
+    #[test]
+    fn thousand_hz_projectile_partition_and_restore_integrate_instance_dt() {
+        let config = FieldConfig {
+            step_duration: StepDuration::HZ_1000,
+            ..Default::default()
+        };
+        let mut whole = Field::new(&config).unwrap();
+        let mut parts = Field::new(&config).unwrap();
+        for field in [&mut whole, &mut parts] {
+            field
+                .fire(Pose::at([0., 0., 10.]), Shot::at_limit(Caliber::Mm17), None)
+                .unwrap();
+        }
+        whole.step(100).unwrap();
+        parts.step(31).unwrap();
+        parts.step(69).unwrap();
+        assert_eq!(whole.snapshot(), parts.snapshot());
+        assert_eq!(whole.time_ns(), 100_000_000);
+        let ball = &whole.snapshot().projectiles[0];
+        // Horizontal quadratic drag has a closed-form solution; vertical speed
+        // contributes only a small correction over this 100 ms flight.
+        let k = Caliber::Mm17.drag_factor_per_m();
+        let expected_x = (1. + k * 25. * 0.1).ln() / k;
+        assert!((ball.position_m[0] - expected_x).abs() < 0.002);
+
+        assert!((ball.velocity_m_s[2] + 0.980665).abs() < 0.04);
+        let mut restored =
+            Field::restore(&whole.snapshot(), &whole.static_geometry_snapshot(), 0.).unwrap();
+        whole.step(100).unwrap();
+        restored.step(43).unwrap();
+        restored.step(57).unwrap();
+        assert_eq!(whole.time_ns(), restored.time_ns());
+        for (a, b) in whole.snapshot().projectiles[0]
+            .position_m
+            .into_iter()
+            .zip(restored.snapshot().projectiles[0].position_m)
+        {
+            assert!((a - b).abs() < 1e-8);
+        }
+    }
+    /// Convert default-rate test waits to ticks, rounding up.
     fn ticks(ns: u64) -> u64 {
         ns.div_ceil(tick_ns())
     }
@@ -1794,6 +1915,7 @@ mod tests {
     /// A field with a chassis and a 15 degree ramp mesh ahead of it.
     fn ramp_field() -> FieldConfig {
         FieldConfig {
+            step_duration: StepDuration::default(),
             rmuc_2027: None,
             zones: Vec::new(),
             bases: vec![],

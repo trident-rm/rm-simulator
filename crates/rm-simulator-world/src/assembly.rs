@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! Restorable automatic assembly motion on the normal 128 Hz field clock.
+//! Restorable automatic assembly motion on the owning field clock.
 use crate::{Pose, Team};
 use glam::DQuat;
 use rm_simulator_physics::manipulator::SerialArm;
@@ -334,8 +334,8 @@ impl ArmState {
         }
         .frames(&self.model)
     }
-    fn step(&mut self) {
-        let dt = crate::tick_ns() as f64 * 1e-9;
+    fn step(&mut self, step_duration: crate::StepDuration) {
+        let dt = step_duration.as_secs_f64();
         for (i, speed) in JOINT_SPEED_RAD_S.iter().enumerate() {
             self.joints_rad[i] +=
                 (self.target_rad[i] - self.joints_rad[i]).clamp(-speed * dt, speed * dt);
@@ -402,12 +402,20 @@ pub struct CorePositioning {
     pub angles_rad: [f64; 2],
     /// Elapsed explicit simulation time, nanoseconds.
     pub elapsed_ns: u64,
-    /// Quantized duration, nanoseconds; at least one normal 128 Hz tick.
+    /// Quantized duration, nanoseconds; at least one owning-field step.
     pub duration_ns: u64,
 }
 impl CorePositioning {
     /// Prepare bounded simultaneous travel from the current Core mechanism pose.
     pub fn new(pose: &RigPose, target_rad: [f64; 6]) -> Self {
+        Self::with_step_duration(pose, target_rad, crate::StepDuration::default())
+    }
+    /// Prepare Core travel quantized to the owning field's exact duration.
+    pub fn with_step_duration(
+        pose: &RigPose,
+        target_rad: [f64; 6],
+        step_duration: crate::StepDuration,
+    ) -> Self {
         let seconds = pose
             .core_q
             .into_iter()
@@ -415,14 +423,14 @@ impl CorePositioning {
             .map(|(a, b)| (a - b).abs())
             .chain([pose.p_rad.abs(), pose.q_rad.abs(), pose.lift_m.abs() / 0.1])
             .fold(0., f64::max);
-        let ticks = (seconds / (crate::tick_ns() as f64 * 1e-9)).ceil().max(1.) as u64;
+        let ticks = (seconds / step_duration.as_secs_f64()).ceil().max(1.) as u64;
         Self {
             from_rad: pose.core_q,
             target_rad,
             lift_m: pose.lift_m,
             angles_rad: [pose.p_rad, pose.q_rad],
             elapsed_ns: 0,
-            duration_ns: ticks.saturating_mul(crate::tick_ns()),
+            duration_ns: ticks.saturating_mul(step_duration.as_ns()),
         }
     }
     /// Fraction of the selected motion completed, from zero through one.
@@ -439,10 +447,18 @@ impl CorePositioning {
     pub fn progress(&self) -> f64 {
         self.elapsed_ns as f64 / self.duration_ns.max(1) as f64
     }
+    #[cfg(test)]
     fn advance(&mut self, pose: &mut RigPose) -> bool {
+        self.advance_with_step_duration(pose, crate::StepDuration::default())
+    }
+    fn advance_with_step_duration(
+        &mut self,
+        pose: &mut RigPose,
+        step_duration: crate::StepDuration,
+    ) -> bool {
         self.elapsed_ns = self
             .elapsed_ns
-            .saturating_add(crate::tick_ns())
+            .saturating_add(step_duration.as_ns())
             .min(self.duration_ns);
         let t = self.progress();
         pose.core_q =
@@ -460,12 +476,20 @@ impl CorePositioning {
             false
         }
     }
+    #[cfg(test)]
     fn validate(&self, model: &Model) -> Result<(), &'static str> {
+        self.validate_with_step_duration(model, crate::StepDuration::default())
+    }
+    fn validate_with_step_duration(
+        &self,
+        model: &Model,
+        step_duration: crate::StepDuration,
+    ) -> Result<(), &'static str> {
         if self.duration_ns == 0
             || self.duration_ns > 60_000_000_000
             || self.elapsed_ns > self.duration_ns
-            || !self.duration_ns.is_multiple_of(crate::tick_ns())
-            || !self.elapsed_ns.is_multiple_of(crate::tick_ns())
+            || !self.duration_ns.is_multiple_of(step_duration.as_ns())
+            || !self.elapsed_ns.is_multiple_of(step_duration.as_ns())
             || ![self.lift_m, self.angles_rad[0], self.angles_rad[1]]
                 .into_iter()
                 .all(f64::is_finite)
@@ -517,7 +541,16 @@ pub struct CoreRecovery {
 impl CoreRecovery {
     /// Prepare fixed idle/discharge branches; withdrawal captures the actual Core state.
     pub fn new(pose: &RigPose, idle_rad: [f64; 6], drop_rad: [f64; 6]) -> Self {
-        let motion = CorePositioning::new(pose, idle_rad);
+        Self::with_step_duration(pose, idle_rad, drop_rad, crate::StepDuration::default())
+    }
+    /// Prepare recovery motions quantized to the owning field's step.
+    pub fn with_step_duration(
+        pose: &RigPose,
+        idle_rad: [f64; 6],
+        drop_rad: [f64; 6],
+        step_duration: crate::StepDuration,
+    ) -> Self {
+        let motion = CorePositioning::with_step_duration(pose, idle_rad, step_duration);
         let mut idle = pose.clone();
         idle.core_q = idle_rad;
         idle.lift_m = 0.;
@@ -525,12 +558,17 @@ impl CoreRecovery {
         idle.q_rad = 0.;
         Self {
             motion,
-            tip: CorePositioning::new(&idle, drop_rad),
+            tip: CorePositioning::with_step_duration(&idle, drop_rad, step_duration),
             elapsed_ns: 0,
         }
     }
-    fn begin(&mut self, pose: &RigPose) {
-        *self = Self::new(pose, self.motion.target_rad, self.tip.target_rad);
+    fn begin(&mut self, pose: &RigPose, step_duration: crate::StepDuration) {
+        *self = Self::with_step_duration(
+            pose,
+            self.motion.target_rad,
+            self.tip.target_rad,
+            step_duration,
+        );
     }
     /// Total prescribed duration, nanoseconds, including a 250 ms stationary release hold and 500 ms gravity clearance dwell.
     pub fn duration_ns(&self) -> u64 {
@@ -544,15 +582,23 @@ impl CoreRecovery {
     pub fn progress(&self) -> f32 {
         self.elapsed_ns as f32 / self.duration_ns() as f32
     }
-    /// Advance one normal 128 Hz tick. The Engineer and its jaws remain untouched.
+    /// Advance one default 128 Hz tick. The Engineer and its jaws remain untouched.
     pub fn advance(&mut self, pose: &mut RigPose) -> bool {
-        self.elapsed_ns = (self.elapsed_ns + crate::tick_ns()).min(self.duration_ns());
+        self.advance_with_step_duration(pose, crate::StepDuration::default())
+    }
+    /// Advance one owning-field step; Engineer joints and jaws remain untouched.
+    pub fn advance_with_step_duration(
+        &mut self,
+        pose: &mut RigPose,
+        step_duration: crate::StepDuration,
+    ) -> bool {
+        self.elapsed_ns = (self.elapsed_ns + step_duration.as_ns()).min(self.duration_ns());
         if self.elapsed_ns <= self.motion.duration_ns {
-            self.motion.advance(pose);
+            self.motion.advance_with_step_duration(pose, step_duration);
         } else {
             let elapsed = self.elapsed_ns - self.motion.duration_ns;
             if elapsed <= self.tip.duration_ns {
-                self.tip.advance(pose);
+                self.tip.advance_with_step_duration(pose, step_duration);
             } else if elapsed > self.tip.duration_ns + 750_000_000 {
                 let t = (elapsed - self.tip.duration_ns - 750_000_000) as f64
                     / self.tip.duration_ns as f64;
@@ -566,9 +612,14 @@ impl CoreRecovery {
         }
         self.elapsed_ns == self.duration_ns()
     }
-    fn validate(&self, model: &Model) -> Result<(), &'static str> {
-        self.motion.validate(model)?;
-        self.tip.validate(model)?;
+    fn validate_with_step_duration(
+        &self,
+        model: &Model,
+        step_duration: crate::StepDuration,
+    ) -> Result<(), &'static str> {
+        self.motion
+            .validate_with_step_duration(model, step_duration)?;
+        self.tip.validate_with_step_duration(model, step_duration)?;
         if self.tip.from_rad != self.motion.target_rad
             || self.tip.lift_m != 0.
             || self.tip.angles_rad != [0.; 2]
@@ -579,7 +630,11 @@ impl CoreRecovery {
                     .saturating_sub(self.motion.duration_ns)
                     .min(self.tip.duration_ns)
             || self.elapsed_ns > self.duration_ns()
-            || !self.elapsed_ns.is_multiple_of(crate::tick_ns())
+            // The exact terminal time includes a fixed 750 ms dwell, which need
+            // not lie on an arbitrary owning-field step grid. Advance clamps
+            // there; intermediate elapsed values must still be step aligned.
+            || (!self.elapsed_ns.is_multiple_of(step_duration.as_ns())
+                && self.elapsed_ns != self.duration_ns())
         {
             return Err("invalid Core recovery time or branches");
         }
@@ -625,7 +680,7 @@ pub struct Run {
     pub model: Model,
     /// Current articulated state in source rig coordinates.
     pub pose: RigPose,
-    /// Full validated trajectory, one sample per 128 Hz tick.
+    /// Full validated trajectory, one sample per owning-field step.
     pub frames: Vec<Frame>,
     /// Index of the next trajectory sample.
     pub cursor: u32,
@@ -659,6 +714,13 @@ impl Run {
     }
     /// Validate bounded decoded state before accepting a restore.
     pub fn validate(&self) -> Result<(), &'static str> {
+        self.validate_with_step_duration(crate::StepDuration::default())
+    }
+    /// Validate decoded job authority against its owning field's time grid.
+    pub fn validate_with_step_duration(
+        &self,
+        step_duration: crate::StepDuration,
+    ) -> Result<(), &'static str> {
         if !(1..=3).contains(&self.difficulty)
             || self.budget == 0
             || self.frames.len() > 4096
@@ -674,7 +736,7 @@ impl Run {
         }
         self.model.validate()?;
         if let Some(recovery) = &self.recovery {
-            recovery.validate(&self.model)?;
+            recovery.validate_with_step_duration(&self.model, step_duration)?;
         }
         if self.phase == Phase::Recovering && self.recovery.is_none() {
             return Err("missing Core recovery motion");
@@ -683,7 +745,7 @@ impl Run {
             return Err("missing Core positioning motion");
         }
         if let Some(motion) = &self.positioning {
-            motion.validate(&self.model)?;
+            motion.validate_with_step_duration(&self.model, step_duration)?;
             if (self.phase == Phase::Positioning && motion.elapsed_ns == motion.duration_ns)
                 || (matches!(
                     self.phase,
@@ -764,12 +826,16 @@ impl Run {
     }
     /// Apply one validated sample and observe measured manipulation on field time.
     pub fn advance(&mut self, now_ns: u64) {
+        self.advance_with_step_duration(now_ns, crate::StepDuration::default());
+    }
+    /// Apply one trajectory sample using the owning field's duration for speed limits.
+    pub fn advance_with_step_duration(&mut self, now_ns: u64, step_duration: crate::StepDuration) {
         use crate::gameplay::rmuc_2027::manipulation::Sensors;
         if self.phase == Phase::Recovering {
             if self
                 .recovery
                 .as_mut()
-                .is_some_and(|r| r.advance(&mut self.pose))
+                .is_some_and(|r| r.advance_with_step_duration(&mut self.pose, step_duration))
             {
                 self.phase = Phase::Completed;
                 self.message = "Assembly complete; Unit recovered, Core idle".into();
@@ -785,7 +851,7 @@ impl Run {
         }
         if self.phase == Phase::Positioning {
             if let Some(motion) = &mut self.positioning
-                && motion.advance(&mut self.pose)
+                && motion.advance_with_step_duration(&mut self.pose, step_duration)
             {
                 self.phase = Phase::Solving;
                 self.started_ns = now_ns;
@@ -797,7 +863,7 @@ impl Run {
             return;
         }
         if let Some(f) = self.frames.get(self.cursor as usize) {
-            let dt = crate::tick_ns() as f64 * 1e-9;
+            let dt = step_duration.as_secs_f64();
             if (0..6).any(|i| {
                 (f.joints_rad[i] - self.pose.engineer_q[i]).abs() > JOINT_SPEED_RAD_S[i] * dt + 2e-6
             }) || (0..2).any(|i| {
@@ -859,7 +925,7 @@ impl Run {
         if self.phase == Phase::BreakingAway {
             if self.cursor as usize == self.frames.len() {
                 if let Some(recovery) = &mut self.recovery {
-                    recovery.begin(&self.pose);
+                    recovery.begin(&self.pose, step_duration);
                     self.phase = Phase::Recovering;
                     self.message = "Engineer clear; recovering spent Unit".into();
                 } else {
@@ -973,7 +1039,8 @@ impl crate::Field {
     }
     /// Admit or replace an owned source-bound job after validating its trajectory.
     pub fn set_assembly(&mut self, run: Run) -> Result<(), crate::FieldError> {
-        run.validate().map_err(crate::FieldError::Restore)?;
+        run.validate_with_step_duration(self.step_duration())
+            .map_err(crate::FieldError::Restore)?;
         if !self
             .chassis_snapshot(run.owner)
             .is_some_and(|c| c.team == run.team && c.placement_revision == run.placement_revision)
@@ -1044,6 +1111,7 @@ impl crate::Field {
         }
     }
     pub(crate) fn advance_assemblies(&mut self) {
+        let step_duration = self.step_duration();
         for arm in &mut self.arms {
             if self.rmuc_2027.as_ref().is_some_and(|s| {
                 s.game.phase == crate::rmuc_2027::match_rules::Phase::Running
@@ -1070,7 +1138,7 @@ impl crate::Field {
                 .any(|r| r.owner == arm.owner && r.active())
                 && !chassis.defeated
             {
-                arm.step();
+                arm.step(step_duration);
             }
         }
         let now = self.time_ns();
@@ -1098,7 +1166,7 @@ impl crate::Field {
                 run.message = "Assembly timed out".into();
             } else {
                 let cursor = run.cursor;
-                run.advance(now);
+                run.advance_with_step_duration(now, step_duration);
                 if was_positioning && run.phase == Phase::Solving && run.awards_match {
                     begin.push((run.owner, run.team, run.difficulty));
                 }
@@ -1251,6 +1319,95 @@ pub(crate) mod tests {
         };
         run.frames[0].guide_m[0] = 0.05;
         (field, run)
+    }
+    #[test]
+    fn thousand_hz_playback_enforces_instance_joint_speed() {
+        let (_, mut run) = fixture();
+        run.frames[0].joints_rad[0] = 0.002;
+        let mut default_run = run.clone();
+        default_run.advance(crate::tick_ns());
+        assert_ne!(default_run.phase, Phase::Failed);
+        run.advance_with_step_duration(1_000_000, crate::StepDuration::HZ_1000);
+        assert_eq!(run.phase, Phase::Failed);
+        assert_eq!(run.pose.engineer_q[0], 0.);
+    }
+    #[test]
+    fn arbitrary_step_completed_recovery_remains_restorable() {
+        let (base, mut run) = fixture();
+        let duration = crate::StepDuration::from_ns(1_234_567).unwrap();
+        let mut checkpoint = base.snapshot();
+        checkpoint.restore.as_mut().unwrap().step_duration = duration;
+        let mut field = Field::restore(&checkpoint, &base.static_geometry_snapshot(), 0.).unwrap();
+        let mut recovery = CoreRecovery::with_step_duration(&run.pose, [0.; 6], [0.2; 6], duration);
+        assert!(!recovery.duration_ns().is_multiple_of(duration.as_ns()));
+        while !recovery.advance_with_step_duration(&mut run.pose, duration) {
+            recovery
+                .validate_with_step_duration(&run.model, duration)
+                .unwrap();
+        }
+        recovery
+            .validate_with_step_duration(&run.model, duration)
+            .unwrap();
+        let mut invalid = recovery.clone();
+        invalid.elapsed_ns -= 1;
+        assert!(
+            invalid
+                .validate_with_step_duration(&run.model, duration)
+                .is_err()
+        );
+        run.recovery = Some(recovery);
+        run.phase = Phase::Completed;
+        field.set_assembly(run).unwrap();
+        let restored =
+            Field::restore(&field.snapshot(), &field.static_geometry_snapshot(), 0.).unwrap();
+        assert_eq!(field.assemblies(), restored.assemblies());
+    }
+    #[test]
+    fn thousand_hz_arm_and_core_motion_keep_physical_rates_and_restore() {
+        let (base, mut run) = fixture();
+        let mut checkpoint = base.snapshot();
+        checkpoint.restore.as_mut().unwrap().step_duration = crate::StepDuration::HZ_1000;
+        let mut field = Field::restore(&checkpoint, &base.static_geometry_snapshot(), 0.).unwrap();
+        let duration = field.step_duration();
+        field.step(2000).unwrap(); // Settle parking before admitting Core motion.
+        let mut arm = ArmState::neutral(run.owner, run.model.clone());
+        arm.target_rad[0] = 0.5;
+        field.add_arm(arm).unwrap();
+        field.step(10).unwrap();
+        assert!((field.arms()[0].joints_rad[0] - 0.01).abs() < 1e-12);
+        run.pose.engineer_body = field.chassis_snapshot(run.owner).unwrap().pose;
+        run.positioning = Some(CorePositioning::with_step_duration(
+            &run.pose, [0.1; 6], duration,
+        ));
+        run.phase = Phase::Positioning;
+        run.validate_with_step_duration(duration).unwrap();
+        field.set_assembly(run).unwrap();
+        field.step(40).unwrap();
+        assert_eq!(
+            field.assemblies()[0]
+                .positioning
+                .as_ref()
+                .unwrap()
+                .elapsed_ns,
+            40_000_000
+        );
+        let mut restored =
+            Field::restore(&field.snapshot(), &field.static_geometry_snapshot(), 0.).unwrap();
+        field.step(60).unwrap();
+        restored.step(20).unwrap();
+        restored.step(40).unwrap();
+        assert_eq!(field.assemblies(), restored.assemblies());
+        assert_eq!(field.assemblies()[0].phase, Phase::Solving);
+        let pose = field.assemblies()[0].pose.clone();
+        let mut recovery = CoreRecovery::with_step_duration(&pose, [0.; 6], [0.2; 6], duration);
+        let mut pose = pose;
+        for _ in 0..50 {
+            recovery.advance_with_step_duration(&mut pose, duration);
+        }
+        assert_eq!(recovery.elapsed_ns, 50_000_000);
+        recovery
+            .validate_with_step_duration(&field.assemblies()[0].model, duration)
+            .unwrap();
     }
     #[test]
     fn final_q_is_revealed_only_after_the_prefix_and_holds_during_replanning() {

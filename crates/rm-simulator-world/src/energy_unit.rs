@@ -264,7 +264,7 @@ impl Field {
         Ok(())
     }
     pub(crate) fn sync_energy_units(&mut self) {
-        let dt = crate::tick_ns() as f64 * 1e-9;
+        let dt = self.step_duration().as_secs_f64();
         for index in 0..self.energy_units.len() {
             let mut unit = self.energy_units[index].clone();
             if let Attachment::Seated(owner) = unit.attachment {

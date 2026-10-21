@@ -6,70 +6,15 @@ use crate::{
     collision_mesh::{self, CollisionMesh},
     math,
 };
-use anyhow::{Context, ensure};
+use anyhow::Context;
 use rm_simulator_world::{
     referee::Mechanism,
     rmuc_2027::{Config, Zone},
 };
 use serde::Deserialize;
 
-/// Exact source-body partition for one driven joint.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct Motion {
-    /// Exported `extras.rm.id` of the moving node.
-    pub id: String,
-    /// Exact mesh-node names, naming source BREP bodies or surface-model shells.
-    pub bodies: Vec<String>,
-    /// Unit axis in the source asset frame.
-    pub axis: [f64; 3],
-    /// Joint origin in source asset metres.
-    pub pivot_m: [f64; 3],
-    /// Prismatic travel in metres, or `None` for the outpost's continuous rotation.
-    pub limits: Option<[f64; 2]>,
-}
-/// Ordered source bodies used to fit one structure's optical detectors.
-///
-/// ```
-/// use rm_simulator_server::rmuc_2027::SourceReport;
-/// let report: SourceReport = serde_json::from_str(r#"{"detector_bodies":[17,23,31]}"#)?;
-/// assert_eq!(report.detector_bodies, [17, 23, 31]);
-/// # Ok::<(), serde_json::Error>(())
-/// ```
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct SourceReport {
-    /// STEP body identifiers, in the same order as the fitted detector faces.
-    pub detector_bodies: Vec<u64>,
-}
-/// One source-owned runtime part, preserving distinct drawing/collision membership.
-///
-/// ```
-/// use rm_simulator_server::rmuc_2027::Part;
-/// let part: Part = serde_json::from_str(
-///     r#"{"id":"outpost/source_body_2200540","asset":"outpost","source_kind":"body"}"#,
-/// )?;
-/// assert_eq!(part.asset, "outpost");
-/// assert!(part.motion_id.is_none());
-/// # Ok::<(), serde_json::Error>(())
-/// ```
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct Part {
-    /// Stable identity scoped by runtime asset; never a reconstructed face ID.
-    pub id: String,
-    /// Runtime asset containing this part (`base` or `outpost`).
-    pub asset: String,
-    /// Source-owned unit classification, including explicitly derived units.
-    pub source_kind: String,
-    /// Original source entity or locally scoped native-unit ordinal, when known.
-    pub source_id: Option<u64>,
-    /// Hierarchical work-part identity retained by the source exporter.
-    pub component_id: Option<String>,
-    /// Unique visual mesh-node name, when the visual retains this part.
-    pub visual_node: Option<String>,
-    /// Unique collision mesh-node name, when collision retains this part.
-    pub collision_node: Option<String>,
-    /// Owning joint identity; absent for stationary geometry.
-    pub motion_id: Option<String>,
-}
+pub use rm_simulator_assets::rmuc_2027::{Motion, Part, SourceReport};
+
 /// Source-pinned 2027 target geometry, motion partitions and part catalogue.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Bindings {
@@ -100,114 +45,20 @@ pub struct Bindings {
 impl Bindings {
     /// Validate identity, geometry and supported motion contracts before admission.
     pub fn validate(&self) -> anyhow::Result<()> {
-        ensure!(
-            matches!(self.schema_version, 1 | 2)
-                && self.ruleset == "rmuc2027-v1.0.0"
-                && self.source_sha256
-                    == "a5ad3ede3b7674fc98f2e73b71717216383cb2b4b5dcdbe900c2038918bea8e0",
-            "unknown 2027 source/ruleset binding"
-        );
         self.world.validate().map_err(anyhow::Error::msg)?;
-        ensure!(
-            (self.rune_motion.is_empty()
-                && self.rune_arms.is_empty()
-                && self.world.runes.is_empty())
-                || (self.rune_motion.len() == 2
-                    && self.rune_arms.len() == 2
-                    && self.world.runes.len() == 2
-                    && self.rune_motion.iter().all(|m| m.limits.is_none()
-                        && !m.bodies.is_empty()
-                        && m.axis.iter().chain(&m.pivot_m).all(|v| v.is_finite())
-                        && (m.axis.iter().map(|v| v * v).sum::<f64>() - 1.).abs() < 1e-6)),
-            "incomplete native Rune binding"
-        );
-        let mut rune_bodies = std::collections::BTreeSet::new();
-        for (index, (motion, arms)) in self.rune_motion.iter().zip(&self.rune_arms).enumerate() {
-            let expected = if index == 0 {
-                "rune.red.spin"
-            } else {
-                "rune.blue.spin"
-            };
-            let unique_arms: std::collections::BTreeSet<_> = arms.iter().collect();
-            ensure!(
-                motion.id == expected
-                    && unique_arms.len() == 5
-                    && arms.iter().all(|arm| !arm.is_empty()
-                        && motion
-                            .bodies
-                            .iter()
-                            .any(|body| body.starts_with(&format!("{arm}/mesh-"))))
-                    && motion.bodies.iter().all(|body| rune_bodies.insert(body)
-                        && arms
-                            .iter()
-                            .any(|arm| body.starts_with(&format!("{arm}/mesh-")))),
-                "duplicate or unowned native Rune source geometry"
-            );
+        rm_simulator_assets::rmuc_2027::Bindings {
+            schema_version: self.schema_version,
+            ruleset: self.ruleset.clone(),
+            source_sha256: self.source_sha256.clone(),
+            world: (),
+            outpost_motion: self.outpost_motion.clone(),
+            base_motion: self.base_motion.clone(),
+            rune_motion: self.rune_motion.clone(),
+            rune_arms: self.rune_arms.clone(),
+            report: self.report.clone(),
+            parts: self.parts.clone(),
         }
-        for (name, count) in [("base", self.world.bases[0].len()), ("outpost", 3)] {
-            let report = self
-                .report
-                .get(name)
-                .context("missing detector source report")?;
-            let unique: std::collections::BTreeSet<_> = report.detector_bodies.iter().collect();
-            ensure!(
-                report.detector_bodies.len() == count && unique.len() == count,
-                "incomplete/duplicate detector source bodies"
-            );
-        }
-        ensure!(
-            self.outpost_motion.len() == 1 && self.base_motion.len() == 3,
-            "incomplete 2027 joints"
-        );
-        for m in self.outpost_motion.iter().chain(&self.base_motion) {
-            ensure!(
-                !m.bodies.is_empty()
-                    && m.bodies.iter().all(|b| {
-                        b.strip_prefix("source_body_")
-                            .or_else(|| {
-                                (self.schema_version == 2)
-                                    .then(|| b.strip_prefix("source_shell_"))
-                                    .flatten()
-                            })
-                            .is_some_and(|id| id.parse::<u64>().is_ok_and(|id| id > 0))
-                    })
-                    && m.pivot_m.iter().chain(&m.axis).all(|v| v.is_finite())
-                    && (m.axis.iter().map(|v| v * v).sum::<f64>() - 1.).abs() < 1e-6,
-                "invalid source motion binding"
-            );
-            if let Some(limits) = m.limits {
-                ensure!(limits == [0., 0.25], "unknown base armor travel");
-            }
-        }
-        if self.schema_version == 2 {
-            let unique: std::collections::BTreeSet<_> = self.parts.iter().map(|p| &p.id).collect();
-            ensure!(
-                !self.parts.is_empty() && unique.len() == self.parts.len(),
-                "missing/duplicate source parts"
-            );
-            for (asset, motions) in [
-                ("base", &self.base_motion),
-                ("outpost", &self.outpost_motion),
-            ] {
-                for motion in motions {
-                    let names: std::collections::BTreeSet<_> = motion.bodies.iter().collect();
-                    ensure!(
-                        names.len() == motion.bodies.len(),
-                        "duplicate moving source part"
-                    );
-                    for name in &motion.bodies {
-                        ensure!(
-                            self.parts.iter().any(|p| p.asset == asset
-                                && p.visual_node.as_ref() == Some(name)
-                                && p.collision_node.as_ref() == Some(name)
-                                && p.motion_id.as_ref() == Some(&motion.id)),
-                            "motion has no paired source part"
-                        );
-                    }
-                }
-            }
-        }
-        Ok(())
+        .validate_source(self.world.bases[0].len(), self.world.runes.len())
     }
     /// Geometry with the reviewed figure footprints installed as antenna approximations.
     pub fn config(&self) -> Config {
@@ -382,6 +233,50 @@ mod tests {
         Pose, Team,
         rmuc_2027::{Detector, Point, Tower},
     };
+    #[test]
+    fn asset_geometry_dto_preserves_runtime_schema_and_admission() {
+        let detector = serde_json::json!({
+            "pose": Pose::at([0., 0., 1.]), "half_m": [0.045, 0.044]
+        });
+        let tower = serde_json::json!({
+            "pivot_m": [0., 0., 0.], "axis": [0., 0., 1.],
+            "detectors": [detector.clone(), detector.clone(), detector.clone()]
+        });
+        let valid = serde_json::json!({
+            "bases": [[detector.clone()], [detector]],
+            "outposts": [tower.clone(), tower], "zones": [], "rotor_direction": 1
+        });
+        let check = |value: serde_json::Value, admitted: bool| {
+            let runtime: Config = serde_json::from_value(value.clone()).unwrap();
+            let dto: rm_simulator_assets::rmuc_2027::Config =
+                serde_json::from_value(value).unwrap();
+            assert_eq!(runtime.validate().is_ok(), admitted);
+            assert_eq!(runtime.validate(), dto.validate());
+            assert_eq!(
+                serde_json::to_value(runtime).unwrap(),
+                serde_json::to_value(dto).unwrap()
+            );
+        };
+        check(valid.clone(), true);
+        let mut invalid = valid.clone();
+        invalid["bases"][0] = serde_json::json!([]);
+        check(invalid, false);
+        let mut invalid = valid.clone();
+        invalid["bases"][0][0]["half_m"] = serde_json::json!([0.072, 0.044]);
+        check(invalid, false);
+        let mut invalid = valid.clone();
+        invalid["outposts"][0]["axis"] = serde_json::json!([0., 0., 2.]);
+        check(invalid, false);
+        let mut invalid = valid.clone();
+        invalid["rotor_direction"] = serde_json::json!(0);
+        check(invalid, false);
+        let mut invalid = valid;
+        invalid["zones"] = serde_json::json!([{
+            "side": "Red", "point": "Base", "floor_m": 0., "height_m": 0.6,
+            "polygon_m": [[0., 0.], [1., 0.], [0., 1.]]
+        }]);
+        check(invalid, false);
+    }
     #[test]
     fn crowned_base_edges_count_but_lower_floor_cannot_activate_upper_highland() {
         let d = Detector {

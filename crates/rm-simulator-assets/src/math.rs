@@ -3,7 +3,7 @@
 //! Just enough quaternion and matrix arithmetic to place CAD assets without
 //! a linear-algebra crate. Quaternions are `[w, x, y, z]`, vectors FLU
 //! metres unless stated otherwise.
-use rm_simulator_world::Pose;
+use rm_simulator_physics::Pose;
 
 /// The renderer's axis change from FLU (x forward, y left, z up) to its own
 /// right/up/back frame, as a rotation: `x -> -z`, `y -> -x`, `z -> y`.
@@ -47,7 +47,7 @@ pub fn quat_axis_angle(axis: [f64; 3], angle_rad: f64) -> [f64; 4] {
 /// the result by the squared length of `q`.
 ///
 /// ```
-/// use rm_simulator_server::math::{quat_axis_angle, rotate};
+/// use rm_simulator_assets::math::{quat_axis_angle, rotate};
 /// use std::f64::consts::FRAC_PI_2;
 ///
 /// // A quarter turn about up (+z) takes forward (+x) to left (+y).
@@ -87,7 +87,7 @@ pub fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 /// renderer reproduces the placed asset.
 ///
 /// ```
-/// use rm_simulator_server::math::{gltf_point, gltf_root_pose, quat_axis_angle};
+/// use rm_simulator_assets::math::{gltf_point, gltf_root_pose, quat_axis_angle};
 /// use std::f64::consts::FRAC_PI_2;
 ///
 /// // Place an asset at (1, 2, 3) m with a quarter turn about its own +y axis.
@@ -137,7 +137,7 @@ impl Mat4 {
     /// glTF node TRS: scale, then `rotation_xyzw`, then translation.
     ///
     /// ```
-    /// use rm_simulator_server::math::Mat4;
+    /// use rm_simulator_assets::math::Mat4;
     ///
     /// // Uniform scale 2 and a translation, no rotation: (1, 0, 0) m maps to (3, 2, 3) m.
     /// let transform =

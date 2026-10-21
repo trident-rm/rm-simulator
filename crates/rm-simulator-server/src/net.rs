@@ -403,7 +403,7 @@ fn record_loopback_frame(inbox: &ClientInbox, payload: &[u8]) {
         Some(b"RMRW") => "RMRW",
         Some(b"RMZ1") => "RMZ1",
         Some(b"RMBZ") => "RMBZ",
-        Some(b"RM10") => "RM10",
+        Some(b"RM11") => "RM11",
         Some(b"RMI6") => "RMI6",
         Some(b"RMC1") => "RMC1",
         Some(b"RMA2") => "RMA2",
@@ -1588,12 +1588,12 @@ mod tests {
                 })
         });
         // Once the configuration handshake completes, the owner anchors travel
-        // the same codec and classify as the current `RM10` framing.
+        // the same codec and classify as the current `RM11` framing.
         wait_until("owner anchor on the loopback wire", || {
             client.poll();
             client
                 .trace_report()
-                .is_some_and(|report| report.stages["loopback_wire"].contains_key("RM10"))
+                .is_some_and(|report| report.stages["loopback_wire"].contains_key("RM11"))
         });
         let report = client.trace_report().unwrap();
         let kinds: Vec<_> = report.stages["loopback_wire"].keys().copied().collect();

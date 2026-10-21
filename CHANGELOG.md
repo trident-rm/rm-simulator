@@ -4,6 +4,17 @@
 
 ## Unreleased
 
+- Add trusted in-process simulation sessions with explicit stepping, addressed
+  controls, timestamped ground truth, shared-geometry checkpoints and seeded resets.
+  Support immutable per-world integration durations, including 1000 Hz, while
+  keeping multiplayer at 128 Hz with explicit custom-rate admission rejection.
+- Separate direct wheel torque requests from built-in velocity control, retaining
+  motor, traction, power and defeat limits and restorable held drive modes.
+- Extract verified CAD manifests, collision loading and source metadata into
+  `rm-simulator-assets`, without server/networking or rendering dependencies.
+  Preserve server compatibility imports and native runtime validation. Carry
+  instance timing and held drive control through protocol 79 checkpoints.
+
 - Add native Radar marking/history, interruption decay, localization thresholds,
   vulnerability, double opportunities and interference, with independent 2 Hz
   localization-module faults and complete restore. Carry the authority and

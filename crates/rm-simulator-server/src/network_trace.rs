@@ -251,7 +251,7 @@ impl Observer {
     }
     pub(crate) fn packet(&self, stage: &'static str, peer: Option<u32>, bytes: &[u8]) {
         let kind = match bytes.get(..4) {
-            Some(b"RM10") => "owner",
+            Some(b"RM11") => "owner",
             Some(b"RMI6") => "inputs",
             Some(b"RMC1") => "shot",
             Some(b"RMA2") => "baseline_ack",
@@ -473,7 +473,7 @@ mod tests {
     fn packet_classes_match_current_wire_magics() {
         let time = crate::clock::ManualTime::new();
         let observer = Observer::open("test", time.source(), None, FILE_LIMIT);
-        for bytes in [b"RM10data", b"RMI6data", b"RMA2data", b"RMC1data"] {
+        for bytes in [b"RM11data", b"RMI6data", b"RMA2data", b"RMC1data"] {
             observer.packet("receive", None, bytes);
         }
         let report = observer.report().unwrap();

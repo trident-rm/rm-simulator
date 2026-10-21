@@ -15,8 +15,8 @@ with compression skipped.
 
 | File | Owns |
 |---|---|
-| `src/cad_assets.rs` | Manifest parsing, SHA-256 verification, and CAD-frame-to-FLU placements with the floor at height zero. |
-| `src/collision_mesh.rs` | Visual GLBs to named FLU triangle parts, plus the ground-footprint height index. |
+| `src/cad_assets.rs` | Compatibility facade over `rm-simulator-assets`, retaining native runtime binding validation. |
+| `collision_mesh`, `math`, `semantics` | Compatibility re-exports of standalone asset loading, FLU math and source metadata. |
 | `src/base_layout.rs` | Reproducible base scoring frames fitted at load time from checksum-verified CAD. |
 | `src/layout.rs` | `FieldConfig` from `LayoutOptions`: rune hubs, outpost origins, terrain, team spawn slots and the `ChassisSpawner`. |
 | `src/simulation.rs` | `Simulation`: the paused flag, bounded real-time advance, command application and chassis spawning per player. |
@@ -56,8 +56,8 @@ ZSTD wire codec and the snapshot delta state machine, the host worker's ordering
 and bounded queues, the replaceable periodic outbox, input leases and their
 renewal, and the scripted link's loss, reordering and duplication.
 
-Many modules carry doctests, among them `protocol.rs`, `compression.rs`,
-`math.rs`, `cad_assets.rs`, `collision_mesh.rs` and `scripted_link.rs`.
+Many modules carry doctests, among them `protocol.rs`, `compression.rs` and
+`scripted_link.rs`. Asset-import doctests live in `rm-simulator-assets`.
 
 Examples cover the operational checks. `inspect_assets` verifies a package and
 reports semantic bindings and collider counts; `match_cost`,
