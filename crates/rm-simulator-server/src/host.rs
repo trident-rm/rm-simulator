@@ -21,6 +21,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 const REQUEST_CAPACITY: usize = 256;
+/// Maximum UTF-8 bytes retained for one player display name.
+const MAX_PLAYER_NAME_BYTES: usize = 64;
 /// Map markers the host keeps, newest last; older ones are forgotten.
 const MAP_MARKER_CAPACITY: usize = 64;
 const CLOCK_PERIOD: Duration = Duration::from_millis(2);
@@ -153,6 +155,7 @@ pub struct CollisionCapture {
 
 type Reply<T> = SyncSender<T>;
 enum Request {
+    Bounded(Box<Request>, Instant, Stop),
     Apply(Command, Reply<Result<CommandReceipt, String>>),
     State(Reply<SimulationState>),
     ControlStatus(
@@ -206,9 +209,41 @@ impl Drop for WorkerCompletion {
 pub struct HostHandle {
     requests: SyncSender<Request>,
     control: Arc<Control>,
+    request_limit: Option<(Instant, Stop)>,
 }
 impl HostHandle {
+    /// Limit HTTP mailbox waits to the connection deadline and shutdown signal.
+    pub(crate) fn for_http(&self, deadline: Instant, stop: Stop) -> Self {
+        let mut handle = self.clone();
+        handle.request_limit = Some((deadline, stop));
+        handle
+    }
+    fn wait_budget(&self) -> Result<Duration, String> {
+        let (deadline, stop) = self.request_limit.as_ref().expect("bounded HTTP handle");
+        if self.is_stopped() || stop.wait(Duration::ZERO) {
+            return Err("request stopped".into());
+        }
+        deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .map(|remaining| remaining.min(Duration::from_millis(10)))
+            .ok_or_else(|| "request deadline exceeded".into())
+    }
     fn send(&self, request: Request) -> Result<(), String> {
+        if let Some((deadline, stop)) = &self.request_limit {
+            let mut request = Request::Bounded(Box::new(request), *deadline, stop.clone());
+            loop {
+                let budget = self.wait_budget()?;
+                match self.requests.try_send(request) {
+                    Ok(()) => return Ok(()),
+                    Err(mpsc::TrySendError::Full(pending)) => request = pending,
+                    Err(mpsc::TrySendError::Disconnected(_)) => {
+                        return Err("host is stopped".into());
+                    }
+                }
+                stop.wait(budget);
+            }
+        }
         if self.is_stopped() {
             return Err("host is stopped".into());
         }
@@ -219,6 +254,17 @@ impl HostHandle {
     fn request<T>(&self, build: impl FnOnce(Reply<T>) -> Request) -> Result<T, String> {
         let (reply, result) = mpsc::sync_channel(1);
         self.send(build(reply))?;
+        if self.request_limit.is_some() {
+            loop {
+                match result.recv_timeout(self.wait_budget()?) {
+                    Ok(value) => return Ok(value),
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => {
+                        return Err("host stopped before replying".into());
+                    }
+                }
+            }
+        }
         result
             .recv()
             .map_err(|_| "host stopped before replying".into())
@@ -377,6 +423,7 @@ impl Host {
         let handle = HostHandle {
             requests,
             control: control.clone(),
+            request_limit: None,
         };
         let worker = thread::Builder::new()
             .name("rm-simulation".into())
@@ -557,6 +604,11 @@ impl Owner {
     }
     fn process(&mut self, request: Request) {
         match request {
+            Request::Bounded(request, deadline, stop) => {
+                if Instant::now() < deadline && !stop.wait(Duration::ZERO) {
+                    self.process(*request);
+                }
+            }
             Request::Apply(command, reply) => {
                 let _ = reply.send(self.apply(command));
             }
@@ -904,6 +956,11 @@ impl Owner {
         }
     }
     fn join(&mut self, registration: PeerRegistration) -> Result<Welcome, String> {
+        if registration.name.len() > MAX_PLAYER_NAME_BYTES {
+            return Err(format!(
+                "player name exceeds {MAX_PLAYER_NAME_BYTES} UTF-8 bytes"
+            ));
+        }
         let PeerRegistration {
             password,
             name,
@@ -1364,6 +1421,64 @@ mod tests {
     }
     fn next(messages: &crate::net::outbox::Receiver) -> Arc<Outbound> {
         messages.recv().unwrap()
+    }
+
+    #[test]
+    fn player_names_are_bounded_by_utf8_bytes_before_admission() {
+        let host = host();
+        let handle = host.handle();
+        let (_, observer) = peer(&handle, Role::Spectator);
+        for name in ["a".repeat(64), "界".repeat(21) + "a"] {
+            let (outbox, _messages) = crate::net::outbox::channel(64);
+            let welcome = handle
+                .join(PeerRegistration {
+                    password: String::new(),
+                    name: name.clone(),
+                    team: None,
+                    role: Role::Spectator,
+                    robot: Robot::default(),
+                    chassis: Default::default(),
+                    owner_spawn: None,
+                    outbox,
+                    stream: Stop::default(),
+                })
+                .unwrap();
+            assert_eq!(handle.roster().unwrap().last().unwrap().name, name);
+            handle.leave(welcome.client_id).unwrap();
+            settle(&handle);
+        }
+        while observer.try_recv().is_some() {}
+        let before = handle.roster().unwrap();
+        for name in ["a".repeat(65), "界".repeat(22), "界".repeat(21) + "ab"] {
+            let (outbox, _messages) = crate::net::outbox::channel(64);
+            let error = handle
+                .join(PeerRegistration {
+                    password: String::new(),
+                    name,
+                    team: None,
+                    role: Role::Spectator,
+                    robot: Robot::default(),
+                    chassis: Default::default(),
+                    owner_spawn: None,
+                    outbox,
+                    stream: Stop::default(),
+                })
+                .unwrap_err();
+            assert!(error.contains("64 UTF-8 bytes"));
+            assert_eq!(handle.roster().unwrap(), before);
+            assert!(observer.try_recv().is_none());
+        }
+    }
+
+    #[test]
+    fn expired_http_commands_are_not_applied_after_a_stall() {
+        let host = host();
+        let handle = host.handle();
+        let release = handle.stall();
+        let bounded = handle.for_http(Instant::now() + Duration::from_millis(50), Stop::default());
+        assert!(bounded.apply(&Command::Pause { paused: false }).is_err());
+        drop(release);
+        assert!(handle.state().unwrap().paused);
     }
 
     #[test]

@@ -1159,7 +1159,7 @@ impl crate::Field {
                     && !c.defeated
                     && run.parking_matches(c.pose)
             });
-            if offline || (!valid && run.phase != Phase::Recovering) {
+            if (offline || !valid) && run.phase != Phase::Recovering {
                 run.cancel("Parking changed or robot unavailable");
             } else if run.timed_out(now) {
                 run.phase = Phase::Failed;
@@ -1331,6 +1331,75 @@ pub(crate) mod tests {
         assert_eq!(run.phase, Phase::Failed);
         assert_eq!(run.pose.engineer_q[0], 0.);
     }
+    #[test]
+    fn autonomous_core_recovery_completes_while_engineer_is_offline() {
+        use crate::rmuc_2027::{Config, Detector, Tower};
+        let detector = Detector {
+            pose: Pose::at([10., 0., 1.]),
+            half_m: [0.045, 0.044],
+        };
+        let mut field = Field::new(&crate::FieldConfig {
+            rmuc_2027: Some(Config {
+                bases: [vec![detector.clone()], vec![detector.clone()]],
+                outposts: std::array::from_fn(|_| Tower {
+                    pivot_m: [10., 0., 1.],
+                    axis: [0., 0., 1.],
+                    detectors: vec![detector.clone(); 3],
+                }),
+                supply_zones: vec![],
+                vantage_zones: vec![],
+                terrain_zones: vec![],
+                runes: vec![],
+                zones: vec![],
+                rotor_direction: -1,
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+        let (_, mut run) = fixture();
+        let owner = field
+            .add_chassis(&crate::ChassisPlacement {
+                config: Default::default(),
+                spawn: run.pose.engineer_body,
+                team: Team::Red,
+                kind: RobotKind::Engineer,
+                performance: None,
+            })
+            .unwrap();
+        field
+            .referee_command(crate::RefereeCommand::StartMatch)
+            .unwrap();
+        field.step(128 * 5).unwrap();
+        assert_eq!(
+            field.rmuc_2027().unwrap().game.phase,
+            crate::gameplay::rmuc_2027::match_rules::Phase::Running
+        );
+        run.owner = owner;
+        run.pose.engineer_body = field.chassis_control_state(owner).unwrap().pose;
+        run.placement_revision = field.chassis_revision(owner).unwrap();
+        run.phase = Phase::Recovering;
+        run.recovery = Some(CoreRecovery::new(&run.pose, [0.4; 6], [0.2; 6]));
+        field.set_assembly(run).unwrap();
+        field
+            .referee_command(crate::RefereeCommand::SetRobotModules {
+                robot: owner,
+                main_online: false,
+                speed_online: true,
+                offline_armor: 0,
+                supercap_online: true,
+            })
+            .unwrap();
+        field.step(128).unwrap();
+        assert_eq!(field.assemblies()[0].phase, Phase::Recovering);
+        assert!(field.assemblies()[0].recovery.as_ref().unwrap().elapsed_ns > 0);
+        let mut restored =
+            Field::restore(&field.snapshot(), &field.fixed_geometry_snapshot(), 0.).unwrap();
+        field.step(128 * 6).unwrap();
+        restored.step(128 * 6).unwrap();
+        assert_eq!(field.assemblies()[0].phase, Phase::Completed);
+        assert_eq!(field.assemblies(), restored.assemblies());
+    }
+
     #[test]
     fn arbitrary_step_completed_recovery_remains_restorable() {
         let (base, mut run) = fixture();

@@ -1217,10 +1217,7 @@ impl Simulation {
         self.validate_shot(shooter, shot_id, input)?;
         let state = self
             .field
-            .snapshot()
-            .chassis
-            .into_iter()
-            .find(|c| c.id == shooter)
+            .chassis_control_state(shooter)
             .ok_or("no chassis with that id")?;
         // Only the shot's exact aim is applied; held movement and its lease are untouched.
         let aim = rm_simulator_world::ChassisCommand {
@@ -3326,13 +3323,17 @@ mod tests {
             },
         };
         let earlier = input(1, 0.25);
-        let newer = input(2, 1.25);
+        let mut newer = input(2, 1.25);
+        newer.command.forward_m_s = 2.;
+        newer.command.left_m_s = -0.5;
+        newer.command.yaw_rate_rad_s = 0.3;
         simulation
             .apply(&Command::PilotInput {
                 chassis: shooter,
                 frame: newer,
             })
             .unwrap();
+        let held_state = simulation.field().chassis_control_state(shooter).unwrap();
         let fire = Command::FireAimed {
             shooter,
             shot_id: 1,
@@ -3357,6 +3358,24 @@ mod tests {
                 .all(|(a, b)| (a - b).abs() < 1e-12)
         );
         assert_eq!(simulation.snapshot().chassis[0].command, newer.command);
+        assert_eq!(
+            simulation.field().chassis_control_state(shooter).unwrap(),
+            held_state
+        );
+        assert_eq!(
+            simulation
+                .apply(&Command::FireAimed {
+                    shooter,
+                    shot_id: 2,
+                    input: earlier,
+                })
+                .unwrap_err(),
+            "weapon is cooling down"
+        );
+        assert_eq!(
+            simulation.field().chassis_control_state(shooter).unwrap(),
+            held_state
+        );
         simulation.apply(&fire).unwrap();
         assert_eq!(simulation.fire_records().len(), 1);
         assert_eq!(simulation.snapshot().shots_fired, 1);

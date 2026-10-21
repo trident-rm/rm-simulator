@@ -5,7 +5,8 @@
 //! `GET /api/clock` compact clock metadata and `GET /api/control/ID` a robot life identity,
 //! `POST /api/referee` a `RefereeCommand` and `POST /api/command` any
 //! [`Command`] as JSON. Requests are handled one per connection on their
-//! own thread; the reply always closes the connection. No dependencies
+//! own thread, up to 32 simultaneous handlers with a shared 10 s request budget;
+//! the reply always closes the connection. No dependencies
 //! beyond the standard library and `serde_json`.
 use crate::host::HostHandle;
 use crate::lifecycle::Stop;
@@ -15,7 +16,7 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The referee panel page.
 pub const PANEL_HTML: &str = include_str!("panel.html");
@@ -25,6 +26,10 @@ const MAX_BODY_BYTES: usize = 64 << 10;
 const MAX_HEADER_LINE_BYTES: usize = 8 << 10;
 /// Header count past which a request head is refused.
 const MAX_HEADERS: usize = 64;
+/// Hard ceiling on active connection threads and tracked sockets.
+const MAX_CONNECTIONS: usize = 32;
+/// Total socket and host-mailbox budget, shared by reads and writes.
+const REQUEST_LIFETIME: Duration = Duration::from_secs(10);
 
 /// A bound referee HTTP server. Dropping it closes the listener.
 pub struct HttpServer {
@@ -46,7 +51,8 @@ impl HttpListener {
     /// The worker polls the listener in nonblocking mode, moves each accepted
     /// stream back to blocking mode and serves it on its own thread. `serve`
     /// runs per connection and must not use the listener. Completed connection
-    /// workers are reaped as the loop runs. Shutdown stops accepting within one
+    /// workers are reaped as the loop runs; excess connections are closed.
+    /// Shutdown stops accepting within one
     /// 10 ms poll, shuts every live stream down and joins all of them,
     /// including connections still waiting for a handshake.
     fn start(
@@ -75,6 +81,10 @@ impl HttpListener {
                 }
                 match listener.accept() {
                     Ok((stream, _)) => {
+                        if connections.len() >= MAX_CONNECTIONS {
+                            let _ = stream.shutdown(Shutdown::Both);
+                            continue;
+                        }
                         // Accepted sockets inherit nonblocking mode on some
                         // platforms; only the listener uses polling.
                         if let Err(error) = stream.set_nonblocking(false) {
@@ -143,8 +153,10 @@ impl HttpServer {
     /// sends becomes a typed request on the same host queue as the transports.
     pub fn bind(addr: impl ToSocketAddrs, host: HostHandle) -> io::Result<HttpServer> {
         let listener = TcpListener::bind(addr)?;
-        let listener = HttpListener::start(listener, Stop::default(), "rm-http", move |stream| {
-            if let Err(error) = handle(stream, &host) {
+        let stop = Stop::default();
+        let connection_stop = stop.clone();
+        let listener = HttpListener::start(listener, stop, "rm-http", move |stream| {
+            if let Err(error) = handle(stream, &host, connection_stop.clone(), REQUEST_LIFETIME) {
                 eprintln!("http: {error}");
             }
         })?;
@@ -333,17 +345,49 @@ fn apply(host: &HostHandle, command: &Command) -> Response {
     }
 }
 
-/// Serve one connection. The read timeout is 10 s, and an unreadable head
-/// still earns a 400 reply.
-fn handle(stream: TcpStream, host: &HostHandle) -> io::Result<()> {
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
-    let mut reader = BufReader::new(stream.try_clone()?);
+/// A socket whose individual operations share one absolute deadline.
+struct DeadlineStream {
+    stream: TcpStream,
+    deadline: Instant,
+}
+impl DeadlineStream {
+    fn remaining(&self) -> io::Result<Duration> {
+        self.deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::TimedOut, "HTTP request deadline exceeded")
+            })
+    }
+}
+impl Read for DeadlineStream {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.stream.set_read_timeout(Some(self.remaining()?))?;
+        self.stream.read(buffer)
+    }
+}
+impl Write for DeadlineStream {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.stream.set_write_timeout(Some(self.remaining()?))?;
+        self.stream.write(buffer)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.set_write_timeout(Some(self.remaining()?))?;
+        self.stream.flush()
+    }
+}
+
+/// Serve one connection within a total budget, including mailbox waits and writes.
+fn handle(stream: TcpStream, host: &HostHandle, stop: Stop, lifetime: Duration) -> io::Result<()> {
+    let deadline = Instant::now() + lifetime;
+    let host = host.for_http(deadline, stop);
+    let mut reader = BufReader::new(DeadlineStream { stream, deadline });
     let response = match read_request(&mut reader) {
-        Ok(Some(request)) => respond(&request, host),
+        Ok(Some(request)) => respond(&request, &host),
         Ok(None) => return Ok(()),
         Err(error) => Response::error(400, error.to_string()),
     };
-    write_response(stream, &response)
+    write_response(reader.into_inner(), &response)
 }
 
 /// Write a complete response and close the connection. `Connection: close` is
@@ -380,6 +424,173 @@ mod tests {
             .unwrap()
             .unwrap()
     }
+    fn socket_pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        (client, server)
+    }
+
+    #[test]
+    fn trickling_headers_and_bodies_cannot_extend_the_deadline() {
+        let (_host, host) = simulation();
+        for prefix in [
+            &b"GET / HTTP/1.1\r\nX-Test: "[..],
+            &b"POST /api/command HTTP/1.1\r\nContent-Length: 1000\r\n\r\n"[..],
+        ] {
+            let (mut client, server) = socket_pair();
+            client.write_all(prefix).unwrap();
+            let (done, result) = std::sync::mpsc::channel();
+            let host = host.clone();
+            let worker = thread::spawn(move || {
+                done.send(handle(
+                    server,
+                    &host,
+                    Stop::default(),
+                    Duration::from_millis(150),
+                ))
+                .unwrap();
+            });
+            let trickle = thread::spawn(move || {
+                for _ in 0..30 {
+                    if client.write_all(b"a").is_err() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(20));
+                }
+            });
+            assert!(
+                result
+                    .recv_timeout(Duration::from_secs(2))
+                    .unwrap()
+                    .is_err()
+            );
+            worker.join().unwrap();
+            trickle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn nonreading_clients_cannot_hold_response_writes_forever() {
+        let (_client, server) = socket_pair();
+        let (done, result) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let socket = DeadlineStream {
+                stream: server,
+                deadline: Instant::now() + Duration::from_millis(150),
+            };
+            let response = Response {
+                status: 200,
+                content_type: "application/octet-stream",
+                body: vec![0; 32 << 20],
+            };
+            done.send(write_response(socket, &response)).unwrap();
+        });
+        assert!(
+            result
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .is_err()
+        );
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn listener_caps_handlers_and_reclaims_slots() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let (entered, workers) = std::sync::mpsc::channel();
+        let server = HttpListener::start(
+            listener,
+            Stop::default(),
+            "http-cap-test",
+            move |mut stream| {
+                entered.send(()).unwrap();
+                let _ = stream.read(&mut [0]);
+            },
+        )
+        .unwrap();
+        let mut clients = Vec::new();
+        for _ in 0..MAX_CONNECTIONS {
+            clients.push(TcpStream::connect(server.local_addr).unwrap());
+            workers.recv_timeout(Duration::from_secs(2)).unwrap();
+        }
+        let mut excess = TcpStream::connect(server.local_addr).unwrap();
+        excess
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        assert_eq!(excess.read(&mut [0]).unwrap(), 0);
+        assert!(workers.try_recv().is_err());
+        clients.pop().unwrap().shutdown(Shutdown::Both).unwrap();
+        // Probe until the accept loop has reaped the released handler.
+        let end = Instant::now() + Duration::from_secs(2);
+        loop {
+            let probe = TcpStream::connect(server.local_addr).unwrap();
+            if workers.recv_timeout(Duration::from_millis(20)).is_ok() {
+                clients.push(probe);
+                break;
+            }
+            assert!(Instant::now() < end);
+        }
+        drop(server); // Must also join all handlers still waiting on reads.
+    }
+
+    #[test]
+    fn request_deadline_bounds_host_submission_and_reply_waits() {
+        for fill_mailbox in [false, true] {
+            let (_host, host) = simulation();
+            let release = host.stall();
+            if fill_mailbox {
+                while host.broadcast_snapshot(false).is_ok() {}
+            }
+            let (mut client, server) = socket_pair();
+            client
+                .write_all(b"GET /api/state HTTP/1.1\r\n\r\n")
+                .unwrap();
+            let (done, result) = std::sync::mpsc::channel();
+            let worker = thread::spawn(move || {
+                done.send(handle(
+                    server,
+                    &host,
+                    Stop::default(),
+                    Duration::from_millis(150),
+                ))
+                .unwrap();
+            });
+            let finished = result.recv_timeout(Duration::from_secs(2));
+            drop(release);
+            worker.join().unwrap();
+            assert!(finished.unwrap().is_err());
+            client
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            assert_eq!(client.read(&mut [0]).unwrap(), 0);
+        }
+    }
+
+    #[test]
+    fn shutdown_interrupts_http_waits_on_a_full_host_mailbox() {
+        let (_host, host) = simulation();
+        let release = host.stall();
+        while host.broadcast_snapshot(false).is_ok() {}
+        let server = HttpServer::bind("127.0.0.1:0", host).unwrap();
+        let address = server.local_addr();
+        let mut client = TcpStream::connect(address).unwrap();
+        client
+            .write_all(b"GET /api/state HTTP/1.1\r\n\r\n")
+            .unwrap();
+        thread::sleep(Duration::from_millis(50));
+        let (done, result) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            drop(server);
+            done.send(()).unwrap();
+        });
+        let stopped = result.recv_timeout(Duration::from_secs(2));
+        drop(release);
+        worker.join().unwrap();
+        stopped.unwrap();
+        let _rebound = TcpListener::bind(address).unwrap();
+    }
+
     #[test]
     fn http_cannot_place_a_pilots_chassis() {
         let host = Host::new(

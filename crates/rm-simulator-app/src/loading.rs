@@ -527,6 +527,11 @@ pub fn to_title(world: &mut World, status: Option<String>) {
         world.insert_resource(SceneInput(Some(SceneState::default())));
         world.insert_resource(rm_simulator_render::targets::TargetInput::default());
     }
+    if let Some(mut scenery) =
+        world.get_resource_mut::<rm_simulator_render::cad::SceneryVisibility>()
+    {
+        scenery.set_if_neq(rm_simulator_render::cad::SceneryVisibility(true));
+    }
     teardown(world);
     if status.is_some() && world.contains_resource::<crate::screenshot::ScreenshotRequest>() {
         world.write_message(AppExit::error());
@@ -618,6 +623,16 @@ mod tests {
             ready_frames: 0,
         });
         (world, sender)
+    }
+
+    #[test]
+    fn leaving_colliders_alone_restores_scenery_for_title_and_staging() {
+        use rm_simulator_render::cad::SceneryVisibility;
+        let mut world = World::new();
+        world.insert_resource(SceneryVisibility(false));
+        to_title(&mut world, None);
+        assert!(world.resource::<SceneryVisibility>().0);
+        assert_eq!(queued(&world), Some(Screen::Title));
     }
 
     #[test]

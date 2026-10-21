@@ -52,7 +52,10 @@ pub struct Request {
     /// Last authoritative checkpoint, the rules' hidden state included, that the
     /// worker restores a whole `Field` from. Provisional balls meet the same
     /// terrain, armor and moving equipment as the host's ball.
-    pub snapshot: FieldSnapshot,
+    pub snapshot: Arc<FieldSnapshot>,
+    /// Sampled peer poses applied when this checkpoint is restored. Commands
+    /// are cleared so peers coast just as they do in the presented scene.
+    pub peers: Vec<ChassisSnapshot>,
     /// The shooter's presented chassis. The restore applies it with the client's
     /// own command, so the local prediction drives it, while every other chassis
     /// is placed with a cleared command and coasts on the sampled pose.
@@ -106,7 +109,7 @@ impl Scene {
         // The owner stands where its own prediction puts it; peers coast on the
         // pose the caller sampled, with no command of their own to drive them.
         let _ = field.reset_chassis(&request.own);
-        for state in &request.snapshot.chassis {
+        for state in &request.peers {
             if state.id != request.own.id {
                 let mut peer = state.clone();
                 peer.command = Default::default();
@@ -207,11 +210,20 @@ impl Worker {
     /// Hand a request to the worker and take the output of the previous one
     /// without blocking. Returns `None` while the worker holds the lock, so a
     /// caller that fell behind skips a frame instead of stalling the render
-    /// thread, and a request that replaces an unread one is dropped.
+    /// thread, and a request that replaces an unread one is dropped. An empty
+    /// flight list clears queued work and returns an empty output without replay.
     pub fn exchange(&self, request: Request) -> Option<Output> {
         let Ok(mut mailbox) = self.shared.0.try_lock() else {
             return None;
         };
+        if request.flights.is_empty() {
+            mailbox.request = None;
+            mailbox.output = None;
+            return Some(Output {
+                epoch: request.epoch,
+                projectiles: BTreeMap::new(),
+            });
+        }
         mailbox.request = Some(request);
         let result = mailbox.output.take();
         self.shared.1.notify_one();
@@ -242,6 +254,42 @@ pub fn muzzle(
 mod tests {
     use super::*;
     use rm_simulator_world::{Caliber, ChassisConfig, ChassisPlacement, FieldConfig, Pose, Team};
+    #[test]
+    fn restore_uses_sampled_peer_poses_without_mutating_shared_checkpoint() {
+        let placement = ChassisPlacement {
+            config: ChassisConfig::default(),
+            team: Team::Red,
+            kind: rm_simulator_world::RobotKind::Infantry,
+            performance: None,
+            spawn: Pose::at([-5., 0., 1.]),
+        };
+        let field = Field::new(&FieldConfig {
+            chassis: vec![placement.clone(), placement],
+            ..Default::default()
+        })
+        .unwrap();
+        let snapshot = Arc::new(field.snapshot());
+        let mut peer = snapshot.chassis[1].clone();
+        peer.pose.translation_m[0] = 5.;
+        let request = Request {
+            epoch: 1,
+            snapshot_id: 1,
+            snapshot: Arc::clone(&snapshot),
+            peers: vec![peer.clone()],
+            own: snapshot.chassis[0].clone(),
+            time_ns: 0,
+            flights: vec![],
+        };
+        let scene = Scene::restore(&request, &field.static_geometry_snapshot(), 0.).unwrap();
+        assert_eq!(scene.field.snapshot().chassis[1].pose, peer.pose);
+        assert_ne!(snapshot.chassis[1].pose, peer.pose);
+        // An idle request never enters the worker mailbox: there is no field
+        // to restore or step until a flight exists.
+        let worker = Worker::new(field.static_geometry_snapshot(), 0.).unwrap();
+        assert!(worker.exchange(request).unwrap().projectiles.is_empty());
+        assert!(worker.shared.0.lock().unwrap().request.is_none());
+    }
+
     #[test]
     fn authoritative_checkpoint_replaces_provisional_trajectory_and_epoch_clears_it() {
         let field = Field::new(&FieldConfig {
@@ -274,7 +322,8 @@ mod tests {
                 if let Some(output) = worker.exchange(Request {
                     epoch,
                     snapshot_id: if accepted { 2 } else { 1 },
-                    snapshot: snapshot.clone(),
+                    snapshot: Arc::new(snapshot.clone()),
+                    peers: snapshot.chassis.clone(),
                     own: snapshot.chassis[0].clone(),
                     time_ns,
                     flights: if epoch == 2 {

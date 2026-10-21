@@ -1382,7 +1382,10 @@ projectiles and field collision. They inherit their last carried linear/angular
 velocity, fall under gravity and can rest on a robot. Disconnecting a carrier
 releases its cargo. Identity, shape, attachment, pose, velocities and grasp
 transform survive full checkpoints and prediction restore. There is no flight
-expiry or projectile allowance for an Energy Unit.
+expiry or projectile allowance for an Energy Unit. The world admits at most 32
+persistent Units, matching its checkpoint bound. When full, deployment preload
+fails without adding a body or changing the gripper; reset the field to clear
+existing Units. Carrier removal preserves released Units within this bound.
 
 The J panel has **Grip / release Unit**, XYZ translation jogs (1 cm) and
 roll/pitch/yaw jogs (5°), also available through `EnergyGrip` and `EnergyArmJog`

@@ -246,7 +246,6 @@ pub(crate) struct DynamicWireframe {
     cube: Option<Handle<Mesh>>,
     sphere: Option<Handle<Mesh>>,
     material: Option<Handle<StandardMaterial>>,
-    entities: usize,
 }
 struct MovingMeshPose {
     kind: rm_simulator_world::referee::Mechanism,
@@ -408,7 +407,11 @@ pub fn dynamic_colliders(
     for transform in primitive_transforms(scene, &session.snapshot) {
         wanted.push((if transform.0 { sphere } else { cube }.clone(), transform.1));
     }
+    let mut occupied = vec![false; wanted.len()];
     for (index, mut mesh, mut transform, mut visibility) in &mut instances {
+        if let Some(slot) = occupied.get_mut(index.0) {
+            *slot = true;
+        }
         if let Some((wanted_mesh, wanted_pose)) = wanted.get(index.0) {
             mesh.set_if_neq(Mesh3d(wanted_mesh.clone()));
             transform.set_if_neq(*wanted_pose);
@@ -417,7 +420,10 @@ pub fn dynamic_colliders(
             visibility.set_if_neq(Visibility::Hidden);
         }
     }
-    for (index, (mesh, transform)) in wanted.iter().enumerate().skip(cache.entities) {
+    for (index, (mesh, transform)) in wanted.iter().enumerate() {
+        if occupied[index] {
+            continue;
+        }
         commands.spawn((
             DynamicCollisionWireframe(index),
             bevy::pbr::wireframe::NoWireframe,
@@ -429,7 +435,6 @@ pub fn dynamic_colliders(
             Visibility::Inherited,
         ));
     }
-    cache.entities = cache.entities.max(wanted.len());
 }
 
 fn primitive_transforms(
@@ -502,6 +507,62 @@ fn primitive_transforms(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dynamic_wireframes_recreate_despawned_slots_after_rejoin() {
+        use crate::controls::{Drive, Player};
+        use rm_simulator_render::sync::SceneInput;
+        let session = crate::session::test_session(true);
+        let id = session.chassis_id.unwrap();
+        let mut app = App::new();
+        app.insert_resource(session)
+            .insert_resource(CollisionDebug::new(CollisionView::Overlay))
+            .insert_resource(Player::at(Vec3::ZERO, 1.2, 0.4))
+            .insert_resource(Drive::new(id, true))
+            .init_resource::<SceneInput>()
+            .init_resource::<rm_simulator_render::targets::TargetInput>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .add_systems(
+                Update,
+                (crate::scene::publish_scene, dynamic_colliders).chain(),
+            );
+        app.update();
+        let entities: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<DynamicCollisionWireframe>>()
+            .iter(app.world())
+            .collect();
+        assert!(!entities.is_empty());
+        // Leave one live slot so this also covers holes in the slot sequence.
+        for entity in entities.iter().skip(1) {
+            app.world_mut().despawn(*entity);
+        }
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&DynamicCollisionWireframe>()
+                .iter(app.world())
+                .count(),
+            entities.len()
+        );
+        let remaining: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<DynamicCollisionWireframe>>()
+            .iter(app.world())
+            .collect();
+        for entity in remaining {
+            app.world_mut().despawn(entity);
+        }
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&DynamicCollisionWireframe>()
+                .iter(app.world())
+                .count(),
+            entities.len()
+        );
+    }
+
     #[test]
     fn collider_toggle_preserves_client_presentation() {
         use crate::controls::{Drive, Player};

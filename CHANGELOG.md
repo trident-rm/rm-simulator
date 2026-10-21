@@ -4,6 +4,15 @@
 
 ## Unreleased
 
+- Bound player display names and concurrent HTTP handlers, with shared request
+  deadlines covering socket reads, host queues and response writes.
+- Enforce the 32-Unit admission/checkpoint limit without partial mutation;
+  continue autonomous Core recovery during Engineer module loss and eliminate
+  per-tick Energy Unit hull copies.
+- Skip idle projectile prediction, share replay checkpoints and avoid full-world
+  snapshots when aiming a shot. Restore scenery and collision overlays correctly
+  after leaving and rejoining a match.
+
 - Fix external refreshes erasing scheduled manual takeover; retain pilot replay
   evidence across control changes. Move ROS HTTP I/O to bounded independent
   workers, add compact clock/control endpoints and avoid full snapshots in

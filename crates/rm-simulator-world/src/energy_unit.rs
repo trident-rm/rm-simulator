@@ -5,6 +5,9 @@ use crate::{Field, FieldError, Pose};
 use glam::{DQuat, DVec3};
 use rm_simulator_physics::projectile::{PayloadShape, PayloadSnapshot};
 use serde::{Deserialize, Serialize};
+
+// Admission and restore share this bound; Units persist until the field resets.
+const MAX_ENERGY_UNITS: usize = 32;
 fn q(p: Pose) -> DQuat {
     let [w, x, y, z] = p.rotation_wxyz;
     DQuat::from_xyzw(x, y, z, w)
@@ -78,11 +81,13 @@ impl Field {
     fn wrist(&self, owner: u32) -> Option<Pose> {
         let arm = self.arms.iter().find(|a| a.owner == owner)?;
         Some(compose(
-            self.chassis_snapshot(owner)?.pose,
+            self.chassis_control_state(owner)?.pose,
             arm.model.engineer.tool_pose(arm.joints_rad),
         ))
     }
     /// Preload exactly one Unit at deployment, with closed jaws. Never called by assembly start.
+    /// Rejects admission without mutation when 32 persistent Units already exist;
+    /// released Units survive carrier removal and are cleared by resetting the field.
     pub fn preload_energy_unit(
         &mut self,
         owner: u32,
@@ -90,6 +95,9 @@ impl Field {
     ) -> Result<(), FieldError> {
         if self.energy_units.iter().any(|u| u.physical.id == owner) {
             return Err(FieldError::Restore("duplicate Energy Unit identity"));
+        }
+        if self.energy_units.len() >= MAX_ENERGY_UNITS {
+            return Err(FieldError::Restore("too many Energy Units"));
         }
         let wrist = self
             .wrist(owner)
@@ -266,88 +274,92 @@ impl Field {
     pub(crate) fn sync_energy_units(&mut self) {
         let dt = self.step_duration().as_secs_f64();
         for index in 0..self.energy_units.len() {
-            let mut unit = self.energy_units[index].clone();
-            if let Attachment::Seated(owner) = unit.attachment {
-                if let Some(run) = self
-                    .assemblies
-                    .iter()
-                    .find(|r| r.owner == owner && r.generation == unit.seated_generation)
-                    && let Some(recovery) = &run.recovery
-                    && recovery.elapsed_ns > 0
-                {
-                    let head = run.pose.frames(&run.model)["core/q"];
-                    let at = compose(compose(run.world_from_rig, head), unit.grasp);
-                    let previous = self.physics.payload(unit.physical.id).unwrap();
-                    let velocity = ((DVec3::from_array(at.translation_m)
-                        - DVec3::from_array(previous.pose.translation_m))
-                        / dt)
-                        .to_array();
-                    let angular =
-                        ((q(at) * q(previous.pose).inverse()).to_scaled_axis() / dt).to_array();
-                    let released = recovery.released();
-                    self.physics
-                        .set_payload_motion(unit.physical.id, !released, at, velocity, angular)
-                        .expect("validated seated Unit");
-                    unit.physical = self.physics.payload(unit.physical.id).unwrap();
-                    unit.physical.velocity_m_s = velocity;
-                    unit.physical.angular_velocity_rad_s = angular;
-                    if released {
-                        unit.attachment = Attachment::Free;
+            // Only attachment metadata is copied. Hull buffers are immutable and
+            // never participate in prescribed motion synchronization.
+            let unit = &self.energy_units[index];
+            let attachment = unit.attachment;
+            let grasp = unit.grasp;
+            let seated_generation = unit.seated_generation;
+            let (at, prescribed) = match attachment {
+                Attachment::Free => continue,
+                Attachment::Seated(owner) => {
+                    let Some(run) = self
+                        .assemblies
+                        .iter()
+                        .find(|r| r.owner == owner && r.generation == seated_generation)
+                    else {
+                        continue;
+                    };
+                    let Some(recovery) = &run.recovery else {
+                        continue;
+                    };
+                    if recovery.elapsed_ns == 0 {
+                        continue;
                     }
-                    self.energy_units[index] = unit;
+                    let head = run.pose.frames(&run.model)["core/q"];
+                    (
+                        compose(compose(run.world_from_rig, head), grasp),
+                        !recovery.released(),
+                    )
                 }
-                continue;
-            }
-            let Attachment::Held(owner) = unit.attachment else {
-                continue;
-            };
-            let Some(wrist) = self.wrist(owner) else {
-                let p = &unit.physical;
-                let _ = self.physics.set_payload_motion(
-                    p.id,
-                    false,
-                    p.pose,
-                    p.velocity_m_s,
-                    p.angular_velocity_rad_s,
-                );
-                self.energy_units[index].attachment = Attachment::Free;
-                continue;
-            };
-            let at = compose(wrist, unit.grasp);
-            if let Some(run) = self.assemblies.iter().find(|r| {
-                r.owner == owner && (r.active() || r.phase == crate::assembly::Phase::Completed)
-            }) {
-                // A confirmed Unit is consumed once and follows the actual Core head until discharge.
-                if matches!(
-                    run.phase,
-                    crate::assembly::Phase::Completed | crate::assembly::Phase::BreakingAway
-                ) && !run.pose.gripped
-                    && unit.seated_generation != run.generation
-                    && run.cursor > 0
-                {
-                    unit.attachment = Attachment::Seated(owner);
-                    unit.spent = true;
-                    let head = compose(run.world_from_rig, run.pose.frames(&run.model)["core/q"]);
-                    unit.grasp = compose(inverse(head), at);
-                    unit.seated_generation = run.generation;
+                Attachment::Held(owner) => {
+                    let Some(wrist) = self.wrist(owner) else {
+                        let unit = &mut self.energy_units[index];
+                        let p = &mut unit.physical;
+                        self.physics
+                            .set_payload_motion(
+                                p.id,
+                                false,
+                                p.pose,
+                                p.velocity_m_s,
+                                p.angular_velocity_rad_s,
+                            )
+                            .expect("validated held Unit");
+                        p.prescribed = false;
+                        unit.attachment = Attachment::Free;
+                        continue;
+                    };
+                    let at = compose(wrist, grasp);
+                    if let Some(run) = self.assemblies.iter().find(|r| {
+                        r.owner == owner
+                            && (r.active() || r.phase == crate::assembly::Phase::Completed)
+                    }) && matches!(
+                        run.phase,
+                        crate::assembly::Phase::Completed | crate::assembly::Phase::BreakingAway
+                    ) && !run.pose.gripped
+                        && seated_generation != run.generation
+                        && run.cursor > 0
+                    {
+                        let unit = &mut self.energy_units[index];
+                        unit.attachment = Attachment::Seated(owner);
+                        unit.spent = true;
+                        let head =
+                            compose(run.world_from_rig, run.pose.frames(&run.model)["core/q"]);
+                        unit.grasp = compose(inverse(head), at);
+                        unit.seated_generation = run.generation;
+                    }
+                    (at, true)
                 }
-            }
-            let previous = self
-                .physics
-                .payload(unit.physical.id)
-                .unwrap_or(unit.physical.clone());
+            };
+            let unit = &mut self.energy_units[index];
+            // Prescribed Units retain their last pose here; free Units are read
+            // from physics on pickup, before switching back to prescribed motion.
+            let previous = &mut unit.physical;
             let velocity = ((DVec3::from_array(at.translation_m)
                 - DVec3::from_array(previous.pose.translation_m))
                 / dt)
                 .to_array();
             let angular = ((q(at) * q(previous.pose).inverse()).to_scaled_axis() / dt).to_array();
-            let _ = self
-                .physics
-                .set_payload_motion(previous.id, true, at, velocity, angular);
-            unit.physical = self.physics.payload(previous.id).unwrap();
-            unit.physical.velocity_m_s = velocity;
-            unit.physical.angular_velocity_rad_s = angular;
-            self.energy_units[index] = unit;
+            self.physics
+                .set_payload_motion(previous.id, prescribed, at, velocity, angular)
+                .expect("validated attached Unit");
+            previous.pose = at;
+            previous.prescribed = prescribed;
+            previous.velocity_m_s = velocity;
+            previous.angular_velocity_rad_s = angular;
+            if !prescribed {
+                unit.attachment = Attachment::Free;
+            }
         }
     }
     pub(crate) fn release_energy_units(&mut self, owner: u32) {
@@ -361,12 +373,13 @@ impl Field {
                     p.velocity_m_s,
                     p.angular_velocity_rad_s,
                 );
+                unit.physical.prescribed = false;
                 unit.attachment = Attachment::Free;
             }
         }
     }
     pub(crate) fn restore_energy_units(&mut self) -> Result<(), FieldError> {
-        if self.energy_units.len() > 32 {
+        if self.energy_units.len() > MAX_ENERGY_UNITS {
             return Err(FieldError::Restore("too many Energy Units"));
         }
         for unit in &self.energy_units {
@@ -425,6 +438,50 @@ mod tests {
         field.preload_energy_unit(run.owner, shape).unwrap();
         (field, run.owner)
     }
+    #[test]
+    fn repeated_deployments_refuse_excess_units_without_breaking_restore() {
+        let (mut field, owner) = fixture();
+        let model = field.arms()[0].model.clone();
+        let shape = field.energy_units()[0].physical.shape.clone();
+        field.remove_chassis(owner).unwrap();
+        for _ in 1..MAX_ENERGY_UNITS {
+            let owner = field
+                .add_chassis(&crate::ChassisPlacement {
+                    config: Default::default(),
+                    spawn: Pose::at([0., 0., 0.4]),
+                    team: crate::Team::Red,
+                    kind: crate::RobotKind::Engineer,
+                    performance: None,
+                })
+                .unwrap();
+            field
+                .add_arm(ArmState::neutral(owner, model.clone()))
+                .unwrap();
+            field.preload_energy_unit(owner, shape.clone()).unwrap();
+            field.remove_chassis(owner).unwrap();
+        }
+        let owner = field
+            .add_chassis(&crate::ChassisPlacement {
+                config: Default::default(),
+                spawn: Pose::at([0., 0., 0.4]),
+                team: crate::Team::Red,
+                kind: crate::RobotKind::Engineer,
+                performance: None,
+            })
+            .unwrap();
+        field.add_arm(ArmState::neutral(owner, model)).unwrap();
+        let before = field.snapshot();
+        assert!(matches!(
+            field.preload_energy_unit(owner, shape),
+            Err(FieldError::Restore("too many Energy Units"))
+        ));
+        assert!(field.physics.payload(owner).is_none());
+        assert_eq!(field.energy_units.len(), MAX_ENERGY_UNITS);
+        assert_eq!(field.snapshot(), before);
+        let restored = Field::restore(&before, &field.fixed_geometry_snapshot(), 0.).unwrap();
+        assert_eq!(restored.energy_units(), field.energy_units());
+    }
+
     #[test]
     fn core_recovery_follows_socket_drops_spent_unit_and_survives_disconnect() {
         use crate::assembly::{CoreRecovery, Phase};
@@ -527,6 +584,27 @@ mod tests {
             Field::restore(&field.snapshot(), &crate::StaticGeometry::default(), 0.).unwrap();
         assert!(reloaded.energy_units()[0].spent);
     }
+    #[test]
+    fn ticking_prescribed_and_free_units_retains_immutable_hull_buffers() {
+        let (mut field, owner) = fixture();
+        let hulls = |field: &Field| {
+            field.energy_units[0]
+                .physical
+                .shape
+                .hulls_m
+                .iter()
+                .map(|h| h.as_ptr())
+                .collect::<Vec<_>>()
+        };
+        let before = hulls(&field);
+        field.step(1).unwrap();
+        assert_eq!(hulls(&field), before);
+        field.toggle_energy_grip(owner).unwrap();
+        let before = hulls(&field);
+        field.step(1).unwrap();
+        assert_eq!(hulls(&field), before);
+    }
+
     #[test]
     fn a_deployed_unit_is_held_visible_and_can_release_and_regrip_without_spawning() {
         let (mut field, id) = fixture();

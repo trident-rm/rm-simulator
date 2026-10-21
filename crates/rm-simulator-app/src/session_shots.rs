@@ -6,6 +6,7 @@ use crate::projectile_prediction::{Flight, Request, Worker};
 use rm_simulator_server::protocol::ShotResult;
 use std::{
     collections::BTreeMap,
+    sync::Arc,
     time::{Duration, Instant},
 };
 struct LocalFlight {
@@ -37,6 +38,8 @@ pub(super) struct LocalShots {
     /// when prediction is off.
     pub worker: Option<Worker>,
     flights: BTreeMap<u64, LocalFlight>,
+    /// Lazily copied once per replay checkpoint, shared by frame requests.
+    checkpoint: Option<(u64, u64, Arc<FieldSnapshot>)>,
     next_launch_ns: u64,
     last_launch: Option<(u64, u64, f64)>,
     /// Shots that expired after 5 s with no authoritative outcome.
@@ -293,6 +296,10 @@ impl Session {
                 }
             }
         }
+        if self.shots.flights.is_empty() {
+            self.shots.checkpoint = None;
+            return;
+        }
         if self.paused || self.prediction_limited() {
             return;
         }
@@ -302,20 +309,36 @@ impl Session {
         let Some(worker) = &self.shots.worker else {
             return;
         };
-        let mut snapshot = self.snapshot.clone();
-        for chassis in &mut snapshot.chassis {
-            if Some(chassis.id) != self.chassis_id
-                && let Some(pose) = self
-                    .remote_history
-                    .sample(chassis.id, self.remote_view_time_ns)
-            {
-                *chassis = pose;
-            }
+        let checkpoint = self.shots.checkpoint.get_or_insert_with(|| {
+            (
+                self.prediction.epoch,
+                self.snapshot_id,
+                Arc::new(self.snapshot.clone()),
+            )
+        });
+        if (checkpoint.0, checkpoint.1) != (self.prediction.epoch, self.snapshot_id) {
+            *checkpoint = (
+                self.prediction.epoch,
+                self.snapshot_id,
+                Arc::new(self.snapshot.clone()),
+            );
         }
+        let snapshot = Arc::clone(&checkpoint.2);
+        let peers = snapshot
+            .chassis
+            .iter()
+            .filter(|chassis| Some(chassis.id) != self.chassis_id)
+            .map(|chassis| {
+                self.remote_history
+                    .sample(chassis.id, self.remote_view_time_ns)
+                    .unwrap_or_else(|| chassis.clone())
+            })
+            .collect();
         if let Some(output) = worker.exchange(Request {
             epoch: self.prediction.epoch,
             snapshot_id: self.snapshot_id,
             snapshot,
+            peers,
             own,
             time_ns: self.prediction.time_ns.max(self.frame_time_ns),
             flights: self
@@ -441,6 +464,37 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn projectile_replay_is_idle_without_flights_and_shares_active_checkpoint() {
+        let mut session = crate::session::test_session(false);
+        let field = rm_simulator_world::Field::new(&Default::default()).unwrap();
+        session.shots.worker = Some(Worker::new(field.static_geometry_snapshot(), 0.).unwrap());
+        session.advance_local_shots();
+        assert!(session.shots.checkpoint.is_none());
+        let shooter = session.chassis_id.unwrap();
+        session.number_input(Command::Chassis {
+            chassis: shooter,
+            command: Default::default(),
+        });
+        session.begin_local_shot(shooter).unwrap();
+        session.advance_local_shots();
+        let first = Arc::clone(&session.shots.checkpoint.as_ref().unwrap().2);
+        session.advance_local_shots();
+        assert!(Arc::ptr_eq(
+            &first,
+            &session.shots.checkpoint.as_ref().unwrap().2
+        ));
+        session.snapshot_id += 1;
+        session.advance_local_shots();
+        assert!(!Arc::ptr_eq(
+            &first,
+            &session.shots.checkpoint.as_ref().unwrap().2
+        ));
+        session.cancel_local_shots();
+        session.advance_local_shots();
+        assert!(session.shots.checkpoint.is_none());
+    }
 
     #[test]
     fn fortress_reserve_unblocks_zero_personal_ammo_and_pending_shots_reserve_it() {
