@@ -97,6 +97,8 @@ pub struct Session {
     pub map_interactions: std::collections::VecDeque<rm_simulator_server::map_interaction::Event>,
     /// Most recent host-owned navigation paths and status, for passive overlays.
     pub navigation: Vec<rm_simulator_server::navigation::View>,
+    /// Host Sentry aim/sweep diagnostics and optical contacts.
+    pub sentry_tracking: Vec<rm_simulator_server::sentry_controller::View>,
     /// Interpolation delay for peer motion, automatic or set by hand in the
     /// F3 menu.
     pub remote_buffer: crate::interpolation::Buffer,
@@ -506,6 +508,7 @@ impl Session {
             snapshot,
             map_interactions: Default::default(),
             navigation: state.navigation.clone(),
+            sentry_tracking: state.sentry_tracking.clone(),
             paused,
             team,
             client_id,
@@ -829,6 +832,7 @@ impl Session {
                 }
             }
             self.navigation = state.navigation.clone();
+            self.sentry_tracking = state.sentry_tracking.clone();
             self.snapshot = state.field;
         }
         self.poll_owner_anchor();

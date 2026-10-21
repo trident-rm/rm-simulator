@@ -19,6 +19,7 @@ mod console;
 mod controls;
 mod debug;
 mod debug_panel;
+mod enemy_intel;
 mod frames;
 mod graphics;
 mod hit_feedback;
@@ -181,6 +182,7 @@ fn main() -> AppExit {
         .add_plugins(hud::HudPlugin)
         .add_plugins(assembly::AssemblyPlugin)
         .add_plugins(sentry::SentryPlugin)
+        .add_plugins(enemy_intel::EnemyIntelPlugin)
         .add_plugins(debug_panel::DebugPanelPlugin)
         .add_plugins(zone_debug::ZoneDebugPlugin)
         .insert_resource(debug_panel::DebugOptions {

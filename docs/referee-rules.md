@@ -12,3 +12,12 @@ exception, gameplay engine and referee scheduler are preserved in the published
 `rm2026-final` tag. [Archive instructions](seasons.md) explain how to run it.
 Main retains shared physical dimensions and serialized records, but cannot run or
 restore a 2026 match.
+
+The native Radar implementation follows UC §5.7.4 Tables 5-29–30: integer-tenth
+mark progress/history, 500 ms interruption samples, 100/50 opposing/friendly
+localization thresholds, 15%/20% vulnerability, union-minute opportunity accrual
+and two possible 30-second double activations. Localization-link faults are
+sampled independently at 2 Hz (§5.1.5). Decoded information-wave observations use
+an explicit simulator receiver proxy; see the [freshness and presentation
+policies](gameplay.md#native-radar-and-team-intelligence). Sentry optical tracking
+is host control input and never grants Radar progress or triggers a shot.

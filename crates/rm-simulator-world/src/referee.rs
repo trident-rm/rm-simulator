@@ -661,6 +661,43 @@ pub enum RefereeCommand {
         /// Charge the automatic-mode commander intervention fee.
         commander: bool,
     },
+    /// Observe localization-module connectivity; sampled at 2 Hz with other modules.
+    SetLocalizationModule {
+        /// Target chassis identity.
+        robot: u32,
+        /// Whether the localization link is present.
+        online: bool,
+    },
+    /// Inject a Radar planar observation; the host evaluates its actual error.
+    RadarReport {
+        /// Observing side, not the target side.
+        team: Team,
+        /// Target chassis identity.
+        robot: u32,
+        /// Reported planar FLU position in metres.
+        position_m: [f64; 2],
+    },
+    /// Supply independently decoded information-wave fields for a team.
+    RadarInformation {
+        /// Observing side.
+        team: Team,
+        /// Target chassis identity.
+        robot: u32,
+        /// Observed fields; missing values remain unknown.
+        information: gp::rmuc_2027::radar::Information,
+    },
+    /// Spend a native Radar double-vulnerability opportunity.
+    RadarDouble {
+        /// Observing side.
+        team: Team,
+    },
+    /// Set interference faced by one Radar, a stand-in for successful key decoding.
+    RadarInterference {
+        /// Observing side whose receiver faces this interference.
+        team: Team,
+        /// Difficulty index 0..=2, representing rulebook levels 1–3.
+        difficulty: u8,
+    },
     /// Observe referee module connectivity; state is sampled at 2 Hz.
     SetRobotModules {
         /// Chassis identity.

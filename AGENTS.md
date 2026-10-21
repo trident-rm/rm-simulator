@@ -116,7 +116,7 @@ in the shared Rapier scene. See
 `docs/assembly-workbench.md`. Adaptive reinforcement
 uses frozen selection-time areas, inclusive circle boundaries and clipping without
 resizing; undefined selection-time statistics freeze default armor until reselection.
-Referee commands stand in for Radar selection. Native Road/Highland/
+Referee commands stand in for Radar adaptive selection and radio decoding; native Radar marks, localization-module faults and independently sourced enemy contacts are supported. Native Road/Highland/
 Tunnel traversal and Small/Big Rune effects are supported. Sentry mode/posture
 budgets and paid commander operations are native; referee power uses measured
 wheel motor load, a separate 60 J buffer and 2 Hz module-fault sampling. See
@@ -211,8 +211,7 @@ not a refactor.
   explicit ticks, path diagnostics through snapshots, and braking on obstruction
   or stalled progress, with at most three recovery replans per goal. Inflated
   terrain checks, explicit 2027 Road exclusions and bounded per-Sentry learned
-  failure regions constrain navigation only. Manual Sentry pilots remain manual;
-  no automatic combat.
+  failure regions constrain navigation only. Manual Sentry pilots default to manual control and may opt into host optical aim/sweep; operator navigation Sentries default to that controller. It yields to tunnel/stow alignment and never fires.
   The CAD bake is an in-memory host cache; controller state is external input,
   not a second physical world or an addition to the referee rules.
 - **Renderer is passive.** It applies caller-owned `SceneState` and never

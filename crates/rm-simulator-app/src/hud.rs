@@ -856,9 +856,6 @@ pub fn update_panel_rows(
                 }
             }
             for p in session.roster.iter().filter(|p| p.team == team) {
-                let robot = session
-                    .rmuc_2027()
-                    .and_then(|s| s.game.robots.iter().find(|r| Some(r.id) == p.chassis));
                 let label = match (p.chassis, p.robot) {
                     (Some(id), Some(robot)) => format!("#{id} {}", robot.name()),
                     _ => p.role.name().to_owned(),
@@ -874,7 +871,9 @@ pub fn update_panel_rows(
                         }
                     ),
                     label,
-                    robot.map_or("--".into(), |r| format!("{} / {} HP", r.hp, r.max_hp)),
+                    p.chassis.map_or("--".into(), |id| {
+                        crate::enemy_intel::health_text(&session, id)
+                    }),
                 ]);
             }
             // Roster and world updates travel separately. Keep every live robot
@@ -882,13 +881,10 @@ pub fn update_panel_rows(
             for chassis in session.snapshot.chassis.iter().filter(|c| {
                 Some(c.team) == team && !session.roster.iter().any(|p| p.chassis == Some(c.id))
             }) {
-                let robot = session
-                    .rmuc_2027()
-                    .and_then(|s| s.game.robots.iter().find(|r| r.id == chassis.id));
                 rows.push([
                     format!("Robot #{}", chassis.id),
                     "Pilot".into(),
-                    robot.map_or("--".into(), |r| format!("{} / {} HP", r.hp, r.max_hp)),
+                    crate::enemy_intel::health_text(&session, chassis.id),
                 ]);
             }
         }
@@ -1223,6 +1219,8 @@ pub fn update_map(
     artwork: Option<Res<crate::minimap::Minimap>>,
     window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
     images: Query<&ImageNode, With<FieldMap>>,
+    labels: Query<&Children>,
+    mut texts: Query<&mut Text>,
     mut pilot: Query<&mut Visibility, With<PilotStack>>,
 ) {
     let (map_entity, node) = &mut *map;
@@ -1294,6 +1292,25 @@ pub fn update_map(
             c.id.to_string(),
         ));
     }
+    if !session.role.referees() {
+        for contact in rm_simulator_server::sentry_controller::contacts(
+            &session.snapshot,
+            &session.sentry_tracking,
+            session.team,
+        ) {
+            let title = crate::enemy_intel::caption(&contact, false);
+            items.push((
+                MapItem::Robot(contact.robot),
+                contact.position_m,
+                team_color(contact.team).with_alpha(if contact.age_ns > 500_000_000 {
+                    0.5
+                } else {
+                    1.
+                }),
+                title,
+            ));
+        }
+    }
     for (i, r) in session.snapshot.runes.iter().enumerate() {
         items.push((
             MapItem::Rune(i),
@@ -1345,12 +1362,21 @@ pub fn update_map(
     }
     for (id, position, color, title) in items {
         let (x, y) = crate::minimap::position(position, bounds);
-        if let Some((_, _, mut node, mut background)) =
+        if let Some((entity, _, mut node, mut background)) =
             dots.iter_mut().find(|(_, dot, _, _)| dot.0 == id)
         {
             node.left = percent(x);
             node.top = percent(y);
             background.0 = color;
+            if let Ok(children) = labels.get(entity) {
+                for child in children.iter() {
+                    if let Ok(mut text) = texts.get_mut(child)
+                        && text.0 != title
+                    {
+                        text.0 = title.clone();
+                    }
+                }
+            }
         } else {
             commands.entity(*map_entity).with_children(|p| {
                 p.spawn((

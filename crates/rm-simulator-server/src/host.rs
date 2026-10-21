@@ -1151,6 +1151,12 @@ impl Owner {
                     Command::PlaceChassis { .. } if !peer.owner => {
                         Some("only the embedded owner places a chassis")
                     }
+                    Command::SetSentryAutoAim { chassis, .. }
+                        if Some(chassis) != own_chassis
+                            && !(peer.owner && self.simulation.is_sentry_bot(chassis)) =>
+                    {
+                        Some("that Sentry is not yours")
+                    }
                     Command::ConvertHeavy { chassis }
                     | Command::EnergyGrip { chassis }
                     | Command::EnergyArmJog { chassis, .. }

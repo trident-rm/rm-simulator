@@ -145,6 +145,8 @@ pub struct Match {
     pub heavy_control_deficit: [u32; 2],
     /// Adaptive-armor observations, selection-time areas and opportunities.
     pub adaptive: super::adaptive::Adaptive,
+    /// Radar marks, decoded observations and opportunity timers, UC §5.7.4.
+    pub radar: super::radar::Radar,
     /// Native team Rune authority, Red then Blue, independent of the 2026 engine.
     pub runes: [super::rune::Rune; 2],
     /// Robots in ascending id order, excluding departed players.
@@ -195,6 +197,7 @@ impl Match {
             heavy_hp_deficit: [0; 2],
             heavy_control_deficit: [0; 2],
             adaptive: super::adaptive::Adaptive::default(),
+            radar: Default::default(),
             runes: std::array::from_fn(|i| super::rune::Rune::new(direction, i as u64 + 1)),
             robots: vec![],
             highland_team: [None; 2],
@@ -235,6 +238,16 @@ impl Match {
             terrain: super::terrain::Terrain::default(),
         });
         self.robots.sort_by_key(|r| r.id);
+        for marks in &mut self.radar.marks {
+            marks.insert(
+                id,
+                super::radar::Mark {
+                    next_wrong_ns: self.control.snapshot().elapsed_ns
+                        + super::radar::INTERRUPTION_NS,
+                    ..Default::default()
+                },
+            );
+        }
     }
     /// UC §5.7.1 launcher permission. Negative calculated times unlock immediately.
     /// Historical deficits survive repairs and control catch-up until the next round.
@@ -306,6 +319,10 @@ impl Match {
         if (self.phase == Phase::Running && self.elapsed_ns() >= ROUND_NS)
             || self.runes.iter().any(|r| !r.validate(self.elapsed_ns()))
             || !self.adaptive.validate(self.elapsed_ns())
+            || !self.radar.validate(
+                self.elapsed_ns(),
+                &self.robots.iter().map(|r| r.id).collect::<Vec<_>>(),
+            )
             || self.assembly.iter().any(|a| !a.validate(self.elapsed_ns()))
             || (self
                 .assembly
@@ -528,7 +545,9 @@ impl Match {
             let mut dt = duration
                 .min(ROUND_NS - now)
                 .min(SCORE_PERIOD_NS - now % SCORE_PERIOD_NS);
-            dt = dt.min(self.combat_boundary_ns());
+            dt = dt
+                .min(self.combat_boundary_ns())
+                .min(self.radar_boundary_ns());
             for a in &self.assembly {
                 if a.outcome == super::assembly::Outcome::Active {
                     dt = dt.min(a.deadline_ns.saturating_sub(now));
@@ -592,6 +611,7 @@ impl Match {
                     r.combat.sentry.advance(dt);
                 }
             }
+            let radar_before = self.elapsed_ns();
             let events = self.control.advance_ns(dt);
             self.apply_events(events);
             self.observe_heavy_deficits();
@@ -602,6 +622,7 @@ impl Match {
                 }
             }
             self.settle_assembly();
+            self.advance_radar(dt, radar_before);
             self.advance_combat(dt);
             self.settle_power_modules();
             if at < ROUND_NS && at.is_multiple_of(10_000_000_000) {

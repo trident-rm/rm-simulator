@@ -45,6 +45,8 @@ pub mod view;
 pub mod workload;
 
 pub mod input_stream;
+pub mod intelligence;
+pub mod sentry_controller;
 
 pub mod network_stats;
 

@@ -92,6 +92,7 @@ struct Header {
     hits_detected: u64,
     bots: Vec<u32>,
     navigation: Vec<crate::navigation::View>,
+    sentry_tracking: Vec<crate::sentry_controller::View>,
     /// Nonzero remainders of the stamps whose code marks one, in the order
     /// [`PlayerSnapshot::for_each_field_stamp`] visits them.
     sub_tick_ns: Vec<u32>,
@@ -711,6 +712,7 @@ impl PlayerSnapshot {
                 hits_detected: field.hits_detected,
                 bots: state.bots.clone(),
                 navigation: state.navigation.clone(),
+                sentry_tracking: state.sentry_tracking.clone(),
                 sub_tick_ns: Vec::new(),
             }),
             shot_results: Aligned(state.shot_results.iter().cloned().map(Aligned).collect()),
@@ -843,12 +845,23 @@ impl PlayerSnapshot {
             })
             .collect();
         let header = header.0;
+        if header.sentry_tracking.len() > 32
+            || header.sentry_tracking.iter().any(|v| {
+                v.detections.len() > 32
+                    || v.detections
+                        .iter()
+                        .any(|d| d.position_m.iter().any(|p| !p.is_finite()))
+            })
+        {
+            return Err(invalid("invalid Sentry tracking diagnostics"));
+        }
         if header.navigation.len() > 32 || header.navigation.iter().any(|view| !view.valid()) {
             return Err(invalid("invalid navigation diagnostics"));
         }
         Ok(SimulationState {
             bots: header.bots,
             navigation: header.navigation,
+            sentry_tracking: header.sentry_tracking,
             snapshot_id: header.snapshot_id,
             input_epoch: header.input_epoch,
             shot_results: shot_results.0.into_iter().map(|result| result.0).collect(),
@@ -1544,6 +1557,7 @@ mod tests {
         let mut state = SimulationState {
             bots: vec![],
             navigation: Vec::new(),
+            sentry_tracking: Vec::new(),
             input_epoch: 0,
             shot_results: vec![],
             snapshot_id: 0,
@@ -1599,6 +1613,7 @@ mod tests {
         SimulationState {
             bots: vec![],
             navigation: Vec::new(),
+            sentry_tracking: Vec::new(),
             input_epoch: 0,
             shot_results: Vec::new(),
             snapshot_id: 0,

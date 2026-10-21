@@ -333,6 +333,7 @@ impl Match {
         }
         self.gold[team] -= cost;
         let r = self.robots.iter_mut().find(|r| r.id == id).unwrap();
+        self.radar.respawn(id);
         r.hp = r.max_hp;
         r.combat.respawn = None;
         r.combat.paid_respawns = r.combat.paid_respawns.saturating_add(1);
@@ -416,6 +417,9 @@ impl Match {
             self.damage_robot(id, u32::MAX, true);
         } else {
             let r = self.robots.iter_mut().find(|r| r.id == id).unwrap();
+            if r.hp == 0 {
+                self.radar.respawn(id);
+            }
             r.hp = hp.min(r.max_hp);
             r.combat.respawn = None;
             r.combat.weakened = false;
@@ -641,6 +645,7 @@ impl Match {
                 p.progress_ns = p.progress_ns.saturating_add(dt * speed);
             }
             if respawning.contains(&r.id) {
+                self.radar.respawn(r.id);
                 r.hp = (r.max_hp + 5) / 10;
                 r.combat.respawn = None;
                 r.combat.weakened = true;

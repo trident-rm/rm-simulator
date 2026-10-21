@@ -497,6 +497,7 @@ fn run_arm(
             let mut state = SimulationState {
                 bots: Vec::new(),
                 navigation: Vec::new(),
+                sentry_tracking: Vec::new(),
                 snapshot_id: tick,
                 input_epoch: 0,
                 shot_results: Vec::new(),

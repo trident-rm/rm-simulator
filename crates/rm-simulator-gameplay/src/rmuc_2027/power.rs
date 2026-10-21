@@ -14,6 +14,8 @@ pub struct Modules {
     pub main_online: bool,
     /// Speed monitor connection; independent launcher lock cause.
     pub speed_online: bool,
+    /// Localization module connection; changes Radar quality rather than HP.
+    pub localization_online: bool,
     /// Number of disconnected armor modules, zero through four.
     pub offline_armor: u8,
     /// Supercapacitor manager connection.
@@ -24,6 +26,7 @@ impl Default for Modules {
         Self {
             main_online: true,
             speed_online: true,
+            localization_online: true,
             offline_armor: 0,
             supercap_online: true,
         }
@@ -83,6 +86,7 @@ impl Match {
             .find(|r| r.id == id)
             .ok_or("unknown robot")?;
         r.combat.power.modules = Modules {
+            localization_online: r.combat.power.modules.localization_online,
             main_online,
             speed_online,
             offline_armor,
@@ -133,6 +137,7 @@ impl Match {
             for r in &mut self.robots {
                 r.online = r.combat.power.modules.main_online;
                 r.combat.speed_module_online = r.combat.power.modules.speed_online;
+                r.combat.localization_module_online = r.combat.power.modules.localization_online;
                 if r.hp == 0 {
                     continue;
                 }

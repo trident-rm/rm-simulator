@@ -314,3 +314,64 @@ fold/arm actuation, suppresses ordinary hits and other module damage, disables
 RFID and map communication and suspends respawn. Infantry XP/levels still accrue.
 Speed-monitor reconnection clears only that module's launcher lock. Localization
 accuracy consequences remain deferred with the Radar observation system.
+
+### Native Radar and team intelligence
+
+UC §5.7.4 Tables 5-29–30 are native authority in `rmuc_2027::radar`:
+position reports update integer-tenth progress/history, interrupted streams
+produce wrong samples every 500 ms, and opposing/friendly localization thresholds
+are 100/50. Enemy vulnerability is 15% at 100 and 20% at 120, combined with
+other same-kind vulnerability by taking the strongest source. Each union minute
+with at least one living opposing robot vulnerable earns one double opportunity;
+up to two 30-second activations may be spent per round. Simultaneous vulnerable
+robots never multiply elapsed time. Interference difficulty suppresses the
+handicapped observer's vulnerability and opportunity accrual while preserving
+marking progress and localization. Revival preserves progress and resets history;
+reports and missing-data sampling continue while defeated.
+
+The world evaluates report error against authoritative positions, quantized to
+millimetres before the strict 800/1600 mm comparisons. Localization-module
+connectivity is independently sampled at 2 Hz; missing localization forces
+opposing reports accurate and friendly reports wrong (§5.1.5). Main-controller
+loss is a separate condition. All marks, observations, timers and pending module
+inputs survive complete restore.
+
+`server::intelligence::Contact` separates position provenance from optional HP,
+HP ceiling, ammunition and defense. Radar position alone never discloses those
+fields. Independent decoded information is accepted through a typed referee
+injection, with a one-second simulator freshness policy. Unlocalized last reports
+fade after 500 ms and disappear after two seconds; Table 5-30 localization remains
+available while progress meets its threshold. Enemy health in the scoreboard and
+roster also follows these observed fields. Full prediction checkpoints still
+contain authority: this is a presentation boundary, not an anti-cheat security
+boundary. The unspecified radio waveform, key decoder and unavailable 2027
+communication packet layout are not implemented; interference can be set by the
+referee as a decoder stand-in.
+
+### Optional Sentry scanning and tracking
+
+`server::sentry_controller` runs host-side optical acquisition at 16 Hz and applies
+its aim/rotation outputs after ordinary pilot inputs on every 128 Hz tick. Owned
+Sentries opt in through **Auto aim + sweep** and opt out through **Manual aim**;
+operator-spawned navigation Sentries opt in by default. Disabling it immediately
+returns aim and chassis rotation to normal input. **StopSentry** stops navigation
+and disables the sweep; a later navigation goal does not implicitly re-enable it.
+
+The simulator camera acquires opposing, living armor faces within 20 m,
+±0.70 rad yaw and ±0.5 rad pitch of the actual gimbal. Scenery rays, front-facing
+armor and approximate intervening robot bodies reject occluded targets. It keeps
+its visible target, otherwise selects the nearest visible enemy. Detection reports
+position and identity only, with a 250 ms freshness limit; it does not grant Radar
+progress, infer health or use the decoded/global position list to aim through
+walls. This models ideal optical recognition, not a camera-image detector.
+
+An unobstructed chassis sweeps at 0.8 rad/s. Without a visible target the gimbal
+sweeps independently in yaw and oscillates in pitch; with a target it tracks the
+visible armor center using the existing physical motor limits. This first pass
+is geometric tracking, without projectile lead/drag solving or a trigger policy.
+The controller never fires. Pilot movement and firing remain ordinary protocol
+inputs. Source stow and tunnel navigation take priority over aiming and rotation;
+passage yaw remains locked until open clearance, nearby geometry/robots prevent
+free rotation, and countdown/finished phases suspend scanning. The controller is
+host input, not another world or rule scheduler; diagnostics travel in protocol
+78 snapshots and physical commands remain in normal checkpoints.

@@ -25,6 +25,8 @@ pub mod combat;
 /// Sensor-driven assembly manipulation workbench; separate from virtual match rewards.
 pub mod manipulation;
 pub mod match_rules;
+/// Radar progress, information observations and vulnerability, UC §5.7.4.
+pub mod radar;
 /// Native 2027 Rune activation, motion, rings and non-field benefits.
 pub mod rune;
 /// Native physical terrain-card sequences and timed benefits (§5.6.4.5).

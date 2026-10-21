@@ -565,7 +565,7 @@ headless check still starts the real app but skips screenshots and encoding.
 The bake is cached in memory for the current loaded scene; no generated field
 asset is committed or written. Map processing/search run on one bounded worker,
 with latest-goal generations discarding stale results. Pose, command and path
-presentation travel through the existing multiplayer codec (protocol 77).
+presentation travel through the existing multiplayer codec (protocol 78).
 Controller state is host-side external input, like a remote pilot; `Field::restore`
 continues to restore the complete physical/rule world, while a new host must
 recreate the controller and bake. There is no portable on-disk bake yet.
@@ -593,3 +593,43 @@ Mode locks at countdown. Own Sentry operations have no commander fee; explicit
 referee Sentry operations with `commander:true` include the Automatic-mode fee.
 Rejected actions leave both gold and state unchanged. Connectivity changes take
 effect at the next 500 ms rule sample, not during a paused frame.
+
+
+Sentry **Auto aim + sweep** enables host-controlled optical tracking and rotation;
+**Manual aim** disables it. Operator-spawned navigation Sentries enable it by
+default. Narrow passages retain navigation yaw and stowed aiming; the controller
+never fires. Enemy contact labels distinguish reported, localized, information-wave
+and optical positions. Health/ammunition/defense remain unknown without decoded
+observations. See [native Radar and Sentry policies](gameplay.md#native-radar-and-team-intelligence).
+
+Referee/console observation examples (robot IDs must exist in a running match):
+
+```json
+{"type":"world","command":{"Referee":{"RadarReport":{"team":"Red","robot":1,"position_m":[6.7,3.5]}}}}
+{"type":"world","command":{"Referee":{"RadarInformation":{"team":"Red","robot":1,"information":{"hp":123,"max_hp":400,"allowance":77,"defense_pct":25}}}}}
+{"type":"world","command":{"Referee":{"RadarDouble":{"team":"Red"}}}}
+{"type":"world","command":{"Referee":{"RadarInterference":{"team":"Red","difficulty":1}}}}
+{"type":"world","command":{"Referee":{"SetLocalizationModule":{"robot":1,"online":false}}}}
+{"type":"world","command":{"SetSentryAutoAim":{"chassis":0,"enabled":true}}}
+```
+
+A report's quality is measured by the world, not supplied by the client.
+`difficulty` indexes radio levels 1–3 as 0–2; it describes interference faced by
+that observer. These are typed simulator operations, not 2027 UART packets.
+`state` exposes `sentry_tracking` and team-derived `enemy_contacts` for automation.
+Run `python3 scripts/check-sentry-intelligence.py` with approved local EGA assets
+to verify acquisition, real chassis rotation, independent health knowledge,
+expiry and manual opt-out, and save inspection screenshots.
+
+
+To record the Sentry attacking a rotating opponent with actual projectiles:
+
+```sh
+../rm-map-tools/ocpenv/bin/python scripts/render-sentry-attack-video.py
+```
+
+The recording harness supplies alignment-gated trigger requests through the
+ordinary `Fire` command; host optical aiming and chassis rotation remain live.
+It verifies native HP damage and defeat, and labels its scripted trigger and
+information-wave HUD receiver proxy explicitly. It does not enable a permanent
+autonomous firing policy.

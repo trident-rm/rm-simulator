@@ -764,7 +764,7 @@ fn state(world: &mut World) -> Value {
         return json!({"ready":false});
     };
     let player = world.get_resource::<Player>();
-    json!({
+    let mut value = json!({
         "ready": crate::loading::in_match(world),
         "team_robot":world.get_resource::<rm_simulator_render::team_robot::TeamRobotStatus>().map(|s|json!({"requested":s.requested,"ready":s.ready,"failed":s.failed})),
         "tick": session.snapshot.tick, "paused":session.paused,
@@ -808,7 +808,14 @@ fn state(world: &mut World) -> Value {
         "referee_link": referee_link_status(world),
         "commands":["help","ready","state","resize","geometry","camera","spawn","pause","step","screenshot","key",
             "mouse_button","mouse_motion","cursor","capture","release_inputs","inspect","world","quit"],
-    })
+    });
+    value["sentry_tracking"] = json!(session.sentry_tracking);
+    value["enemy_contacts"] = json!(rm_simulator_server::sentry_controller::contacts(
+        &session.snapshot,
+        &session.sentry_tracking,
+        session.team
+    ));
+    value
 }
 
 /// Counts main-world geometry on demand, including hidden and off-camera entities.

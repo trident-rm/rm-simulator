@@ -560,6 +560,7 @@ mod tests {
         let state = rm_simulator_server::simulation::SimulationState {
             bots: vec![],
             navigation: Vec::new(),
+            sentry_tracking: Vec::new(),
             snapshot_id: session.snapshot_id,
             input_epoch: session.input_epoch,
             shot_results: vec![result],

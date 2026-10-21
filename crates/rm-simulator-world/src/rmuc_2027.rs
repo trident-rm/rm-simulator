@@ -489,6 +489,93 @@ mod tests {
         .unwrap()
     }
     #[test]
+    fn radar_error_boundaries_localization_sampling_and_full_restore() {
+        let mut f = field();
+        let id = f
+            .add_chassis(&crate::ChassisPlacement {
+                team: Team::Blue,
+                config: ChassisConfig::default(),
+                spawn: Pose::at([0., 0., 1.]),
+                kind: crate::RobotKind::Infantry,
+                performance: None,
+            })
+            .unwrap();
+        f.referee_command(crate::RefereeCommand::StartMatch)
+            .unwrap();
+        f.step(640).unwrap();
+        let p = f.chassis_snapshot(id).unwrap().pose.translation_m;
+        for (offset, increment) in [(0.0, 10), (0.8, 15), (1.6, -8)] {
+            f.referee_command(crate::RefereeCommand::RadarReport {
+                team: Team::Red,
+                robot: id,
+                position_m: [p[0] + offset, p[1]],
+            })
+            .unwrap();
+            assert_eq!(
+                f.rmuc_2027().unwrap().game.radar.marks[0][&id].increment_tenths,
+                increment
+            );
+        }
+        f.referee_command(crate::RefereeCommand::SetLocalizationModule {
+            robot: id,
+            online: false,
+        })
+        .unwrap();
+        assert!(
+            f.rmuc_2027().unwrap().game.robots[0]
+                .combat
+                .localization_module_online
+        );
+        f.step(64).unwrap();
+        assert!(
+            !f.rmuc_2027().unwrap().game.robots[0]
+                .combat
+                .localization_module_online
+        );
+        f.referee_command(crate::RefereeCommand::RadarReport {
+            team: Team::Red,
+            robot: id,
+            position_m: [100., 100.],
+        })
+        .unwrap();
+        assert_eq!(
+            f.rmuc_2027().unwrap().game.radar.marks[0][&id].increment_tenths,
+            10
+        );
+        f.referee_command(crate::RefereeCommand::RadarReport {
+            team: Team::Blue,
+            robot: id,
+            position_m: [p[0], p[1]],
+        })
+        .unwrap();
+        assert_eq!(
+            f.rmuc_2027().unwrap().game.radar.marks[1][&id].increment_tenths,
+            -16
+        );
+        f.referee_command(crate::RefereeCommand::RadarInformation {
+            team: Team::Red,
+            robot: id,
+            information: crate::gameplay::rmuc_2027::radar::Information {
+                hp: Some(99),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+        let mut restored = Field::restore(
+            &f.snapshot(),
+            &f.static_geometry_snapshot(),
+            f.floor_height_m(),
+        )
+        .unwrap();
+        f.step(128).unwrap();
+        restored.step(128).unwrap();
+        assert_eq!(
+            f.rmuc_2027().unwrap().game,
+            restored.rmuc_2027().unwrap().game
+        );
+        assert!(f.rmuc_2027().unwrap().game.radar.information[0].is_empty());
+    }
+    #[test]
     fn physical_motor_draw_exhausts_native_buffer_and_cut_survives_restore() {
         let mut f = field();
         let mut cfg = ChassisConfig::default();

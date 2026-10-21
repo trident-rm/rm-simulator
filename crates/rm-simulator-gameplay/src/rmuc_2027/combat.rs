@@ -60,6 +60,8 @@ pub struct Combat {
     pub overspeed_locked_for_round: bool,
     /// Speed-monitor link state; reconnection clears only this lock cause.
     pub speed_module_online: bool,
+    /// Sampled localization link; missing localization alters Radar accuracy (§5.1.5).
+    pub localization_module_online: bool,
     /// Remaining rounds for this robot’s caliber (§5.4.2).
     pub allowance: u32,
     /// Simulator Hero conversion has installed the Heavy launcher; reset each round.
@@ -111,6 +113,7 @@ impl Default for Combat {
             overspeed_until_ns: 0,
             overspeed_locked_for_round: false,
             speed_module_online: true,
+            localization_module_online: true,
             allowance: 0,
             heavy_installed: false,
             last_combat_ns: None,

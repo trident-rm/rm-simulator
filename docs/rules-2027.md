@@ -746,6 +746,12 @@ cause vulnerability or build double-vulnerability progress. Physical signal
 parameters are to be published later. Exact packets require the separately
 referenced 2027 communication protocol, not supplied with these three PDFs.
 
+The native engine now implements the marking/history, interruption,
+vulnerability, union opportunity timers and interference handicap above.
+Typed Radar reports and decoded information injections feed independently
+sourced enemy contacts; the latter is a simulator receiver proxy, with explicit
+freshness policies. See [gameplay](gameplay.md#native-radar-and-team-intelligence).
+
 ## UL 3v3 rules
 
 UL chapter 3 defines its own game; UC economy, assembly unlocks, adaptive armor,

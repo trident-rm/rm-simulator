@@ -106,6 +106,8 @@ pub struct SimulationState {
     pub bots: Vec<u32>,
     /// Host controller diagnostics and paths; not additional physical rule state.
     pub navigation: Vec<crate::navigation::View>,
+    /// Opted-in Sentry scan/aim state and current optical detections.
+    pub sentry_tracking: Vec<crate::sentry_controller::View>,
     /// Host publication identity; zero for an unpublished operator capture.
     pub snapshot_id: u64,
     /// Counter bumped on every pause transition. Inputs and shots stamped with
@@ -154,6 +156,7 @@ pub struct FireRecord {
 /// whole fixed 128 Hz ticks.
 pub struct Simulation {
     navigation: Option<crate::navigation::Service>,
+    sentry_tracking: crate::sentry_controller::Service,
     assembly: Option<crate::assembly::Service>,
     /// Lobby password every remote seat must present. The embedded owner seat
     /// is exempt because it already holds the simulation.
@@ -250,6 +253,7 @@ impl Simulation {
     pub fn new(field: Field, paused: bool) -> Self {
         Self {
             navigation: None,
+            sentry_tracking: Default::default(),
             assembly: None,
             password: String::new(),
             bots: Default::default(),
@@ -276,6 +280,9 @@ impl Simulation {
         }
     }
     /// Poll the bounded worker without advancing the world, including while paused.
+    pub(crate) fn is_sentry_bot(&self, id: u32) -> bool {
+        self.bots.contains(&id) && self.robot(id) == Some(Robot::Sentry)
+    }
     pub(crate) fn poll_navigation(&mut self) {
         if let Some(nav) = &mut self.navigation {
             nav.poll(&self.field);
@@ -367,6 +374,7 @@ impl Simulation {
         let id = self.place(placement, Some(Robot::Sentry))?;
         self.bots.insert(id);
         self.navigation.as_mut().unwrap().add(id);
+        self.sentry_tracking.set(id, true);
         Ok(())
     }
     fn spawn_bot(&mut self, team: Team, spin_rad_s: f64) -> Result<(), String> {
@@ -815,6 +823,7 @@ impl Simulation {
         self.shot_results.remove(&id);
         self.last_shot_ids.remove(&id);
         self.bots.remove(&id);
+        self.sentry_tracking.remove(id);
         self.pilot_spawns.remove(&id);
         self.fired_ns.remove(&id);
         self.pilot_weapons.remove(&id);
@@ -842,6 +851,7 @@ impl Simulation {
                 .navigation
                 .as_ref()
                 .map_or_else(Vec::new, |nav| nav.views()),
+            sentry_tracking: self.sentry_tracking.views(),
             snapshot_id: 0,
             input_epoch: self.input_epoch,
             shot_results: self
@@ -893,6 +903,7 @@ impl Simulation {
         }
         self.poll_navigation();
         if self.navigation.is_none()
+            && !self.sentry_tracking.active()
             && self.input_streams.is_empty()
             && self.pending_shots.is_empty()
         {
@@ -916,6 +927,11 @@ impl Simulation {
             if let Some(nav) = &mut self.navigation {
                 nav.tick(&mut self.field);
             }
+            let navigation = self
+                .navigation
+                .as_ref()
+                .map_or_else(Vec::new, |n| n.views());
+            self.sentry_tracking.tick(&mut self.field, &navigation);
             self.execute_pending_shots();
             self.field.step_with_hits(1, observer)?;
         }
@@ -1224,10 +1240,27 @@ impl Simulation {
                     .filter(|n| n.owns(*chassis))
                     .ok_or("not a navigation Sentry")?;
                 nav.stop(*chassis);
+                self.sentry_tracking.set(*chassis, false);
                 crate::navigation::brake(&mut self.field, *chassis)
             }
             Command::MapInteraction(_) => {
                 Err("map interactions require a connected team pilot".into())
+            }
+            Command::SetSentryAutoAim { chassis, enabled } => {
+                if self.robot(*chassis) != Some(Robot::Sentry) {
+                    return Err("auto aim requires a Sentry".into());
+                }
+                self.sentry_tracking.set(*chassis, *enabled);
+                if !enabled && let Some(body) = self.field.chassis_snapshot(*chassis) {
+                    let mut command = body.command;
+                    command.yaw_rate_rad_s = 0.;
+                    command.aim_yaw_rad = body.held_aim_rad[0];
+                    command.aim_pitch_rad = body.held_aim_rad[1];
+                    self.field
+                        .command_chassis(*chassis, command)
+                        .map_err(|e| e.to_string())?;
+                }
+                Ok(())
             }
             Command::ConvertHeavy { chassis } => {
                 self.field

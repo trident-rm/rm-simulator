@@ -182,6 +182,17 @@ impl Match {
             }
             effects.cooling_per_s = effects.cooling_half_per_s / 2;
         }
+        if let Some(r) = self.robots.iter().find(|r| r.id == id && r.hp > 0) {
+            let opponent = if r.team == Team::Red {
+                Team::Blue
+            } else {
+                Team::Red
+            };
+            effects.vulnerability_pct = effects.vulnerability_pct.max(
+                self.radar
+                    .vulnerability_pct(opponent, id, self.elapsed_ns()),
+            );
+        }
         effects
     }
 

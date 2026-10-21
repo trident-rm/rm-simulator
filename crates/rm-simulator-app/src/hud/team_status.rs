@@ -222,10 +222,8 @@ pub(super) fn update(
                                 .map_or(r.number(), |s| s.number)
                         }),
                     hp: {
-                        session
-                            .rmuc_2027()
-                            .and_then(|s| s.game.robots.iter().find(|r| r.id == c.id))
-                            .map(|r| (r.hp, r.max_hp))
+                        let (hp, max) = crate::enemy_intel::health(&session, c.id);
+                        hp.zip(max)
                     },
                 }
             })
@@ -362,6 +360,31 @@ mod tests {
                 .iter(app.world())
                 .any(|r| r.occupants.contains(&Some(0)))
         );
+        assert!(
+            !texts.iter().any(|t| t.contains("10/200")),
+            "enemy HP is not a public position field"
+        );
+        assert!(texts.iter().any(|t| t.contains("HP --")));
+        {
+            let mut session = app.world_mut().resource_mut::<Session>();
+            let game = &mut session.snapshot.rmuc_2027.as_mut().unwrap().game;
+            game.radar.information[0].insert(
+                3,
+                rm_simulator_world::gameplay::rmuc_2027::radar::Information {
+                    hp: Some(10),
+                    max_hp: Some(200),
+                    observed_ns: game.elapsed_ns(),
+                    ..Default::default()
+                },
+            );
+        }
+        app.update();
+        let texts: Vec<_> = app
+            .world_mut()
+            .query::<&Text>()
+            .iter(app.world())
+            .map(|t| t.0.clone())
+            .collect();
         assert!(texts.iter().any(|t| t.contains("10/200")));
     }
 

@@ -29,6 +29,22 @@ pub(crate) fn brake(field: &mut Field, id: u32) -> Result<(), String> {
         .command_chassis(id, command)
         .map_err(|e| e.to_string())
 }
+pub(crate) fn rotation_clear(field: &Field, id: u32, geometry: &StaticGeometry) -> bool {
+    let Some(body) = field.chassis_snapshot(id) else {
+        return false;
+    };
+    let p = body.pose.translation_m;
+    let radius = body.config.body_half_m[0]
+        .hypot(body.config.body_half_m[1])
+        .max(PLANNING_RADIUS_M);
+    // Ground support is below the center; preserve a small margin above the deck.
+    geometry.cylinder_sweep_clear(
+        [p[0], p[1], p[2] + 0.32],
+        [p[0], p[1], p[2] + 0.32],
+        radius,
+        0.3,
+    )
+}
 fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
 }

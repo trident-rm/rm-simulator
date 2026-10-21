@@ -4,6 +4,17 @@
 
 ## Unreleased
 
+- Add native Radar marking/history, interruption decay, localization thresholds,
+  vulnerability, double opportunities and interference, with independent 2 Hz
+  localization-module faults and complete restore. Carry the authority and
+  Sentry controller diagnostics through protocol 78.
+- Add team enemy contacts and map/world overlays with independently observed
+  position, HP, ammunition and defense. Enemy health remains unknown until
+  decoded information arrives and returns to unknown when reception expires.
+- Add optional Sentry optical aim tracking and continuous chassis/gimbal sweeps,
+  preserving navigation/stow priorities and manual firing. Add owned controls
+  and reproducible live CAD intelligence/aim and actual-projectile attack recordings.
+
 - Tune clear chassis folding/stair/retraction strokes to 500 ms in either
   direction, preserving collision sweeps, reversal and outage/defeat stops.
   Keep checked CAD packages unchanged and apply source actuator tuning at load.

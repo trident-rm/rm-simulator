@@ -113,8 +113,8 @@ use serde::{Deserialize, Serialize};
 /// Version 73 adds authenticated team map interaction events.
 /// Version 74 adds host-owned Sentry navigation commands and path diagnostics.
 /// Version 76 adds the EGA Sentry choice and explicit tunnel navigation segments.
-/// Version 77 carries Sentry posture/budget authority and referee power/module state.
-pub const PROTOCOL_VERSION: u32 = 77;
+/// Version 78 carries native Radar intelligence and Sentry aim-controller settings.
+pub const PROTOCOL_VERSION: u32 = 78;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///
@@ -833,6 +833,13 @@ pub enum Command {
     },
     /// Send a typed map intent through the authenticated team command interface.
     MapInteraction(crate::map_interaction::Interaction),
+    /// Opt into Sentry optical tracking and chassis/gimbal sweeping; never fires.
+    SetSentryAutoAim {
+        /// Owned Sentry identity, checked by the host.
+        chassis: u32,
+        /// Enable the host controller or return aim/rotation to the pilot.
+        enabled: bool,
+    },
     /// Convert an unlocked native Heavy to the Hero gameplay approximation.
     ConvertHeavy {
         /// Requesting pilot's stable chassis identity; checked by the host.
@@ -1420,6 +1427,7 @@ mod tests {
         let state = SimulationState {
             bots: vec![],
             navigation: Vec::new(),
+            sentry_tracking: Vec::new(),
             input_epoch: 0,
             shot_results: Vec::new(),
             snapshot_id: 0,

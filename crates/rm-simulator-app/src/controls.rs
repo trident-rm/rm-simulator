@@ -330,6 +330,10 @@ pub fn drive_chassis(
         blocked,
         placement_revision: chassis.placement_revision,
     };
+    let sentry_aim = session
+        .sentry_tracking
+        .iter()
+        .any(|v| v.chassis == chassis.id && v.enabled);
     let mut command = if chassis.config.planar_flight {
         fly_command(
             intent.forward,
@@ -358,6 +362,14 @@ pub fn drive_chassis(
     }
     if blocked {
         command.yaw_rate_rad_s = 0.;
+    }
+    if sentry_aim {
+        // Prediction uses the latest host-controlled axes, while movement and T
+        // remain ordinary pilot input. The host applies its current controller
+        // output after every input stream update.
+        command.aim_yaw_rad = chassis.command.aim_yaw_rad;
+        command.aim_pitch_rad = chassis.command.aim_pitch_rad;
+        command.yaw_rate_rad_s = chassis.command.yaw_rate_rad_s;
     }
     let transition = drive.intent != Some(intent);
     drive.intent = Some(intent);

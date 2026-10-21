@@ -648,6 +648,12 @@ impl Field {
             .map_err(FieldError::Chassis)?;
         if let Some(state) = &mut self.rmuc_2027 {
             state.game.robots.retain(|r| r.id != id);
+            for marks in &mut state.game.radar.marks {
+                marks.remove(&id);
+            }
+            for info in &mut state.game.radar.information {
+                info.remove(&id);
+            }
             if state.game.phase == rmuc_2027::match_rules::Phase::Running {
                 state.game.activations();
             }
@@ -1002,6 +1008,69 @@ impl Field {
                         .game
                         .buy_ammo(robot, amount)
                         .map_err(FieldError::Referee)?;
+                }
+                RefereeCommand::SetLocalizationModule { robot, online } => {
+                    let r = state
+                        .game
+                        .robots
+                        .iter_mut()
+                        .find(|r| r.id == robot)
+                        .ok_or(FieldError::Referee("unknown robot"))?;
+                    r.combat.power.modules.localization_online = online;
+                }
+                RefereeCommand::RadarReport {
+                    team,
+                    robot,
+                    position_m,
+                } => {
+                    if position_m.iter().any(|v| !v.is_finite() || v.abs() > 1000.) {
+                        return Err(FieldError::Referee("invalid Radar position"));
+                    }
+                    let actual = self
+                        .physics
+                        .chassis_snapshot(robot)
+                        .ok_or(FieldError::Referee("unknown Radar target"))?
+                        .pose
+                        .translation_m;
+                    // Compare integer millimetres at exact Table 5-29 boundaries.
+                    let reported = position_m.map(|v| (v * 1000.).round() as i32);
+                    let actual = [actual[0], actual[1]].map(|v| (v * 1000.).round() as i32);
+                    let error2 = (0..2)
+                        .map(|i| {
+                            let delta = i64::from(reported[i]) - i64::from(actual[i]);
+                            delta * delta
+                        })
+                        .sum::<i64>();
+                    use gameplay::rmuc_2027::radar::Quality;
+                    let quality = if error2 < 800 * 800 {
+                        Quality::Accurate
+                    } else if error2 < 1600 * 1600 {
+                        Quality::SemiAccurate
+                    } else {
+                        Quality::Wrong
+                    };
+                    state
+                        .game
+                        .radar_report(referee::game_team(team), robot, reported, quality)
+                        .map_err(FieldError::Referee)?;
+                }
+                RefereeCommand::RadarInformation {
+                    team,
+                    robot,
+                    information,
+                } => state
+                    .game
+                    .radar_information(referee::game_team(team), robot, information)
+                    .map_err(FieldError::Referee)?,
+                RefereeCommand::RadarDouble { team } => state
+                    .game
+                    .radar_double(referee::game_team(team))
+                    .map_err(FieldError::Referee)?,
+                RefereeCommand::RadarInterference { team, difficulty } => {
+                    if difficulty > 2 {
+                        return Err(FieldError::Referee("invalid Radar difficulty"));
+                    }
+                    state.game.radar.interference[referee::game_team(team).index()] = difficulty;
                 }
                 RefereeCommand::SetSentryMode { robot, mode } => state
                     .game

@@ -12,6 +12,8 @@ use rm_simulator_world::gameplay::rmuc_2027::{
 struct SentryControls;
 #[derive(Component)]
 struct ModeControls;
+#[derive(Component)]
+struct AutoAimStatus;
 /// Install the role-specific control panel during a running session.
 pub struct SentryPlugin;
 impl Plugin for SentryPlugin {
@@ -92,6 +94,44 @@ fn spawn(mut commands: Commands) {
                     ));
                 }
             });
+            for (enabled, label) in [(true, "Auto aim + sweep"), (false, "Manual aim")] {
+                p.spawn((
+                    bevy::ui_widgets::Button,
+                    bevy::ui_widgets::ActivateOnPress,
+                    Node {
+                        padding: UiRect::all(px(5)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.15, 0.22, 0.28)),
+                ))
+                .observe(
+                    move |_: On<bevy::ui_widgets::Activate>,
+                          mut session: ResMut<Session>,
+                          mut ui: ResMut<HudState>| {
+                        ui.consumed = true;
+                        if let Some(chassis) = session.chassis_id {
+                            session.apply(Command::SetSentryAutoAim { chassis, enabled });
+                        }
+                    },
+                )
+                .with_child((
+                    Text::new(label),
+                    TextFont {
+                        font_size: FontSize::Px(13.),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ));
+            }
+            p.spawn((
+                AutoAimStatus,
+                Text::new("Manual aim"),
+                TextFont {
+                    font_size: FontSize::Px(12.),
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ));
             for posture in [Posture::Attack, Posture::Defense, Posture::Movement] {
                 p.spawn(Node {
                     column_gap: px(4),
@@ -139,7 +179,29 @@ fn update(
     ui: Res<HudState>,
     mut panels: Query<&mut Node, (With<SentryControls>, Without<ModeControls>)>,
     mut modes: Query<&mut Node, (With<ModeControls>, Without<SentryControls>)>,
+    mut status: Query<&mut Text, With<AutoAimStatus>>,
 ) {
+    let tracking = session
+        .sentry_tracking
+        .iter()
+        .find(|v| Some(v.chassis) == session.chassis_id && v.enabled);
+    let caption = tracking.map_or_else(
+        || "Manual aim".into(),
+        |v| {
+            if v.heading_locked {
+                "Tunnel heading locked".into()
+            } else if let Some(id) = v.target {
+                format!("Tracking #{id} | manual fire")
+            } else {
+                "Sweeping | manual fire".into()
+            }
+        },
+    );
+    for mut text in &mut status {
+        if text.0 != caption {
+            text.0 = caption.clone();
+        }
+    }
     let game = session.rmuc_2027().map(|s| &s.game);
     let owned = game.is_some_and(|g| {
         g.robots

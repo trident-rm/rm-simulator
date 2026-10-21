@@ -279,6 +279,11 @@ physics approximations. The EGA Sentry uses `--robot sentry` with its
 `--chassis tunnel-omni`; T folds its head. Sentry deployment also retains the
 ordinary Omni option. Host-owned EGA navigation bots fold for low-clearance paths.
 A headless host selects its fitted dimensions with `--team-cad`.
+The Sentry panel offers **Auto aim + sweep** / **Manual aim**. This optional host
+controller scans with its gimbal, rotates the chassis where clear and tracks
+visible enemy armor; firing remains manual. Detected enemies gain map/scene
+labels. Enemy HP/ammunition are shown only when decoded information supplies them.
+
 
 Use `--cad-assets PATH` and `--map-tools PATH` for other locations. The generator
 writes `minimap.png` and `minimap.json` beside the external field manifest.
