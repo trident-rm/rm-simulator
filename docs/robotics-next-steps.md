@@ -66,10 +66,13 @@ dynamic-obstacle navigation support.
 
 ## Running a real navigation stack during a game
 
-Integration review, 2026-10-21. **Design below, not a delivered live-game ROS
-bridge.** The optional [ROS adapter](../integrations/ros2/README.md) currently
-owns a separate bare-ground probe. Its DDS smoke test establishes message delivery,
-not control of the CAD arena or an active multiplayer match.
+Integration review, 2026-10-21. The leased motion boundary and a separate ROS
+command bridge are now implemented; live-host sensor streaming, odometry and TF
+below remain design work. See the [control bridge instructions](../integrations/ros2/README.md#control-a-robot-in-an-existing-game).
+The optional [ROS adapter](../integrations/ros2/README.md) currently
+owns a separate bare-ground probe. Its original DDS smoke test establishes
+LiDAR message delivery. The separate control smoke test now establishes ROS
+command delivery and physical motion in a headless CAD host.
 
 Use the same external navigation executable and topic contract against both a
 headless CAD match and the interactive game. The server remains the sole owner of
@@ -87,9 +90,9 @@ same ROS interfaces as one on the game's machine.
   HTTP operator commands do not establish a pilot seat or per-robot authority.
 - `StopSentry` cancels the built-in navigation goal, disables host optical
   aim/sweep and brakes. A later `NavigateSentry` or map intent can nevertheless
-  restart built-in planning. Sending `Chassis` alone does not cancel navigation:
-  its next tick may overwrite the command. A complete bridge needs exclusive
-  ownership of the chassis motion channels.
+  restart built-in planning. Sending raw `Chassis` alone does not cancel an
+  active navigation goal. Use `ExternalDrive` instead: it cancels navigation and
+  ignores team map intents while its motion lease is active.
 - Raw `Chassis` requests hold their setpoint. The pilot input stream has its own
   timeout handling, but the operator path does not inherit it. A ROS subscriber
   forwarding raw commands therefore needs a host-enforced expiry, not just a
@@ -99,11 +102,17 @@ same ROS interfaces as one on the game's machine.
   them with current geometry cannot reproduce rolling acquisition timestamps.
   The live host must export matching captures from its actual integration steps.
 
-### Proposed host boundary
+### Host boundary and remaining sensor work
 
-Add a ROS-independent external-controller attachment in the server, selected per
-robot. Keep the public wire protocol versioned if these requests are exposed to
-network clients. The adapter has no referee powers by default.
+The server now accepts ROS-independent `ExternalDrive` and
+`ReleaseExternalDrive` protocol commands, with body/world velocity and heading
+vector modes, sampled-time admission, sequence checks, per-robot leases and
+simulation-time expiry. Operator authorization remains on the normal host path.
+The ROS control bridge is a separate process using bounded 20 Hz HTTP requests.
+A future sensor attachment should use the same per-robot ownership boundary.
+Protocol 80 versions these operator requests. The current HTTP bridge uses the
+privileged operator endpoint; a future restricted attachment should grant only
+its addressed robot channels, without referee powers.
 
 1. Claim an addressed robot with a generation/lease identity. A grant cancels
    built-in chassis navigation and chassis sweep; manual takeover revokes it.
@@ -111,7 +120,7 @@ network clients. The adapter has no referee powers by default.
    with external driving without writing the same fields.
 2. Accept bounded latest-value velocity requests with sequence, lease identity
    and host-stamped expiry. Proposed initial motion timeout: 250 ms of advancing
-   simulation time. Reject nonfinite values, old sequences and revoked leases;
+   simulation time (implemented). Reject nonfinite values, old sequences and revoked leases;
    retain normal motor, power, defeat and match restrictions. Preserve held aim
    and posture when changing velocity; do not construct a default full command
    that unfolds the robot or resets its gimbal on every `cmd_vel` update.
@@ -193,18 +202,20 @@ clearance, with yaw restricted through narrow passages.
 
 ### Implementation order and acceptance
 
-1. Host control lease, bounded velocity ingress and stale-command brake. Test
-   manual takeover, ordering, disconnect, pause/resume and robot identity changes.
+1. Implemented: host control lease, velocity/heading modes and stale-command
+   brake, plus an optional ROS command bridge. Native and CAD/DDS checks cover
+   ordering, command loss, manual takeover, pause and placement changes.
 2. Live-host scan attachment and bounded acquisition/publication workers. Test
    clock alignment and discontinuities under folding, spawns and queue pressure.
-3. ROS body commands, TF and an opt-in truth odometry bootstrap. Demonstrate an
-   external controller driving the same robot while another player is in-game.
+3. ROS body/world/heading commands are implemented. Next add TF and an opt-in
+   truth odometry bootstrap, then demonstrate external navigation while another
+   player is in-game.
 4. PointCloud2 conversion and a known-map navigation demo, then encoder/IMU models
    and actual external localization. Do not label truth-assisted tests as SLAM.
 5. All three tunnel routes, moving opponents and mechanism-aware navigation.
 
-The first end-to-end acceptance run should show external navigation moving the
-live in-game Sentry around CAD obstacles, manual takeover stopping it, and a
+The next full-navigation acceptance run should show an external planner moving
+the live in-game Sentry around CAD obstacles, manual takeover stopping it, and a
 killed bridge braking within the lease timeout. Record goal error, collisions,
 real-time factor, command age and scan drops. A later sensor-localized run must
 pass with truth topics unavailable to the external stack. These are required

@@ -633,3 +633,13 @@ ordinary `Fire` command; host optical aiming and chassis rotation remain live.
 It verifies native HP damage and defeat, and labels its scripted trigger and
 information-wave HUD receiver proxy explicitly. It does not enable a permanent
 autonomous firing policy.
+
+## External navigation control
+
+Enable `--http 127.0.0.1:7780` to expose operator commands for an external robot
+controller. `ExternalDrive` supports body velocity, world velocity and world
+heading-vector control with a 250 ms simulation-time lease. Manual input revokes
+external control; gimbal and folding state are preserved. The optional ROS bridge
+accepts stamped velocity commands for an unpiloted in-game Sentry. See the
+[setup, JSON examples and control modes](../integrations/ros2/README.md#control-a-robot-in-an-existing-game).
+This controls a live host; it does not yet export that host's LiDAR or odometry.

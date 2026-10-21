@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Add leased external robot control with body/world velocity and heading-vector
+  modes, bounded heading feedback, stale-command braking and manual takeover.
+  Preserve aim/folding state and reject stale pause/life/sequence inputs. Add an
+  optional ROS stamped-velocity bridge into a running app/headless host, with
+  live CAD/DDS control checks; protocol advances to 80.
+
 - Add an opt-in rclrs ROS 2 adapter with Pixi/RoboStack Jazzy setup, official
   Livox Driver 2 message interfaces, simulation-clock publishing and a driven
   chassis probe. Preserve per-point timing and validate native DDS delivery

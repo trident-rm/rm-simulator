@@ -20,3 +20,5 @@ build = { cmd = "bash scripts/with-ros.sh cargo build --release --features ros2 
 run = { cmd = "bash scripts/with-ros.sh ../../target/ros2/release/rm-simulator-ros2", depends-on = ["build"] }
 test = { cmd = "bash scripts/with-ros.sh cargo test --features ros2 --locked", depends-on = ["interfaces"] }
 smoke = { cmd = "bash scripts/with-ros.sh python scripts/smoke.py", depends-on = ["build"] }
+control = { cmd = "bash scripts/with-ros.sh python scripts/control.py", depends-on = ["interfaces"] }
+control-smoke = { cmd = "bash scripts/with-ros.sh python scripts/control_smoke.py", depends-on = ["interfaces"] }

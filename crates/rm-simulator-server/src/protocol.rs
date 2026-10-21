@@ -116,7 +116,8 @@ use serde::{Deserialize, Serialize};
 /// Version 78 carries native Radar intelligence and Sentry aim-controller settings.
 /// Version 79 carries restorable direct wheel motor torque requests and the
 /// validated field step in checkpoint authority.
-pub const PROTOCOL_VERSION: u32 = 79;
+/// Version 80 adds operator-authorized leased external motion modes.
+pub const PROTOCOL_VERSION: u32 = 80;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///
@@ -812,6 +813,20 @@ pub fn check_map_marker(kind: MapMarkerKind, position_m: [f64; 2]) -> Result<(),
 /// Anything that changes the simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Command {
+    /// Operator-authorized leased external drive; never grants aim or fire authority.
+    ExternalDrive {
+        /// Addressed chassis, whose native physical and match limits remain active.
+        chassis: u32,
+        /// Sequenced motion with current pause epoch and placement revision.
+        input: crate::external_control::Input,
+    },
+    /// Release and brake an external lease without restoring an old navigation goal.
+    ReleaseExternalDrive {
+        /// Addressed chassis.
+        chassis: u32,
+        /// Active lease identity; stale releases cannot stop a newer controller.
+        lease_id: u64,
+    },
     /// Operator-only spawn of a host-owned navigation prototype Sentry.
     SpawnSentry {
         /// Team whose map intents it may consume.
@@ -1107,7 +1122,9 @@ impl Command {
     pub fn is_match_control(&self) -> bool {
         matches!(
             self,
-            Command::SpawnSentry { .. }
+            Command::ExternalDrive { .. }
+                | Command::ReleaseExternalDrive { .. }
+                | Command::SpawnSentry { .. }
                 | Command::NavigateSentry { .. }
                 | Command::StopSentry { .. }
                 | Command::Referee(_)

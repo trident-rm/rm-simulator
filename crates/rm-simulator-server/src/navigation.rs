@@ -1164,6 +1164,10 @@ impl Service {
         }
         let live = field.static_geometry_snapshot();
         for (&id, a) in &mut self.agents {
+            // A stopped controller relinquishes motion; the stop request already braked.
+            if a.view.phase == Phase::Idle {
+                continue;
+            }
             let Some(body) = field.chassis_snapshot(id) else {
                 continue;
             };

@@ -10,7 +10,8 @@ ROS Cargo features. No ROS dependency is added to physics, world or rendering.
 
 The included executable is a standalone headless probe with one driven chassis
 and the bare physical ground. It is not a switch on the multiplayer server or
-interactive app, does not load the arena, and does not control a running match.
+interactive app, does not load the arena, and does not control a running match. The separate `control` task below can drive
+an existing app/server session through its operator API.
 The publisher library accepts scans from any caller-owned `Field`, including
 one initialized with the CAD arena. The [mounted sensor API](../../docs/navigation-sensors.md)
 supplies coherent geometry and motion without a second physical world.
@@ -149,3 +150,119 @@ no replacement is selectable through rclrs's current features. The optional
 adapter's policy records this maintenance exception; core policy is unchanged.
 Revisit it when rclrs replaces async-std. Dependencies remain unmodified and
 permissively licensed.
+
+## Control a robot in an existing game
+
+The `control` task subscribes to `geometry_msgs/msg/TwistStamped` and forwards
+bounded, sequenced external drive requests to the existing host. It creates no
+second world and requires no ROS dependency in the app/server. This first bridge
+uses the operator HTTP API at up to 20 Hz, with one pending command. It is suitable
+for initial navigation control, not high-rate embedded control or sensor export.
+
+Start the interactive simulator with its local HTTP API enabled:
+
+```sh
+just run --http 127.0.0.1:7780 --no-referee
+```
+
+Use an operator-spawned Sentry so an occupied pilot seat does not keep sending
+manual inputs. The console's world command or `POST /api/command` can spawn one:
+
+```json
+{"SpawnSentry":{"team":"Red","position_m":[4,-3,1],"yaw_deg":0}}
+```
+
+Read its stable chassis ID from `GET /api/state`. The same API is available from
+the headless host. Run the bridge from the repository root, substituting that ID:
+
+```sh
+pixi run --manifest-path integrations/ros2/pixi.toml control --chassis 0 --mode heading --topic /sentry/cmd_vel --publish-clock
+```
+
+Enable `--publish-clock` only when this bridge is the match's single ROS clock
+publisher. It polls the authoritative simulation clock at 20 Hz, including while
+paused; it never substitutes wall time. Consumers must use simulation time.
+Do not run the separate bare-world probe as a clock source for the live game.
+
+| Mode | Input frame | Twist interpretation |
+|---|---|---|
+| `body` | `base_link` | Linear x/y are body forward/left m/s; angular z is CCW rad/s. |
+| `world` | `map` | Linear x/y are arena-frame m/s; angular z is CCW rad/s. |
+| `heading` (default) | `map` | Nonzero linear x/y gives world heading and its magnitude gives m/s. Host turns toward it; angular z must be zero. A zero vector stops. |
+
+`--frame-id` overrides the expected frame name; it does not transform frames.
+A `map` command must already use the simulator arena's FLU axes and orientation;
+apply an explicit transform in your navigation adapter if localization uses a
+different map orientation. Nonplanar components and mismatched frames are refused.
+Heading mode is intended for omnidirectional chassis. It can translate sideways
+while turning; it is not a differential-drive controller or collision avoidance.
+
+Publish new messages at 20 Hz, with simulation timestamps in `header.stamp` and
+the exact expected `header.frame_id`. The subscription accepts best-effort QoS.
+Only new ROS messages renew motion: the timer never resends a previous setpoint.
+Requests over 6 m/s or 4 rad/s are rejected, with heading feedback capped at
+4 rad/s and gain 4/s. Native motor, power, collision and defeat restrictions still
+apply. These bounds are simulator adapter policies, not RoboMaster rule constants.
+
+The first accepted request takes motion control, cancels built-in navigation and
+disables chassis/gimbal sweep. Gimbal aim, folding state and balance setting are
+preserved; firing and mechanism control are separate commands. Manual pilot input,
+ordinary `Chassis` commands, a new built-in navigation goal or a pause revokes the
+external lease. Team map intents do not replace an active external motion lease.
+Old navigation goals never automatically resume.
+
+The host brakes after 250 ms of simulation time without a fresh sample. Delayed,
+duplicate, out-of-order and revoked requests cannot refresh a lease. The host also
+checks the current pause epoch and robot placement revision. The bridge disarms
+motion on HTTP rejection or a connection error; it never automatically steals
+control back after manual takeover. When enabled, clock polling continues after
+motion is disarmed. Restart with a newer `--lease-id` after checking the
+game. By default a process uses its wall-clock startup nanoseconds only as a
+unique increasing lease identifier, never as a sensor/command timestamp.
+
+On normal exit the bridge attempts a release; the host timeout handles a killed
+process or lost connection. A paused world does not advance its timeout, but
+entering pause revokes motion immediately and resuming requires a new lease.
+An occupied player seat's ordinary input packets count as manual takeover even
+when neutral, hence the recommendation to use an unpiloted robot.
+
+For a direct non-ROS client, `POST /api/command` the same protocol request:
+
+```json
+{"ExternalDrive":{"chassis":0,"input":{"lease_id":1,"sequence":1,"sampled_time_ns":1000000000,"input_epoch":0,"placement_revision":0,"motion":{"HeadingVector":{"direction_world":[1,0],"speed_m_s":1}}}}}
+```
+
+Read actual `sampled_time_ns`, `input_epoch` and `placement_revision` from the
+current state; the numbers above are illustrative. Advance sequence on every
+sample. Lease IDs must be nonzero and increase when reacquiring a robot. A direct
+`HeadingVector` request with zero speed turns in place; signed speed permits
+backing along the heading while facing it. `BodyVelocity` and `WorldVelocity`
+carry `velocity_m_s: [x,y]` and `yaw_rate_rad_s` instead. Release explicitly with:
+
+```json
+{"ReleaseExternalDrive":{"chassis":0,"lease_id":1}}
+```
+
+The endpoint is privileged operator access. Keep it on loopback or an otherwise
+trusted network, using the existing referee-panel deployment contract. Ordinary
+network pilots cannot submit these external operator commands. Protocol 80
+requires matching current app/server builds. The lease lives in the host
+controller, not physical checkpoints; it does not authorize referee edits.
+
+No live-match LiDAR/IMU/odometry/TF export is added by this control bridge. A real
+planner can now actuate the in-game robot, but sensor-driven navigation still
+needs those adapters. Full-state polling for the optional clock is an initial
+transport cost; a future bounded telemetry stream should replace it.
+
+Test actual DDS input against a headless CAD host (same simulation/command path
+as the game), after building the normal server binary:
+
+```sh
+nix develop -c cargo build -p rm-simulator-server --bin rm-simulator-server --locked
+pixi run --manifest-path integrations/ros2/pixi.toml control-smoke
+```
+
+The smoke test starts and cleans up its own CAD host/ROS bridge in an isolated
+ROS domain, checks all three control modes, physical displacement, timeout
+braking while the bridge remains alive and manual takeover. It does not run
+Nav2 or claim successful sensor-based autonomous navigation.

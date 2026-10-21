@@ -20,6 +20,7 @@ pub mod clock;
 pub use rm_simulator_assets::collision_mesh;
 pub mod compression;
 pub mod deployment;
+pub mod external_control;
 pub mod host;
 pub mod host_args;
 pub mod http;

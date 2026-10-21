@@ -155,6 +155,7 @@ pub struct FireRecord {
 /// [`advance`](Simulation::advance) and [`step`](Simulation::step), and only in
 /// whole fixed 128 Hz ticks.
 pub struct Simulation {
+    external_control: crate::external_control::Service,
     navigation: Option<crate::navigation::Service>,
     sentry_tracking: crate::sentry_controller::Service,
     assembly: Option<crate::assembly::Service>,
@@ -263,6 +264,7 @@ impl Simulation {
             return Err("server simulation supports only the default 128 Hz field step");
         }
         Ok(Self {
+            external_control: Default::default(),
             navigation: None,
             sentry_tracking: Default::default(),
             assembly: None,
@@ -294,6 +296,11 @@ impl Simulation {
     pub(crate) fn is_sentry_bot(&self, id: u32) -> bool {
         self.bots.contains(&id) && self.robot(id) == Some(Robot::Sentry)
     }
+    fn revoke_external_control(&mut self, id: u32) {
+        if self.external_control.revoke(id) {
+            let _ = crate::navigation::brake(&mut self.field, id);
+        }
+    }
     pub(crate) fn poll_navigation(&mut self) {
         if let Some(nav) = &mut self.navigation {
             nav.poll(&self.field);
@@ -302,6 +309,9 @@ impl Simulation {
     pub(crate) fn accept_navigation_intent(&mut self, event: &crate::map_interaction::Event) {
         if let crate::map_interaction::Target::Position(position_m) = event.interaction.target {
             for &id in &event.recipients {
+                if self.external_control.active(id) {
+                    continue;
+                }
                 if let Some(nav) = &mut self.navigation
                     && nav.owns(id)
                 {
@@ -550,6 +560,10 @@ impl Simulation {
     /// so no input or shot crosses the pause.
     pub fn set_paused(&mut self, paused: bool) {
         if paused != self.paused {
+            let ids: Vec<_> = self.field.snapshot().chassis.iter().map(|b| b.id).collect();
+            for id in ids {
+                self.revoke_external_control(id);
+            }
             self.input_epoch = self
                 .input_epoch
                 .checked_add(1)
@@ -829,6 +843,7 @@ impl Simulation {
     /// Remove a chassis with its input stream, pending shots, results, bot mark
     /// and spawn record. A later spawn takes a fresh id.
     pub fn remove_chassis(&mut self, id: u32) -> Result<(), String> {
+        self.external_control.remove(id);
         self.input_streams.remove(&id);
         self.cancel_pending_shots(Some(id), "shooter disconnected");
         self.shot_results.remove(&id);
@@ -913,7 +928,8 @@ impl Simulation {
             service.poll(&mut self.field);
         }
         self.poll_navigation();
-        if self.navigation.is_none()
+        if !self.external_control.any_active()
+            && self.navigation.is_none()
             && !self.sentry_tracking.active()
             && self.input_streams.is_empty()
             && self.pending_shots.is_empty()
@@ -932,6 +948,7 @@ impl Simulation {
             });
             for (id, stream) in &mut self.input_streams {
                 if let Some(neutral) = stream.advance(now) {
+                    self.external_control.revoke(*id);
                     let _ = self.field.command_chassis(*id, neutral);
                 }
             }
@@ -943,6 +960,7 @@ impl Simulation {
                 .as_ref()
                 .map_or_else(Vec::new, |n| n.views());
             self.sentry_tracking.tick(&mut self.field, &navigation);
+            self.external_control.tick(&mut self.field);
             self.execute_pending_shots();
             self.field.step_with_hits(1, observer)?;
         }
@@ -970,6 +988,7 @@ impl Simulation {
                     .into(),
             );
         }
+        self.revoke_external_control(id);
         // A no-referee practice robot can still be repositioned through debug.
         if self.field.rmuc_2027().is_some() {
             self.field
@@ -1225,6 +1244,37 @@ impl Simulation {
         observer: &mut dyn FnMut(&rm_simulator_world::ArmorHit),
     ) -> Result<(), String> {
         match command {
+            Command::ExternalDrive { chassis, input } => {
+                if self.paused || input.input_epoch != self.input_epoch {
+                    return Err("external input requires an unpaused current epoch".into());
+                }
+                let body = self
+                    .field
+                    .chassis_snapshot(*chassis)
+                    .ok_or("missing chassis")?;
+                if body.placement_revision != input.placement_revision
+                    || self.field.chassis_defeated(*chassis) != Some(false)
+                {
+                    return Err("external input belongs to an unavailable chassis life".into());
+                }
+                self.external_control
+                    .receive(*chassis, *input, self.field.time_ns())?;
+                self.input_streams.remove(chassis);
+                if let Some(nav) = &mut self.navigation {
+                    nav.stop(*chassis);
+                }
+                if self.robot(*chassis) == Some(Robot::Sentry) {
+                    self.sentry_tracking.set(*chassis, false);
+                }
+                let command = input.motion.resolve(body.pose, body.command)?;
+                self.field
+                    .command_chassis(*chassis, command)
+                    .map_err(|e| e.to_string())
+            }
+            Command::ReleaseExternalDrive { chassis, lease_id } => {
+                self.external_control.release(*chassis, *lease_id)?;
+                crate::navigation::brake(&mut self.field, *chassis)
+            }
             Command::SpawnSentry {
                 team,
                 position_m,
@@ -1242,6 +1292,7 @@ impl Simulation {
                     .as_mut()
                     .ok_or("no navigation Sentry")?
                     .goal(*chassis, *position_m)?;
+                self.revoke_external_control(*chassis);
                 crate::navigation::brake(&mut self.field, *chassis)
             }
             Command::StopSentry { chassis } => {
@@ -1251,6 +1302,7 @@ impl Simulation {
                     .filter(|n| n.owns(*chassis))
                     .ok_or("not a navigation Sentry")?;
                 nav.stop(*chassis);
+                self.revoke_external_control(*chassis);
                 self.sentry_tracking.set(*chassis, false);
                 crate::navigation::brake(&mut self.field, *chassis)
             }
@@ -1258,6 +1310,9 @@ impl Simulation {
                 Err("map interactions require a connected team pilot".into())
             }
             Command::SetSentryAutoAim { chassis, enabled } => {
+                if *enabled && self.external_control.active(*chassis) {
+                    return Err("release external control before enabling chassis sweep".into());
+                }
                 if self.robot(*chassis) != Some(Robot::Sentry) {
                     return Err("auto aim requires a Sentry".into());
                 }
@@ -1368,10 +1423,11 @@ impl Simulation {
                     .placement_revision;
                 let now = self.field.time_ns();
                 let stream = self.input_streams.entry(*chassis).or_default();
-                if let Some(command) = stream
+                let accepted = stream
                     .receive(*frame, now, revision)
-                    .map_err(str::to_string)?
-                {
+                    .map_err(str::to_string)?;
+                if let Some(command) = accepted {
+                    self.revoke_external_control(*chassis);
                     self.field
                         .command_chassis(*chassis, command)
                         .map_err(|e| e.to_string())?;
@@ -1403,6 +1459,7 @@ impl Simulation {
                     .as_ref()
                     .ok_or("this field offers no chassis")?;
                 let placement = spawner.at(team, *position_m, *yaw_deg);
+                self.revoke_external_control(*chassis);
                 self.input_streams.remove(chassis);
                 if let Some(nav) = &mut self.navigation {
                     nav.stop(*chassis);
@@ -1411,10 +1468,15 @@ impl Simulation {
                     .place_chassis(*chassis, placement.spawn)
                     .map_err(|e| e.to_string())
             }
-            Command::Chassis { chassis, command } => self
-                .field
-                .command_chassis(*chassis, *command)
-                .map_err(|e| e.to_string()),
+            Command::Chassis { chassis, command } => {
+                if !command.is_finite() {
+                    return Err("invalid chassis command".into());
+                }
+                self.revoke_external_control(*chassis);
+                self.field
+                    .command_chassis(*chassis, *command)
+                    .map_err(|e| e.to_string())
+            }
             Command::SpawnBot { team, spin_rad_s } => self.spawn_bot(*team, *spin_rad_s),
             Command::RemoveBot { chassis } => {
                 if !self.bots.contains(chassis) {
@@ -1772,6 +1834,139 @@ mod tests {
         });
         let id = simulation.spawn_chassis(Team::Red).unwrap();
         (simulation, id)
+    }
+
+    fn external_input(sim: &Simulation, id: u32, lease_id: u64, sequence: u64) -> Command {
+        Command::ExternalDrive {
+            chassis: id,
+            input: crate::external_control::Input {
+                lease_id,
+                sequence,
+                sampled_time_ns: sim.field.time_ns(),
+                input_epoch: sim.input_epoch,
+                placement_revision: sim.field.chassis_revision(id).unwrap(),
+                motion: crate::external_control::Motion::HeadingVector {
+                    direction_world: [0., 1.],
+                    speed_m_s: 1.,
+                },
+            },
+        }
+    }
+    #[test]
+    fn external_drive_expires_preserves_channels_and_requires_fresh_lease() {
+        let (mut sim, id) = pilot_simulation();
+        sim.apply(&Command::Chassis {
+            chassis: id,
+            command: rm_simulator_world::ChassisCommand {
+                folded: true,
+                aim_yaw_rad: 0.8,
+                aim_pitch_rad: 0.2,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+        let input = external_input(&sim, id, 1, 1);
+        sim.apply(&input).unwrap();
+        sim.step(16).unwrap();
+        assert!(sim.external_control.active(id));
+        assert!(sim.apply(&input).is_err());
+        sim.step(17).unwrap();
+        assert!(!sim.external_control.active(id));
+        let body = sim.field.chassis_snapshot(id).unwrap();
+        assert_eq!(
+            (
+                body.command.forward_m_s,
+                body.command.left_m_s,
+                body.command.yaw_rate_rad_s
+            ),
+            (0., 0., 0.)
+        );
+        assert!(body.command.folded);
+        assert_eq!(
+            (body.command.aim_yaw_rad, body.command.aim_pitch_rad),
+            (0.8, 0.2)
+        );
+        assert!(sim.apply(&external_input(&sim, id, 1, 2)).is_err());
+        sim.apply(&external_input(&sim, id, 2, 1)).unwrap();
+        sim.apply(&Command::Chassis {
+            chassis: id,
+            command: Default::default(),
+        })
+        .unwrap();
+        assert!(!sim.external_control.active(id));
+        assert!(sim.apply(&external_input(&sim, id, 2, 2)).is_err());
+    }
+    #[test]
+    fn rejected_update_at_expiry_still_brakes_and_scheduled_manual_input_takes_over() {
+        let (mut sim, id) = pilot_simulation();
+        sim.apply(&external_input(&sim, id, 1, 1)).unwrap();
+        sim.step(32).unwrap();
+        assert!(sim.apply(&external_input(&sim, id, 1, 2)).is_err());
+        sim.step(1).unwrap();
+        assert_eq!(
+            sim.field.chassis_snapshot(id).unwrap().command.forward_m_s,
+            0.
+        );
+        assert_eq!(sim.field.chassis_snapshot(id).unwrap().command.left_m_s, 0.);
+        sim.apply(&external_input(&sim, id, 2, 1)).unwrap();
+        let now = sim.field.time_ns();
+        sim.apply(&Command::PilotInput {
+            chassis: id,
+            frame: crate::input_stream::InputFrame {
+                input_epoch: sim.input_epoch,
+                sequence: 1,
+                sampled_time_ns: now + tick_ns(),
+                duration_ticks: 1,
+                placement_revision: sim.field.chassis_revision(id).unwrap(),
+                command: rm_simulator_world::ChassisCommand {
+                    forward_m_s: 0.3,
+                    ..Default::default()
+                },
+            },
+        })
+        .unwrap();
+        assert!(sim.external_control.active(id));
+        sim.step(2).unwrap();
+        assert!(!sim.external_control.active(id));
+        assert_eq!(
+            sim.field.chassis_snapshot(id).unwrap().command.forward_m_s,
+            0.3
+        );
+    }
+
+    #[test]
+    fn external_drive_pause_and_life_boundaries_reject_stale_packets() {
+        let (mut sim, id) = pilot_simulation();
+        let input = external_input(&sim, id, 1, 1);
+        sim.apply(&input).unwrap();
+        sim.set_paused(true);
+        assert!(!sim.external_control.active(id));
+        assert!(sim.apply(&external_input(&sim, id, 2, 1)).is_err());
+        sim.set_paused(false);
+        assert!(sim.apply(&input).is_err());
+        let input = external_input(&sim, id, 2, 1);
+        sim.apply(&input).unwrap();
+        sim.apply(&Command::PlaceChassis {
+            chassis: id,
+            position_m: [1., 1., 0.5],
+            yaw_deg: 90.,
+        })
+        .unwrap();
+        assert!(!sim.external_control.active(id));
+        assert!(sim.apply(&input).is_err());
+        sim.apply(&external_input(&sim, id, 3, 1)).unwrap();
+        let stale_release = Command::ReleaseExternalDrive {
+            chassis: id,
+            lease_id: 2,
+        };
+        assert!(sim.apply(&stale_release).is_err());
+        assert!(sim.external_control.active(id));
+        sim.apply(&Command::ReleaseExternalDrive {
+            chassis: id,
+            lease_id: 3,
+        })
+        .unwrap();
+        assert!(!sim.external_control.active(id));
     }
 
     fn reference_robot(

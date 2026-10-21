@@ -1681,6 +1681,24 @@ mod tests {
                 position_m: [0., 0.],
             },
             Command::StopSentry { chassis: 0 },
+            Command::ExternalDrive {
+                chassis: 0,
+                input: crate::external_control::Input {
+                    lease_id: 1,
+                    sequence: 1,
+                    sampled_time_ns: 0,
+                    input_epoch: 0,
+                    placement_revision: 0,
+                    motion: crate::external_control::Motion::HeadingVector {
+                        direction_world: [1., 0.],
+                        speed_m_s: 1.,
+                    },
+                },
+            },
+            Command::ReleaseExternalDrive {
+                chassis: 0,
+                lease_id: 1,
+            },
             Command::SpawnBot {
                 team: Team::Blue,
                 spin_rad_s: 3.,

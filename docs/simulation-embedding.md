@@ -12,7 +12,9 @@ per-point times, physical self-occlusion and seeded range effects, without an
 external integration.
 An [optional, separate rclrs adapter](../integrations/ros2/README.md) now publishes
 those measured points as Livox Driver 2 messages and simulation `/clock` using
-Pixi/RoboStack; the core libraries and multiplayer builds remain ROS-free.
+Pixi/RoboStack; a separate [ROS command bridge](../integrations/ros2/README.md#control-a-robot-in-an-existing-game)
+can now drive a live app/server robot with leased body/world velocity or heading
+vectors. Core libraries and multiplayer builds remain ROS-free.
 
 ## Choose the layer
 
