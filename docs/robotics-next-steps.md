@@ -3,7 +3,8 @@
 # Robotics integration investigation
 
 Investigation following `939316e`, 2026-10-21. MuJoCo implementation is deferred
-at the user's request. No MuJoCo, ROS or other integration dependency was added.
+at the user's request. The optional ROS adapter was added subsequently in its
+own workspace; MuJoCo remains deferred.
 See [the measurements](performance-20261021.md) and
 [embedding contracts](simulation-embedding.md).
 
@@ -62,6 +63,152 @@ reproduction of physical laser reflectance. Sensor geometry, vehicle collision
 geometry and visual geometry should be independently selectable with retained
 source provenance. Moving robots and equipment must participate before claiming
 dynamic-obstacle navigation support.
+
+## Running a real navigation stack during a game
+
+Integration review, 2026-10-21. **Design below, not a delivered live-game ROS
+bridge.** The optional [ROS adapter](../integrations/ros2/README.md) currently
+owns a separate bare-ground probe. Its DDS smoke test establishes message delivery,
+not control of the CAD arena or an active multiplayer match.
+
+Use the same external navigation executable and topic contract against both a
+headless CAD match and the interactive game. The server remains the sole owner of
+the physical world. Bevy only draws it. Replace the robot hardware interface with
+a simulator adapter; do not port the planner into Bevy or give ROS callbacks a
+mutable `Field`. A navigation stack running on another machine should see the
+same ROS interfaces as one on the game's machine.
+
+### Existing hooks and concrete gaps
+
+- `HostHandle::apply` queues operator commands on the authoritative worker;
+  `Command::Chassis` accepts body-frame forward/left speed and yaw rate.
+  `POST /api/command` exposes that operator path when HTTP is enabled. This is
+  useful for low-rate experiments, not the high-rate sensor/control transport.
+  HTTP operator commands do not establish a pilot seat or per-robot authority.
+- `StopSentry` cancels the built-in navigation goal, disables host optical
+  aim/sweep and brakes. A later `NavigateSentry` or map intent can nevertheless
+  restart built-in planning. Sending `Chassis` alone does not cancel navigation:
+  its next tick may overwrite the command. A complete bridge needs exclusive
+  ownership of the chassis motion channels.
+- Raw `Chassis` requests hold their setpoint. The pilot input stream has its own
+  timeout handling, but the operator path does not inherit it. A ROS subscriber
+  forwarding raw commands therefore needs a host-enforced expiry, not just a
+  best-effort zero command on bridge shutdown.
+- `HostHandle::try_dynamic_geometry` supplies an asynchronous debug capture, not
+  coherent per-tick mounted LiDAR brackets. Polling snapshots/HTTP and combining
+  them with current geometry cannot reproduce rolling acquisition timestamps.
+  The live host must export matching captures from its actual integration steps.
+
+### Proposed host boundary
+
+Add a ROS-independent external-controller attachment in the server, selected per
+robot. Keep the public wire protocol versioned if these requests are exposed to
+network clients. The adapter has no referee powers by default.
+
+1. Claim an addressed robot with a generation/lease identity. A grant cancels
+   built-in chassis navigation and chassis sweep; manual takeover revokes it.
+   Separate motion, gimbal and firing authority so future auto-aim can coexist
+   with external driving without writing the same fields.
+2. Accept bounded latest-value velocity requests with sequence, lease identity
+   and host-stamped expiry. Proposed initial motion timeout: 250 ms of advancing
+   simulation time. Reject nonfinite values, old sequences and revoked leases;
+   retain normal motor, power, defeat and match restrictions. Preserve held aim
+   and posture when changing velocity; do not construct a default full command
+   that unfolds the robot or resets its gimbal on every `cmd_vel` update.
+3. At each 128 Hz physical step, capture the attached robot's mounted scene at
+   matching boundaries. Send shared immutable captures to a bounded acquisition
+   worker. Never query DDS or trace the entire LiDAR frame inside the host worker.
+   Share the fixed capture geometry across attachments and retain moving robots.
+4. Publish completed timestamped sensor frames through a separate bounded DDS
+   queue. On overload, report dropped intervals and restart a bracket; never
+   interpolate across a missing run of ticks or silently retimestamp old data.
+   Track capture, acquisition and publication latency separately.
+5. On defeat, removal, placement, reset, lease loss or manual takeover, revoke
+   queued motion and brake. While paused, accept no new motion for later replay;
+   require a fresh command on resume. A disconnected bridge cannot leave a held
+   velocity indefinitely. Host transport time may detect disconnects while
+   paused; the physical world still advances only on simulation ticks.
+
+The acquisition worker needs bounded capture backlog and explicit discontinuity
+handling: folding can change collider shapes, and robot spawns/removals change
+scene topology. Clear partial packets at such boundaries and preserve absolute
+emission phase. Observe buffer/capture age in diagnostics rather than masking
+these events with a frozen scan.
+
+### ROS-facing contract
+
+Use robot topic namespaces and unique frame IDs for each attachment. A shared
+match has one `/clock` authority. All consumers use `use_sim_time=true`.
+
+| Interface | Owner and meaning |
+|---|---|
+| Livox `CustomMsg` | Simulator's existing measured, distorted local points; default 10 Hz batching. |
+| `sensor_msgs/PointCloud2` | Optional conversion of the same measured points for costmaps; preserve and document time fields. |
+| `sensor_msgs/Imu` | Future sampled/noisy acceleration and angular velocity; needed by LiDAR-inertial stacks. |
+| Wheel feedback / `nav_msgs/Odometry` | Future encoder-derived estimate, with covariance; slip remains estimator error. |
+| `/tf_static` body-to-sensor | Configured physical mounting extrinsics. |
+| `/tf` odom-to-body | Exactly one odometry estimator, or an explicitly selected truth bootstrap. |
+| `/tf` map-to-odom | External localization/SLAM, or explicit known-map bootstrap. |
+| `geometry_msgs/TwistStamped` | External body-frame x/y velocity and z yaw rate; configurable unstamped compatibility. |
+| Goal / path / status | External planner actions and diagnostics, mapped to team map intent when enabled. |
+| Fold/stow request and state | Separate robot mechanism channel with achieved-state feedback. |
+
+Simulator FLU matches the intended ROS body forward/left/up axes. `linear.x`,
+`linear.y` and `angular.z` map to forward m/s, left m/s and CCW rad/s; no Bevy
+coordinate transform belongs in this adapter. Enforce a configured body frame
+for stamped commands. World-frame commands require an explicit transform.
+Reject unsupported vertical/roll/pitch components rather than silently treating
+a three-dimensional command as planar. Clamp or reject motion using documented
+per-robot limits.
+
+Nav2 expects an odometry source and the `map -> odom -> base_link` transform
+chain; see its [state-estimation contract](https://docs.nav2.org/rolling/getting_started/navigation_concepts/state_estimation/).
+Jazzy deployments differ in stamped velocity configuration: configure both ends
+explicitly rather than assuming a default. The
+[Jazzy loopback simulator reference](https://docs.nav2.org/jazzy/configuration_and_development/configuration_guide/others/configuring_loopback_sim/)
+documents `enable_stamped_cmd_vel` and its older-distribution default. Keep our
+Rapier world as the plant; running that loopback simulator as another plant would
+bypass the dynamics being tested.
+
+Start with an explicitly labeled truth-localized mode to isolate controller and
+bridge failures. Publish truth on evaluation-only topics in sensor-localized
+mode; never also publish perfect `map -> odom` beside SLAM. A LiDAR-only planner
+can use the existing scan output, but FAST-LIO-style LiDAR-inertial localization
+requires the missing IMU adapter. Livox messages alone do not complete that stack.
+
+### Arena-specific planning
+
+An omni Sentry needs lateral velocity support. A conventional 2D navigation
+stack can serve as a baseline on open ground, but the arena also needs terrain
+segmentation and explicit constrained tunnel transitions. Do not project every
+triangle onto one occupancy plane: roof surfaces would block usable tunnels.
+Keep floor support, overhead clearance and dynamic obstacles distinct.
+
+Expose tunnel entry/exit, alignment, fold, transit and unfold as a staged behavior
+with measured completion, timeouts and cancellation. The external planner must
+own route selection in this mode; the existing CAD-based tunnel planner is a
+separately selected baseline. A static maximum-size footprint is conservative;
+a smaller folded footprint must only activate after posture feedback confirms
+clearance, with yaw restricted through narrow passages.
+
+### Implementation order and acceptance
+
+1. Host control lease, bounded velocity ingress and stale-command brake. Test
+   manual takeover, ordering, disconnect, pause/resume and robot identity changes.
+2. Live-host scan attachment and bounded acquisition/publication workers. Test
+   clock alignment and discontinuities under folding, spawns and queue pressure.
+3. ROS body commands, TF and an opt-in truth odometry bootstrap. Demonstrate an
+   external controller driving the same robot while another player is in-game.
+4. PointCloud2 conversion and a known-map navigation demo, then encoder/IMU models
+   and actual external localization. Do not label truth-assisted tests as SLAM.
+5. All three tunnel routes, moving opponents and mechanism-aware navigation.
+
+The first end-to-end acceptance run should show external navigation moving the
+live in-game Sentry around CAD obstacles, manual takeover stopping it, and a
+killed bridge braking within the lease timeout. Record goal error, collisions,
+real-time factor, command age and scan drops. A later sensor-localized run must
+pass with truth topics unavailable to the external stack. These are required
+future tests, not results from the existing bare-world DDS smoke test.
 
 ## Joint controls without a new backend
 
