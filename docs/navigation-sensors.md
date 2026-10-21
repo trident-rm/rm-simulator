@@ -82,7 +82,8 @@ stable identities and self-exclusion, followed by a mounted sensor service and
 scan overlays. Keep perfect chassis pose, noisy wheel/IMU odometry and estimated
 map pose separate. The existing ground-truth Sentry planner should remain a
 baseline, not silently supply observations to a sensor-only navigation policy.
-ROS, SLAM and external planner adapters remain future work.
+The optional ROS output adapter is described below; SLAM and external planner
+adapters remain future work.
 
 Run the CAD query/scan benchmark with:
 
@@ -329,7 +330,11 @@ The independent bare-world probe used 58.401 ms acquisition for the same point
 budget. Mesh queries dominate the loaded-world difference. Reports remain in
 ignored `local-assets/rolling-*-example.log` files.
 
-App overlays, transport/ROS adapters, noisy wheel/IMU odometry, estimated-pose
+An [optional rclrs adapter](../integrations/ros2/README.md) publishes measured
+rolling frames as Livox Driver 2 CustomMsg and simulation `/clock`. Its standalone
+probe and native DDS tests use Pixi/RoboStack; no ROS dependency enters this core.
+
+App overlays, app/server ROS wiring, noisy wheel/IMU odometry, estimated-pose
 SLAM, incidence/material response and angular measurement noise remain future
 work. The existing Sentry planner still consumes ground-truth geometry; these
 sensor APIs do not silently replace it with a localization stack.

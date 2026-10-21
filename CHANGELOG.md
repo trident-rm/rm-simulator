@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Add an opt-in rclrs ROS 2 adapter with Pixi/RoboStack Jazzy setup, official
+  Livox Driver 2 message interfaces, simulation-clock publishing and a driven
+  chassis probe. Preserve per-point timing and validate native DDS delivery
+  with a generated-message Python subscriber; ordinary builds remain ROS-free.
 - Add mounted rolling LiDAR over coherent per-step physics captures, retaining
   self-occlusion and interpolating chassis and moving-collider poses at each
   emission. Include deterministic range noise/dropout, timestamped local points,

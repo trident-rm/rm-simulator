@@ -25,6 +25,16 @@ provenance of copied code is recorded so that no notice is lost.
 
 ## Provenance of reused code
 
+The `CustomMsg.msg` and `CustomPoint.msg` definitions in
+`integrations/ros2/interfaces/livox_ros_driver2/msg/` come from
+[Livox-SDK/livox_ros_driver2](https://github.com/Livox-SDK/livox_ros_driver2/tree/21445540f0d100dc86a7e6df312dd70bbdb4afdf),
+revision `21445540f0d100dc86a7e6df312dd70bbdb4afdf`, copyright (c) 2022 Livox.
+Only trailing blank lines are normalized; fields and comments match upstream.
+Their MIT notice is retained in
+`integrations/ros2/interfaces/livox_ros_driver2/LICENSE`. The local CMake package
+only generates those interfaces; it contains no Livox hardware driver or SDK.
+The optional adapter uses unmodified Apache-2.0 rclrs 0.8.0 from crates.io.
+
 The fitted coefficients in
 `crates/rm-simulator-physics/src/sensors/mid360_coefficients.rs` and reference
 angle excerpts in its tests derive from `scan_mode/mid360.csv` in

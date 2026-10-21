@@ -10,6 +10,11 @@ metadata = json.loads(subprocess.check_output(
 packages = {p["id"]: p for p in metadata["packages"]}
 nodes = {n["id"]: n["dependencies"] for n in metadata["resolve"]["nodes"]}
 
+# Native ROS stays in integrations/ros2's opt-in workspace. Core verification
+# must not need a sourced ROS installation, even with --all-features.
+assert not ({"rclrs", "ros-env", "rosidl_runtime_rs", "r2r"}
+            & {p["name"] for p in packages.values()})
+
 
 def dependencies(name):
     root = next(p["id"] for p in packages.values() if p["name"] == name)

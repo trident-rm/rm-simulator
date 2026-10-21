@@ -7,6 +7,8 @@ our reviewed CAD field, runs native combat, territory control, Rune and assembly
 mechanics on an explicit 128 Hz multiplayer clock, and supports local and network play.
 Reusable in-process sessions support configurable stepping, including 1000 Hz,
 without a server or renderer; see [simulation embedding](docs/simulation-embedding.md).
+An [optional ROS 2 adapter](integrations/ros2/README.md) publishes mounted LiDAR
+as Livox Driver 2 messages and simulation time through rclrs, using Pixi/RoboStack.
 Drive a chassis over the terrain with a mouse-aimed gun, or explore with `--fly`.
 The final 2026-capable source is preserved at Git tag `rm2026-final`.
 

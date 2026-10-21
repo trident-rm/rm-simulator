@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright (c) 2026 hxyulin <hxyulin@proton.me>
+[package]
+name = "rm-simulator-ros2"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Native ROS is intentionally outside the default simulator workspace.
+[workspace]
+
+[features]
+default = []
+ros2 = ["dep:rclrs", "dep:anyhow", "dep:rm-simulator-world", "dep:clap"]
+
+[dependencies]
+rm-simulator-physics = { version = "0.1.0", path = "../../crates/rm-simulator-physics" }
+rm-simulator-world = { version = "0.1.0", path = "../../crates/rm-simulator-world", optional = true }
+rclrs = { version = "=0.8.0", optional = true }
+anyhow = { version = "1", optional = true }
+clap = { version = "4.6", features = ["derive"], optional = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+
+[[bin]]
+name = "rm-simulator-ros2"
+path = "src/main.rs"
+required-features = ["ros2"]

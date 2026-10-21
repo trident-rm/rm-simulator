@@ -29,6 +29,7 @@ source file.
 | Physics reuse without a match or server | `docs/physics-reuse.md` |
 | In-process sessions, configurable timing and adapter boundaries | `docs/simulation-embedding.md` |
 | Nearest-hit queries and ideal LiDAR | `docs/navigation-sensors.md` |
+| Optional ROS 2 / Livox publishing and Pixi environment | `integrations/ros2/README.md` |
 | Licensing and third-party provenance | `NOTICE.md` |
 | Every guide, indexed | `docs/README.md` |
 
@@ -134,6 +135,12 @@ frame stays fixed, detector masks are source-envelope approximations and base
 shield travel is illustrative. See `docs/rmuc2027-field.md` before extending it.
 
 ## Layout
+
+`integrations/ros2/` is an opt-in, separate Cargo workspace for rclrs publishing
+and a Pixi/RoboStack environment. It consumes measured rolling LiDAR frames and
+publishes Livox Driver 2 messages plus `/clock`; it adds no ROS dependency to core
+crates. Its standalone probe owns a trusted `Field`, not a multiplayer host.
+Native ROS checks run separately; keep the ordinary workspace ROS-free.
 
 | Path | Contents |
 |---|---|

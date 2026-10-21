@@ -32,6 +32,7 @@ args = ["--fix=lf"]
 [[repos.hooks]]
 id = "check-added-large-files"
 args = ["--maxkb=500"]
+exclude = '^integrations/ros2/pixi\.lock$'
 
 [[repos]]
 repo = "https://github.com/crate-ci/typos"

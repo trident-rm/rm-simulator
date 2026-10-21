@@ -10,6 +10,9 @@ passive [LiDAR foundation](navigation-sensors.md) supplies geometric rays and
 ideal instantaneous scans, plus a mounted rolling MID-360 approximation with
 per-point times, physical self-occlusion and seeded range effects, without an
 external integration.
+An [optional, separate rclrs adapter](../integrations/ros2/README.md) now publishes
+those measured points as Livox Driver 2 messages and simulation `/clock` using
+Pixi/RoboStack; the core libraries and multiplayer builds remain ROS-free.
 
 ## Choose the layer
 

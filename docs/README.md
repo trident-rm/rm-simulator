@@ -19,6 +19,7 @@ Git history.
 | In-process sessions, clocks, controls and future adapters | [Simulation embedding](simulation-embedding.md) |
 | Navigation sensors, joint feedback and deferred MuJoCo investigation | [Robotics next steps](robotics-next-steps.md) |
 | Nearest-hit geometry and ideal LiDAR acquisition | [Navigation sensors](navigation-sensors.md) |
+| Optional ROS 2 / Livox Driver 2 publishing through rclrs | [ROS 2 adapter](../integrations/ros2/README.md) |
 | Calibrated serial-arm IK optimization and paired benchmark | [Serial arm search](serial-arm-search.md) |
 | Standalone gameplay and its live integration | [Gameplay](gameplay.md) |
 | Rule sources and historical archive | [Referee rules](referee-rules.md) |
