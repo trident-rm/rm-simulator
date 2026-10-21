@@ -5,7 +5,11 @@
 The multiplayer app is one consumer of reusable libraries. In-process callers
 can own a physical match without starting a server, a socket, a window or a
 background worker. This guide describes the integration boundaries; it does not
-add MuJoCo, ROS, Python, camera sensors, LiDAR or an RL training framework.
+add MuJoCo, ROS, Python, camera sensors or an RL training framework. A subsequent
+passive [LiDAR foundation](navigation-sensors.md) supplies geometric rays and
+ideal instantaneous scans, plus a mounted rolling MID-360 approximation with
+per-point times, physical self-occlusion and seeded range effects, without an
+external integration.
 
 ## Choose the layer
 
@@ -117,7 +121,8 @@ must use the server protocol. `Session::referee` is explicitly privileged.
 truth. They must not be confused with measured sensor outputs or team-visible
 Radar information. Future adapters should expose timestamped sensor observations
 and keep these truth APIs available separately for labels, evaluation and debug.
-This refactor creates no fake LiDAR, camera, IMU or encoder observations.
+The separate physics sensor module supplies ideal geometric LiDAR; camera, IMU
+and encoder measurement models remain separate future adapters.
 
 ## Subsequent integrations
 

@@ -3,7 +3,9 @@
 //! Loaded-field CPU and tail-cost probe. No rendering or wall-clock pacing.
 //! Usage: match_cost CAD_PATH [MATCHES=1] [PILOTS=8] [SAMPLES=1000]
 use rm_simulator_server::{cad_assets, layout};
-use rm_simulator_world::{Caliber, ChassisCommand, ChassisConfig, Field, Shot, Team};
+use rm_simulator_world::{
+    Caliber, ChassisCommand, ChassisConfig, Field, RefereeCommand, Shot, Team, tick_ns,
+};
 use std::{hint::black_box, path::PathBuf, time::Instant};
 
 fn report(name: &str, samples: &mut [f64]) {
@@ -66,6 +68,16 @@ fn main() -> anyhow::Result<()> {
             },
         )?;
     }
+    template.referee_command(RefereeCommand::StartMatch)?;
+    template
+        .step(rm_simulator_world::gameplay::rmuc_2027::match_rules::COUNTDOWN_NS / tick_ns())?;
+    // Explicit benchmark ammunition: native Infantry deploy without rounds.
+    for robot in template.chassis_snapshots() {
+        template.referee_command(RefereeCommand::SetAllowance {
+            robot: robot.id,
+            allowance: [200, 0],
+        })?;
+    }
     template.step(500)?;
     let snapshot = template.snapshot();
     let geometry = template.static_geometry_snapshot();
@@ -75,6 +87,7 @@ fn main() -> anyhow::Result<()> {
         started.elapsed().as_secs_f64()
     );
     println!("CAD root={}", root.display());
+    let batch_ms = 16. * tick_ns() as f64 * 1e-6;
     let wall = Instant::now();
     let results = std::thread::scope(|scope| {
         let jobs: Vec<_> = (0..matches)
@@ -87,15 +100,22 @@ fn main() -> anyhow::Result<()> {
                     let mut steps = Vec::with_capacity(samples);
                     let mut snapshots = Vec::new();
                     let mut restores = Vec::new();
+                    let mut accepted_shots = 0;
+                    let mut rejected_shots = 0;
                     for sample in 0..samples {
                         if sample % 8 == 0 {
                             let shooters: Vec<_> =
                                 field.snapshot().chassis.iter().map(|c| c.id).collect();
                             for id in shooters {
                                 if let Some(muzzle) = field.chassis_muzzle_pose(id) {
-                                    field
+                                    if field
                                         .fire(muzzle, Shot::at_limit(Caliber::Mm17), Some(id))
-                                        .unwrap();
+                                        .is_ok()
+                                    {
+                                        accepted_shots += 1;
+                                    } else {
+                                        rejected_shots += 1;
+                                    }
                                 }
                             }
                         }
@@ -113,7 +133,7 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
                     }
-                    (steps, snapshots, restores)
+                    (steps, snapshots, restores, accepted_shots, rejected_shots)
                 })
             })
             .collect();
@@ -124,11 +144,15 @@ fn main() -> anyhow::Result<()> {
     println!(
         "Concurrent run wall time {:.3}s, simulated seconds per match {:.3}",
         wall.elapsed().as_secs_f64(),
-        samples as f64 * 0.016
+        samples as f64 * 16. * tick_ns() as f64 * 1e-9
     );
-    for (index, (mut steps, mut snapshots, mut restores)) in results.into_iter().enumerate() {
-        let over_budget = steps.iter().filter(|&&ms| ms > 16.).count();
-        println!("match {index}: {over_budget}/{samples} step batches exceed 16 ms");
+    for (index, (mut steps, mut snapshots, mut restores, accepted, rejected)) in
+        results.into_iter().enumerate()
+    {
+        let over_budget = steps.iter().filter(|&&ms| ms > batch_ms).count();
+        println!(
+            "match {index}: {over_budget}/{samples} step batches exceed {batch_ms:.3} ms; accepted shots={accepted}, rejected={rejected}"
+        );
         report("step", &mut steps);
         report("snapshot", &mut snapshots);
         report("restore", &mut restores);

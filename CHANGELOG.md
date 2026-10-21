@@ -4,6 +4,23 @@
 
 ## Unreleased
 
+- Add mounted rolling LiDAR over coherent per-step physics captures, retaining
+  self-occlusion and interpolating chassis and moving-collider poses at each
+  emission. Include deterministic range noise/dropout, timestamped local points,
+  continuity checks and headless acquisition examples with optional CSV output.
+- Add a compact procedural MID-360 pattern approximation fitted to Livox's
+  published angle table, with continuous sample phase, deterministic decimation
+  and held-out validation. The inferred 12-second model period and nominal
+  firing cadence are approximations; rolling scan motion remains deferred.
+- Add passive nearest-hit metric ray queries and configurable ideal instantaneous
+  LiDAR scans over shared geometry captures, with mounted poses, explicit
+  simulation timestamps and reusable output buffers. Keep sensor noise,
+  optional semantic filtering and external navigation adapters deferred. The
+  separate mounted scanner supplies rolling scans and range effects.
+- Expand native rules benchmarks and correct the loaded-field probe's 128 Hz
+  timing labels; explicitly provision ammunition and count successful launches.
+  Record rules, physics and CAD-query measurements and deferred robotics findings.
+
 - Add trusted in-process simulation sessions with explicit stepping, addressed
   controls, timestamped ground truth, shared-geometry checkpoints and seeded resets.
   Support immutable per-world integration durations, including 1000 Hz, while

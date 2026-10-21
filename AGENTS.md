@@ -28,6 +28,7 @@ source file.
 | Crate ownership, ticks, restore, ECS | `docs/architecture-refactor.md` |
 | Physics reuse without a match or server | `docs/physics-reuse.md` |
 | In-process sessions, configurable timing and adapter boundaries | `docs/simulation-embedding.md` |
+| Nearest-hit queries and ideal LiDAR | `docs/navigation-sensors.md` |
 | Licensing and third-party provenance | `NOTICE.md` |
 | Every guide, indexed | `docs/README.md` |
 
@@ -138,7 +139,7 @@ shield travel is illustrative. See `docs/rmuc2027-field.md` before extending it.
 |---|---|
 | `crates/rm-simulator-assets` | Verified manifests, collision GLBs, source binding records, articulation semantics and FLU math. Depends on physics/gameplay types, never world, server, rendering or networking. Server compatibility imports preserve native runtime validation. |
 | `crates/rm-simulator-gameplay` | Deterministic match engine the world referee runs as its live rules authority (re-exported as `rm_simulator_world::gameplay`). No physics, rendering or other simulator-crate dependency. |
-| `crates/rm-simulator-physics` | Bevy-free, gameplay-free Rapier library. `chassis.rs` owns wheel/body dynamics, `mechanism.rs` owns prescribed robot folding geometry, `projectile.rs` owns stepping and raw armor contacts, `geometry.rs` owns shared collision captures and clearance queries, and `motion.rs` owns prescribed rotor/rail motion and fitted armor geometry. `control.rs` owns direct wheel torque request types. No other simulator crate dependency. |
+| `crates/rm-simulator-physics` | Bevy-free, gameplay-free Rapier library. `chassis.rs` owns wheel/body dynamics, `mechanism.rs` owns prescribed robot folding geometry, `projectile.rs` owns stepping and raw armor contacts, `geometry.rs` owns shared collision captures and clearance queries, and `motion.rs` owns prescribed rotor/rail motion and fitted armor geometry. `control.rs` owns direct wheel torque request types; `sensors.rs` owns passive caller-stamped ideal LiDAR over geometry captures. No other simulator crate dependency. |
 | `crates/rm-simulator-world` | Complete `Field` facade, rune activation, outpost/base HP, referee integration and `scoring.rs` detection/damage. Coordinates physics on explicit ticks and restores the whole world. `session.rs` exposes trusted in-process stepping, control, truth, checkpoints and seeded resets. Re-exports existing physical types through compatibility modules. |
 | `crates/rm-simulator-render` | Bevy scene. `cad.rs` (glTF scenery and roles), `rune.rs` and `outpost.rs` (light overlays with lit and struck materials), `projectile.rs` (pooled projectile spheres), `chassis.rs` (body, armor lights, omni wheels, two-axis gimbal), `sync.rs` (`SceneState` in, transforms and materials out), `lighting.rs`. Never depends on the world crate. |
 | `crates/rm-simulator-server` | Bevy-free glue and the `rm-simulator-server` binary. asset compatibility imports (verified CAD loading and collision geometry supplied by `rm-simulator-assets`), `compression.rs` (the self-identifying wire framing for non-checkpoint messages: ZSTD or, for the loopback transport, raw), `math.rs` (wxyz quaternion and column-major matrix helpers, the glTF root pose convention), `layout.rs` (rune hubs, outpost origins, terrain into the field, team spawn slots and the `ChassisSpawner`, `FieldConfig` from options), `simulation.rs` (`Simulation`: paused flag, bounded real-time advance, command application, chassis spawning per player), `protocol.rs` (`ClientMessage`/`ServerMessage`, roles), `host.rs` (single-owner simulation worker, roster and command authority), `net.rs` (the GNS UDP sockets, the in-process owner's loopback codec link, peer delivery and `Client`), `network_trace.rs` (bounded metadata tracing and local counters), `udp_codec.rs` (the per-peer UDP codec with no socket in it: fragment framing, reassembly, input batches, delta coding and pacing, all on an explicit `now`), `gns_transport.rs` (the GNS sockets that drive that codec), `scripted_link.rs` (a deterministic datagram link with scripted loss, reordering, duplication, delay and blackouts, for tests), `host_args.rs` (the field, rune, weapon and chassis options a host accepts, shared with the app's command line), `workload.rs` (the deterministic no-CAD field the bandwidth probe and the measurement examples drive), `http.rs` and `panel.html` (minimal HTTP/1.1 server and the referee page), `main.rs` (headless binary). Depends on the world crate; the only place besides the app that reads host time. |
@@ -219,6 +220,12 @@ not a refactor.
 - **Embedding.** `world::session::Session` is a trusted caller-owned facade over the same
   `Field` control and step paths. It adds no transport authority or wall-clock pacing.
   Ground-truth access is explicitly privileged and is not a simulated sensor.
+  Passive `physics::sensors` acquisitions take explicit geometry, pose and time;
+  their caller owns scheduling. Mounted rolling scans retain self-occlusion and
+  interpolate coherent per-step robot/collider captures; they reject topology
+  changes and robot placement discontinuities. Optional seeded range effects
+  are indexed by global emission number, independent of batching. Sensor output
+  contains local points and timestamps, not privileged per-point world poses.
   Caller adapters own sampling schedules, random generators and task/reward state.
   Direct wheel torques bypass velocity/balance assistance but preserve physical
   motor, power, traction and defeat limits; gimbal/folding remain prescribed.

@@ -61,7 +61,90 @@ pub struct MovingGeometry {
     /// The part's own shapes, held at the origin of its untranslated frame.
     pub geometry: StaticGeometry,
 }
+
+/// Closest surface returned by a metric ray query over one geometry capture.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RayHit {
+    /// Distance along the normalized ray, in metres, including zero if inside a solid.
+    pub distance_m: f64,
+    /// World FLU intersection point, metres.
+    pub position_m: [f64; 3],
+    /// World FLU surface normal; may be zero/unreliable for an origin inside a solid.
+    pub normal: [f64; 3],
+    /// Shape ordinal in this capture, stable only while that capture is unchanged.
+    /// This is not a robot identity or persistent semantic part ID.
+    pub shape_index: usize,
+}
+
 impl StaticGeometry {
+    /// Return the nearest hit up to an inclusive metric range, or a valid miss.
+    /// Direction is normalized internally; its scale does not change the range.
+    /// Invalid/non-finite inputs return an error, unlike a valid `Ok(None)` miss.
+    /// Meshes use their exact captured triangles and cached BVHs, not convex hulls.
+    /// Solid shapes containing the origin occlude at zero range. Equal-range
+    /// hits retain the first capture-local shape. This never advances physics.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{WorldPhysics, Pose};
+    /// let mut world = WorldPhysics::new(&[], 0.0);
+    /// world.add_static_box(Pose::at([2., 0., 1.]), [1.; 3]);
+    /// let geometry = world.static_geometry_snapshot(true);
+    /// let hit = geometry.cast_ray([0., 0., 1.], [7., 0., 0.], 3.)?.unwrap();
+    /// assert!((hit.distance_m - 1.5).abs() < 1e-9);
+    /// assert_eq!(hit.normal, [-1., 0., 0.]);
+    /// assert!(geometry.cast_ray([0., 0., 1.], [0.; 3], 3.).is_err());
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn cast_ray(
+        &self,
+        origin_m: [f64; 3],
+        direction: [f64; 3],
+        max_distance_m: f64,
+    ) -> Result<Option<RayHit>, &'static str> {
+        if !origin_m.into_iter().chain(direction).all(f64::is_finite)
+            || !max_distance_m.is_finite()
+            || max_distance_m <= 0.
+        {
+            return Err("ray requires finite origin/direction and a positive finite range");
+        }
+        let direction = vector(direction);
+        let scale = direction.abs().max_element();
+        if scale == 0. {
+            return Err("ray direction must be nonzero");
+        }
+        // Scaling first avoids overflow/underflow for valid extreme directions.
+        let ray = Ray::new(vector(origin_m), (direction / scale).normalize());
+        Ok(self.cast_metric_ray(&ray, max_distance_m))
+    }
+
+    /// Internal scan path for already validated metric rays.
+    pub(crate) fn cast_metric_ray(&self, ray: &Ray, max_distance_m: f64) -> Option<RayHit> {
+        let bounds = self.bounds.get_or_init(|| {
+            self.shapes
+                .iter()
+                .map(|(pose, shape)| shape.compute_aabb(pose))
+                .collect()
+        });
+        let mut closest: Option<RayHit> = None;
+        let mut limit = max_distance_m;
+        for (index, ((pose, shape), bounds)) in self.shapes.iter().zip(bounds.iter()).enumerate() {
+            if bounds.cast_local_ray(ray, limit, true).is_none() {
+                continue;
+            }
+            if let Some(hit) = shape.cast_ray_and_get_normal(pose, ray, limit, true)
+                && (closest.is_none() || hit.time_of_impact < limit)
+            {
+                limit = hit.time_of_impact;
+                closest = Some(RayHit {
+                    distance_m: limit,
+                    position_m: ray.point_at(limit).to_array(),
+                    normal: hit.normal.to_array(),
+                    shape_index: index,
+                });
+            }
+        }
+        closest
+    }
     /// Separate articulated scenery from fixed geometry for debug drawing.
     pub fn fixed_only(&self) -> Self {
         Self {
@@ -333,6 +416,93 @@ impl StaticGeometry {
 #[cfg(test)]
 mod clearance_tests {
     use crate::{Pose, WorldPhysics};
+    #[test]
+    fn nearest_ray_is_metric_bounded_and_not_shape_order_dependent() {
+        let mut world = WorldPhysics::new(&[], 0.);
+        world.add_static_box(Pose::at([4., 0., 1.]), [1.; 3]);
+        world.add_static_box(Pose::at([2., 0., 1.]), [1.; 3]);
+        let geometry = world.static_geometry_snapshot(true);
+        for scale in [1e-300, 1., 7., 1e300] {
+            let hit = geometry
+                .cast_ray([0., 0., 1.], [scale, 0., 0.], 1.5)
+                .unwrap()
+                .unwrap();
+            assert_eq!(hit.distance_m, 1.5);
+            assert_eq!(hit.position_m, [1.5, 0., 1.]);
+            assert_eq!(hit.normal, [-1., 0., 0.]);
+        }
+        assert!(
+            geometry
+                .cast_ray([0., 0., 1.], [1., 0., 0.], 1.49)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            geometry
+                .cast_ray([0., 0., 1.], [-1., 0., 0.], 10.)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            geometry
+                .cast_ray([2., 0., 1.], [1., 0., 0.], 10.)
+                .unwrap()
+                .unwrap()
+                .distance_m,
+            0.
+        );
+        assert!(
+            geometry
+                .cast_ray([f64::NAN, 0., 0.], [1., 0., 0.], 1.)
+                .is_err()
+        );
+        assert!(geometry.cast_ray([0.; 3], [0.; 3], 1.).is_err());
+        assert!(
+            geometry
+                .cast_ray([0.; 3], [f64::INFINITY, 0., 0.], 1.)
+                .is_err()
+        );
+        for range in [0., -1., f64::NAN, f64::INFINITY] {
+            assert!(geometry.cast_ray([0.; 3], [1., 0., 0.], range).is_err());
+        }
+    }
+
+    #[test]
+    fn ray_queries_preserve_triangle_gaps_instead_of_convexifying() {
+        let mut world = WorldPhysics::new(&[], -10.);
+        world
+            .add_static_mesh(
+                vec![
+                    [2., -2., -1.],
+                    [2., -1., -1.],
+                    [2., -1., 1.],
+                    [2., -2., 1.],
+                    [2., 1., -1.],
+                    [2., 2., -1.],
+                    [2., 2., 1.],
+                    [2., 1., 1.],
+                ],
+                vec![[0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7]],
+            )
+            .unwrap();
+        let geometry = world.static_geometry_snapshot(true);
+        assert!(
+            geometry
+                .cast_ray([0.; 3], [1., 0., 0.], 5.)
+                .unwrap()
+                .is_none()
+        );
+        let hit = geometry
+            .cast_ray([0., 1.5, 0.], [1., 0., 0.], 5.)
+            .unwrap()
+            .unwrap();
+        assert_eq!(hit.distance_m, 2.);
+        let reverse = geometry
+            .cast_ray([4., 1.5, 0.], [-1., 0., 0.], 5.)
+            .unwrap()
+            .unwrap();
+        assert_eq!(reverse.distance_m, 2.);
+    }
     #[test]
     fn oriented_box_preserves_its_heading_and_checks_the_entire_sweep() {
         let mut world = WorldPhysics::new(&[], 0.);

@@ -482,6 +482,16 @@ impl Field {
         self.physics.dynamic_geometry_snapshot()
     }
 
+    /// Capture enabled geometry and this robot's actual pose at the current
+    /// simulation time for a mounted rolling LiDAR. Own-robot occluders remain.
+    /// This is trusted ground truth for sensor generation, not a wire command.
+    pub fn lidar_scene_capture(
+        &self,
+        robot: u32,
+    ) -> Result<rm_simulator_physics::sensors::rolling::SceneCapture, &'static str> {
+        self.physics.lidar_scene_capture(robot, self.time_ns())
+    }
+
     /// Launch a projectile in the shared physical world, with an optional shooter.
     /// Native matches enforce phase, HP, launcher locks, heat and allowance.
     /// Returns the projectile identity.

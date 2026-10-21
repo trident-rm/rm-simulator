@@ -14,6 +14,8 @@ other simulator crate.
 | File | Owns |
 |---|---|
 | `src/control.rs` | Validated held drive modes and per-wheel motor torque requests, independent of a transport or controller scheduler. |
+| `src/sensors.rs` | Prepared ideal planar/multi-layer LiDAR, caller-stamped instantaneous acquisition and reusable output buffers over explicit geometry captures. |
+| `src/sensors/rolling.rs` | Mounted procedural MID-360 acquisitions with interpolated robot/obstacle motion, self-occlusion, timestamps and seeded range noise/dropout. |
 | `src/chassis.rs` | The four-wheel chassis: an octagonal omni deck and compact lower bumper (box on other presets), a turret cuboid, ray-cast spring/damper suspension, independent wheel inertia, motor torque and slip-limited omni tyres, four armor housings, gimbal dynamics and the shared drivetrain power budget. `ChassisConfig` presets are the omni Infantry and the mecanum Hero. |
 | `src/projectile.rs` | `WorldPhysics`, `Shot`, `Caliber`, `Contact`, `TargetFace`, `TargetFrames`, `StaticGeometry` and `ProjectilePolicy`: projectile flight, scoring faces and raw contacts in physical order. |
 | `src/geometry.rs` | Shared collision captures and read-only clearance queries consumed by the world facade. |

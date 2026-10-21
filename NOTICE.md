@@ -25,6 +25,39 @@ provenance of copied code is recorded so that no notice is lost.
 
 ## Provenance of reused code
 
+The fitted coefficients in
+`crates/rm-simulator-physics/src/sensors/mid360_coefficients.rs` and reference
+angle excerpts in its tests derive from `scan_mode/mid360.csv` in
+[Livox-SDK/livox_laser_simulation](https://github.com/Livox-SDK/livox_laser_simulation/tree/1cce1073633a062b92e30243a4c2920e45551bb5),
+revision `1cce1073633a062b92e30243a4c2920e45551bb5`. The original CSV is not
+distributed here. `scripts/fit-mid360-pattern.py` reproduces the empirical fit.
+The repository author's copyright applies to the fitter and sensor implementation,
+not the original measurement data. The upstream MIT notice is retained below:
+
+```text
+MIT License
+
+Copyright (c) 2021 livox
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 Rune rules, outpost geometry, rune and outpost light visuals, lighting, pose
 conversion, and the scene synchronization pattern were copied from the sibling
 `rm-vision-sim` repository and adapted for a first-person application. Both

@@ -608,7 +608,7 @@ pub(crate) fn pose(p: Pose) -> Pose3 {
 fn finite(v: [f64; 3]) -> bool {
     v.iter().all(|x| x.is_finite())
 }
-fn pose_is_valid(p: Pose) -> bool {
+pub(crate) fn pose_is_valid(p: Pose) -> bool {
     let norm = p.rotation_wxyz.iter().map(|v| v * v).sum::<f64>();
     finite(p.translation_m) && norm.is_finite() && (norm - 1.).abs() < 1e-6
 }
@@ -958,6 +958,45 @@ impl WorldPhysics {
                 .map(|(_, collider)| (*collider.position(), collider.shared_shape().clone()))
                 .collect(),
         }
+    }
+    /// Capture enabled geometry and a robot pose for a mounted rolling LiDAR.
+    /// Own-robot geometry is retained for physical self-occlusion. `time_ns` is
+    /// caller-owned simulation time, not host time; take captures on each physics
+    /// step for interpolation. Mesh buffers are shared, not tessellated or copied.
+    /// Sensor captures include the bare catch half-space when present.
+    pub fn lidar_scene_capture(
+        &self,
+        robot: u32,
+        time_ns: u64,
+    ) -> Result<crate::sensors::rolling::SceneCapture, &'static str> {
+        use crate::sensors::rolling::{SceneCapture, SensorCollider};
+        let robot_state = self.chassis_snapshot(robot).ok_or("unknown LiDAR robot")?;
+        let mut fixed = Vec::new();
+        let mut moving = Vec::new();
+        for (handle, collider) in self.world.all_colliders().filter(|(_, c)| c.is_enabled()) {
+            let sample = SensorCollider {
+                handle,
+                pose: *collider.position(),
+                shape: collider.shared_shape().clone(),
+            };
+            if collider.parent().is_some() || self.mechanisms.iter().any(|(h, ..)| *h == handle) {
+                moving.push(sample);
+            } else {
+                fixed.push(sample);
+            }
+        }
+        Ok(SceneCapture::new(
+            robot,
+            robot_state.placement_revision,
+            time_ns,
+            robot_state.pose,
+            fixed,
+            moving,
+            self.chassis
+                .iter()
+                .map(|c| (c.id(), c.revision()))
+                .collect(),
+        ))
     }
     /// Nothing moves on its own: no projectile in flight and no chassis.
     pub fn is_idle(&self) -> bool {

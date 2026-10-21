@@ -17,6 +17,8 @@ Git history.
 | Crate ownership, ticks, restore and ECS | [Simulation architecture](architecture-refactor.md) |
 | Standalone physics and optional rendering | [Physics reuse](physics-reuse.md) |
 | In-process sessions, clocks, controls and future adapters | [Simulation embedding](simulation-embedding.md) |
+| Navigation sensors, joint feedback and deferred MuJoCo investigation | [Robotics next steps](robotics-next-steps.md) |
+| Nearest-hit geometry and ideal LiDAR acquisition | [Navigation sensors](navigation-sensors.md) |
 | Calibrated serial-arm IK optimization and paired benchmark | [Serial arm search](serial-arm-search.md) |
 | Standalone gameplay and its live integration | [Gameplay](gameplay.md) |
 | Rule sources and historical archive | [Referee rules](referee-rules.md) |
@@ -33,6 +35,7 @@ Git history.
 | Robot geometry and artwork assumptions | [Robot equipment](robot-equipment.md) |
 | Cartesian Engineer assembly prototype and boundaries | [Assembly workbench](assembly-workbench.md) |
 | CPU measurements and reproducibility | [Performance](performance.md) |
+| Native rules, physical stepping and query baseline | [2026-10-21 measurements](performance-20261021.md) |
 | Renderer benchmark commands and interpretation | [Render benchmark](render-benchmark.md) |
 | Optional Steam integration | [Steam](steam.md) |
 | License, provenance and third-party notices | [Notices](../NOTICE.md) |
