@@ -147,30 +147,15 @@ fn stowed_clear(
 }
 // The Road uses Figure 5-23; the two adjacent Highland lanes use surveyed CAD
 // hints (runtime RMUC2027_V1.0.0.stp, arena FLU): X ±1.45 m, Y 5.93/6.93 m.
-// The inferred Highland RFID ends are diagonal and do not trace the passages.
+// Passage staging seeds remain separate from the calibrated RFID antenna pads.
 // These are seeds, not geometry: fitted paths require complete
 // source support/headroom validation. Off-grid sampling avoids missing an 800 mm
 // opening with a 700 mm robot on a 250 mm navigation grid.
 fn tunnel_seeds() -> Vec<[[f64; 3]; 2]> {
-    let areas = crate::zone_catalog::areas();
-    let mut seeds: Vec<_> = areas
-        .iter()
-        .filter(|a| a.id.ends_with("-tunnel-1-0"))
-        .filter_map(|a| {
-            let b = areas
-                .iter()
-                .find(|b| b.id == format!("{}2", &a.id[..a.id.len() - 1]))?;
-            let middle = |a: &crate::zone_catalog::Area| {
-                let n = a.polygon_m.len() as f64;
-                [
-                    a.polygon_m.iter().map(|p| p[0]).sum::<f64>() / n,
-                    a.polygon_m.iter().map(|p| p[1]).sum::<f64>() / n,
-                    a.floor_m,
-                ]
-            };
-            Some([middle(a), middle(b)])
-        })
-        .collect();
+    let mut seeds = vec![
+        [[4.695806, 4.666273, 0.], [4.695806, 5.936208, 0.]],
+        [[-4.695806, -4.666273, 0.], [-4.695806, -5.936208, 0.]],
+    ];
     for sign in [1., -1.] {
         for y in [5.93, 6.93] {
             seeds.push([[sign * -1.45, sign * y, 0.], [sign * 1.45, sign * y, 0.]]);
@@ -1300,7 +1285,7 @@ impl Service {
                             a.replan(from, to, false);
                         }
                     } else {
-                        let speed = (if tunnel { 0.30_f64 } else { SPEED_M_S })
+                        let speed = (if tunnel { 0.35_f64 } else { SPEED_M_S })
                             .min(distance(p, last) * 1.6)
                             .min(d * 2.0);
                         let mut vx = (waypoint[0] - p[0]) / d.max(0.001) * speed;

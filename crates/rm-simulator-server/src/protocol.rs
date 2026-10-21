@@ -113,7 +113,8 @@ use serde::{Deserialize, Serialize};
 /// Version 73 adds authenticated team map interaction events.
 /// Version 74 adds host-owned Sentry navigation commands and path diagnostics.
 /// Version 76 adds the EGA Sentry choice and explicit tunnel navigation segments.
-pub const PROTOCOL_VERSION: u32 = 76;
+/// Version 77 carries Sentry posture/budget authority and referee power/module state.
+pub const PROTOCOL_VERSION: u32 = 77;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///
@@ -952,6 +953,20 @@ pub enum Command {
         chassis: u32,
         /// Projectile class to buy.
         caliber: rm_simulator_world::Caliber,
+    },
+    /// Select the owned Sentry's pre-round operation mode.
+    SetSentryMode {
+        /// Sender's own chassis.
+        chassis: u32,
+        /// Native Sentry mode.
+        mode: rm_simulator_world::gameplay::rmuc_2027::sentry::Mode,
+    },
+    /// Request an operation from the owned Sentry; no commander intervention fee.
+    SentryAction {
+        /// Sender's own chassis.
+        chassis: u32,
+        /// Native operation.
+        action: rm_simulator_world::gameplay::rmuc_2027::sentry::Action,
     },
     /// Purchase delayed HP recovery for this native 2027 pilot.
     BuyHp {

@@ -25,6 +25,15 @@ pub struct Area {
     pub rfid: bool,
 }
 impl Area {
+    /// Antenna/body-center height band, metres. Tunnel cards exclude travel on roofs.
+    pub fn height_m(&self) -> f64 {
+        if self.id.contains("-tunnel-") {
+            0.26
+        } else {
+            0.45
+        }
+    }
+
     /// Physical traversal identity for a named native card footprint, if any.
     pub fn terrain_card(&self) -> Option<rm_simulator_world::gameplay::rmuc_2027::terrain::Card> {
         use rm_simulator_world::gameplay::{
@@ -275,38 +284,60 @@ pub fn areas() -> Vec<Area> {
             [532., 840.],
         ],
     );
-    // Nine tunnel pads per side (§5.6.4.5): end/interior/end for three tunnels.
-    // Interior footprints are inferred between visible ends, hidden by decks.
-    for (course, ends) in [
-        [[480., 862.], [480., 905.]],
-        [[650., 905.], [620., 938.]],
-        [[690., 905.], [660., 938.]],
-    ]
-    .iter()
-    .enumerate()
-    {
-        for pad in 0..3 {
-            let t = pad as f64 / 2.;
-            let [u, v] = [
-                ends[0][0] * (1. - t) + ends[1][0] * t,
-                ends[0][1] * (1. - t) + ends[1][1] * t,
-            ];
+    // UC §5.6.4.5/Table 5-27: nine tunnel pads per side. Endpoint centers
+    // follow 250 mm CAD plates, not the old diagonal Figure 5-23 digitization.
+    // See scripts/survey-tunnel-rfid.py and docs/tunnel-rfid-calibration.md.
+    // Interior centers are inferred below each surveyed roof. The 600 mm
+    // transverse antenna footprint is an explicit simulator approximation.
+    for (course, centers, floors, along_x) in [
+        (
+            0,
+            [[4.6871, 4.87535], [4.6868, 5.3452], [4.68645, 5.81504]],
+            [-0.10, 0.01, 0.047],
+            false,
+        ),
+        (
+            1,
+            [
+                [-1.35594, 5.95629],
+                [-0.92627, 5.95629],
+                [-0.49659, 5.95629],
+            ],
+            [-0.1563; 3],
+            true,
+        ),
+        (
+            2,
+            [[-0.40594, 6.92491], [0.02373, 6.92491], [0.45341, 6.92491]],
+            [0.0176; 3],
+            true,
+        ),
+    ] {
+        for (pad, [x, y]) in centers.into_iter().enumerate() {
+            let longitudinal = if pad == 1 { 0.08 } else { 0.125 };
+            let [dx, dy] = if along_x {
+                [longitudinal, 0.30]
+            } else {
+                [0.30, longitudinal]
+            };
+            let pixels = [
+                [x - dx, y - dy],
+                [x + dx, y - dy],
+                [x + dx, y + dy],
+                [x - dx, y + dy],
+            ]
+            .map(|[x, y]| [639. - x * 33.86, 704. + y * 33.86]);
             add(
                 &format!("tunnel-{}-{pad}", course + 1),
                 &format!(
-                    "Tunnel {} {} / 3 s{}",
+                    "Tunnel {} {} / 3 s (CAD aligned{})",
                     course + 1,
                     ["END A", "INTERIOR", "END B"][pad],
-                    if pad == 1 { " (inferred)" } else { "" }
+                    if pad == 1 { "; inferred" } else { "" }
                 ),
-                0.0,
+                floors[pad],
                 true,
-                &[
-                    [u - 13., v - 12.],
-                    [u + 13., v - 12.],
-                    [u + 13., v + 12.],
-                    [u - 13., v + 12.],
-                ],
+                &pixels,
             );
         }
     }
@@ -346,6 +377,99 @@ pub fn areas() -> Vec<Area> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn calibrated_tunnel_routes_reward_both_directions_and_mirrors_but_not_roof_travel() {
+        use rm_simulator_world::{
+            gameplay::rmuc_2027::{
+                match_rules::{COUNTDOWN_NS, GroundRole, Match},
+                terrain::Course,
+            },
+            rmuc_2027::Zone,
+        };
+        let areas = terrain_areas();
+        for side in [Team::Red, Team::Blue] {
+            for index in 0..3 {
+                let course = areas
+                    .iter()
+                    .filter(|a| {
+                        a.side == side
+                            && a.terrain_card().is_some_and(|c| {
+                                c.course == Some(Course::Tunnel) && c.index == index
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                let center = |a: &Area| {
+                    [
+                        a.polygon_m.iter().map(|p| p[0]).sum::<f64>() / 4.,
+                        a.polygon_m.iter().map(|p| p[1]).sum::<f64>() / 4.,
+                        a.floor_m + 0.18,
+                    ]
+                };
+                let a = center(
+                    course
+                        .iter()
+                        .find(|a| a.terrain_card().unwrap().pad == 0)
+                        .unwrap(),
+                );
+                let b = center(
+                    course
+                        .iter()
+                        .find(|a| a.terrain_card().unwrap().pad == 2)
+                        .unwrap(),
+                );
+                for reverse in [false, true] {
+                    for (duration_ns, above_roof, expected) in [
+                        (2_500_000_000u64, false, true),
+                        (8_000_000_000, false, false),
+                        (2_500_000_000, true, false),
+                    ] {
+                        let mut g = Match::new(1);
+                        g.add_robot(
+                            7,
+                            rm_simulator_world::gameplay::Team::Red,
+                            GroundRole::Sentry,
+                        );
+                        g.start(1);
+                        g.advance_ns(COUNTDOWN_NS);
+                        for step in 0..=500 {
+                            let t = if reverse {
+                                1. - f64::from(step) / 500.
+                            } else {
+                                f64::from(step) / 500.
+                            };
+                            let mut p = std::array::from_fn(|i| a[i] * (1. - t) + b[i] * t);
+                            if above_roof {
+                                p[2] += 0.5;
+                            }
+                            let cards = areas
+                                .iter()
+                                .filter(|a| {
+                                    Zone {
+                                        side: a.side,
+                                        point: rm_simulator_world::rmuc_2027::Point::Base,
+                                        floor_m: a.floor_m,
+                                        height_m: a.height_m(),
+                                        polygon_m: a.polygon_m.clone(),
+                                    }
+                                    .contains(p)
+                                })
+                                .filter_map(|a| a.terrain_card())
+                                .collect::<Vec<_>>();
+                            g.observe_terrain(7, &cards);
+                            if step < 500 {
+                                g.advance_ns(duration_ns / 500);
+                            }
+                        }
+                        assert_eq!(
+                            g.robots[0].terrain.until_ns[3] > g.elapsed_ns(),
+                            expected,
+                            "side={side:?} course={index} reverse={reverse} roof={above_roof} duration={duration_ns}"
+                        );
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn every_2027_zone_and_nine_tunnel_pads_per_side() {
         let areas = areas();

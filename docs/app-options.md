@@ -540,7 +540,31 @@ headless check still starts the real app but skips screenshots and encoding.
 The bake is cached in memory for the current loaded scene; no generated field
 asset is committed or written. Map processing/search run on one bounded worker,
 with latest-goal generations discarding stale results. Pose, command and path
-presentation travel through the existing multiplayer codec (protocol 76).
+presentation travel through the existing multiplayer codec (protocol 77).
 Controller state is host-side external input, like a remote pilot; `Field::restore`
 continues to restore the complete physical/rule world, while a new host must
 recreate the controller and bake. There is no portable on-disk bake yet.
+
+
+### Sentry rule controls
+
+An owned Sentry has an in-game panel for Automatic/Semi-auto selection before
+countdown, ordinary/enhanced Attack/Defense/Movement and ready-respawn
+confirmation. The HUD reports mode/posture, rule power limit, remaining referee
+buffer and active cuts. These are independent of standard Omni/EGA model choice.
+See [native Sentry and power rules](gameplay.md#sentry-modes-postures-and-interventions)
+and [tunnel RFID calibration and live audit](tunnel-rfid-calibration.md).
+
+Console examples use ordinary typed protocol commands (replace chassis 0):
+
+```json
+{"type":"world","command":{"SetSentryMode":{"chassis":0,"mode":"SemiAutomatic"}}}
+{"type":"world","command":{"SentryAction":{"chassis":0,"action":{"Posture":{"posture":"Attack","enhanced":true}}}}}
+{"type":"world","command":{"SentryAction":{"chassis":0,"action":"ConfirmRespawn"}}}
+{"type":"world","command":{"Referee":{"SetRobotModules":{"robot":0,"main_online":false,"speed_online":true,"offline_armor":0,"supercap_online":true}}}}
+```
+
+Mode locks at countdown. Own Sentry operations have no commander fee; explicit
+referee Sentry operations with `commander:true` include the Automatic-mode fee.
+Rejected actions leave both gold and state unchanged. Connectivity changes take
+effect at the next 500 ms rule sample, not during a paused frame.

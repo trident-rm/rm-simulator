@@ -46,6 +46,7 @@ fn base_vantage_and_highland_defense_use_strongest_source_and_exact_expiry() {
         assert_eq!(g.field_effects(1).defense_pct, 0);
         g.robots[0].combat.weakened = false;
         g.robots[0].online = false;
+        g.robots[0].combat.power.modules.main_online = false;
         assert_eq!(g.field_effects(1).defense_pct, 0);
     }
 }
@@ -62,6 +63,7 @@ fn highland_defense_follows_exclusive_latch_not_raw_contacts() {
         Activation::HighlandHeld
     );
     g.robots[1].online = false;
+    g.robots[1].combat.power.modules.main_online = false;
     g.advance_ns(0);
     assert_eq!(g.field_effects(1).defense_pct, 25);
 }
@@ -89,6 +91,7 @@ fn fortress_uses_historical_deficit_and_shared_reserve_before_personal_allowance
         activate(&mut g, 3, team, Point::Fortress);
         assert_eq!(g.field_effects(3).fortress_reserve, 0);
         g.robots[0].online = false;
+        g.robots[0].combat.power.modules.main_online = false;
         g.advance_ns(0);
         assert_eq!(g.field_effects(3).fortress_reserve, 499);
         // The same reserve is shared across holders, not refilled by handover.

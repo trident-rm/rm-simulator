@@ -1394,6 +1394,21 @@ impl Simulation {
                 .field
                 .buy_ammo(*chassis, *caliber)
                 .map_err(|e| e.to_string()),
+            Command::SetSentryMode { chassis, mode } => self
+                .field
+                .referee_command(rm_simulator_world::RefereeCommand::SetSentryMode {
+                    robot: *chassis,
+                    mode: *mode,
+                })
+                .map_err(|e| e.to_string()),
+            Command::SentryAction { chassis, action } => self
+                .field
+                .referee_command(rm_simulator_world::RefereeCommand::SentryAction {
+                    robot: *chassis,
+                    action: *action,
+                    commander: false,
+                })
+                .map_err(|e| e.to_string()),
             Command::BuyHp { chassis } => self
                 .field
                 .referee_command(rm_simulator_world::RefereeCommand::BuyHp { robot: *chassis })

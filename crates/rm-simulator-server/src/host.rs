@@ -637,6 +637,14 @@ impl Owner {
             .ok_or("unknown sender")?;
         let team = peer.info.team.ok_or("sender has no team")?;
         let robot = peer.info.robot.ok_or("sender has no robot")?;
+        if self.simulation.field().rmuc_2027().is_some_and(|s| {
+            s.game
+                .robots
+                .iter()
+                .any(|r| Some(r.id) == peer.info.chassis && !r.online)
+        }) {
+            return Err("main controller offline: communication disabled".into());
+        }
         let source = if robot == Robot::Sentry {
             Source::SentryOperator
         } else {
@@ -708,6 +716,35 @@ impl Owner {
         } else {
             Some(0x100 + u16::from(robot.number()) + if team == Team::Blue { 100 } else { 0 })
         };
+        if self.next_map_interaction == u64::MAX {
+            return Err("map event id exhausted".into());
+        }
+        // Team-operator forwarding stands in for the commander in this prototype.
+        // One official Sentry per side; training may spawn more, charged atomically.
+        if let Some(state) = self.simulation.field().rmuc_2027()
+            && state.game.phase == rm_simulator_world::rmuc_2027::match_rules::Phase::Running
+        {
+            let mut game = state.game.clone();
+            for &id in &recipients {
+                if game.robots.iter().any(|r| {
+                    r.id == id
+                        && r.role == rm_simulator_world::rmuc_2027::match_rules::GroundRole::Sentry
+                }) {
+                    game.sentry_intervention(id, source == Source::TeamOperator)
+                        .map_err(str::to_string)?;
+                }
+            }
+            // The validated commands below cannot fail independently: no time
+            // advances between this balance preflight and worker-owned application.
+            for &id in &recipients {
+                if self.simulation.robot(id) == Some(Robot::Sentry) {
+                    self.simulation.apply(&Command::Referee(rm_simulator_world::RefereeCommand::SentryAction {
+                        robot: id, action: rm_simulator_world::gameplay::rmuc_2027::sentry::Action::ForwardMarker,
+                        commander: source == Source::TeamOperator,
+                    }))?;
+                }
+            }
+        }
         let event = Event {
             id: self.next_map_interaction,
             client_id,
@@ -1123,6 +1160,8 @@ impl Owner {
                     | Command::Respawn { chassis }
                     | Command::ResetRobot { chassis }
                     | Command::BuyAmmo { chassis, .. }
+                    | Command::SetSentryMode { chassis, .. }
+                    | Command::SentryAction { chassis, .. }
                     | Command::BuyHp { chassis }
                     | Command::InstantRespawn { chassis }
                     | Command::SetPerformance { chassis, .. }

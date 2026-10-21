@@ -645,6 +645,35 @@ pub enum RefereeCommand {
         /// New HP.
         hp: u32,
     },
+    /// Select Sentry operation mode before the simulator self-check proxy.
+    SetSentryMode {
+        /// Chassis identity.
+        robot: u32,
+        /// Automatic or semi-automatic rule identity.
+        mode: gp::rmuc_2027::sentry::Mode,
+    },
+    /// Perform a native Sentry operation, optionally as a paid commander intervention.
+    SentryAction {
+        /// Chassis identity.
+        robot: u32,
+        /// Operation to validate and execute atomically.
+        action: gp::rmuc_2027::sentry::Action,
+        /// Charge the automatic-mode commander intervention fee.
+        commander: bool,
+    },
+    /// Observe referee module connectivity; state is sampled at 2 Hz.
+    SetRobotModules {
+        /// Chassis identity.
+        robot: u32,
+        /// Main controller connection.
+        main_online: bool,
+        /// Speed monitor connection.
+        speed_online: bool,
+        /// Number of disconnected armor modules, at most four.
+        offline_armor: u8,
+        /// Supercapacitor management connection.
+        supercap_online: bool,
+    },
 }
 
 /// The clock an absolute referee timestamp is measured on.

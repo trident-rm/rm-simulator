@@ -554,6 +554,7 @@ fn teardown(world: &mut World) {
     despawn_all::<crate::hud::Toolbar>(world);
     despawn_all::<crate::hud::Settings>(world);
     despawn_all::<crate::debug_panel::DebugPanel>(world);
+    despawn_all::<crate::debug_panel::RespawnMenu>(world);
     despawn_all::<crate::network_hud::NetworkOverlay>(world);
     despawn_all::<crate::debug::CollisionWireframe>(world);
     despawn_all::<crate::debug::DynamicCollisionWireframe>(world);

@@ -62,7 +62,12 @@ impl Match {
             r.combat.allowance = r.combat.allowance.saturating_sub(1);
         }
         r.combat.last_combat_ns = Some(now);
-        r.combat.heat_tenths += if r.role == GroundRole::Heavy {
+        r.combat.heat_tenths += if r.role == GroundRole::Sentry
+            && r.combat.sentry.enhanced
+            && r.combat.sentry.posture == super::super::sentry::Posture::Attack
+        {
+            0
+        } else if r.role == GroundRole::Heavy {
             1000
         } else {
             100
@@ -367,6 +372,8 @@ impl Match {
             r.combat.last_combat_ns = Some(now);
         }
         if r.hp == 0 && applied > 0 {
+            r.combat.sentry.respawn_confirmed = false;
+            r.combat.power.buffer_uj = super::super::power::BUFFER_UJ;
             r.combat.heat_tenths = 0;
             r.combat.overheated = false;
             r.combat.weakened = false;
@@ -480,7 +487,6 @@ impl Match {
             r.team != victim
                 && r.role == GroundRole::Infantry
                 && r.hp > 0
-                && r.online
                 && r.combat.level < self.level_caps[r.team.index()]
         };
         let killer =
@@ -583,6 +589,12 @@ impl Match {
                 } else {
                     1
                 };
+                if r.role == GroundRole::Sentry
+                    && !r.combat.sentry.respawn_confirmed
+                    && p.progress_ns >= self.respawn_required_ns(r)
+                {
+                    continue;
+                }
                 dt = dt.min(
                     self.respawn_required_ns(r)
                         .saturating_sub(p.progress_ns)
@@ -607,7 +619,9 @@ impl Match {
                 } else {
                     1
                 };
-                if p.progress_ns.saturating_add(dt * speed) >= self.respawn_required_ns(r) {
+                if p.progress_ns.saturating_add(dt * speed) >= self.respawn_required_ns(r)
+                    && (r.role != GroundRole::Sentry || r.combat.sentry.respawn_confirmed)
+                {
                     respawning.push(r.id);
                 }
             }
@@ -794,14 +808,18 @@ mod tests {
         g.record_launch(1, 30.);
         assert_eq!(g.robots[0].combat.overspeed_until_ns, 35 * SECOND);
         g.robots[0].combat.speed_module_online = false;
+        g.robots[0].combat.power.modules.speed_online = false;
         g.advance_ns(20 * SECOND);
         assert!(g.check_launch(1).is_err());
         g.robots[0].combat.speed_module_online = true;
+        g.robots[0].combat.power.modules.speed_online = true;
         g.check_launch(1).unwrap();
         g.record_launch(1, 35.);
         assert!(g.robots[0].combat.overspeed_locked_for_round);
         g.robots[0].combat.speed_module_online = false;
+        g.robots[0].combat.power.modules.speed_online = false;
         g.robots[0].combat.speed_module_online = true;
+        g.robots[0].combat.power.modules.speed_online = true;
         g.advance_ns(40 * SECOND);
         assert!(g.check_launch(1).is_err());
     }
@@ -832,9 +850,11 @@ mod tests {
         let mut g = running();
         g.damage_robot(1, 500, true);
         g.robots[0].online = false;
+        g.robots[0].combat.power.modules.main_online = false;
         g.advance_ns(SECOND);
         assert_eq!(g.robots[0].combat.respawn.as_ref().unwrap().progress_ns, 0);
         g.robots[0].online = true;
+        g.robots[0].combat.power.modules.main_online = true;
         for _ in 0..25 {
             g.observe_service(1, true, true);
             g.advance_ns(SETTLEMENT_NS);

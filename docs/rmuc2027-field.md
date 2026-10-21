@@ -1070,9 +1070,10 @@ available. Confirming both unchanged choices locks both. Combat launches,
 actual damage and kills grant XP, with Table 5-14 distribution for unidentified,
 friendly or ineligible sources. Level-up adds the maximum-HP increase immediately;
 a capped Infantry stops collecting XP. Terrain/rune/dart XP awaits those systems.
-Semi-automatic Sentry retains its Table 3-6 preset; full Sentry posture rules
-are not enabled. Chassis referee power limits and the 60 J buffer remain outside
-this change; reported performance does not alter the separate drivetrain budget.
+Sentry modes/postures and referee power/module enforcement are now native; see
+[gameplay](gameplay.md#sentry-modes-postures-and-interventions). Tunnel RFID
+footprints follow the [CAD calibration](tunnel-rfid-calibration.md), with explicit
+antenna approximations and a live navigation/reward audit.
 
 The native host advertises a 25 m/s 17 mm default/cap (Tables 3-5–3-6),
 including random speed variation, instead of the legacy 30 m/s configurable

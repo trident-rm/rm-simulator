@@ -881,3 +881,9 @@ mod tests {
         }
     }
 }
+
+/// UC §5.7.2 Sentry operation modes and cumulative posture budgets.
+pub mod sentry;
+
+/// UC §§5.1.4–5 referee power buffer and module connectivity.
+pub mod power;

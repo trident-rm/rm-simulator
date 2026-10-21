@@ -681,7 +681,8 @@ independent 15 s cumulative allowance (UC Table 5-28).
 | Movement | 1.5× power; 25% vulnerability; one-third cooling | 1.2× power; same penalties | 200 W limit; same other penalties |
 
 Power/cooling reductions multiply the value after other benefits; Table 5-28
-specifies integer values. A robot death must not erase cumulative posture use.
+specifies integer values. A robot death must not erase cumulative posture use. The native implementation
+and explicit timing/selection policies are described in [gameplay](gameplay.md#sentry-modes-postures-and-interventions).
 
 ### Aerial system
 

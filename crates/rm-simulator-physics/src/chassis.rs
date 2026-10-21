@@ -1362,7 +1362,8 @@ fn integrate_wheel_drives(
     wheels: &mut [WheelState],
     contacts: &[(f64, f64)],
     dt_s: f64,
-) -> (Vec<f64>, f64) {
+    budget_w: f64,
+) -> (Vec<f64>, f64, f64) {
     let ratio = config.wheel_radius_m
         / if config.mecanum {
             std::f64::consts::SQRT_2
@@ -1374,6 +1375,7 @@ fn integrate_wheel_drives(
     let mut forces = vec![0.0; wheels.len()];
     let mut motors = vec![0.0; wheels.len()];
     let mut average_scale = 0.0;
+    let mut power_w = 0.0;
     for _ in 0..slices {
         let mut mechanical_w = 0.0;
         let mut copper_w = 0.0;
@@ -1391,8 +1393,9 @@ fn integrate_wheel_drives(
             copper_w +=
                 config.dynamics.motor_stall_loss_w * (*motor / config.wheel_stall_force_n).powi(2);
         }
-        let scale = drive_power_scale(mechanical_w, copper_w, config.dynamics.drive_power_w);
+        let scale = drive_power_scale(mechanical_w, copper_w, budget_w);
         average_scale += scale / f64::from(slices);
+        power_w += (mechanical_w * scale + copper_w * scale * scale) / f64::from(slices);
         for (((wheel, &motor), &(ground_speed, grip)), force) in wheels
             .iter_mut()
             .zip(&motors)
@@ -1414,7 +1417,7 @@ fn integrate_wheel_drives(
             contact.slip_m_s = wheel.angular_velocity_rad_s * ratio - ground_speed;
         }
     }
-    (forces, average_scale)
+    (forces, average_scale, power_w)
 }
 
 /// One chassis inside a physics world: its Rapier bodies and colliders, the
@@ -1442,6 +1445,9 @@ pub(crate) struct Chassis {
     aim_rad: [f64; 2],
     gimbal_velocity_rad_s: [f64; 2],
     defeated: bool,
+    drive_budget_w: f64,
+    drive_power_w: f64,
+    actuation_cut: bool,
     /// Colliders the armor housings touched after the previous substep, so a
     /// resting contact registers one collision rather than one per substep.
     pub(crate) armor_touching: Vec<ColliderHandle>,
@@ -1760,6 +1766,9 @@ impl Chassis {
             },
             aim_rad: [yaw_of(spawn), 0.0],
             gimbal_velocity_rad_s: [0.0; 2],
+            drive_budget_w: f64::MAX,
+            drive_power_w: 0.,
+            actuation_cut: false,
             defeated: false,
             armor_touching: Vec::new(),
         })
@@ -1837,6 +1846,13 @@ impl Chassis {
         self.placement_revision
     }
     /// Whether the referee has this robot at zero HP.
+    pub(crate) fn set_power(&mut self, budget_w: f64, actuation_cut: bool) {
+        self.drive_budget_w = budget_w.max(0.);
+        self.actuation_cut = actuation_cut;
+    }
+    pub(crate) fn drive_power_w(&self) -> f64 {
+        self.drive_power_w
+    }
     pub(crate) fn is_defeated(&self) -> bool {
         self.defeated
     }
@@ -1993,7 +2009,7 @@ impl Chassis {
         };
         let up = pose.rotation * Vector::Z;
         // A defeated robot's drive is cut: the wheels brake to a stop.
-        let command = if self.defeated {
+        let command = if self.defeated || self.actuation_cut {
             ChassisCommand::default()
         } else {
             self.command
@@ -2133,7 +2149,14 @@ impl Chassis {
         // Forces and torques are separate accumulators; both must be cleared.
         body.reset_forces(false);
         body.reset_torques(false);
-        let (traction, scale) = integrate_wheel_drives(cfg, &mut self.wheels, &tyre_contacts, dt_s);
+        let budget = if self.defeated || self.actuation_cut {
+            0.
+        } else {
+            self.drive_budget_w.min(cfg.dynamics.drive_power_w)
+        };
+        let (traction, scale, power) =
+            integrate_wheel_drives(cfg, &mut self.wheels, &tyre_contacts, dt_s, budget);
+        self.drive_power_w = power;
         for ((wheel, (force, _)), traction) in self
             .wheels
             .iter_mut()
@@ -2150,7 +2173,7 @@ impl Chassis {
             .iter()
             .filter(|wheel| wheel.contact.is_some())
             .count();
-        if cfg.balance_assist && supported > 0 {
+        if cfg.balance_assist && supported > 0 && budget > 0. {
             // Reduced inverted-pendulum LQR, with a small speed-error lean
             // setpoint. The motor/leg plant remains an approximation; this is
             // an assisted body torque, not a firmware wheel-leg controller.
@@ -2204,7 +2227,7 @@ impl Chassis {
             .unwrap_or_else(|| self.config.climbing.as_ref().unwrap().speed_rad_s);
         let before = self.fold_angle_rad;
         let goal = if self.command.folded { limit } else { 0. };
-        if !self.defeated {
+        if !self.defeated && !self.actuation_cut {
             let change = speed * dt_s;
             let next = self.fold_angle_rad + (goal - self.fold_angle_rad).clamp(-change, change);
             if next == self.fold_angle_rad || self.fold_path_clear(world, next) {
@@ -2293,7 +2316,7 @@ impl Chassis {
         }
     }
     fn step_gimbal(&mut self, dt_s: f64) {
-        if self.defeated {
+        if self.defeated || self.actuation_cut {
             return;
         }
         let cfg = &self.config.dynamics;
@@ -2749,7 +2772,13 @@ mod tests {
         let mut wheels = vec![initial; 4];
         let contacts = [(0.0, 0.0), (0.0, 100.0), (0.0, 100.0), (0.0, 100.0)];
         for _ in 0..64 {
-            integrate_wheel_drives(&cfg, &mut wheels, &contacts, 1.0 / 128.0);
+            integrate_wheel_drives(
+                &cfg,
+                &mut wheels,
+                &contacts,
+                1.0 / 128.0,
+                cfg.dynamics.drive_power_w,
+            );
         }
         assert!(wheels[0].angular_velocity_rad_s > wheels[1].angular_velocity_rad_s + 5.0);
         assert_eq!(
@@ -2761,8 +2790,20 @@ mod tests {
         let mut low = vec![initial; 4];
         let mut high = vec![initial; 4];
         for _ in 0..16 {
-            integrate_wheel_drives(&restricted, &mut low, &contacts, 1.0 / 128.0);
-            integrate_wheel_drives(&cfg, &mut high, &contacts, 1.0 / 128.0);
+            integrate_wheel_drives(
+                &restricted,
+                &mut low,
+                &contacts,
+                1.0 / 128.0,
+                restricted.dynamics.drive_power_w,
+            );
+            integrate_wheel_drives(
+                &cfg,
+                &mut high,
+                &contacts,
+                1.0 / 128.0,
+                cfg.dynamics.drive_power_w,
+            );
         }
         assert!(low[0].angular_velocity_rad_s < high[0].angular_velocity_rad_s);
     }

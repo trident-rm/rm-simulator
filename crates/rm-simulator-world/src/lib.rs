@@ -1003,6 +1003,34 @@ impl Field {
                         .buy_ammo(robot, amount)
                         .map_err(FieldError::Referee)?;
                 }
+                RefereeCommand::SetSentryMode { robot, mode } => state
+                    .game
+                    .set_sentry_mode(robot, mode)
+                    .map_err(FieldError::Referee)?,
+                RefereeCommand::SentryAction {
+                    robot,
+                    action,
+                    commander,
+                } => state
+                    .game
+                    .sentry_action(robot, action, commander)
+                    .map_err(FieldError::Referee)?,
+                RefereeCommand::SetRobotModules {
+                    robot,
+                    main_online,
+                    speed_online,
+                    offline_armor,
+                    supercap_online,
+                } => state
+                    .game
+                    .set_modules(
+                        robot,
+                        main_online,
+                        speed_online,
+                        offline_armor,
+                        supercap_online,
+                    )
+                    .map_err(FieldError::Referee)?,
                 RefereeCommand::BuyHp { robot } => {
                     state.game.buy_hp(robot).map_err(FieldError::Referee)?
                 }
@@ -1108,6 +1136,14 @@ impl Field {
                 .physics
                 .step(prev_ns, &self.target_frames)
                 .map_err(FieldError::Ballistics)?;
+            if let Some(state) = &mut self.rmuc_2027 {
+                for r in &mut state.game.robots {
+                    r.combat.power.actual_mw =
+                        (self.physics.chassis_drive_power_w(r.id).unwrap_or(0.) * 1000.)
+                            .round()
+                            .clamp(0., 10_000_000.) as u32;
+                }
+            }
             self.sync_energy_units();
             for contact in contacts {
                 if self.armor_disabled(contact.target) {

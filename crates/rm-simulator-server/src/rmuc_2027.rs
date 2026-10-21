@@ -220,7 +220,7 @@ impl Bindings {
                     side: a.side,
                     point,
                     floor_m: a.floor_m,
-                    height_m: 0.45,
+                    height_m: a.height_m(),
                     polygon_m: a.polygon_m,
                 })
             })
@@ -233,7 +233,7 @@ impl Bindings {
                     side: a.side,
                     point: rm_simulator_world::rmuc_2027::Point::Base,
                     floor_m: a.floor_m,
-                    height_m: 0.45,
+                    height_m: a.height_m(),
                     polygon_m: a.polygon_m,
                 },
             })

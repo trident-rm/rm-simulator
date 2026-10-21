@@ -117,7 +117,11 @@ in the shared Rapier scene. See
 uses frozen selection-time areas, inclusive circle boundaries and clipping without
 resizing; undefined selection-time statistics freeze default armor until reselection.
 Referee commands stand in for Radar selection. Native Road/Highland/
-Tunnel traversal and Small/Big Rune effects are supported. Source Rune arm
+Tunnel traversal and Small/Big Rune effects are supported. Sentry mode/posture
+budgets and paid commander operations are native; referee power uses measured
+wheel motor load, a separate 60 J buffer and 2 Hz module-fault sampling. See
+`docs/gameplay.md` for timing policies and `docs/tunnel-rfid-calibration.md` for
+CAD-aligned tunnel antenna approximations. Source Rune arm
 subtrees and detector banks are bound by `scripts/bind-rmuc2027-rune.py` without
 remeshing. Adaptive observations/statistics live in `gameplay::rmuc_2027::adaptive`;
 Figure 5-1's inclusive permanent heat-lock boundary is the adopted user policy.

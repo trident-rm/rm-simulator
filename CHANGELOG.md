@@ -4,6 +4,19 @@
 
 ## Unreleased
 
+- Implement Automatic/SemiAutomatic Sentry selection, all three ordinary and
+  enhanced postures, cumulative weakening/budgets, normal-respawn confirmation
+  and atomic commander intervention fees. Add owned Sentry controls and HUD
+  status; carry complete authority through protocol 77 checkpoints.
+- Meter physical motor electrical draw against native power limits and the
+  60 J referee buffer. Enforce five-second drive cuts and 2 Hz module-failure
+  penalties, independent speed locks and main-controller actuation/RFID/
+  communication loss, while preserving restorable state.
+- Align tunnel RFID endpoints to source CAD marking rectangles and infer
+  interior pads under their roofs. Separate antenna footprints from navigation
+  staging, reject above-roof detections, and audit native traversal rewards in
+  the continuous Sentry tour. Preserve the three-second reward deadline.
+
 - Add a reproducible continuous Sentry tour through Road, near-highland and
   far-highland tunnels, with live in-game video capture and a physical-crossing
   audit. Measure warm goal-to-path latency separately from the initial bake.

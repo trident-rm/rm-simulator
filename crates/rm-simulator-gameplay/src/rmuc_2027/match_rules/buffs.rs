@@ -148,6 +148,44 @@ impl Match {
     /// assert_eq!(game.damage_robot(7, 20, false), 10);
     /// ```
     pub fn field_effects(&self, id: u32) -> Effects {
+        let mut effects = self.field_effects_before_posture(id);
+        if let Some(r) = self
+            .robots
+            .iter()
+            .find(|r| r.id == id && r.role == GroundRole::Sentry && r.hp > 0 && r.online)
+        {
+            use super::super::sentry::Posture;
+            let s = &r.combat.sentry;
+            match s.posture {
+                Posture::Attack => {
+                    effects.cooling_half_per_s = effects.cooling_half_per_s.max(
+                        r.stats(self.elapsed_ns()).cooling_per_s
+                            * 2
+                            * if s.weakened() { 2 } else { 3 },
+                    );
+                    effects.vulnerability_pct = effects.vulnerability_pct.max(25);
+                }
+                Posture::Defense => {
+                    effects.defense_pct = effects.defense_pct.max(if s.enhanced {
+                        99
+                    } else if s.weakened() {
+                        25
+                    } else {
+                        50
+                    });
+                    effects.cooling_half_per_s = (effects.cooling_half_per_s / 6) * 2;
+                }
+                Posture::Movement => {
+                    effects.vulnerability_pct = effects.vulnerability_pct.max(25);
+                    effects.cooling_half_per_s = (effects.cooling_half_per_s / 6) * 2;
+                }
+            }
+            effects.cooling_per_s = effects.cooling_half_per_s / 2;
+        }
+        effects
+    }
+
+    fn field_effects_before_posture(&self, id: u32) -> Effects {
         let Some(r) = self.robots.iter().find(|r| r.id == id) else {
             return Effects::default();
         };

@@ -143,7 +143,12 @@ def run(client, args, temporary, audit):
         state = client.call({'type': 'state'})
     audit.update(bake_s=time.monotonic()-stamp, bake=state['navigation'][0]['bake'], chassis=owner)
     state = client.call({'type': 'step', 'ticks': 128})
+    if args.rules:
+        state = client.call({'type': 'world', 'command': {'Referee': 'StartMatch'}})
+        state = client.call({'type': 'step', 'ticks': 640})
     first_tick = state['tick']
+    previous_until = [0, 0, 0, 0]
+    audit['terrain_awards'] = []
     crossings = Crossings()
     movie = None if args.check_only else Movie(client, args, temporary)
     plan_s = 0.
@@ -153,9 +158,19 @@ def run(client, args, temporary, audit):
         assert len(state['chassis_all']) == 1, 'tour must use one continuously driven chassis'
         assert body['placement_revision'] == 0, 'chassis was repositioned'
         crossings.observe(body, state['tick'])
+        terrain = None
+        if args.rules:
+            robot = next(r for r in state['rmuc_2027']['robots'] if r['id'] == owner)
+            terrain = robot['terrain']
+            for i, until in enumerate(terrain['until_ns']):
+                if until > previous_until[i]:
+                    audit['terrain_awards'].append({'tick': state['tick'], 'leg': label,
+                        'benefit': ['Highland', 'Road', 'AcrossTunnel', 'ThroughTunnel'][i],
+                        'until_ns': until, 'contacts': terrain['contacts']})
+            previous_until[:] = terrain['until_ns']
         audit['samples'].append({'tick': state['tick'], 'leg': label,
                                  'position_m': body['pose']['translation_m'],
-                                 'fold_rad': body['fold_angle_rad'],
+                                 'fold_rad': body['fold_angle_rad'], 'terrain': terrain,
                                  'phase': state['navigation'][0]['phase'],
                                  'message': state['navigation'][0]['message']})
         if movie:
@@ -205,6 +220,14 @@ def run(client, args, temporary, audit):
                                   'simulation_s': (state['tick']-started_tick)/128})
             print(f'{label}: arrived, {audit["legs"][-1]["simulation_s"]:.1f} s driving', flush=True)
         assert set(crossings.completed) == set(PASSAGES), crossings.completed
+        if args.rules:
+            rewarded = {card['index'] for a in audit['terrain_awards']
+                        if a['benefit'] == 'ThroughTunnel' for card in a['contacts']
+                        if card['course'] == 'Tunnel'}
+            # The cautious uphill Road leg takes over three seconds between
+            # cards. It must not receive an invented reward; both flat lanes do.
+            assert rewarded == {1, 2}, rewarded
+            audit['road_reward_policy'] = 'No reward: physical uphill crossing exceeds the 3 s card window'
         for frame in range(args.fps*2 if movie else 1):
             ticks = round((frame+1)*128/args.fps)-round(frame*128/args.fps) if movie else 256
             state = client.call({'type': 'step', 'ticks': ticks})
@@ -228,6 +251,7 @@ def main():
                         default=Path('local-assets/robot-cad-survey/bound-tunnel-sentry'))
     parser.add_argument('--out', type=Path, default=Path('local-assets/sentry-three-tunnel-tour.mp4'))
     parser.add_argument('--check-only', action='store_true')
+    parser.add_argument('--rules', action='store_true', help='start a native match and audit terrain rewards')
     parser.add_argument('--fps', type=int, choices=[8, 16, 32], default=16)
     parser.add_argument('--max-plan-s', type=float, default=5.)
     args = parser.parse_args()

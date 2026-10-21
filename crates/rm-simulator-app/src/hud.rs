@@ -997,6 +997,34 @@ pub fn update_hud(
                         r.combat.heat_tenths as f64 / 10.,
                         r.stats(now).heat_limit
                     );
+                    value.push_str(&format!(
+                        "\n{} W LIMIT  ·  {:.1} J{}",
+                        native.unwrap().game.power_limit_w(r.id),
+                        r.combat.power.buffer_uj as f64 * 1e-6,
+                        if now < r.combat.power.cut_until_ns {
+                            "  DRIVE CUT"
+                        } else {
+                            ""
+                        }
+                    ));
+                    if !r.online {
+                        value.push_str("  OFFLINE");
+                    }
+                    if r.role
+                        == rm_simulator_world::gameplay::rmuc_2027::match_rules::GroundRole::Sentry
+                    {
+                        value.push_str(&format!(
+                            "\n{:?} · {:?}{}{}",
+                            r.combat.sentry.mode,
+                            r.combat.sentry.posture,
+                            if r.combat.sentry.enhanced { " +" } else { "" },
+                            if r.combat.sentry.weakened() {
+                                " (EXHAUSTED)"
+                            } else {
+                                ""
+                            }
+                        ));
+                    }
                     if r.combat.launcher_locked(now) {
                         value.push_str("  LOCKED");
                     }
@@ -1012,7 +1040,7 @@ pub fn update_hud(
                     if r.combat.respawn.is_some() {
                         let status = native.unwrap().game.respawn_remaining_ns(r.id).map_or_else(
                             || "PAUSED".into(),
-                            |ns| format!("{:.1}s", ns as f64 * 1e-9),
+                            |ns| if ns == 0 && r.role == rm_simulator_world::gameplay::rmuc_2027::match_rules::GroundRole::Sentry { "READY — CONFIRM".into() } else { format!("{:.1}s", ns as f64 * 1e-9) },
                         );
                         value.push_str(&format!("\nRESPAWN {status}"));
                     }

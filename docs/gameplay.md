@@ -246,3 +246,71 @@ incremented so prediction does not interpolate between shapes. Source arm meshes
 are removed; the Unit remains a physical object. There is no reverse conversion.
 Starting a new round retains the chosen Hero shape but clears installation,
 ammunition and unlock history; use the same button after unlocking again.
+
+## Sentry modes, postures and interventions
+
+UC Table 3-6/§5.7.2 run through `rmuc_2027::sentry`. New Sentries default to
+Automatic (400 HP, 260 heat, 30/s cooling, 100 W before posture); SemiAutomatic
+uses 200 HP, 100 heat, 10/s and 60 W. Select with `SetSentryMode` while Idle;
+the simulator's countdown is the pre-self-check selection cutoff. Model choice
+and the navigation controller do not choose this rule identity. Mode selection
+survives starting another round; posture usage resets each round.
+
+Movement is the initial posture. Attack/Defense/Movement implement Table 5-28,
+including five-second selection cooldowns, strict `>180 s` cumulative weakening,
+independent 15 s enhanced budgets and automatic enhanced expiry. Enhanced time
+also counts toward ordinary posture use. Simulator policy: usage pauses while
+defeated or main-controller offline; neither state erases existing usage or
+cooldown deadlines. Voluntary ordinary/enhanced changes share one cooldown;
+automatic expiry never waits for or starts a cooldown. The first switch is
+available immediately. Cooling reductions apply after other benefits and round
+down to whole heat units per second. Attack cooling competes with other cooling
+benefits; enhanced Attack keeps heat zero without clearing independent permanent
+launcher locks. `Match::power_limit_w` includes posture; `Robot::stats` retains
+base performance and the paid-respawn modifier.
+
+Owned `Command::SentryAction` requests are Sentry-originated operations.
+Privileged `RefereeCommand::SentryAction { commander: true, ... }` represents the
+commander and charges Automatic Sentries 50 gold per accepted operation.
+Posture, ammunition, delayed HP, immediate respawn and normal-respawn confirmation
+use the same atomic transaction; purchase prices are additional. Rejected
+operations spend nothing. Sentries wait at a completed normal respawn bar for
+`ConfirmRespawn`; this interprets §5.7.2's confirmation operation as the final
+revival gate, while the general §5.3.2 progress starts immediately on death.
+Other ground roles retain automatic normal revival.
+
+Minimap routing uses the team operator as a commander proxy: forwarding an
+accepted marker to Automatic Sentry costs 50 gold; its own operator and
+SemiAutomatic Sentry incur no intervention fee. All recipients and total costs
+are validated before committing an event. Offline main controllers cannot send
+or receive these communications. This does not add autonomous combat.
+
+The in-game Sentry panel offers pre-round modes, ordinary/enhanced postures; the defeat dialog offers
+normal-respawn confirmation and paid revival. The HTTP referee panel offers paid commander posture
+requests. The HUD shows mode/posture, native power limit, buffer and drive cuts.
+
+## Referee power and module faults
+
+`rmuc_2027::power` implements UC §5.1.4/Figure 5-2's 10 Hz 60 J referee buffer
+and five-second drive cut. It is separate from hardware supercapacitor energy.
+The physical wheel model reports nonnegative electrical load (positive mechanical
+work plus copper loss, after torque scaling, without regeneration credit).
+Simulator metering policy: the last completed physics slice is held as the
+10 Hz meter sample. Integer milliwatts/microjoules and explicit round boundaries
+make buffer settlement restorable and independent of step partitioning.
+
+The world's next motor budget is bounded by both configured hardware power and
+`native limit + remaining buffer / 0.1 s`. This permits buffered bursts rather
+than silently hard-clamping every request to the steady-state rule limit. Actual
+buffer exhaustion cuts motor torque; an over-power cut leaves the gimbal powered.
+The buffer refills below the rule limit, including during a cut. Death restores
+60 J. No rule enforcement is added to bare physical worlds or Idle practice.
+
+`SetRobotModules` supplies pending main/speed/armor-count/supercapacitor-manager
+connectivity; the engine samples it at 2 Hz (§5.1.5). Each disconnected armor or
+supercapacitor manager costs 4 HP per sample. Main-controller offline instead
+costs 2.5% maximum HP per sample (fractional carry retained), cuts drive/gimbal/
+fold/arm actuation, suppresses ordinary hits and other module damage, disables
+RFID and map communication and suspends respawn. Infantry XP/levels still accrue.
+Speed-monitor reconnection clears only that module's launcher lock. Localization
+accuracy consequences remain deferred with the Radar observation system.

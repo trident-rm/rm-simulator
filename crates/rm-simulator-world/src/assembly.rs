@@ -1045,6 +1045,12 @@ impl crate::Field {
     }
     pub(crate) fn advance_assemblies(&mut self) {
         for arm in &mut self.arms {
+            if self.rmuc_2027.as_ref().is_some_and(|s| {
+                s.game.phase == crate::rmuc_2027::match_rules::Phase::Running
+                    && s.game.robots.iter().any(|r| r.id == arm.owner && !r.online)
+            }) {
+                continue;
+            }
             let Some(chassis) = self.physics.chassis_snapshot(arm.owner) else {
                 continue;
             };
@@ -1071,6 +1077,10 @@ impl crate::Field {
         let mut settle = Vec::new();
         let mut begin = Vec::new();
         for run in &mut self.assemblies {
+            let offline = self.rmuc_2027.as_ref().is_some_and(|s| {
+                s.game.phase == crate::rmuc_2027::match_rules::Phase::Running
+                    && s.game.robots.iter().any(|r| r.id == run.owner && !r.online)
+            });
             if !run.station_busy() {
                 continue;
             }
@@ -1081,7 +1091,7 @@ impl crate::Field {
                     && !c.defeated
                     && run.parking_matches(c.pose)
             });
-            if !valid && run.phase != Phase::Recovering {
+            if offline || (!valid && run.phase != Phase::Recovering) {
                 run.cancel("Parking changed or robot unavailable");
             } else if run.timed_out(now) {
                 run.phase = Phase::Failed;

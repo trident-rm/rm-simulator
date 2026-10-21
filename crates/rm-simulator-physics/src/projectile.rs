@@ -1038,6 +1038,19 @@ impl WorldPhysics {
             chassis.set_defeated(defeated);
         }
     }
+    /// Set an external drive budget in watts and optional total actuation cut.
+    /// Derived each tick by the world; never changes the hardware configuration.
+    pub fn set_chassis_power(&mut self, id: u32, budget_w: f64, actuation_cut: bool) {
+        if budget_w.is_finite()
+            && let Ok(c) = self.chassis_mut(id)
+        {
+            c.set_power(budget_w, actuation_cut);
+        }
+    }
+    /// Latest average motor electrical draw in watts, excluding regeneration credit.
+    pub fn chassis_drive_power_w(&self, id: u32) -> Option<f64> {
+        self.chassis_ref(id).map(Chassis::drive_power_w)
+    }
     /// Body centre of a chassis in world FLU metres; `None` for an unknown id.
     pub fn chassis_position_m(&self, id: u32) -> Option<[f64; 3]> {
         self.chassis_ref(id)

@@ -767,3 +767,8 @@ The detailed network overlay reports recording status; console `state` includes
 message counters, encoding costs and trace status. See
 [network tracing](docs/network-tracing.md) for byte definitions, bounded recording,
 and the summary command. Keep traces outside Git.
+
+Owned Sentries offer Automatic/Semi-auto selection and normal/enhanced posture
+controls; the HUD shows referee power limits, buffer and cuts. See the
+[Sentry controls](docs/app-options.md#sentry-rule-controls) and
+[native rules](docs/gameplay.md#sentry-modes-postures-and-interventions).

@@ -410,6 +410,11 @@ impl crate::Field {
         state.game.advance_ns(duration_ns);
         for r in &state.game.robots {
             self.physics.set_chassis_defeated(r.id, r.hp == 0);
+            self.physics.set_chassis_power(
+                r.id,
+                f64::from(state.game.drive_budget_w(r.id)),
+                !r.online,
+            );
         }
     }
 }
@@ -482,6 +487,65 @@ mod tests {
             ..Default::default()
         })
         .unwrap()
+    }
+    #[test]
+    fn physical_motor_draw_exhausts_native_buffer_and_cut_survives_restore() {
+        let mut f = field();
+        let mut cfg = ChassisConfig::default();
+        cfg.dynamics.motor_stall_loss_w = 500.;
+        let id = f
+            .add_chassis(&ChassisPlacement {
+                spawn: Pose::at([0., 0., cfg.rest_height_m()]),
+                config: cfg,
+                team: Team::Red,
+                kind: RobotKind::Infantry,
+                performance: None,
+            })
+            .unwrap();
+        f.referee_command(RefereeCommand::StartMatch).unwrap();
+        f.step(640).unwrap();
+        f.command_chassis(
+            id,
+            crate::ChassisCommand {
+                forward_m_s: 5.,
+                yaw_rate_rad_s: 6.,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut peak_mw = 0;
+        for _ in 0..512 {
+            f.step(1).unwrap();
+            let g = &f.rmuc_2027().unwrap().game;
+            let p = &g.robots[0].combat.power;
+            peak_mw = peak_mw.max(p.actual_mw);
+            if p.cut_until_ns > g.elapsed_ns() {
+                break;
+            }
+        }
+        let g = &f.rmuc_2027().unwrap().game;
+        assert!(
+            peak_mw > 45_000,
+            "motor model did not exceed native 45 W limit"
+        );
+        assert!(
+            g.robots[0].combat.power.cut_until_ns > g.elapsed_ns(),
+            "no native cut after measured overdraw"
+        );
+        assert_eq!(g.drive_budget_w(id), 0);
+        let snap = f.snapshot();
+        let mut restored =
+            Field::restore(&snap, &f.static_geometry_snapshot(), f.floor_height_m()).unwrap();
+        f.step(16).unwrap();
+        restored.step(16).unwrap();
+        assert_eq!(
+            f.rmuc_2027().unwrap().game,
+            restored.rmuc_2027().unwrap().game
+        );
+        assert_eq!(
+            f.rmuc_2027().unwrap().game.robots[0].combat.power.actual_mw,
+            0
+        );
     }
     #[test]
     fn heavy_conversion_keeps_identity_ammunition_damage_and_restore() {

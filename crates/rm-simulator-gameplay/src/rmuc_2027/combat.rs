@@ -32,6 +32,10 @@ pub struct Respawn {
 /// Complete per-robot combat authority, independent of physics and host time.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Combat {
+    /// Referee buffer, power cut and module observations, UC §§5.1.4–5.
+    pub power: super::power::Power,
+    /// Sentry mode and cumulative posture authority, UC §5.7.2.
+    pub sentry: super::sentry::Sentry,
     /// Infantry chassis choice; table values are native 2027, not 2026 Stats.
     pub chassis: InfantryChassis,
     /// Infantry launcher choice; other roles ignore this field.
@@ -93,6 +97,8 @@ pub struct Combat {
 impl Default for Combat {
     fn default() -> Self {
         Self {
+            power: Default::default(),
+            sentry: Default::default(),
             chassis: InfantryChassis::HpFocused,
             launcher: InfantryLauncher::CoolingFocused,
             chassis_locked: false,
@@ -146,7 +152,9 @@ impl Combat {
     }
     /// Validate finite-range integer state before authoritative restore.
     pub fn validate(&self, now_ns: u64) -> bool {
-        (1..=10).contains(&self.level)
+        self.power.validate(now_ns)
+            && self.sentry.validate(now_ns)
+            && (1..=10).contains(&self.level)
             && self.cooling_half_carry <= 1
             && u64::from(self.sentry_collected_minutes) <= now_ns / 60_000_000_000
             && self.deliveries.iter().all(|d| d.rounds <= 1000)
@@ -223,6 +231,14 @@ impl Robot {
                 },
             }
         };
+        if self.role == GroundRole::Sentry && c.sentry.mode == super::sentry::Mode::Automatic {
+            stats = Stats {
+                max_hp: 400,
+                chassis_power_w: 100,
+                heat_limit: 260,
+                cooling_per_s: 30,
+            };
+        }
         if now_ns < c.double_power_until_ns {
             stats.chassis_power_w = (stats.chassis_power_w * 2).min(200);
         }

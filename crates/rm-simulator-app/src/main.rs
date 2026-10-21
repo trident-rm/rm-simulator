@@ -40,6 +40,7 @@ mod referee_video;
 mod robot_assets;
 mod scene;
 mod screenshot;
+mod sentry;
 mod session;
 mod staging;
 #[cfg(feature = "steam")]
@@ -179,6 +180,7 @@ fn main() -> AppExit {
         .add_plugins(graphics::GraphicsPlugin)
         .add_plugins(hud::HudPlugin)
         .add_plugins(assembly::AssemblyPlugin)
+        .add_plugins(sentry::SentryPlugin)
         .add_plugins(debug_panel::DebugPanelPlugin)
         .add_plugins(zone_debug::ZoneDebugPlugin)
         .insert_resource(debug_panel::DebugOptions {

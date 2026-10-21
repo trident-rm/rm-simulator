@@ -419,18 +419,56 @@ fn sync_panel(
 }
 
 #[derive(Component)]
-struct RespawnMenu;
+pub(crate) struct RespawnMenu;
+#[derive(Component, Clone, Copy)]
+enum RecoveryControl {
+    Frame,
+    Confirm,
+    Paid,
+}
+#[derive(Component)]
+struct RespawnStatus;
 
 /// Death remains visible until the host confirms the player's explicit respawn.
 fn respawn_menu(
     mut commands: Commands,
     session: Res<crate::session::Session>,
     mut ui: ResMut<HudState>,
-    mut panels: Query<&mut Node, With<RespawnMenu>>,
+    mut panels: Query<(&RecoveryControl, &mut Node)>,
+    mut status: Query<&mut Text, With<RespawnStatus>>,
 ) {
     let defeated = session
         .own_chassis()
         .is_some_and(|chassis| chassis.defeated);
+    let game = session.rmuc_2027().map(|s| &s.game);
+    let running = game.is_some_and(|g| {
+        matches!(
+            g.phase,
+            rm_simulator_world::rmuc_2027::match_rules::Phase::Running
+                | rm_simulator_world::rmuc_2027::match_rules::Phase::Countdown
+        )
+    });
+    let sentry = game.is_some_and(|g| {
+        g.robots.iter().any(|r| {
+            Some(r.id) == session.chassis_id
+                && r.role == rm_simulator_world::rmuc_2027::match_rules::GroundRole::Sentry
+        })
+    });
+    for mut label in &mut status {
+        let text = game
+            .and_then(|g| session.chassis_id.map(|id| (g, id)))
+            .map_or_else(
+                || "Robot defeated".into(),
+                |(g, id)| match g.respawn_remaining_ns(id) {
+                    Some(0) if sentry => "Normal respawn ready — confirm below".into(),
+                    Some(ns) => format!("Robot defeated — normal respawn {:.1}s", ns as f64 * 1e-9),
+                    None => "Robot defeated — respawn suspended".into(),
+                },
+            );
+        if label.0 != text {
+            label.0 = text;
+        }
+    }
     if ui.respawn && !defeated {
         ui.consumed = true;
     }
@@ -439,6 +477,7 @@ fn respawn_menu(
         let panel = commands
             .spawn((
                 RespawnMenu,
+                RecoveryControl::Frame,
                 GlobalZIndex(40),
                 Node {
                     display: if defeated {
@@ -458,25 +497,53 @@ fn respawn_menu(
                 BackgroundColor(Color::srgba(0.01, 0.02, 0.03, 0.75)),
             ))
             .id();
-        commands.spawn((ChildOf(panel), Text::new("Robot defeated"), ThemedText));
+        commands.spawn((
+            ChildOf(panel),
+            Text::new("Robot defeated"),
+            ThemedText,
+            RespawnStatus,
+        ));
         commands.spawn_scene(bsn! {
-            @FeathersButton { @caption: bsn! { Text("Respawn here - restore HP") ThemedText } }
+            @FeathersButton { @caption: bsn! { Text("Confirm respawn") ThemedText } }
             ActivateOnPress
-            AccessibleLabel("Respawn here - restore HP")
+            AccessibleLabel("Confirm respawn")
             on(|_: On<Activate>, mut session: ResMut<crate::session::Session>, mut ui: ResMut<HudState>| {
                 ui.consumed = true;
                 if session.commands_confirmed() && let Some(chassis) = session.chassis_id {
-                    session.apply(rm_simulator_server::protocol::Command::Respawn { chassis });
+                    let command = if session.rmuc_2027().is_some_and(|s| s.game.phase == rm_simulator_world::rmuc_2027::match_rules::Phase::Running) {
+                        rm_simulator_server::protocol::Command::SentryAction { chassis, action: rm_simulator_world::gameplay::rmuc_2027::sentry::Action::ConfirmRespawn }
+                    } else { rm_simulator_server::protocol::Command::Respawn { chassis } };
+                    session.apply(command);
                 }
             })
-        }).insert(ChildOf(panel));
+        }).insert((ChildOf(panel), RecoveryControl::Confirm));
+        commands.spawn_scene(bsn! {
+            @FeathersButton { @caption: bsn! { Text("Purchase immediate respawn") ThemedText } }
+            ActivateOnPress
+            AccessibleLabel("Purchase immediate respawn")
+            on(|_: On<Activate>, mut session: ResMut<crate::session::Session>, mut ui: ResMut<HudState>| {
+                ui.consumed = true;
+                if session.commands_confirmed() && let Some(chassis) = session.chassis_id {
+                    session.apply(rm_simulator_server::protocol::Command::InstantRespawn { chassis });
+                }
+            })
+        }).insert((ChildOf(panel), RecoveryControl::Paid));
     }
-    for mut panel in &mut panels {
-        panel.display = if defeated {
+    for (control, mut node) in &mut panels {
+        let visible = defeated
+            && match control {
+                RecoveryControl::Frame => true,
+                RecoveryControl::Confirm => !running || sentry,
+                RecoveryControl::Paid => running,
+            };
+        let display = if visible {
             Display::Flex
         } else {
             Display::None
         };
+        if node.display != display {
+            node.display = display;
+        }
     }
 }
 
@@ -536,7 +603,10 @@ mod tests {
         app.insert_resource(session)
             .init_resource::<HudState>()
             .add_systems(Update, respawn_menu);
-        let panel = app.world_mut().spawn((RespawnMenu, Node::default())).id();
+        let panel = app
+            .world_mut()
+            .spawn((RespawnMenu, RecoveryControl::Frame, Node::default()))
+            .id();
         app.update();
         assert!(app.world().resource::<HudState>().blocks_input());
         assert_eq!(

@@ -204,6 +204,7 @@ fn rune_benefits_survive_weakness_and_disconnection_but_not_expiry() {
     small(&mut g, Team::Red);
     g.robots[0].combat.weakened = true;
     g.robots[0].online = false;
+    g.robots[0].combat.power.modules.main_online = false;
     assert_eq!(g.field_effects(1).defense_pct, 25);
     g.advance_ns(45 * S);
     assert_eq!(g.field_effects(1).defense_pct, 0);

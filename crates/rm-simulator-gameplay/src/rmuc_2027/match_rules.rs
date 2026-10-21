@@ -47,7 +47,7 @@ pub enum GroundRole {
     Heavy,
     /// Infantry, using native 2027 experience and performance tables.
     Infantry,
-    /// Semi-automatic Sentry (UC Table 3-6).
+    /// Automatic or semi-automatic Sentry (UC Table 3-6).
     Sentry,
 }
 /// One eligible robot and its restorable activation/progress state.
@@ -207,15 +207,23 @@ impl Match {
         self.control.snapshot().elapsed_ns
     }
     /// Register a prototype. Infantry uses HP-priority level one (200 HP,
-    /// UC Table 5-17); semi-automatic Sentry uses 200 HP (UC Table 3-6).
+    /// UC Table 5-17); automatic Sentry defaults to 400 HP (UC Table 3-6).
     pub fn add_robot(&mut self, id: u32, team: Team, role: GroundRole) {
         self.robots.retain(|r| r.id != id);
         self.robots.push(Robot {
             id,
             team,
             role,
-            hp: if role == GroundRole::Heavy { 400 } else { 200 },
-            max_hp: if role == GroundRole::Heavy { 400 } else { 200 },
+            hp: if role == GroundRole::Infantry {
+                200
+            } else {
+                400
+            },
+            max_hp: if role == GroundRole::Infantry {
+                200
+            } else {
+                400
+            },
             combat: super::combat::Combat {
                 allowance: if role == GroundRole::Sentry { 300 } else { 0 },
                 ..Default::default()
@@ -264,15 +272,25 @@ impl Match {
         let robots = self
             .robots
             .iter()
-            .map(|r| (r.id, r.team, r.role, r.combat.chassis, r.combat.launcher))
+            .map(|r| {
+                (
+                    r.id,
+                    r.team,
+                    r.role,
+                    r.combat.chassis,
+                    r.combat.launcher,
+                    r.combat.sentry.mode,
+                )
+            })
             .collect::<Vec<_>>();
         *self = Self::new(direction);
         for (r, seed) in self.runes.iter_mut().zip(rune_seeds) {
             r.seed = seed;
         }
-        for (id, team, role, chassis, launcher) in robots {
+        for (id, team, role, chassis, launcher, mode) in robots {
             self.add_robot(id, team, role);
             let robot = self.robots.iter_mut().find(|r| r.id == id).unwrap();
+            robot.combat.sentry.mode = mode;
             robot.combat.chassis = chassis;
             robot.combat.launcher = launcher;
             robot.max_hp = robot.stats(0).max_hp;
@@ -529,6 +547,11 @@ impl Match {
             if now < THREE_MIN_NS {
                 dt = dt.min(THREE_MIN_NS - now);
             }
+            for r in &self.robots {
+                if r.role == GroundRole::Sentry && r.hp > 0 && r.online {
+                    dt = dt.min(r.combat.sentry.boundary());
+                }
+            }
             for (r, a) in self.robots.iter().zip(&active) {
                 for expiry in r.expires_ns.iter().flatten().filter(|&&t| t > now) {
                     dt = dt.min(*expiry - now);
@@ -564,6 +587,11 @@ impl Match {
                     }
                 }
             }
+            for r in &mut self.robots {
+                if r.role == GroundRole::Sentry && r.hp > 0 && r.online {
+                    r.combat.sentry.advance(dt);
+                }
+            }
             let events = self.control.advance_ns(dt);
             self.apply_events(events);
             self.observe_heavy_deficits();
@@ -575,6 +603,7 @@ impl Match {
             }
             self.settle_assembly();
             self.advance_combat(dt);
+            self.settle_power_modules();
             if at < ROUND_NS && at.is_multiple_of(10_000_000_000) {
                 for team in Team::BOTH {
                     self.gold[team.index()] = self.gold[team.index()]

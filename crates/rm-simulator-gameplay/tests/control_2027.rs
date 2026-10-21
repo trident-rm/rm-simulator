@@ -298,6 +298,7 @@ fn fortress_retention_clears_at_exact_boundary_without_an_extra_tick() {
         SECOND,
     );
     g.robots[1].online = false;
+    g.robots[1].combat.power.modules.main_online = false;
     hold(
         &mut g,
         &[(1, Team::Blue, Point::CentralHighland)],
@@ -333,8 +334,10 @@ fn transferred_outpost_and_first_defending_fortress_robot_use_current_ownership(
         assert!(active[1].1[fortress]);
         assert!(!active[2].1[fortress]);
         g.robots[1].online = false;
+        g.robots[1].combat.power.modules.main_online = false;
         assert!(g.activations()[2].1[fortress]);
         g.robots[1].online = true;
+        g.robots[1].combat.power.modules.main_online = true;
         // A returning lower id cannot steal the still-active defender's latch.
         assert!(!g.activations()[1].1[fortress]);
         assert_eq!(g.fortress_robot[side.index()], Some(3));

@@ -37,3 +37,5 @@ Git history.
 | License, provenance and third-party notices | [Notices](../NOTICE.md) |
 
 - [Hardware and robot model candidates](hardware-models.md): source-derived referee modules, team CAD survey and assembled Omni prototype.
+
+- [Tunnel RFID calibration](tunnel-rfid-calibration.md): CAD measurements, antenna approximations and live reward checks.
