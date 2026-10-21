@@ -45,6 +45,8 @@ pub struct InputStream {
     revision: Option<u64>,
     /// Highest executed sequence, or zero before any input applies.
     latest: u64,
+    /// Sequences explicitly superseded by another controller, not executed.
+    superseded_sequence: u64,
     /// Scheduled frames not yet eligible, ordered by sequence.
     pending: VecDeque<InputFrame>,
     /// Server time in ns of the last applied input; the lease counts from here.
@@ -81,7 +83,7 @@ impl InputStream {
             self.revision = Some(placement_revision);
         }
         self.record_evidence(frame, now_ns, placement_revision)?;
-        if frame.sequence <= self.latest
+        if frame.sequence <= self.latest.max(self.superseded_sequence)
             || now_ns.saturating_sub(frame.sampled_time_ns) > INPUT_LEASE_NS
         {
             return Ok(None);
@@ -218,6 +220,27 @@ impl InputStream {
         }
         self.telemetry.lease_expiries += u64::from(self.held.is_some());
         self.neutralize()
+    }
+    /// Relinquish pilot control to an external controller while retaining replay
+    /// evidence. Pending sequences are retired without claiming they executed,
+    /// so a duplicate cannot schedule discarded manual motion again.
+    ///
+    /// ```
+    /// use rm_simulator_server::input_stream::{InputStream, InputFrame};
+    /// let mut stream = InputStream::default();
+    /// let frame = InputFrame {input_epoch:0, sequence:1, sampled_time_ns:10,
+    ///     duration_ticks:1, placement_revision:0, command:Default::default()};
+    /// stream.receive(frame, 0, 0)?;
+    /// stream.supersede();
+    /// assert!(stream.receive(frame, 10, 0)?.is_none());
+    /// assert!(stream.advance(10).is_none());
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn supersede(&mut self) {
+        self.superseded_sequence = self
+            .superseded_sequence
+            .max(self.telemetry.received_sequence);
+        self.cancel();
     }
     /// Drop the pending schedule and neutralize motion while preserving the last
     /// aim. A host calls this when a life ends, the world pauses or the chassis

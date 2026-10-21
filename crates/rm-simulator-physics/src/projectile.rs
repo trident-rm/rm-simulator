@@ -1179,6 +1179,21 @@ impl WorldPhysics {
         self.chassis_ref(id)
             .map(|chassis| chassis.muzzle_pose(&self.world))
     }
+    /// Allocation-free pose, held control and life state for one chassis.
+    /// No configuration, wheel arrays or source articulation geometry is cloned.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{WorldPhysics, Team, Pose, chassis::ChassisConfig};
+    /// let mut world = WorldPhysics::new(&[], 0.);
+    /// let id = world.add_chassis(Team::Red, ChassisConfig::default(), Pose::at([0.,0.,0.4]))?;
+    /// let state = world.chassis_control_state(id).unwrap();
+    /// assert_eq!(state.pose.translation_m, [0.,0.,0.4]);
+    /// assert!(!state.defeated);
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn chassis_control_state(&self, id: u32) -> Option<crate::chassis::ChassisControlState> {
+        self.chassis_ref(id).map(|c| c.control_state(&self.world))
+    }
     /// One chassis' state without walking the rules, for a replay that reads
     /// its own robot every tick and nothing else.
     pub fn chassis_snapshot(&self, id: u32) -> Option<ChassisSnapshot> {
@@ -1964,6 +1979,40 @@ pub fn scoring_offset(target: ArmorTarget, local_m: [f64; 3]) -> Option<[f64; 2]
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn compact_chassis_control_state_tracks_pose_input_revision_and_defeat() {
+        let mut world = super::WorldPhysics::new(&[], 0.);
+        let id = world
+            .add_chassis(
+                crate::Team::Red,
+                crate::chassis::ChassisConfig::default(),
+                crate::Pose::at([1., 2., 0.4]),
+            )
+            .unwrap();
+        let command = crate::chassis::ChassisCommand {
+            forward_m_s: 1.,
+            aim_pitch_rad: 0.2,
+            folded: true,
+            ..Default::default()
+        };
+        world.command_chassis(id, command).unwrap();
+        let state = world.chassis_control_state(id).unwrap();
+        let full = world.chassis_snapshot(id).unwrap();
+        assert_eq!(state.pose, full.pose);
+        assert_eq!(state.command, full.command);
+        assert_eq!(state.placement_revision, full.placement_revision);
+        assert!(!state.defeated);
+        world
+            .place_chassis(id, crate::Pose::at([3., 4., 0.4]))
+            .unwrap();
+        world.set_chassis_defeated(id, true);
+        let updated = world.chassis_control_state(id).unwrap();
+        assert_eq!(updated.pose.translation_m, [3., 4., 0.4]);
+        assert!(updated.placement_revision > state.placement_revision);
+        assert!(updated.defeated);
+        assert!(world.chassis_control_state(id + 1).is_none());
+    }
+
     use super::*;
     fn face(target: ArmorTarget, x: f64, yaw_rad: f64) -> TargetFace {
         TargetFace {

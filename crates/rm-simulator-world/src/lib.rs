@@ -877,6 +877,16 @@ impl Field {
     pub fn projectile_snapshots(&self) -> Vec<ProjectileSnapshot> {
         self.physics.snapshot()
     }
+    /// Allocation-free state for an addressed controller, excluding geometry and wheels.
+    ///
+    /// ```
+    /// let field = rm_simulator_world::Field::new(&Default::default())?;
+    /// assert!(field.chassis_control_state(123).is_none());
+    /// # Ok::<(), rm_simulator_world::FieldError>(())
+    /// ```
+    pub fn chassis_control_state(&self, id: u32) -> Option<chassis::ChassisControlState> {
+        self.physics.chassis_control_state(id)
+    }
     /// One chassis' snapshot on its own, without building a whole field
     /// snapshot; a replay reads its own robot after every tick.
     pub fn chassis_snapshot(&self, id: u32) -> Option<ChassisSnapshot> {

@@ -13,6 +13,8 @@ import time
 import urllib.error
 import urllib.request
 
+from control_io import ClockWorker, CommandWorker
+
 
 def motion(mode, x, y, yaw_rate):
     """Convert ROS planar components into the server's explicit motion modes."""
@@ -80,6 +82,10 @@ def main():
     from rclpy.qos import qos_profile_sensor_data
     from rosgraph_msgs.msg import Clock
 
+    initial = request(args.host, f"/api/control/{args.chassis}")
+    body = initial["chassis"]
+    if initial["paused"] or body["defeated"]:
+        raise RuntimeError("select a live chassis in an unpaused match")
     rclpy.init(args=[])
     node = rclpy.create_node("rm_simulator_control")
     clock = (
@@ -87,19 +93,20 @@ def main():
         if args.publish_clock
         else None
     )
-    initial = request(args.host, "/api/state")
-    body = next(
-        (b for b in initial["field"]["chassis"] if b["id"] == args.chassis), None
-    )
-    if body is None or initial["paused"]:
-        node.destroy_node()
-        rclpy.try_shutdown()
-        raise RuntimeError("select an existing chassis in an unpaused match")
     epoch = initial["input_epoch"]
     revision = body["placement_revision"]
     pending = None
     sequence = 0
     armed = True
+    commands = CommandWorker(
+        lambda command: request(args.host, "/api/command", command)
+    )
+    clocks = (
+        ClockWorker(lambda: request(args.host, "/api/clock"))
+        if clock is not None
+        else None
+    )
+    reported_clock_error = None
 
     def receive(msg):
         nonlocal pending, sequence
@@ -137,27 +144,29 @@ def main():
             node.get_logger().warning(str(error))
 
     def pump():
-        nonlocal pending, armed
-        if not armed and clock is None:
-            return
-        try:
-            # Polling full state is a prototype transport, not high-rate sensor export.
-            if clock is not None:
-                state = request(args.host, "/api/state")
-                stamp = state["field"]["time_ns"]
-                msg = Clock()
-                msg.clock.sec, msg.clock.nanosec = divmod(stamp, 1_000_000_000)
-                clock.publish(msg)
-            if armed and pending is not None:
-                command, pending = pending, None
-                request(args.host, "/api/command", command)
-        except (OSError, ValueError) as error:
-            was_armed, armed = armed, False
+        nonlocal pending, armed, reported_clock_error
+        error = commands.take_error()
+        if error is not None:
+            armed = False
             pending = None
-            if was_armed:
-                node.get_logger().error(
-                    f"Control disarmed: {error}; restart with a newer lease after checking the game"
+            node.get_logger().error(
+                f"Control disarmed: {error}; restart with a newer lease after checking the game"
+            )
+        if clocks is not None:
+            status, error = clocks.take()
+            if error is not None and error != reported_clock_error:
+                node.get_logger().warning(f"Clock polling failed: {error}")
+                reported_clock_error = error
+            if status is not None:
+                reported_clock_error = None
+                msg = Clock()
+                msg.clock.sec, msg.clock.nanosec = divmod(
+                    status["time_ns"], 1_000_000_000
                 )
+                clock.publish(msg)
+        if armed and pending is not None:
+            command, pending = pending, None
+            commands.submit(command)
 
     node.create_subscription(TwistStamped, args.topic, receive, qos_profile_sensor_data)
     node.create_timer(0.05, pump)
@@ -169,6 +178,10 @@ def main():
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        # Finish any in-flight drive before issuing release. No callbacks run here.
+        commands.close()
+        if clocks is not None:
+            clocks.close()
         try:
             request(
                 args.host,

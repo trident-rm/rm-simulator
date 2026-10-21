@@ -155,6 +155,10 @@ type Reply<T> = SyncSender<T>;
 enum Request {
     Apply(Command, Reply<Result<CommandReceipt, String>>),
     State(Reply<SimulationState>),
+    ControlStatus(
+        Option<u32>,
+        Reply<Result<crate::simulation::ControlStatus, String>>,
+    ),
     FireRecords(Reply<Vec<crate::simulation::FireRecord>>),
     Roster(Reply<Vec<PlayerInfo>>),
     MapMarkers(Reply<Vec<MapMarkerRecord>>),
@@ -249,6 +253,14 @@ impl HostHandle {
                 .clone()
                 .ok_or(error)
         })
+    }
+    /// Read a compact clock/control identity at one worker turn without a full snapshot.
+    /// `None` queries only time, pause and epoch; a missing addressed chassis is an error.
+    pub fn control_status(
+        &self,
+        chassis: Option<u32>,
+    ) -> Result<crate::simulation::ControlStatus, String> {
+        self.request(|reply| Request::ControlStatus(chassis, reply))?
     }
     /// The `field` of [`Self::state`] at this request's worker turn.
     pub fn snapshot(&self) -> Result<FieldSnapshot, String> {
@@ -550,6 +562,13 @@ impl Owner {
             }
             Request::FireRecords(reply) => {
                 let _ = reply.send(self.simulation.fire_records());
+            }
+            Request::ControlStatus(chassis, reply) => {
+                let _ = reply.send(
+                    self.simulation
+                        .control_status(chassis)
+                        .map_err(str::to_string),
+                );
             }
             Request::State(reply) => {
                 let _ = reply.send(self.simulation.state());

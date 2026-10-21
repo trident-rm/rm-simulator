@@ -14,7 +14,8 @@ An [optional, separate rclrs adapter](../integrations/ros2/README.md) now publis
 those measured points as Livox Driver 2 messages and simulation `/clock` using
 Pixi/RoboStack; a separate [ROS command bridge](../integrations/ros2/README.md#control-a-robot-in-an-existing-game)
 can now drive a live app/server robot with leased body/world velocity or heading
-vectors. Core libraries and multiplayer builds remain ROS-free.
+vectors. Compact host clock/identity replies avoid snapshot polling, and HTTP I/O
+runs on bounded workers outside ROS callbacks. Core libraries and multiplayer builds remain ROS-free.
 
 ## Choose the layer
 

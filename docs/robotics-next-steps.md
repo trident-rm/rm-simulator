@@ -108,7 +108,10 @@ The server now accepts ROS-independent `ExternalDrive` and
 `ReleaseExternalDrive` protocol commands, with body/world velocity and heading
 vector modes, sampled-time admission, sequence checks, per-robot leases and
 simulation-time expiry. Operator authorization remains on the normal host path.
-The ROS control bridge is a separate process using bounded 20 Hz HTTP requests.
+The ROS control bridge is a separate process using bounded 20 Hz HTTP requests
+on independent command/clock workers. Compact clock/identity endpoints avoid full
+match snapshots. Fresh manual input revokes ownership on admission, even for a
+future transition; preserved pilot evidence prevents replayed takeover.
 A future sensor attachment should use the same per-robot ownership boundary.
 Protocol 80 versions these operator requests. The current HTTP bridge uses the
 privileged operator endpoint; a future restricted attachment should grant only

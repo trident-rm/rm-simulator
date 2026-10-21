@@ -156,7 +156,7 @@ permissively licensed.
 The `control` task subscribes to `geometry_msgs/msg/TwistStamped` and forwards
 bounded, sequenced external drive requests to the existing host. It creates no
 second world and requires no ROS dependency in the app/server. This first bridge
-uses the operator HTTP API at up to 20 Hz, with one pending command. It is suitable
+uses the operator HTTP API at up to 20 Hz with bounded latest-value mailboxes. It is suitable
 for initial navigation control, not high-rate embedded control or sensor export.
 
 Start the interactive simulator with its local HTTP API enabled:
@@ -180,8 +180,8 @@ pixi run --manifest-path integrations/ros2/pixi.toml control --chassis 0 --mode 
 ```
 
 Enable `--publish-clock` only when this bridge is the match's single ROS clock
-publisher. It polls the authoritative simulation clock at 20 Hz, including while
-paused; it never substitutes wall time. Consumers must use simulation time.
+publisher. A dedicated worker polls the compact `/api/clock` endpoint at up to
+20 Hz, including while paused; it never substitutes wall time. Consumers must use simulation time.
 Do not run the separate bare-world probe as a clock source for the live game.
 
 | Mode | Input frame | Twist interpretation |
@@ -200,6 +200,14 @@ while turning; it is not a differential-drive controller or collision avoidance.
 Publish new messages at 20 Hz, with simulation timestamps in `header.stamp` and
 the exact expected `header.frame_id`. The subscription accepts best-effort QoS.
 Only new ROS messages renew motion: the timer never resends a previous setpoint.
+HTTP requests run on independent command and clock workers, outside ROS callbacks.
+The ROS input cache and each worker retain at most one unsent value, plus one
+in-flight HTTP request per worker. Newer commands replace queued ones; a slow
+clock request cannot block command submission or subscription callbacks. Shutdown
+drops unsent commands and waits for the in-flight HTTP operation before attempting
+release. If an HTTP operation fails, the host's timestamp admission and lease
+expiry remain the fallback; a client timeout cannot cancel an already queued
+server operation.
 Requests over 6 m/s or 4 rad/s are rejected, with heading feedback capped at
 4 rad/s and gain 4/s. Native motor, power, collision and defeat restrictions still
 apply. These bounds are simulator adapter policies, not RoboMaster rule constants.
@@ -208,15 +216,19 @@ The first accepted request takes motion control, cancels built-in navigation and
 disables chassis/gimbal sweep. Gimbal aim, folding state and balance setting are
 preserved; firing and mechanism control are separate commands. Manual pilot input,
 ordinary `Chassis` commands, a new built-in navigation goal or a pause revokes the
-external lease. Team map intents do not replace an active external motion lease.
+external lease on fresh input admission, including a transition scheduled for a
+future tick. Replay evidence survives external claims: duplicate pilot packets
+cannot restore superseded manual motion. Team map intents do not replace an active external motion lease.
 Old navigation goals never automatically resume.
 
 The host brakes after 250 ms of simulation time without a fresh sample. Delayed,
 duplicate, out-of-order and revoked requests cannot refresh a lease. The host also
 checks the current pause epoch and robot placement revision. The bridge disarms
-motion on HTTP rejection or a connection error; it never automatically steals
+motion on a command HTTP rejection or connection error; it never automatically steals
 control back after manual takeover. When enabled, clock polling continues after
-motion is disarmed. Restart with a newer `--lease-id` after checking the
+motion is disarmed. Clock failures are reported separately and do not themselves
+revoke motion; the host's ordinary timestamp and stale-command checks still apply.
+Restart with a newer `--lease-id` after checking the
 game. By default a process uses its wall-clock startup nanoseconds only as a
 unique increasing lease identifier, never as a sensor/command timestamp.
 
@@ -232,8 +244,16 @@ For a direct non-ROS client, `POST /api/command` the same protocol request:
 {"ExternalDrive":{"chassis":0,"input":{"lease_id":1,"sequence":1,"sampled_time_ns":1000000000,"input_epoch":0,"placement_revision":0,"motion":{"HeadingVector":{"direction_world":[1,0],"speed_m_s":1}}}}}
 ```
 
-Read actual `sampled_time_ns`, `input_epoch` and `placement_revision` from the
-current state; the numbers above are illustrative. Advance sequence on every
+Read time, epoch and the robot's placement revision from `GET /api/control/0`:
+
+```json
+{"time_ns":1000000000,"input_epoch":0,"paused":false,"chassis":{"id":0,"placement_revision":0,"defeated":false}}
+```
+
+`GET /api/clock` returns the same clock/epoch/pause fields with `chassis: null`.
+Neither endpoint builds a full world snapshot. Use `time_ns` as a current sample
+stamp when no independently synchronized ROS clock is available. The numbers
+above are illustrative. Advance sequence on every
 sample. Lease IDs must be nonzero and increase when reacquiring a robot. A direct
 `HeadingVector` request with zero speed turns in place; signed speed permits
 backing along the heading while facing it. `BodyVelocity` and `WorldVelocity`
@@ -251,8 +271,9 @@ controller, not physical checkpoints; it does not authorize referee edits.
 
 No live-match LiDAR/IMU/odometry/TF export is added by this control bridge. A real
 planner can now actuate the in-game robot, but sensor-driven navigation still
-needs those adapters. Full-state polling for the optional clock is an initial
-transport cost; a future bounded telemetry stream should replace it.
+needs those adapters. Clock/control discovery now uses compact metadata endpoints
+rather than polling full match state. HTTP remains a prototype control transport;
+a future telemetry stream can provide higher rates without per-request connections.
 
 Test actual DDS input against a headless CAD host (same simulation/command path
 as the game), after building the normal server binary:
@@ -266,3 +287,10 @@ The smoke test starts and cleans up its own CAD host/ROS bridge in an isolated
 ROS domain, checks all three control modes, physical displacement, timeout
 braking while the bridge remains alive and manual takeover. It does not run
 Nav2 or claim successful sensor-based autonomous navigation.
+
+ROS-free regressions for slow I/O, latest-value replacement, command failure and
+shutdown ordering run in the core Python suite:
+
+```sh
+python3 -m unittest discover -s scripts/tests -p test_control_io.py
+```

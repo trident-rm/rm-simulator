@@ -237,12 +237,12 @@ impl Service {
         let now = field.time_ns();
         for (&id, entry) in &mut self.entries {
             let Some(active) = entry.active else { continue };
-            let body = field.chassis_snapshot(id);
+            let body = field.chassis_control_state(id);
             if now.saturating_sub(active.refreshed_ns) >= LEASE_NS
                 || body
                     .as_ref()
                     .is_none_or(|b| b.placement_revision != active.input.placement_revision)
-                || field.chassis_defeated(id) != Some(false)
+                || body.as_ref().is_none_or(|b| b.defeated)
             {
                 entry.active = None;
                 let _ = crate::navigation::brake(field, id);

@@ -21,7 +21,10 @@ const SPEED_M_S: f64 = 1.0;
 const TUNNEL_SPEED_M_S: f64 = 0.85;
 const PLANNING_RADIUS_M: f64 = RADIUS_M + 0.12;
 pub(crate) fn brake(field: &mut Field, id: u32) -> Result<(), String> {
-    let mut command = field.chassis_snapshot(id).ok_or("missing Sentry")?.command;
+    let mut command = field
+        .chassis_control_state(id)
+        .ok_or("missing chassis")?
+        .command;
     command.forward_m_s = 0.;
     command.left_m_s = 0.;
     command.yaw_rate_rad_s = 0.;

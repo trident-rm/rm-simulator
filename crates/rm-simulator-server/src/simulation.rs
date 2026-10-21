@@ -121,6 +121,29 @@ pub struct SimulationState {
     pub field: FieldSnapshot,
 }
 
+/// Small control/clock reply, captured on the authoritative worker without a world snapshot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControlStatus {
+    /// Current simulation time in nanoseconds.
+    pub time_ns: u64,
+    /// Current pause epoch for input admission.
+    pub input_epoch: u64,
+    /// Whether simulation pacing is paused.
+    pub paused: bool,
+    /// Optional addressed robot's life/defeat identity; absent for clock-only queries.
+    pub chassis: Option<ControlIdentity>,
+}
+/// Minimal robot identity needed to start an external control lease.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControlIdentity {
+    /// Stable simulator chassis ID, never a referee ID.
+    pub id: u32,
+    /// Revision changed by placement or revival.
+    pub placement_revision: u64,
+    /// Defeated robots cannot accept an external lease.
+    pub defeated: bool,
+}
+
 /// Construction events shared by the window's loading screen and headless host.
 #[derive(Debug, PartialEq)]
 pub enum BuildProgress {
@@ -868,6 +891,40 @@ impl Simulation {
         self.field.snapshot()
     }
 
+    /// Read the clock and optionally one robot's identity without cloning match,
+    /// geometry, configuration or trajectory state. Unknown requested IDs fail.
+    ///
+    /// ```
+    /// let (simulation, ids) = rm_simulator_server::workload::simulation(1);
+    /// let clock = simulation.control_status(None)?;
+    /// assert!(clock.chassis.is_none());
+    /// let robot = simulation.control_status(Some(ids[0]))?;
+    /// assert_eq!(robot.time_ns, clock.time_ns);
+    /// assert_eq!(robot.chassis.unwrap().id, ids[0]);
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn control_status(&self, chassis: Option<u32>) -> Result<ControlStatus, &'static str> {
+        let chassis = chassis
+            .map(|id| {
+                let body = self
+                    .field
+                    .chassis_control_state(id)
+                    .ok_or("missing chassis")?;
+                Ok::<_, &'static str>(ControlIdentity {
+                    id,
+                    placement_revision: body.placement_revision,
+                    defeated: body.defeated,
+                })
+            })
+            .transpose()?;
+        Ok(ControlStatus {
+            time_ns: self.field.time_ns(),
+            input_epoch: self.input_epoch,
+            paused: self.paused,
+            chassis,
+        })
+    }
+
     /// The publication state: field, bots, epoch, pause flag and recent shot
     /// results. `snapshot_id` is left at zero for the host to stamp.
     pub fn state(&self) -> SimulationState {
@@ -1250,16 +1307,18 @@ impl Simulation {
                 }
                 let body = self
                     .field
-                    .chassis_snapshot(*chassis)
+                    .chassis_control_state(*chassis)
                     .ok_or("missing chassis")?;
-                if body.placement_revision != input.placement_revision
-                    || self.field.chassis_defeated(*chassis) != Some(false)
-                {
+                if body.placement_revision != input.placement_revision || body.defeated {
                     return Err("external input belongs to an unavailable chassis life".into());
                 }
                 self.external_control
                     .receive(*chassis, *input, self.field.time_ns())?;
-                self.input_streams.remove(chassis);
+                // Cancel held/pending pilot motion but retain sequence evidence, so
+                // a replay cannot retake control after an explicit external claim.
+                if let Some(stream) = self.input_streams.get_mut(chassis) {
+                    stream.supersede();
+                }
                 if let Some(nav) = &mut self.navigation {
                     nav.stop(*chassis);
                 }
@@ -1415,19 +1474,21 @@ impl Simulation {
                 }
                 let revision = self
                     .field
-                    .snapshot()
-                    .chassis
-                    .into_iter()
-                    .find(|c| c.id == *chassis)
-                    .ok_or("no chassis with that id")?
-                    .placement_revision;
+                    .chassis_revision(*chassis)
+                    .ok_or("no chassis with that id")?;
                 let now = self.field.time_ns();
                 let stream = self.input_streams.entry(*chassis).or_default();
+                let previous_received = stream.telemetry.received_sequence;
                 let accepted = stream
                     .receive(*frame, now, revision)
                     .map_err(str::to_string)?;
-                if let Some(command) = accepted {
+                let fresh = stream.telemetry.received_sequence > previous_received;
+                // Manual ownership changes on admission, even when the actual
+                // transition is scheduled for a future tick.
+                if fresh {
                     self.revoke_external_control(*chassis);
+                }
+                if let Some(command) = accepted {
                     self.field
                         .command_chassis(*chassis, command)
                         .map_err(|e| e.to_string())?;
@@ -1925,11 +1986,83 @@ mod tests {
             },
         })
         .unwrap();
-        assert!(sim.external_control.active(id));
+        assert!(!sim.external_control.active(id));
+        // An intervening refresh of the revoked lease must not erase the
+        // scheduled manual transition.
+        assert!(sim.apply(&external_input(&sim, id, 2, 2)).is_err());
         sim.step(2).unwrap();
         assert!(!sim.external_control.active(id));
         assert_eq!(
             sim.field.chassis_snapshot(id).unwrap().command.forward_m_s,
+            0.3
+        );
+    }
+
+    #[test]
+    fn replayed_pilot_input_cannot_revoke_a_new_external_lease() {
+        let (mut sim, id) = pilot_simulation();
+        let frame = crate::input_stream::InputFrame {
+            input_epoch: sim.input_epoch,
+            sequence: 1,
+            sampled_time_ns: sim.field.time_ns(),
+            duration_ticks: 1,
+            placement_revision: sim.field.chassis_revision(id).unwrap(),
+            command: rm_simulator_world::ChassisCommand {
+                forward_m_s: 0.3,
+                ..Default::default()
+            },
+        };
+        sim.apply(&Command::PilotInput { chassis: id, frame })
+            .unwrap();
+        sim.apply(&external_input(&sim, id, 1, 1)).unwrap();
+        sim.apply(&Command::PilotInput { chassis: id, frame })
+            .unwrap();
+        assert!(sim.external_control.active(id));
+        let fresh = crate::input_stream::InputFrame {
+            sequence: 2,
+            sampled_time_ns: sim.field.time_ns() + 2 * tick_ns(),
+            ..frame
+        };
+        sim.apply(&Command::PilotInput {
+            chassis: id,
+            frame: fresh,
+        })
+        .unwrap();
+        assert!(!sim.external_control.active(id));
+        assert!(sim.apply(&external_input(&sim, id, 1, 2)).is_err());
+        sim.step(3).unwrap();
+        assert_eq!(
+            sim.field
+                .chassis_control_state(id)
+                .unwrap()
+                .command
+                .forward_m_s,
+            0.3
+        );
+        let future = crate::input_stream::InputFrame {
+            sequence: 3,
+            sampled_time_ns: sim.field.time_ns() + 2 * tick_ns(),
+            ..frame
+        };
+        sim.apply(&Command::PilotInput {
+            chassis: id,
+            frame: future,
+        })
+        .unwrap();
+        sim.apply(&external_input(&sim, id, 2, 1)).unwrap();
+        sim.apply(&Command::PilotInput {
+            chassis: id,
+            frame: future,
+        })
+        .unwrap();
+        sim.step(3).unwrap();
+        assert!(sim.external_control.active(id));
+        assert_ne!(
+            sim.field
+                .chassis_control_state(id)
+                .unwrap()
+                .command
+                .forward_m_s,
             0.3
         );
     }

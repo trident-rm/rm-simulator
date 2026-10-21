@@ -2,6 +2,7 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! A small HTTP/1.1 front for the referee: `GET /` serves the control panel,
 //! `GET /api/state` the current state (`paused` and the field snapshot),
+//! `GET /api/clock` compact clock metadata and `GET /api/control/ID` a robot life identity,
 //! `POST /api/referee` a `RefereeCommand` and `POST /api/command` any
 //! [`Command`] as JSON. Requests are handled one per connection on their
 //! own thread; the reply always closes the connection. No dependencies
@@ -285,6 +286,21 @@ pub fn respond(request: &Request, host: &HostHandle) -> Response {
             Ok(records) => Response::json(200, &records),
             Err(reason) => Response::error(503, reason),
         },
+        ("GET", "/api/clock") => match host.control_status(None) {
+            Ok(status) => Response::json(200, &status),
+            Err(reason) => Response::error(503, reason),
+        },
+        ("GET", path) if path.starts_with("/api/control/") => {
+            match path.trim_start_matches("/api/control/").parse::<u32>() {
+                Ok(id) => match host.control_status(Some(id)) {
+                    Ok(status) => Response::json(200, &status),
+                    Err(reason) => {
+                        Response::error(if host.is_stopped() { 503 } else { 404 }, reason)
+                    }
+                },
+                Err(_) => Response::error(400, "invalid chassis ID"),
+            }
+        }
         ("GET", "/api/state") => match host.state() {
             Ok(state) => Response::json(200, &state),
             Err(reason) => Response::error(503, reason),
@@ -386,6 +402,41 @@ mod tests {
             &handle,
         );
         assert_eq!(response.status, 403);
+    }
+    #[test]
+    fn compact_clock_and_control_endpoints_follow_worker_order() {
+        let (simulation, ids) = crate::workload::simulation(1);
+        let host = Host::new(simulation, true).unwrap();
+        let handle = host.handle();
+        let get = |path: &str| {
+            respond(
+                &Request {
+                    method: "GET".into(),
+                    path: path.into(),
+                    body: vec![],
+                },
+                &handle,
+            )
+        };
+        let clock = get("/api/clock");
+        assert_eq!(clock.status, 200);
+        assert!(clock.body.len() < 256);
+        let clock: crate::simulation::ControlStatus = serde_json::from_slice(&clock.body).unwrap();
+        assert_eq!(clock.time_ns, 0);
+        assert!(clock.chassis.is_none());
+        let robot = get(&format!("/api/control/{}", ids[0]));
+        assert_eq!(robot.status, 200);
+        let robot: crate::simulation::ControlStatus = serde_json::from_slice(&robot.body).unwrap();
+        assert_eq!(robot.chassis.unwrap().id, ids[0]);
+        assert_eq!(get("/api/control/999").status, 404);
+        assert_eq!(get("/api/control/invalid").status, 400);
+        handle.apply(&Command::Pause { paused: true }).unwrap();
+        handle.apply(&Command::Step { ticks: 3 }).unwrap();
+        let clock: crate::simulation::ControlStatus =
+            serde_json::from_slice(&get("/api/clock").body).unwrap();
+        assert!(clock.paused);
+        assert_eq!(clock.input_epoch, 1);
+        assert_eq!(clock.time_ns, 3 * rm_simulator_world::tick_ns());
     }
     #[test]
     fn requests_parse_and_route() {

@@ -1339,6 +1339,19 @@ pub struct ChassisSnapshot {
     pub defeated: bool,
 }
 
+/// Allocation-free state for a controller; excludes geometry, configuration and wheel arrays.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChassisControlState {
+    /// Current body pose in world FLU metres and unit wxyz quaternion.
+    pub pose: Pose,
+    /// Held high-level input, including aim, folding and balance channels.
+    pub command: ChassisCommand,
+    /// Placement/revival revision used to reject controls for an old life.
+    pub placement_revision: u64,
+    /// Whether native defeat has disabled actuation.
+    pub defeated: bool,
+}
+
 /// Body-frame wheel geometry in `ChassisConfig::wheel_hubs_m` order.
 fn wheel_geometry(config: &ChassisConfig) -> Vec<WheelGeometry> {
     wheel_geometry_at(config, 0.)
@@ -2412,6 +2425,21 @@ impl Chassis {
             } else {
                 self.aim_rad[axis] = self.aim_rad[axis].clamp(-1.4, 1.4);
             }
+        }
+    }
+    pub(crate) fn control_state(&self, world: &PhysicsWorld) -> ChassisControlState {
+        ChassisControlState {
+            pose: {
+                let body = &world.bodies[self.body];
+                let q = body.rotation();
+                Pose {
+                    translation_m: body.translation().to_array(),
+                    rotation_wxyz: [q.w, q.x, q.y, q.z],
+                }
+            },
+            command: self.command,
+            placement_revision: self.placement_revision,
+            defeated: self.defeated,
         }
     }
     /// Read the body, wheel and gimbal state into a serializable snapshot.

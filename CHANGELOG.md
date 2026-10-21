@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Fix external refreshes erasing scheduled manual takeover; retain pilot replay
+  evidence across control changes. Move ROS HTTP I/O to bounded independent
+  workers, add compact clock/control endpoints and avoid full snapshots in
+  per-input revision checks and per-tick chassis control.
+
 - Add transport-independent referee data models for all 35 serial IDs, nine
   interaction families and 36 custom-client topics from communication protocol
   V2.0.0. Include configurable mock templates, schema metadata, bounds checks
