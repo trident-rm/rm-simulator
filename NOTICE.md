@@ -25,6 +25,15 @@ provenance of copied code is recorded so that no notice is lost.
 
 ## Provenance of reused code
 
+The field names, IDs and layouts in `server::referee_protocol` are independently
+modeled in Rust from the user-supplied RoboMaster 2026 University Series
+Communication Protocol V2.0.0 (2026-06-30), published by the RoboMaster Organizing
+Committee, © 2026 DJI. The manual itself is not redistributed. Its specification
+and DJI's documentation retain their ownership; repository licensing covers the
+local implementation, not ownership of the official protocol. Source identity,
+section references and interpretation differences are recorded in
+[the referee data guide](docs/referee-link.md).
+
 The `CustomMsg.msg` and `CustomPoint.msg` definitions in
 `integrations/ros2/interfaces/livox_ros_driver2/msg/` come from
 [Livox-SDK/livox_ros_driver2](https://github.com/Livox-SDK/livox_ros_driver2/tree/21445540f0d100dc86a7e6df312dd70bbdb4afdf),

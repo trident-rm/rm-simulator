@@ -31,6 +31,7 @@ pub use rm_simulator_assets::math;
 pub mod navigation;
 pub mod net;
 pub mod protocol;
+pub mod referee_protocol;
 pub mod rmuc_2027;
 pub mod roster;
 pub mod simulation;

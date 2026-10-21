@@ -27,7 +27,7 @@ Git history.
 | Current runtime, 2026 archive and admission | [Runtime and archive](seasons.md) |
 | Command-line options, controls and interface | [App options](app-options.md) |
 | App automation, headless rendering and screenshots | [Console](console.md) |
-| Testing a custom client over the referee protocol | [Referee link](referee-link.md) |
+| Transport-independent referee DTOs/mocks and custom-client link | [Referee link](referee-link.md) |
 | Packet metadata and local channel diagnostics | [Network tracing](network-tracing.md) |
 | RMUC 2027 source partitions, runtime build and visual review | [2027 field](rmuc2027-field.md) |
 | Field package layout, discovery, composition, collision | [Field package](field-package.md) |

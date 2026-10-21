@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Add transport-independent referee data models for all 35 serial IDs, nine
+  interaction families and 36 custom-client topics from communication protocol
+  V2.0.0. Include configurable mock templates, schema metadata, bounds checks
+  and explicit native own-robot telemetry projection; document manual conflicts.
+
 - Add leased external robot control with body/world velocity and heading-vector
   modes, bounded heading feedback, stale-command braking and manual takeover.
   Preserve aim/folding state and reject stale pause/life/sequence inputs. Add an

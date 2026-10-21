@@ -30,6 +30,7 @@ source file.
 | In-process sessions, configurable timing and adapter boundaries | `docs/simulation-embedding.md` |
 | Nearest-hit queries and ideal LiDAR | `docs/navigation-sensors.md` |
 | Optional ROS 2 / Livox publishing and Pixi environment | `integrations/ros2/README.md` |
+| Referee serial/custom-client DTOs, mocks and compatibility link | `docs/referee-link.md` |
 | Licensing and third-party provenance | `NOTICE.md` |
 | Every guide, indexed | `docs/README.md` |
 
