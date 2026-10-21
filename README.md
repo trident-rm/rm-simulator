@@ -93,7 +93,7 @@ The essentials, for driving and for match control:
 | Q / E | Rotate the Drone's body left/right; the mouse aims its gimbal separately |
 | Left Ctrl | Fast: 5 m/s drive command, 8 m/s flight |
 | R | Toggle chassis spin (6 rad/s) while driving |
-| T | Toggle mechanism: the active robot’s supported fold, stair linkage or tunnel stow |
+| T | Toggle supported chassis fold, stair linkage or tunnel stow (500 ms clear stroke) |
 | J | Open Heavy assembly controls and unlocked Hero conversion (2027) |
 | V | Toggle first- and third-person view while driving |
 | C | Cycle physics colliders: Off / Overlay / Only |

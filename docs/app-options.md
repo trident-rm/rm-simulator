@@ -452,15 +452,40 @@ resting barrel, so EGA's X-wheel stance approaches the ramp correctly.
 Snapshots expose `tunnel_segments` aligned with `path_m` and the bake's
 low-edge and passage counts; world overlays highlight selected tunnel segments blue.
 
+Clear chassis mechanism strokes take 500 ms in either direction (64 physics
+ticks), including the folding Hero, stair linkage and source articulated stow.
+Source package checksums and geometry are unchanged; the app tunes the verified
+configuration before sending it to the host. Partial reversals cover only the
+remaining travel. Collision stops, defeat and offline controllers can delay a
+stroke. This is simulator tuning, not a claimed rulebook time limit. The separate
+PIE assembly arm retains its joint-speed limits during manipulation/posture moves;
+its Cartesian arm playback is not the chassis' primary stow actuator.
+
+To record real T-input folding and verify each intermediate joint sample:
+
+```sh
+../rm-map-tools/ocpenv/bin/python scripts/render-folding-video.py --profile sentry
+../rm-map-tools/ocpenv/bin/python scripts/render-folding-video.py --profile heavy
+../rm-map-tools/ocpenv/bin/python scripts/render-folding-video.py --profile stairs
+```
+
+These local-source recordings need Pillow, FFmpeg and the approved bound robot
+packages. `render-sentry-navigation-video.py --rules --speedup 3` records the
+continuous tunnel tour at 3x playback while physics remains at 128 Hz.
+
 At the safe approach the controller folds to its real actuator endpoint,
 levels the firing pitch and aligns the chassis to the longest segment in the
 contiguous stowed section. Bounded, collision-checked position corrections hold
 that staging point against drift while preparing; forward travel waits for the
 fold and alignment to finish. It holds that heading through short lateral exit
 connectors, using omni strafing instead of trying to turn inside the lane.
-It uses a nominal 0.30 m/s crossing speed with bounded lateral centering,
+It requests up to 0.85 m/s in flat tunnels and 0.6 m/s on sloped edges, with bounded lateral centering,
 checking clearance before movement and small yaw changes, and unfolds after
 its whole footprint clears the roof. Preparation has a ten-second timeout.
+The passage heading remains locked after the last marked tunnel waypoint until
+full-height clearance is available; a lateral exit connector uses strafing.
+Flat Highland staging candidates start 0.35 m beyond the surveyed portal seeds,
+with longer fallbacks when needed. The Road keeps its longer ramp run-up.
 Stop, defeat and replanning retain the current fold target; they cannot request
 an unsafe opening. Goals inside low-clearance interiors are currently rejected;
 choose a supported exit-side destination. Search is conservative and does not yet
@@ -468,7 +493,7 @@ carry orientation as an A* state, so some physically possible curved passages
 may be rejected or stop for recovery.
 
 Current geometry and other robot footprints are checked during search and ahead
-of motion. The follower requests at most 0.65 m/s through ordinary chassis
+of motion. The follower requests at most 1.0 m/s in open areas through ordinary chassis
 commands at 16 Hz, inside the explicit 128 Hz simulation loop. Defeat stops the
 controller. Obstruction or a three-second stall brakes the wheels and triggers a worker
 replan from the actual position, up to three recovery attempts per goal. A stall

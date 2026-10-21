@@ -52,9 +52,10 @@ python3 scripts/render-sentry-navigation-video.py --check-only --rules \
   --out local-assets/sentry-rfid-rules.mp4
 ```
 
-The current tour physically crosses all three types without repositioning and
-receives ThroughTunnel on both Highland lanes (including the Far return).
-Its uphill Road motion is deliberately cautious and exceeds three seconds
-between endpoint detections; the native engine correctly withholds that reward.
-The audit records contacts, sequence deadlines and benefit awards, so physical
-passage success is never confused with satisfying the traversal reward timing.
+The tour physically crosses all three types without repositioning and receives
+ThroughTunnel on both Highland lanes (including the Far return). With faster
+navigation, the Road crossing can also meet the three-second card window. The
+native engine awards it only when the observed sequence meets that deadline;
+physical passage success alone is insufficient. The audit records contacts,
+sequence deadlines and actual benefit awards; rewards always come from native
+per-tick contacts.

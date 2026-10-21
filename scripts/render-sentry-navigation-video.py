@@ -101,7 +101,7 @@ class Movie:
                   f'last goal-to-path: {plan_s*1000:.0f} ms')
         draw.text((20, h-47), detail, font=self.small, fill=(184, 210, 227))
         draw.text((20, h-24), f'Crossed: {", ".join(crossings.completed) or "none yet"}  '
-                  '| 128 Hz physics | 1x playback', font=self.small, fill=(117, 224, 166))
+                  f'| 128 Hz physics | {self.args.speedup:g}x playback', font=self.small, fill=(117, 224, 166))
         if self.encoder is None:
             self.encoder = subprocess.Popen([
                 'ffmpeg', '-y', '-v', 'error', '-f', 'rawvideo', '-pixel_format', 'rgb24',
@@ -110,7 +110,7 @@ class Movie:
                 '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(self.args.out),
             ], stdin=subprocess.PIPE)
         pixels = image.tobytes()
-        count = max(1, round(duration*self.args.fps))
+        count = max(1, round(duration*self.args.fps/self.args.speedup))
         for _ in range(count):
             self.encoder.stdin.write(pixels)
         self.frames += count
@@ -191,7 +191,7 @@ def run(client, args, temporary, audit):
         # Playback includes the observed query delay. No simulation time is
         # advanced while the host plans; capture/encoding overhead is excluded.
         if movie:
-            sample(label+' — path ready', max(1/args.fps, plan_s))
+            sample(label+' — path ready', max(args.speedup/args.fps, plan_s))
 
     try:
         sample('Start', .75)
@@ -207,7 +207,7 @@ def run(client, args, temporary, audit):
                 if state['tick']-started_tick > 180*128:
                     raise RuntimeError(f'{label}: 180 simulated second driving deadline exceeded')
                 # Exact rational frame pacing; 16 fps gives eight physics ticks.
-                ticks = (round((frame+1)*128/args.fps)-round(frame*128/args.fps)) if movie else 32
+                ticks = (round((frame+1)*128*args.speedup/args.fps)-round(frame*128*args.speedup/args.fps)) if movie else 32
                 stamp = time.monotonic()
                 state = client.call({'type': 'step', 'ticks': ticks})
                 if state['navigation'][0]['phase'] == 'Planning':
@@ -224,12 +224,12 @@ def run(client, args, temporary, audit):
             rewarded = {card['index'] for a in audit['terrain_awards']
                         if a['benefit'] == 'ThroughTunnel' for card in a['contacts']
                         if card['course'] == 'Tunnel'}
-            # The cautious uphill Road leg takes over three seconds between
-            # cards. It must not receive an invented reward; both flat lanes do.
-            assert rewarded == {1, 2}, rewarded
-            audit['road_reward_policy'] = 'No reward: physical uphill crossing exceeds the 3 s card window'
-        for frame in range(args.fps*2 if movie else 1):
-            ticks = round((frame+1)*128/args.fps)-round(frame*128/args.fps) if movie else 256
+            assert {1, 2} <= rewarded, rewarded
+            audit['rewarded_courses'] = sorted(rewarded)
+            audit['road_reward_policy'] = ('Awarded within the native 3 s card window' if 0 in rewarded
+                                          else 'No reward: physical crossing exceeds the 3 s card window')
+        for frame in range(round(args.fps*2/args.speedup) if movie else 1):
+            ticks = round((frame+1)*128*args.speedup/args.fps)-round(frame*128*args.speedup/args.fps) if movie else 256
             state = client.call({'type': 'step', 'ticks': ticks})
             sample('Complete — all three tunnel types crossed', ticks/128)
         body = next(b for b in state['chassis_all'] if b['id'] == owner)
@@ -253,6 +253,7 @@ def main():
     parser.add_argument('--check-only', action='store_true')
     parser.add_argument('--rules', action='store_true', help='start a native match and audit terrain rewards')
     parser.add_argument('--fps', type=int, choices=[8, 16, 32], default=16)
+    parser.add_argument('--speedup', type=float, choices=[1., 2., 3.], default=1., help='video playback speed; physics stays 128 Hz')
     parser.add_argument('--max-plan-s', type=float, default=5.)
     args = parser.parse_args()
     args.out = args.out.resolve()
@@ -260,7 +261,7 @@ def main():
     with socket.socket() as reserve:
         reserve.bind(('127.0.0.1', 0))
         port = reserve.getsockname()[1]
-    audit = {'completed': False, 'tick_hz': 128, 'fps': args.fps,
+    audit = {'completed': False, 'tick_hz': 128, 'fps': args.fps, 'speedup': args.speedup,
              'planning_measurement': 'console goal-to-path wall latency, including transport/polling',
              'plans': [], 'legs': [], 'samples': []}
     log = args.out.with_suffix('.app.log')

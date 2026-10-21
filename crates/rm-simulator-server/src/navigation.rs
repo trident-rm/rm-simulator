@@ -17,7 +17,8 @@ pub const CELL_M: f64 = 0.25;
 pub const RADIUS_M: f64 = 0.37;
 const TUNNEL_GRADE: f64 = 0.287; // tan(16 degrees), admits the UC §4.4 15-degree approach.
 const GRADE: f64 = 0.213; // tan(12 degrees), conservative omni terrain limit.
-const SPEED_M_S: f64 = 0.65;
+const SPEED_M_S: f64 = 1.0;
+const TUNNEL_SPEED_M_S: f64 = 0.85;
 const PLANNING_RADIUS_M: f64 = RADIUS_M + 0.12;
 pub(crate) fn brake(field: &mut Field, id: u32) -> Result<(), String> {
     let mut command = field.chassis_snapshot(id).ok_or("missing Sentry")?.command;
@@ -558,7 +559,14 @@ impl Map {
             }
             let d = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
             let mut accepted = None;
-            'candidate: for extension in [0.8, 1.05, 1.3] {
+            // The Road's sloped entry needs its full run-up for wheel alignment.
+            // Flat Highland lanes can use shorter collision-checked connectors.
+            let extensions: &[f64] = if d[1].abs() > 0.9 {
+                &[0.8, 1.05, 1.3]
+            } else {
+                &[0.35, 0.5, 0.65, 0.8, 1.05, 1.3]
+            };
+            'candidate: for &extension in extensions {
                 for offset in [
                     0., -0.05, 0.05, -0.1, 0.1, -0.15, 0.15, -0.2, 0.2, -0.25, 0.25,
                 ] {
@@ -874,6 +882,8 @@ struct Agent {
     stalled: u64,
     retries: u8,
     failed: Vec<Obstacle>,
+    // Retain the passage frame until a full-height rotation envelope is clear.
+    passage_yaw: Option<f64>,
 }
 impl Agent {
     fn replan(&mut self, from: [f64; 3], toward: [f64; 3], learn: bool) {
@@ -1000,6 +1010,7 @@ impl Service {
                 stalled: 0,
                 retries: 0,
                 failed: vec![],
+                passage_yaw: None,
             },
         );
     }
@@ -1190,10 +1201,19 @@ impl Service {
                     let yaw = rm_simulator_world::chassis::yaw_of(body.pose);
                     let entry = a.view.path_m[a.view.waypoint - 1];
                     let offset = tunnel_heading_offset(field.chassis_config(id).unwrap());
+                    if !body.command.folded && body.fold_angle_rad < 0.001 {
+                        a.passage_yaw = None;
+                    }
                     let heading = if tunnel {
-                        passage_heading(&a.view.path_m, &a.view.tunnel_segments, a.view.waypoint)
-                            + offset
+                        *a.passage_yaw.get_or_insert_with(|| {
+                            passage_heading(
+                                &a.view.path_m,
+                                &a.view.tunnel_segments,
+                                a.view.waypoint,
+                            ) + offset
+                        })
                     } else {
+                        a.passage_yaw = None;
                         (waypoint[1] - entry[1]).atan2(waypoint[0] - entry[0]) + offset
                     };
                     let error = (heading - yaw).sin().atan2((heading - yaw).cos());
@@ -1207,7 +1227,19 @@ impl Service {
                             crate::math::rotate(body.pose.rotation_wxyz, [1., 0., 0.])[2]
                                 .clamp(-1., 1.)
                                 .asin();
-                        command.yaw_rate_rad_s = (error * 4.).clamp(-0.5, 0.5);
+                        let yaw_speed = if clearance(
+                            &self.surface,
+                            &live,
+                            from,
+                            from,
+                            false,
+                            PLANNING_RADIUS_M,
+                        ) {
+                            1.5
+                        } else {
+                            0.5
+                        };
+                        command.yaw_rate_rad_s = (error * 4.).clamp(-yaw_speed, yaw_speed);
                         let target = yaw + (error * 0.25).clamp(-0.05, 0.05);
                         if (0..=4).any(|i| {
                             !stowed_clear(
@@ -1285,9 +1317,15 @@ impl Service {
                             a.replan(from, to, false);
                         }
                     } else {
-                        let speed = (if tunnel { 0.35_f64 } else { SPEED_M_S })
-                            .min(distance(p, last) * 1.6)
-                            .min(d * 2.0);
+                        let speed = (if tunnel && (waypoint[2] - entry[2]).abs() / length > 0.08 {
+                            0.6
+                        } else if tunnel {
+                            TUNNEL_SPEED_M_S
+                        } else {
+                            SPEED_M_S
+                        })
+                        .min(distance(p, last) * 1.6)
+                        .min(d * 2.0);
                         let mut vx = (waypoint[0] - p[0]) / d.max(0.001) * speed;
                         let mut vy = (waypoint[1] - p[1]) / d.max(0.001) * speed;
                         if tunnel {

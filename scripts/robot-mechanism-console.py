@@ -33,15 +33,15 @@ def run(client, directory):
         step(1)
         client.call({'type':'key','key':'t','pressed':False})
     step(128);shot('travel')
-    toggle();middle=step(64)
+    toggle();middle=step(31)
     angle=middle['chassis']['fold_angle_rad']
     assert 0.1<angle<limit, angle
     shot('mid-transform')
-    deployed=step(512)
+    deployed=step(32)
     assert abs(deployed['chassis']['fold_angle_rad']-limit)<1e-4, deployed['chassis']['fold_angle_rad']
     assert deployed['chassis']['command']['folded'] is True
     shot('deployed')
-    toggle();returned=step(512)
+    toggle();returned=step(63)
     assert abs(returned['chassis']['fold_angle_rad'])<1e-4
     shot('returned')
     result={'profile':serial['profile'] if serial else ('stairs' if stairs else 'hero'),'mid_angle_rad':angle,'endpoint_rad':limit,

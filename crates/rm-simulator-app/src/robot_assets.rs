@@ -135,7 +135,7 @@ pub fn source_chassis(root: &Path) -> std::io::Result<Option<rm_simulator_world:
     {
         return Err(std::io::Error::other("source chassis checksum mismatch"));
     }
-    let c: rm_simulator_world::ChassisConfig = serde_json::from_slice(&bytes)?;
+    let mut c: rm_simulator_world::ChassisConfig = serde_json::from_slice(&bytes)?;
     c.validate().map_err(std::io::Error::other)?;
     if c.articulation
         .as_ref()
@@ -145,6 +145,9 @@ pub fn source_chassis(root: &Path) -> std::io::Result<Option<rm_simulator_world:
             "source articulation profile mismatch",
         ));
     }
+    // Runtime actuator tuning, applied after verifying the unmodified source package.
+    c.set_transform_duration_s(0.5)
+        .map_err(std::io::Error::other)?;
     Ok(Some(c))
 }
 

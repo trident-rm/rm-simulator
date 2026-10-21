@@ -4,6 +4,14 @@
 
 ## Unreleased
 
+- Tune clear chassis folding/stair/retraction strokes to 500 ms in either
+  direction, preserving collision sweeps, reversal and outage/defeat stops.
+  Keep checked CAD packages unchanged and apply source actuator tuning at load.
+- Speed up Sentry navigation to 1 m/s in open areas, 0.85 m/s in flat tunnels
+  and 0.6 m/s on sloped tunnel edges. Shorten clear Highland approaches and
+  retain passage heading until a full-height turning envelope is clear.
+  Add reproducible live folding videos and accelerated tunnel-tour recording.
+
 - Implement Automatic/SemiAutomatic Sentry selection, all three ordinary and
   enhanced postures, cumulative weakening/budgets, normal-respawn confirmation
   and atomic commander intervention fees. Add owned Sentry controls and HUD

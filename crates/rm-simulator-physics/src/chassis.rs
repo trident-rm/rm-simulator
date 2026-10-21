@@ -405,7 +405,7 @@ impl ChassisConfig {
         }
     }
     /// Source-fitted Artisans Hero with mecanum wheels and a counter-rotating folding head.
-    /// Joint centres come from the 2026 source STEP; 127 degrees and 90 degrees/s
+    /// Joint centres come from the 2026 source STEP; 127 degrees and a 500 ms full stroke
     /// are simulator actuator assumptions. Legs retain effective ray suspension.
     pub fn folding_hero() -> Self {
         let reference_z = 0.0775;
@@ -419,7 +419,7 @@ impl ChassisConfig {
                 head_center_m: [0.0755, -0.019, 0.0275],
                 head_half_m: [0.1505, 0.095, 0.069],
                 folded_angle_rad: 127_f64.to_radians(),
-                speed_rad_s: std::f64::consts::FRAC_PI_2,
+                speed_rad_s: 127_f64.to_radians() / 0.5,
                 muzzle_offset_m: [0.23582, -0.00141, 0.],
                 camera_offset_m: [0.14243, -0.00676, 0.07753],
             }),
@@ -443,7 +443,7 @@ impl ChassisConfig {
 
     /// DreamChaser Engineer donor with its closed stair-climbing wheel linkage.
     /// Geometry follows the supplied 2026 STEP/report; 38 kg, spring/motor tuning
-    /// and the 40 degree/s actuator rate are simulator assumptions. This profile
+    /// and a 500 ms full actuator stroke are simulator assumptions. This profile
     /// does not admit the unavailable RM2027 Heavy gameplay role.
     pub fn stair_heavy() -> Self {
         let linkage = crate::mechanism::ClimbingConfig {
@@ -456,7 +456,7 @@ impl ChassisConfig {
             rear_wheel_length_m: 0.320,
             travel_angle_rad: 0.0926526307467,
             deployed_angle_rad: 1.3302776523948,
-            speed_rad_s: 40_f64.to_radians(),
+            speed_rad_s: (1.3302776523948 - 0.0926526307467) / 0.5,
             wheel_left_m: [0.2083, -0.2083],
             spring_anchor_offset_m: 0.03 - 38. * 9.81 / 40_000.,
         };
@@ -491,6 +491,42 @@ impl ChassisConfig {
             .or_else(|| self.folding.as_ref().map(|f| f.folded_angle_rad))
             .or_else(|| self.climbing.as_ref().map(|c| c.travel_rad()))
             .unwrap_or(0.)
+    }
+    /// Set a full mechanism stroke duration in seconds, retaining source geometry.
+    /// This simulator tuning applies to either direction; a reversal travels only
+    /// the remaining distance. Obstruction, defeat and module outages can delay it.
+    /// Fixed robots are unchanged. Rejects nonpositive/nonfinite durations or rates.
+    ///
+    /// ```
+    /// use rm_simulator_physics::chassis::ChassisConfig;
+    /// let mut robot = ChassisConfig::folding_hero();
+    /// robot.set_transform_duration_s(0.5).unwrap();
+    /// assert_eq!(robot.folding.as_ref().unwrap().speed_rad_s,
+    ///            robot.transform_limit_rad() / 0.5);
+    /// ```
+    pub fn set_transform_duration_s(&mut self, duration_s: f64) -> Result<(), &'static str> {
+        let limit = self.transform_limit_rad();
+        let speed = limit / duration_s;
+        if !duration_s.is_finite()
+            || duration_s <= 0.
+            || !speed.is_finite()
+            || (limit > 0. && speed <= 0.)
+        {
+            return Err("invalid transform duration");
+        }
+        if limit == 0. {
+            return Ok(());
+        }
+        if let Some(a) = &mut self.articulation {
+            a.speed_rad_s = speed;
+        }
+        if let Some(f) = &mut self.folding {
+            f.speed_rad_s = speed;
+        }
+        if let Some(c) = &mut self.climbing {
+            c.speed_rad_s = speed;
+        }
+        Ok(())
     }
     /// World collision poses for the primary transform at an explicit input angle.
     pub fn transform_collision_parts(
@@ -3465,6 +3501,60 @@ mod folding_tests {
             *tick += 1;
         }
     }
+    #[test]
+    fn half_second_strokes_reverse_and_resume_without_teleporting() {
+        for mut config in [ChassisConfig::folding_hero(), ChassisConfig::stair_heavy()] {
+            config.set_transform_duration_s(0.5).unwrap();
+            let limit = config.transform_limit_rad();
+            let mut world = WorldPhysics::new(&[], 0.);
+            let id = world
+                .add_chassis(Team::Red, config, Pose::at([0., 0., 20.]))
+                .unwrap();
+            let mut tick = 0;
+            world
+                .command_chassis(
+                    id,
+                    ChassisCommand {
+                        folded: true,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            advance(&mut world, &mut tick, 32);
+            assert!(
+                (world.chassis_snapshot(id).unwrap().fold_angle_rad - limit / 2.).abs() < 1e-12
+            );
+            world
+                .command_chassis(id, ChassisCommand::default())
+                .unwrap();
+            advance(&mut world, &mut tick, 32);
+            assert!(world.chassis_snapshot(id).unwrap().fold_angle_rad.abs() < 1e-12);
+            world
+                .command_chassis(
+                    id,
+                    ChassisCommand {
+                        folded: true,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            advance(&mut world, &mut tick, 63);
+            assert!(world.chassis_snapshot(id).unwrap().fold_angle_rad < limit - 0.001);
+            advance(&mut world, &mut tick, 1);
+            assert!((world.chassis_snapshot(id).unwrap().fold_angle_rad - limit).abs() < 1e-12);
+            world
+                .command_chassis(id, ChassisCommand::default())
+                .unwrap();
+            advance(&mut world, &mut tick, 64);
+            assert!(world.chassis_snapshot(id).unwrap().fold_angle_rad.abs() < 1e-12);
+        }
+        let mut config = ChassisConfig::folding_hero();
+        let before = config.clone();
+        for invalid in [0., -1., f64::NAN, f64::INFINITY, f64::MIN_POSITIVE / 16.] {
+            assert!(config.set_transform_duration_s(invalid).is_err());
+            assert_eq!(config, before);
+        }
+    }
     fn setup(height: f64) -> (WorldPhysics, u32) {
         let mut w = WorldPhysics::new(&[], 0.);
         let id = w
@@ -3549,7 +3639,10 @@ mod folding_tests {
         advance(&mut host, &mut tick, 40);
         let saved = host.chassis_snapshot(id).unwrap();
         assert!(
-            (saved.fold_angle_rad - std::f64::consts::FRAC_PI_2 * 40. / 128.).abs() < 1e-12,
+            (saved.fold_angle_rad
+                - saved.config.folding.as_ref().unwrap().speed_rad_s * 40. / 128.)
+                .abs()
+                < 1e-12,
             "angle={} command={:?}",
             saved.fold_angle_rad,
             saved.command
