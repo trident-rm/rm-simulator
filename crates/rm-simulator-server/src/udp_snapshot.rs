@@ -10,7 +10,7 @@ use crate::binary_snapshot::bitpack::{self, Node};
 use crate::protocol::ServerMessage;
 use crate::simulation::SimulationState;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, io};
+use std::{borrow::Cow, collections::BTreeMap, io, sync::OnceLock};
 /// First four bytes of every baseline or owner-configuration feedback payload,
 /// so a sender can tell feedback from snapshot traffic on the same lane.
 pub const ACK_MAGIC: &[u8; 4] = b"RMA2";
@@ -164,6 +164,65 @@ pub fn parse(bytes: &[u8]) -> io::Result<Option<Wire>> {
     }
     Ok(None)
 }
+/// Immutable preparation shared by peers receiving the same world publication.
+/// Builds the quantized tree and independent packed frame once; dictionary
+/// compression is lazy and uses the first encoder's reusable context. Each
+/// encoder retains its own acknowledged baselines, prediction and counters.
+///
+/// ```
+/// use rm_simulator_server::{udp_snapshot::{Encoder, PreparedSnapshot}, workload};
+/// let (simulation, _) = workload::simulation(2);
+/// let state = simulation.state();
+/// let prepared = PreparedSnapshot::new(state.input_epoch, &state)?;
+/// let mut first = Encoder::default();
+/// let mut second = Encoder::default();
+/// assert_eq!(first.snapshot_prepared(&prepared)?, second.snapshot_prepared(&prepared)?);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub struct PreparedSnapshot {
+    epoch: u64,
+    tick: u64,
+    node: Node,
+    packed: Vec<u8>,
+    compressed: OnceLock<Vec<u8>>,
+}
+impl PreparedSnapshot {
+    /// Prepare one complete restorable state for wire generation `epoch`, which
+    /// callers normally take from `state.input_epoch`. Rejects invalid checkpoint
+    /// trees before exposing a preparation; no compression or peer state is needed.
+    pub fn new(epoch: u64, state: &SimulationState) -> io::Result<Self> {
+        let node = crate::snapshot_codec::checkpoint_node(state)?;
+        let packed = bitpack::encode(&node, None, epoch, 0)?;
+        Ok(Self {
+            epoch,
+            tick: state.field.tick,
+            node,
+            packed,
+            compressed: OnceLock::new(),
+        })
+    }
+    fn independent<'a>(
+        &'a self,
+        raw: bool,
+        compressor: &mut crate::binary_snapshot::Compressor,
+    ) -> &'a [u8] {
+        if raw {
+            return &self.packed;
+        }
+        let mut reused = true;
+        let bytes = self.compressed.get_or_init(|| {
+            reused = false;
+            compressor.compress(&self.packed)
+        });
+        // Encoding counters describe each peer's alternatives, even when the
+        // compression work was performed by another peer of this publication.
+        if reused && bytes.starts_with(bitpack::MAGIC) {
+            compressor.record_raw_fallback();
+        }
+        bytes
+    }
+}
+
 /// Server-side delta encoder for one peer.
 ///
 /// A new baseline is proposed only while no proposal and no retirement are
@@ -300,8 +359,36 @@ impl Encoder {
     /// assert!(encoder.deltas > 0);
     /// ```
     pub fn snapshot(&mut self, epoch: u64, state: &SimulationState) -> io::Result<Vec<u8>> {
+        // Preserve the cheap direct path for callers encoding one peer only.
         let tick = state.field.tick;
-        let state = crate::snapshot_codec::checkpoint_node(state)?;
+        let node = crate::snapshot_codec::checkpoint_node(state)?;
+        let packed = bitpack::encode(&node, None, epoch, 0)?;
+        let packed_len = packed.len();
+        let independent = self.frame(packed);
+        self.snapshot_node(epoch, tick, &node, packed_len, Cow::Owned(independent))
+    }
+    /// Encode a shared preparation with this peer's own baseline state. Produces
+    /// the same bytes and accounting as [`Self::snapshot`] for the same inputs
+    /// and feedback, while sharing tree construction, independent packing and
+    /// dictionary compression across a broadcast's recipients.
+    pub fn snapshot_prepared(&mut self, prepared: &PreparedSnapshot) -> io::Result<Vec<u8>> {
+        let independent = prepared.independent(self.raw, &mut self.compressor);
+        self.snapshot_node(
+            prepared.epoch,
+            prepared.tick,
+            &prepared.node,
+            prepared.packed.len(),
+            Cow::Borrowed(independent),
+        )
+    }
+    fn snapshot_node(
+        &mut self,
+        epoch: u64,
+        tick: u64,
+        state: &Node,
+        packed_len: usize,
+        independent: Cow<'_, [u8]>,
+    ) -> io::Result<Vec<u8>> {
         if self.epoch != Some(epoch) {
             self.epoch = Some(epoch);
             self.active = None;
@@ -315,14 +402,12 @@ impl Encoder {
         if self.retiring.is_some() {
             self.retire_age += 1;
         }
-        let packed = bitpack::encode(&state, None, epoch, 0)?;
-        self.last_packed_bytes = packed.len();
-        let oversize = packed.len() > BASE_LIMIT;
-        let independent = self.frame(packed);
+        self.last_packed_bytes = packed_len;
+        let oversize = packed_len > BASE_LIMIT;
         self.full_bytes += independent.len() as u64;
         if oversize {
             self.sent_bytes += independent.len() as u64;
-            return Ok(independent);
+            return Ok(independent.into_owned());
         }
         if self.pending.is_none()
             && self.retiring.is_none()
@@ -348,7 +433,7 @@ impl Encoder {
             self.frame(packed)
         } else if let Some((id, baseline)) = &self.active {
             let packed = crate::snapshot_codec::encode_checkpoint(
-                &state,
+                state,
                 tick,
                 Some((baseline, *id)),
                 epoch,
@@ -363,10 +448,10 @@ impl Encoder {
                 self.deltas += 1;
                 delta
             } else {
-                independent
+                independent.into_owned()
             }
         } else {
-            independent
+            independent.into_owned()
         };
         self.sent_bytes += encoded.len() as u64;
         Ok(encoded)
@@ -522,6 +607,134 @@ mod tests {
     use super::*;
     use crate::simulation::Simulation;
     use rm_simulator_world::{Field, FieldConfig};
+
+    #[test]
+    fn shared_preparation_matches_independent_peers_across_feedback_and_epochs() {
+        for raw in [false, true] {
+            let (mut simulation, ids) = crate::workload::simulation(6);
+            for id in ids {
+                simulation
+                    .apply(&crate::protocol::Command::Chassis {
+                        chassis: id,
+                        command: crate::workload::constant_drive(),
+                    })
+                    .unwrap();
+            }
+            let encoder = || {
+                if raw {
+                    Encoder::new_raw()
+                } else {
+                    Encoder::default()
+                }
+            };
+            let mut direct: Vec<_> = (0..3).map(|_| encoder()).collect();
+            let mut shared: Vec<_> = (0..3).map(|_| encoder()).collect();
+            let mut decoders: Vec<_> = (0..3).map(|_| Decoder::default()).collect();
+            let mut last_ack = [None; 3];
+            for frame in 0..96 {
+                simulation.step(4).unwrap();
+                if frame % 8 == 0 {
+                    let _ = simulation.apply(&crate::protocol::Command::Fire { shooter: 0 });
+                }
+                let mut state = simulation.state();
+                state.snapshot_id = frame + 1;
+                state.input_epoch = u64::from(frame >= 48);
+                let prepared = PreparedSnapshot::new(state.input_epoch, &state).unwrap();
+                for peer in 0..3 {
+                    // Delayed duplicate feedback must not affect another peer
+                    // or repopulate a previous generation's baseline state.
+                    if frame % 7 == 0
+                        && let Some(ack) = last_ack[peer]
+                    {
+                        let a = direct[peer].feedback(ack);
+                        let b = shared[peer].feedback(ack);
+                        assert_eq!(
+                            a.as_ref().map(envelope_bytes),
+                            b.as_ref().map(envelope_bytes)
+                        );
+                        if let Some(retire) = a {
+                            let (_, ack) = decoders[peer].receive(retire).unwrap();
+                            if let Some(ack) = ack {
+                                direct[peer].feedback(ack);
+                                shared[peer].feedback(ack);
+                            }
+                        }
+                    }
+                    let a = direct[peer].snapshot(state.input_epoch, &state).unwrap();
+                    let b = shared[peer].snapshot_prepared(&prepared).unwrap();
+                    assert_eq!(a, b, "raw={raw} peer={peer} frame={frame}");
+                    let wire = parse(&crate::compression::decompress(&b, 4 << 20).unwrap())
+                        .unwrap()
+                        .unwrap();
+                    let (_, ack) = decoders[peer].receive(wire).unwrap();
+                    if let Some(ack) = ack {
+                        last_ack[peer] = Some(ack);
+                        // Different lost acknowledgements produce distinct
+                        // peer baselines while preparation remains shared.
+                        if !(frame as usize + peer).is_multiple_of(5) {
+                            let a = direct[peer].feedback(ack);
+                            let b = shared[peer].feedback(ack);
+                            assert_eq!(
+                                a.as_ref().map(envelope_bytes),
+                                b.as_ref().map(envelope_bytes)
+                            );
+                            if let Some(retire) = a {
+                                let (_, ack) = decoders[peer].receive(retire).unwrap();
+                                if let Some(ack) = ack {
+                                    direct[peer].feedback(ack);
+                                    shared[peer].feedback(ack);
+                                }
+                            }
+                            if frame == 0
+                                && let Feedback::Stored { epoch, id } = ack
+                            {
+                                let missing = Feedback::Missing { epoch, id };
+                                direct[peer].feedback(missing);
+                                shared[peer].feedback(missing);
+                            }
+                        }
+                    }
+                    let counters = |e: &Encoder| {
+                        (
+                            e.full_bytes,
+                            e.sent_bytes,
+                            e.deltas,
+                            e.last_packed_bytes,
+                            e.raw_fallbacks(),
+                            e.skipped_deltas(),
+                        )
+                    };
+                    assert_eq!(counters(&direct[peer]), counters(&shared[peer]));
+                    assert!(decoders[peer].pinned() <= 2);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cached_independent_fallback_is_accounted_for_each_peer() {
+        let simulation = Simulation::new(Field::new(&FieldConfig::default()).unwrap(), false);
+        let state = simulation.state();
+        let prepared = PreparedSnapshot::new(state.input_epoch, &state).unwrap();
+        let mut first = crate::binary_snapshot::Compressor::new();
+        let mut second = crate::binary_snapshot::Compressor::new();
+        let a = prepared.independent(false, &mut first);
+        assert!(
+            a.starts_with(bitpack::MAGIC),
+            "small bare checkpoint should use raw fallback"
+        );
+        let b = prepared.independent(false, &mut second);
+        assert_eq!(a, b);
+        assert!(std::ptr::eq(a, b));
+        assert_eq!(first.raw_fallbacks(), 1);
+        assert_eq!(second.raw_fallbacks(), 1);
+        assert!(
+            prepared
+                .independent(true, &mut second)
+                .starts_with(bitpack::MAGIC)
+        );
+        assert_eq!(second.raw_fallbacks(), 1);
+    }
 
     #[test]
     fn binary_chassis_and_projectiles_round_trip_across_baselines_and_epochs() {

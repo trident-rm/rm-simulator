@@ -185,7 +185,10 @@ not a refactor.
   encode broadcasts on socket writers. Replace only unsent periodic snapshots
   in the bounded peer outbox, never confirmation snapshots or reliable messages.
   Encode snapshots only after dequeuing the selected frame; decode before client
-  inbox coalescing. Confirmation snapshots stay full and precede Pong. Only the
+  inbox coalescing. Addressed local pilots use 4 ms owner-only anchors and 32 ms
+  world publications; owner-only tails never replace a waiting world checkpoint.
+  World frames lazily share quantization, independent packing and compression on
+  delivery workers, retaining per-peer baseline state and logical counters. Confirmation snapshots stay full and precede Pong. Only the
   acknowledged UDP baselines carry deltas, and their retained-baseline scheme is
   not a revision chain.
   `Server::bind` consumes the simulation.

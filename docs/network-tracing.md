@@ -79,7 +79,8 @@ counts and publication work are the useful measurements.
 Host delivery reports expose `encoding` counters once per second:
 
 - `raw_world_bytes` is the packed checkpoint size before delta encoding and
-  compression, measured on every periodic frame.
+  compression, measured on every world publication. Owner-only updates do not
+  prepare or encode a world checkpoint.
 - `framed_world_bytes` and `owner_bytes` count produced application bytes before
   pacing replaces or expires them.
 - `independent_bytes` and `selected_bytes` compare the baseline codec's compressed
@@ -131,10 +132,22 @@ two in-process datagram channels, with compression skipped (`RMRW` frames). It
 retains the same `Client` API, host authorization and confirmation snapshot/Pong
 order as network play. Only unsent periodic snapshots may be replaced. Reliable
 outbox overflow closes the peer explicitly. Dropping the client removes its seat;
-server teardown joins its delivery workers. Standalone sessions create no gameplay
-listener, while listen hosts give their local player the same loopback codec and
-serve remote players over GNS UDP. Snapshot cloning and physics replay still cost
-time.
+server teardown joins its delivery workers. Addressed local pilots receive owner
+anchors every 4 ms and world checkpoints every 32 ms. Owner-only publications
+still perform the configuration handshake, but never prepare a world checkpoint
+or rotate its baselines. Unaddressed staging, spectator and referee seats retain
+a full-state fallback. The outbox keeps at most one world and one owner-only
+publication after each reliable barrier; an owner update cannot erase a waiting
+world checkpoint. At capacity, optional owner-only updates may be dropped.
+
+Standalone sessions create no gameplay listener, while listen hosts give their
+local player the same loopback codec and serve remote players over GNS UDP.
+World publications lazily share their quantized tree, independent packed bytes
+and dictionary compression across recipients. Preparation happens after dequeue
+on delivery workers. Each peer owns its baseline/retirement history, prediction,
+delta selection and accounting; a mixed raw/compressed broadcast shares the tree
+and uses the appropriate independent framing. The direct single-peer encoder
+remains available. Snapshot capture/cloning and physics replay still cost time.
 
 ## Packet classification
 
@@ -155,3 +168,19 @@ These application-byte measurements exclude GNS and network overhead. The probe
 is not a real-UDP acceptance trial, and its canonical firing scenarios do not
 populate shot-result or hit histories. Add those workloads before using the
 probe to evaluate outcome-recovery traffic.
+
+Run the release fanout probe with:
+
+```sh
+cargo run -p rm-simulator-server --example network_fanout --release --locked
+```
+
+It compares direct and shared preparation for one, two and twelve recipients of
+moving/firing twelve-robot states. Reported encoding time includes preparation
+once per broadcast and excludes stepping, decoding and feedback. It checks exact
+wire bytes and per-peer counters under staggered acknowledgements and an epoch
+change, in both compressed and raw framing. These synthetic no-CAD measurements
+exclude transport overhead and do not measure socket RTT or application FPS.
+The owner cadence in the attribution probe now uses the production owner-only
+flag and raw loopback framing; `every-publication` retains the old raw 4 ms world
+stream as a comparison. Remote cadence remains compressed at 32 ms.

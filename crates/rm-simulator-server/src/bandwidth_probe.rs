@@ -29,7 +29,7 @@ use crate::host::Outbound;
 use crate::net::QueuedCommand;
 use crate::protocol::{Command, ServerMessage};
 use crate::simulation::{SimulationState, TickSchedule};
-use crate::udp_codec::{CONGESTED_PENDING_BYTES, ClientCodec, PeerCodec};
+use crate::udp_codec::{ClientCodec, PeerCodec};
 use rm_simulator_world::{ChassisCommand, tick_ns};
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -40,11 +40,8 @@ const STEP_MS: u64 = 2;
 /// Owner-only host publication period: `host.rs` `OWNER_BROADCAST_PERIOD` fires
 /// every 4 ms, and `publish_snapshot(true)` pushes those frames only to the
 /// in-process owner peer.
-///
-/// `PeerCodec` cannot tell an owner-only periodic frame from a full world one:
-/// both arrive as `Outbound { periodic: true, .. }`. The probe therefore
-/// reproduces the intended cadence itself instead of asking one `send` call to
-/// distinguish the two kinds.
+/// Owner-only frames use the same explicit publication flag as the host and
+/// skip world encoding without pretending that the carrier is congested.
 const OWNER_BROADCAST_MS: u64 = 4;
 /// Full world publication period. `host.rs` `BROADCAST_PERIOD` publishes every
 /// 32 ms, and `publish_snapshot(false)` pushes those frames to every peer.
@@ -108,19 +105,16 @@ impl Workload {
 pub(crate) enum Cadence {
     /// A remote pilot peer: only the 32 ms full publication reaches it. Each
     /// such frame still carries the owner anchor for that pilot's own chassis,
-    /// because `PeerCodec` emits an anchor for every periodic frame. This is
-    /// the configuration the reported 855 kbps remote baseline measures.
+    /// because `PeerCodec` emits an anchor for every periodic frame. Uses the
+    /// compressed framing that remote transports use.
     Remote,
     /// The in-process owner peer: 4 ms owner-only frames plus the 32 ms world
-    /// frame. `PeerCodec::send` cannot separate the two, so the probe forces the
-    /// separation through the codec's own congested-carrier path, which keeps the
-    /// anchor and skips the world checkpoint.
+    /// frame, using the production owner-only flag and raw loopback framing.
     Owner,
     /// Counterfactual, never the remote path: every 4 ms publication is fed
     /// ungated, so each one produces a world checkpoint as well as an anchor.
-    /// That is what today's `PeerCodec::send` does when handed either periodic
-    /// kind, and it sizes the code-path inefficiency the cadence experiment must
-    /// fix.
+    /// Reproduces the former owner path with raw loopback framing, for measuring
+    /// the cost of world encodes that the owner-only flag now avoids.
     EveryPublication,
 }
 
@@ -157,8 +151,6 @@ pub(crate) struct Totals {
     /// World updates produced, from the host encoder counters.
     pub(crate) produced_world_updates: u64,
     /// World updates skipped for a congested carrier, from the host counters.
-    /// The [`Cadence::Owner`] run uses this path deliberately to keep only the
-    /// anchor on an owner-only publication.
     pub(crate) skipped_world_updates: u64,
     /// Complete player checkpoints the client reassembled.
     pub(crate) down_complete_snapshots: u64,
@@ -334,13 +326,13 @@ pub(crate) fn run_observed(
     let (mut simulation, chassis) = crate::workload::simulation(workload.players() as usize);
     let driver = chassis[0];
     let mut totals = Totals::default();
-    let mut peer = PeerCodec::new(now, budget_bytes_s, false);
+    let mut peer = PeerCodec::new(now, budget_bytes_s, cadence != Cadence::Remote);
     peer.joined(chassis.first().copied());
     let mut client = ClientCodec::new(
         now,
         upstream_bytes_s,
         crate::udp_codec::MAX_INPUT_FRAMES,
-        false,
+        cadence != Cadence::Remote,
     );
     let mut sequence = 0_u64;
     let mut snapshot_id = 0_u64;
@@ -397,16 +389,14 @@ pub(crate) fn run_observed(
         if advance > 0 {
             simulation.step(advance).unwrap();
         }
-        // Reproduce the host's two publication kinds explicitly. `PeerCodec` has
-        // no flag that separates them, so this probe decides when a world
-        // checkpoint may be offered and, for the owner cadence, uses the codec's
-        // congested-carrier path to keep the anchor while skipping the world.
+        // Reproduce the host's two publication kinds through the production
+        // owner-only flag; both use an uncongested carrier.
         let owner_due = tick.is_multiple_of(OWNER_BROADCAST_MS / STEP_MS);
         let world_due = tick.is_multiple_of(WORLD_BROADCAST_MS / STEP_MS);
         let pending = match cadence {
             Cadence::Remote => world_due.then_some(0),
             Cadence::Owner if world_due => Some(0),
-            Cadence::Owner if owner_due => Some(CONGESTED_PENDING_BYTES + 1),
+            Cadence::Owner if owner_due => Some(0),
             Cadence::Owner => None,
             Cadence::EveryPublication => owner_due.then_some(0),
         };
@@ -419,6 +409,7 @@ pub(crate) fn run_observed(
             // control path. A host publication is a periodic snapshot.
             let mut frame = Outbound::new(ServerMessage::Snapshot(Box::new(state)));
             frame.periodic = true;
+            frame.owner_only = cadence == Cadence::Owner && !world_due;
             let encode_started = Instant::now();
             peer.send(&frame, now, pending).unwrap();
             totals.down_encode_us += encode_started.elapsed().as_micros();
@@ -699,17 +690,32 @@ mod tests {
     /// Attribution only: this prints the baseline record set. `--nocapture` is
     /// what makes the numbers visible; it asserts nothing about them.
     ///
-    /// The remote cadence is the headline: a remote pilot peer receives only the
-    /// 32 ms full publications, which is what the reported 855 kbps measures.
-    /// The owner and every-publication runs come after it so the reader can see
-    /// how much the owner-only frames would cost if they reached a peer, and how
-    /// much of that is the codec's inability to tell the two periodic kinds
-    /// apart.
+    /// The remote cadence receives 32 ms compressed publications. The raw owner
+    /// cadence keeps 4 ms anchors and 32 ms world checkpoints; every-publication
+    /// is the old raw path, offering a complete world every 4 ms.
     #[test]
     fn bandwidth_attribution_baseline() {
         baseline_report(10, Cadence::Remote);
         baseline_report(5, Cadence::Owner);
         baseline_report(5, Cadence::EveryPublication);
+    }
+
+    #[test]
+    fn owner_cadence_preserves_anchors_without_offering_high_rate_worlds() {
+        let owner = run(Workload::Drive, 1, Cadence::Owner, UNLIMITED, UNLIMITED);
+        let old = run(
+            Workload::Drive,
+            1,
+            Cadence::EveryPublication,
+            UNLIMITED,
+            UNLIMITED,
+        );
+        assert_eq!(owner.produced_owner_updates, old.produced_owner_updates);
+        assert_eq!(owner.down_anchors, old.down_anchors);
+        assert_eq!(owner.produced_world_updates, 32);
+        assert_eq!(old.produced_world_updates, 250);
+        assert_eq!(owner.skipped_world_updates, 0);
+        assert_eq!(owner.down_complete_snapshots, owner.produced_world_updates);
     }
 
     /// Run the ablated workloads and sum each section's packed and compressed

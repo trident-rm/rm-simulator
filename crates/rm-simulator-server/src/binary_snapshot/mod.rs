@@ -96,6 +96,11 @@ impl Compressor {
         self.raw_fallbacks
     }
 
+    /// Account for another peer selecting a cached independent raw fallback.
+    pub(crate) fn record_raw_fallback(&mut self) {
+        self.raw_fallbacks += 1;
+    }
+
     /// Small deltas [`Compressor::compress_delta`] sent without an attempt.
     pub(crate) fn skipped_deltas(&self) -> u64 {
         self.skipped_deltas

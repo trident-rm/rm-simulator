@@ -1552,6 +1552,14 @@ mod tests {
         let chassis = state.field.chassis.iter().find(|c| c.id == id).unwrap();
         assert!((chassis.pose.translation_m[0] - spawn[0]).abs() < 1e-6);
         assert!((chassis.pose.translation_m[1] - spawn[1]).abs() < 1e-6);
+        // World publications have their own 32 ms cadence. A confirmation
+        // and its owner anchor may arrive before the first periodic checkpoint.
+        wait_until("first raw world publication", || {
+            client.poll();
+            client
+                .trace_report()
+                .is_some_and(|r| r.stages["loopback_wire"].contains_key("RMB1"))
+        });
         // The frames the embedded client received were raw: packed `RMB1`
         // snapshots and `RMRW` control frames, never the ZSTD framings.
         let report = client.trace_report().unwrap();

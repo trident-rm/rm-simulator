@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Keep local pilot owner anchors at 4 ms while encoding world checkpoints at
+  32 ms, preserving pending world updates and reliable queue barriers. Share
+  checkpoint preparation across peers while retaining independent baselines,
+  exact wire bytes and per-peer counters; add a release fanout benchmark.
+
 - Bound player display names and concurrent HTTP handlers, with shared request
   deadlines covering socket reads, host queues and response writes.
 - Enforce the 32-Unit admission/checkpoint limit without partial mutation;

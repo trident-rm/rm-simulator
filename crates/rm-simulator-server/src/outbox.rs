@@ -42,12 +42,11 @@ pub(crate) struct Receiver {
 /// Create a bounded outbox holding at most `capacity` frames, and panic unless
 /// `capacity` is positive.
 ///
-/// A push drops the replaceable tail first when the new frame is itself
-/// replaceable or when the queue is full. Therefore periodic state can never
-/// queue behind another periodic frame, a reliable frame can always evict an
-/// unsent periodic one, and a confirmation or reliable frame is never replaced.
-/// A push that cannot make room fails, so a slow consumer cannot grow the
-/// queue; the peer path treats that failure as a disconnect.
+/// A world publication replaces the periodic tail; an owner-only publication
+/// replaces only another owner-only tail. Up to one of each may wait after a
+/// reliable barrier. Reliable messages may evict the tail at capacity and are
+/// never replaced. An owner-only update with no room is dropped; other overflow
+/// fails, so a slow peer cannot grow the queue.
 pub(crate) fn channel(capacity: usize) -> (Sender, Receiver) {
     assert!(capacity > 0, "outbox capacity must be positive");
     let shared = Arc::new(Shared {
@@ -89,13 +88,22 @@ impl Sender {
         if !state.receiver {
             return Err(());
         }
-        if state.queue.back().is_some_and(|frame| frame.replaceable)
-            && (replaceable || state.queue.len() == state.capacity)
-        {
-            // Replace periodic state, or make room for a reliable message.
+        // A world publication supersedes both periodic kinds. Owner-only
+        // updates replace only an owner tail, preserving the pending world.
+        // Neither crosses the last reliable confirmation/Pong barrier.
+        while state.queue.back().is_some_and(|frame| {
+            frame.replaceable
+                && ((replaceable && (!message.owner_only || frame.message.owner_only))
+                    || (!replaceable && state.queue.len() == state.capacity))
+        }) {
             state.queue.pop_back();
         }
         if state.queue.len() == state.capacity {
+            // A fresh anchor can wait for its next publication; never evict a
+            // world checkpoint or disconnect solely for this optional update.
+            if replaceable && message.owner_only {
+                return Ok(());
+            }
             return Err(());
         }
         state.queue.push_back(Frame {
@@ -184,6 +192,31 @@ mod tests {
         Arc::new(Outbound::new(ServerMessage::Notice(text.into())))
     }
 
+    #[test]
+    fn owner_only_preserves_world_and_reliable_barriers() {
+        let frame = |name: &str, owner_only| {
+            let mut f = Outbound::new(ServerMessage::Notice(name.into()));
+            f.periodic = true;
+            f.owner_only = owner_only;
+            Arc::new(f)
+        };
+        let (tx, rx) = channel(8);
+        tx.push(frame("world 0", false), true).unwrap();
+        tx.push(frame("owner 1", true), true).unwrap();
+        tx.push(frame("owner 2", true), true).unwrap();
+        assert_eq!(rx.queued(), 2);
+        tx.push(notice("confirmation"), false).unwrap();
+        tx.push(frame("world 1", false), true).unwrap();
+        tx.push(frame("owner 3", true), true).unwrap();
+        tx.push(frame("world 2", false), true).unwrap();
+        for name in ["world 0", "owner 2", "confirmation", "world 2"] {
+            assert!(matches!(rx.try_recv().unwrap().message(),ServerMessage::Notice(s) if s==name));
+        }
+        let (tx, rx) = channel(1);
+        tx.push(frame("world", false), true).unwrap();
+        tx.push(frame("owner", true), true).unwrap();
+        assert!(matches!(rx.try_recv().unwrap().message(),ServerMessage::Notice(s) if s=="world"));
+    }
     #[test]
     fn periodic_tail_is_replaced_before_capacity() {
         let (sender, receiver) = channel(2);

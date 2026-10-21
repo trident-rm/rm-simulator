@@ -30,7 +30,7 @@ const CLOCK_PERIOD: Duration = Duration::from_millis(2);
 // Full independent UDP checkpoints are larger than deltas. 31 Hz keeps
 // ordinary one-player frames below the transport's initial bandwidth budget.
 pub const BROADCAST_PERIOD: Duration = Duration::from_millis(32);
-/// Embedded-client latency setting, independent of the 1 ms rule tick.
+/// Embedded owner-anchor latency setting, independent of the 128 Hz rule clock.
 const OWNER_BROADCAST_PERIOD: Duration = Duration::from_millis(4);
 
 /// A map marker the host accepted from a team member, with who sent it and
@@ -55,9 +55,14 @@ pub(crate) struct Outbound {
     message: ServerMessage,
     compressed: OnceLock<Vec<u8>>,
     uncompressed: OnceLock<Vec<u8>>,
+    /// Quantization/packing is lazy on delivery workers, never the host worker.
+    checkpoint: OnceLock<io::Result<crate::udp_snapshot::PreparedSnapshot>>,
     /// True on a periodic snapshot, whose unsent tail the peer outbox may
     /// replace. Reliable messages leave it false and are never replaced.
     pub(crate) periodic: bool,
+    /// A high-rate local publication: emit the owner anchor without a world frame.
+    /// Spectators without an addressed chassis retain the full snapshot fallback.
+    pub(crate) owner_only: bool,
 }
 impl Outbound {
     pub(crate) fn new(message: ServerMessage) -> Self {
@@ -65,11 +70,27 @@ impl Outbound {
             message,
             compressed: OnceLock::new(),
             uncompressed: OnceLock::new(),
+            checkpoint: OnceLock::new(),
             periodic: false,
+            owner_only: false,
         }
     }
     pub(crate) fn message(&self) -> &ServerMessage {
         &self.message
+    }
+    pub(crate) fn prepared_snapshot(&self) -> io::Result<&crate::udp_snapshot::PreparedSnapshot> {
+        self.checkpoint
+            .get_or_init(|| {
+                let ServerMessage::Snapshot(state) = &self.message else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "not a checkpoint",
+                    ));
+                };
+                crate::udp_snapshot::PreparedSnapshot::new(state.input_epoch, state)
+            })
+            .as_ref()
+            .map_err(|error| io::Error::new(error.kind(), error.to_string()))
     }
     /// The framed wire bytes for this message, cached separately per framing.
     /// `raw` selects the loopback transport's uncompressed frame; the network
@@ -948,6 +969,7 @@ impl Owner {
         let mut outbound = Outbound::new(ServerMessage::Snapshot(Box::new(state)));
         self.observer.server("host_publish", outbound.message());
         outbound.periodic = true;
+        outbound.owner_only = owner_only;
         let frame = Arc::new(outbound);
         for peer in &self.peers {
             if !owner_only || peer.owner {
@@ -1421,6 +1443,26 @@ mod tests {
     }
     fn next(messages: &crate::net::outbox::Receiver) -> Arc<Outbound> {
         messages.recv().unwrap()
+    }
+
+    #[test]
+    fn owner_only_delivery_never_prepares_world_and_world_preparation_is_shared() {
+        let (simulation, ids) = crate::workload::simulation(2);
+        let mut frame = Outbound::new(ServerMessage::Snapshot(Box::new(simulation.state())));
+        frame.periodic = true;
+        frame.owner_only = true;
+        let now = Instant::now();
+        let mut first = crate::udp_codec::PeerCodec::new(now, 64 << 20, true);
+        first.joined(Some(ids[0]));
+        first.send(&frame, now, 0).unwrap();
+        assert!(frame.checkpoint.get().is_none());
+        frame.owner_only = false;
+        first.send(&frame, now, 0).unwrap();
+        let prepared = frame.prepared_snapshot().unwrap() as *const _;
+        let mut second = crate::udp_codec::PeerCodec::new(now, 64 << 20, false);
+        second.joined(Some(ids[1]));
+        second.send(&frame, now, 0).unwrap();
+        assert_eq!(prepared, frame.prepared_snapshot().unwrap() as *const _);
     }
 
     #[test]

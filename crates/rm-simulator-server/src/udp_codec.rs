@@ -883,14 +883,20 @@ impl PeerCodec {
                 self.queue_control(now, &bytes)?;
             }
         }
+        // Only ordinary world publications rotate baselines. High-rate owner
+        // updates keep the configuration handshake and anchor above, without
+        // creating a second world stream. Unaddressed local seats still need
+        // their snapshot fallback (for staging, spectators and referees).
+        if frame.periodic && frame.owner_only && self.chassis.is_some() {
+            return Ok(());
+        }
         if frame.periodic && pending_bytes > CONGESTED_PENDING_BYTES {
             self.encoding.skipped_world_updates += 1;
             return Ok(());
         }
-        let compressed = if frame.periodic
-            && let ServerMessage::Snapshot(state) = frame.message()
+        let compressed = if frame.periodic && matches!(frame.message(), ServerMessage::Snapshot(_))
         {
-            let encoded = self.encoder.snapshot(state.input_epoch, state)?;
+            let encoded = self.encoder.snapshot_prepared(frame.prepared_snapshot()?)?;
             self.encoding.raw_world_bytes += self.encoder.last_packed_bytes as u64;
             encoded
         } else {
@@ -1505,6 +1511,42 @@ mod tests {
         }
         let json = crate::compression::decompress(&packet[HEADER..], MAX_WIRE).ok()?;
         crate::snapshot_codec::decode_player_message(&json).ok()
+    }
+
+    #[test]
+    fn owner_only_updates_handshake_and_anchor_without_rotating_world_baselines() {
+        let now = Instant::now();
+        let state = owner_state(0, 1, 0);
+        let revision = crate::owner_stream::ConfigRevision::of(&state.field.chassis[0].config);
+        let mut host = PeerCodec::new(now, 64 << 20, true);
+        host.joined(Some(0));
+        let mut frame = periodic(&state);
+        frame.owner_only = true;
+        host.send(&frame, now, 0).unwrap();
+        assert!(host.owner_config.pending.is_some());
+        assert_eq!(host.encoding.world_updates, 0);
+        assert_eq!(host.encoder.full_bytes, 0);
+        assert!(host.owner_config.answer(Feedback::ConfigStored {
+            revision: revision.raw()
+        }));
+        for i in 1..=16 {
+            host.send(&frame, now + Duration::from_millis(i * 4), 0)
+                .unwrap();
+        }
+        assert_eq!(host.encoding.owner_updates, 16);
+        assert_eq!(host.encoding.world_updates, 0);
+        assert_eq!(host.encoder.full_bytes, 0);
+        // A real world publication still bootstraps/rotates the ordinary lane.
+        frame.owner_only = false;
+        host.send(&frame, now + Duration::from_millis(68), 0)
+            .unwrap();
+        assert_eq!(host.encoding.world_updates, 1);
+        assert!(host.encoder.full_bytes > 0);
+        // Local referees/staging seats without a chassis retain full-state delivery.
+        let mut spectator = PeerCodec::new(now, 64 << 20, true);
+        frame.owner_only = true;
+        spectator.send(&frame, now, 0).unwrap();
+        assert_eq!(spectator.encoding.world_updates, 1);
     }
 
     #[test]
