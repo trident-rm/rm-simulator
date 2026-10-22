@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Audit the supplied 2026-10-22 RM2027 Q&A against native UC/UL control,
+  adaptive armor and logistics. Record the clarified aerial-impact event model,
+  remaining implementation gaps and simulator policies the slides do not settle.
+
 - Add bounded continuous console MP4 capture with asynchronous GPU readbacks,
   off-thread encoding, wall-time resampling and actual unique/drop statistics.
   Transfer readback buffers without a second frame copy, move channel conversion

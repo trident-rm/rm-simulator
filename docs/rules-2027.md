@@ -3,7 +3,8 @@
 # RoboMaster 2027 rules reference
 
 Engineering interpretation of the three Chinese V1.0.0 manuals released on
-2026-10-15. This is a reference for implementation, not a claim that the simulator
+2026-10-15, with the supplied 2026-10-22 rules-presentation Q&A audited below.
+This is a reference for implementation, not a claim that the simulator
 implements the full 2027 season. The [control component](gameplay.md#rmuc-2027-control-component) now drives a
 [source-bound RMUC 2027 control/structure subset](rmuc2027-field.md#enable-the-live-controlstructure-subset)
 in every build. Historical 2026 kernels are documented in [referee rules](referee-rules.md) and [gameplay](gameplay.md); they do not select the active runtime.
@@ -18,6 +19,7 @@ resource systems and victory conditions.
 ## Contents
 
 - [Sources and citation convention](#sources-and-citation-convention)
+- [2026-10-22 Q&A audit](#2026-10-22-qa-audit)
 - [Existing 2026 references and comparison scope](#existing-2026-references-and-comparison-scope)
 - [Separate competition profiles](#separate-competition-profiles)
 - [UC roster and field](#uc-roster-and-field)
@@ -42,8 +44,11 @@ resource systems and victory conditions.
 | UC | RoboMaster 2027 机甲大师超级对抗赛比赛规则手册 | V1.0.0, 20261015 | 144 |
 | UL | RoboMaster 2027 机甲大师高校联盟赛比赛规则手册 | V1.0.0, 20261015 | 68 |
 | ROB | RoboMaster 2027 机甲大师高校系列赛机器人制作规范手册 | V1.0.0, 20261015 | 91 |
+| QA22 | 2026.10.22规则答疑.pdf, supplied presentation capture | 2026-10-22 | 15 |
 
-Citations below use the manual's **printed page number**; PDF viewer page is
+QA22 citations use one-based PDF page numbers; its screenshot compilation has
+no printed page numbering. UC/UL/ROB citations use the manual's **printed page
+number**; PDF viewer page is
 printed page + 1 in all three supplied files. Section and table numbers are
 scoped to the source key. Retain the Chinese term when an English translation
 could accidentally identify an old robot or mechanism. “Heavy” below means
@@ -55,6 +60,7 @@ Exact source fingerprints (SHA-256):
 UC   9e2eed9295536c6fd547b62d634df1d5e70a2e1e2250e5dff3521d557e5d54be
 UL   a8fd7b7f6ea5212b9e4dfa590b478827992598d91912ed671653c8bdd9727fd6
 ROB  3287fe5f521f8801ce69632032ea17a9c8d8a099091558f58618cd7721154a3c
+QA22 6792de6dfaf27053314b2e029fb312054a257ae10daa6bee26b6b458ad417709
 ```
 
 The supplied PDFs remain external source material, under DJI's notices; they
@@ -70,6 +76,73 @@ conduct, penalties, appeals and event administration remain governed by the
 manuals, not exhaustively restated here. Later publications and official answers
 must be incorporated explicitly; do not silently replace this baseline. UC/UL
 §§1.3–1.4 describe amendments and the authority of official answers.
+
+## 2026-10-22 Q&A audit
+
+The supplied QA22 file contains screenshots of DJI's “RMU 2027 规则解读与答疑”
+presentation, plus short surrounding annotations. This audit uses the visible
+slides as clarification evidence; surrounding commentary (for example on PDF
+pp.2 and 6) is not promoted to a competition requirement. The complete talk/audio
+is not included. No gameplay constants or simulator policies were changed by
+this audit. The source PDF and rendered pages remain outside tracked source.
+
+The implemented RMUC/RMUL control state machines and adaptive-area formula agree
+with the mechanisms shown. The presentation adds a useful aerial-contact model,
+but does not supply its numeric thresholds. Physical launcher installation and
+two logistics outputs remain implementation gaps, distinguished below from
+incorrect interpretations.
+
+| PDF page(s) | Clarification | Documentation/runtime assessment |
+|---|---|---|
+| 1 | Heavy is a manipulation platform; the modular 42 mm launcher is a picked-up, installed tool. Power and electrical interfaces are part of the engineering task. | Interpretation matches [Heavy installation](#launcher-installation-and-heavy-properties). Runtime still uses the explicitly approximate [Hero conversion](#temporary-hero-conversion-for-heavy), rather than physical tool pickup, attachment and electrical connection. |
+| 1 | Hardware research should address whole-robot integration rather than only isolated reusable modules. | Design rationale; no new numeric rule or simulator state transition. |
+| 2 | 2027 first adds the modular launcher; later seasons may expand tools and tasks. | Future direction, not a requirement to add unspecified props or assembly tasks to this release. The surrounding note about future field-made props is not an independently specified current rule. |
+| 3–5 | Aerial impacts are complete contact events: begin when any local contact exceeds the threshold, reselect the qualifying contact region every instant, integrate its weighted contribution over area and time, and end when all locations are below threshold. Qualifying regions may move or be disconnected. Check event duration and the accumulated quantity after completion. | Existing documentation correctly leaves aerial-impact detection unimplemented. Extend that reference with this event model; a single projectile-speed threshold, peak force, fixed contact patch or first-contact damage would not reproduce it. Numerical thresholds and the exact boundary policy remain absent. |
+| 6–7 top | Adaptive mechanics compare relative performance; historical hit-rate and outpost-destruction plots explain the design. | Context only. The plotted 2026 percentiles and destruction times are not 2027 rule constants or calibration targets. |
+| 7 bottom | Accuracy is hit rate divided by spread; relative accuracy determines area through `rho² / (2 + rho²)`. A team spends an accumulating once-per-minute opportunity on a common center, after at least ten hits. Applies across robots, outposts and base. | Matches [`adaptive`](../crates/rm-simulator-gameplay/src/rmuc_2027/adaptive.rs): common center, ten-hit gate, accumulated opportunities and team accuracy ratio. |
+| 7–8 top | Default damage ×1; reinforced ×0.5; outside ×1.5. These multiply attack/defense effects. Equal accuracy gives 1/3 area; rho 0.7 gives about 20%, rho 1.4 about 49%. | Matches `Adaptive::area_share`, `Region::half_units` and native `Match::hit_with_region`. The sample shares are approximately 0.1968, 0.3333 and 0.4949. No change required. |
+| 8 bottom–9 | Timeout Base-HP comparison encouraged retaining small distant damage advantages; 2027 moves accumulated advantage to contestable territories. | Matches timeout control-first adjudication. The historical 500 HP comparisons do not create a new 2027 tie margin. |
+| 10 top | Outpost territory joins Outpost + Central Highland; Base territory joins Base + Fortress. R/B name physical locations, not current owners. Both outpost territories give +1/s; both base territories +3/s. Only the initial side can fully control a Base territory. | Matches `Territory`, point aggregation and `Control::score_rate`. Temporary control qualifies in our implementation. This is strongly corroborated by the slides together: enemy Base territory can only be temporary, so excluding temporary control would make the advertised both-Base +3/s condition unattainable. This conclusion is an inference from the combined rules, not a verbatim “temporary earns points” sentence. |
+| 10 bottom–11 top | Physical Outpost owner/alive status differs from territory controller/strength. Capture-then-destroy and destroy-then-convert both lead to the other team's full control and a 500 HP rebuild. | Matches `Control::outpost_destroyed` / `transition`; destruction first produces temporary control for the previous controller, not an immediate enemy full capture. Both paths already have regressions. |
+| 11 bottom | UC partial capture advances/retreats equally; simultaneous activation pauses. Example: blue alone 3 s → leaves 2 s → both 2 s → blue alone 4 s gives progress 3 → 1 → 1 → 5. | Matches `TerritoryState::direction` and `Control::advance_ns`, including constituent-point aggregation. |
+| 11 bottom, 12 top, 15 | Once temporary control exists, five continuous seconds without its controller activating returns full control to the other side even if that side has no robot present. Full UC control persists when both sides are absent; UC has no neutral territory state. Enemy Base control stays temporary. | Matches the existing full/temporary enum and absence recovery. These are activation times after the ordinary RFID validity resolution, not necessarily five seconds after raw detection disappears. |
+| 12 bottom | Base has 10,000 HP. Destruction remains an early victory condition; if neither Base is destroyed after seven minutes, compare accumulated control. | Matches native `Match::finish`; surviving Base HP is not a timeout tiebreaker. The slide's more radical discarded design is not the current rule. |
+| 13 top | With lost own-Base HP delta, lambda = `1 - delta / 20000`. Respawn requirement divides by lambda; supply healing, remote healing fraction and robot interaction bandwidth multiply by lambda; video resolution multiplies by lambda². At delta 5000: lambda .75, respawn ×4/3, video ×.5625. | Interpretation and native healing/respawn arithmetic match. Interaction-bandwidth reduction and image downsampling are documented requirements but are not implemented by the app/referee adapters. This is robot/referee interaction bandwidth, not permission to throttle the entire multiplayer transport. |
+| 13 bottom | RMUL 3v3: five minutes, no Base, 600 starting control; each held zone drains the opponent by 1/s; a death costs its team 10; zero ends immediately; timeout compares remaining control, attack damage, total robot HP. | Matches the separate `rmul_2027` authority. No UC control/assembly/adaptive mechanics are inherited. |
+| 14 top | RMUL keeps independent 0–5 team progress. Erode opposing progress before building one's own; at 5 acquire control, at 0 lose it; both active pauses. A fully controlled zone therefore takes 5 s to neutralize then 5 s to capture. A neutral zone with 3 opposing progress first takes 3 s to erode. | Matches `rmul_2027::Match::settle`. Existing regressions cover contest, erosion and acquisition. This differs deliberately from UC's full/temporary transitions. |
+| 14 bottom, 15 | All three UL zones start neutral. With nobody activating a controlled zone, progress decays at 1/s and control persists until zero, then becomes neutral and stops draining the opponent. | Matches `ZoneState` and native settlement. This is decay after resolved activation loss; the world adapter retains the manual's RFID grace. The slides do not unambiguously settle the separate case of unattended partial progress on a never-controlled neutral zone. |
+| 15 | UC and UL intentionally have different initialization, inactivity and victory semantics. | Separate authorities and identities match. UC full control never becomes UL-style neutral merely because a point is empty. |
+
+### Policies the presentation does not settle
+
+Keep the existing explicitly user-selected policies until a source resolves them:
+
+- Adaptive area frozen at selection versus continuous resizing. The slides say
+  performance determines area and the team chooses its center; they do not state
+  the update cadence. They neither confirm nor revoke our frozen-area policy.
+- Adaptive circle clipping, the exact circle boundary and undefined-accuracy
+  behavior. Schematic circles are not a specification for edge cases.
+- The conflicting permanent heat-lock threshold in the original manual. QA22
+  contains no heat-lock clarification; the adopted inclusive figure policy stays.
+- Capture/scoring ordering on an exactly shared timestamp and simultaneous
+  destruction ordering. The conceptual diagrams do not resolve event scheduling.
+- The exact aerial threshold, valid duration/impulse intervals, inclusive/exclusive
+  endpoint rules, or treatment of equality at the force threshold. Slide examples
+  are normalized illustrations, not numerical calibration data.
+
+The aerial animation screenshots also contain mismatched intermediate curve
+labels versus their displayed block sums. Do not turn those illustration labels
+into test expectations; use the stated event model and actual future thresholds.
+
+### Implementation follow-ups
+
+1. Preserve the confirmed control paths; no state-machine rewrite is indicated.
+2. Add aerial-contact event accumulation only with an explicit physical model
+   and published thresholds (or clearly labelled simulator parameters).
+3. Implement/refine physical Heavy launcher installation when replacing the
+   approved conversion approximation.
+4. Apply logistics to the intended referee interaction and image paths while
+   leaving HUD clarity intact; healing/respawn already use lambda.
 
 ## Existing 2026 references and comparison scope
 
@@ -541,8 +614,9 @@ survive snapshots rather than be reduced to a single owner bit.
 Controlling both outpost territories adds 1 control/s; controlling both base
 territories adds 3 control/s (p.97). The sentence says “control” without
 qualifying temporary/full. The implemented component counts both, per the user
-instruction; this is the adopted interpretation rather than a later official
-clarification. Base protection separately requires full control.
+instruction; QA22 pp.10, 12 and 15 corroborate that interpretation through the
+state and scoring diagrams (see the audit above). Base protection separately
+requires full control.
 
 Base damage also reduces logistics. With `Δ = lost base HP`,
 `λ = 1 - Δ / 20000` (UC Table 5-19):
@@ -690,6 +764,10 @@ UC §3.2.1 and ROB §2.4.4 replace the old shooting drone: autonomous aircraft
 communicate only indirectly via the hangar, carry no launcher, and use an
 emergency-stop remote. A hangar holds up to four aircraft. Impact attacks can
 score on base/outpost armor, but detection thresholds are pending (UC Table 5-1).
+QA22 pp.3–5 clarify a complete-contact-event model: reselect the above-threshold
+contact area at each instant and accumulate its force/area/time contribution,
+then evaluate duration and accumulated value when the event ends. A single
+projectile-speed or peak-force check cannot stand in for this unimplemented model.
 No 2026 aerial support timer, tether or 17 mm launcher can be assumed.
 
 ### Darts
