@@ -110,6 +110,47 @@ pub struct PreferenceStatus {
     /// A readable explanation shown in settings; corrupt files are never overwritten.
     pub message: String,
     writable: bool,
+    graphics_launch: Option<LaunchGraphics>,
+}
+/// Keep launch-only graphics out of unrelated preference writes.
+struct LaunchGraphics {
+    applied: GraphicsSettings,
+    saved: GraphicsSettings,
+}
+fn apply_launch_graphics(
+    settings: &mut Preferences,
+    preset: Option<rm_simulator_render::graphics_settings::QualityPreset>,
+    no_bloom: bool,
+) -> Option<LaunchGraphics> {
+    if preset.is_none() && !no_bloom {
+        return None;
+    }
+    let saved = settings.graphics.clone();
+    if let Some(preset) = preset {
+        settings.graphics = GraphicsSettings {
+            preset,
+            ..Default::default()
+        };
+    }
+    if no_bloom {
+        settings.graphics.overrides.bloom = Some(false);
+    }
+    Some(LaunchGraphics {
+        applied: settings.graphics.clone(),
+        saved,
+    })
+}
+fn save_document(settings: &Preferences, launch: &mut Option<LaunchGraphics>) -> Preferences {
+    let mut document = settings.clone();
+    if let Some(value) = launch {
+        if value.applied == settings.graphics {
+            document.graphics = value.saved.clone();
+        } else {
+            // A graphics-menu edit deliberately replaces the launch selection.
+            *launch = None;
+        }
+    }
+    document
 }
 struct PendingSave {
     settings: Preferences,
@@ -119,7 +160,12 @@ struct PendingSave {
 /// it and adds the `PostUpdate` system that saves later edits. A load failure
 /// keeps the defaults, blocks writes and reports the error in
 /// `PreferenceStatus::message`.
-pub struct PreferencesPlugin;
+pub struct PreferencesPlugin {
+    /// Temporary clean preset, leaving saved graphics unchanged.
+    pub graphics_preset: Option<rm_simulator_render::graphics_settings::QualityPreset>,
+    /// Temporary bloom override for low-cost visualization.
+    pub no_bloom: bool,
+}
 impl Plugin for PreferencesPlugin {
     fn build(&self, app: &mut App) {
         let path = crate::title::remembered_path().map(|path| path.with_file_name("settings.json"));
@@ -127,13 +173,15 @@ impl Plugin for PreferencesPlugin {
             .as_deref()
             .map(Preferences::load)
             .unwrap_or_else(|| Err("No configuration directory; settings cannot be saved".into()));
-        let (settings, message, writable) = match loaded {
+        let (mut settings, message, writable) = match loaded {
             Ok(settings) => (settings, String::new(), true),
             Err(error) => {
                 warn!("{error}");
                 (Preferences::default(), error, false)
             }
         };
+        let graphics_launch =
+            apply_launch_graphics(&mut settings, self.graphics_preset, self.no_bloom);
         if let Some(mut ui) = app.world_mut().get_resource_mut::<HudState>() {
             ui.controls = settings.controls.clone();
             ui.sensitivity = settings.sensitivity;
@@ -152,6 +200,7 @@ impl Plugin for PreferencesPlugin {
             pending: None,
             message,
             writable,
+            graphics_launch,
         })
         .insert_resource(settings)
         .add_systems(PostUpdate, save_changes);
@@ -227,10 +276,11 @@ fn save_changes(
     let Some(path) = status.path.clone() else {
         return;
     };
+    let document = save_document(&settings, &mut status.graphics_launch);
     if exiting {
         // Preserve the final edit before process shutdown. Only exit waits for
         // disk I/O; normal frames hand the atomic write to a worker.
-        let result = settings.save(&path);
+        let result = document.save(&path);
         if result.is_ok() {
             status.message.clear();
         }
@@ -241,7 +291,7 @@ fn save_changes(
         status.last_saved = settings.clone();
         return;
     }
-    let submitted = settings.clone();
+    let submitted = document;
     match std::thread::Builder::new()
         .name("settings-save".into())
         .spawn(move || submitted.save(&path))
@@ -262,6 +312,27 @@ fn save_changes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn launch_graphics_do_not_leak_into_unrelated_saved_preferences() {
+        use rm_simulator_render::graphics_settings::QualityPreset;
+        let mut settings = Preferences::default();
+        let saved_graphics = settings.graphics.clone();
+        let mut launch = apply_launch_graphics(&mut settings, Some(QualityPreset::Low), true);
+        assert!(!settings.graphics.resolved().shadows);
+        assert!(!settings.graphics.resolved().bloom);
+        settings.sensitivity = 0.004;
+        let document = save_document(&settings, &mut launch);
+        assert_eq!(document.graphics, saved_graphics);
+        assert_eq!(document.sensitivity, 0.004);
+        assert_eq!(settings.graphics.preset, QualityPreset::Low);
+        settings.graphics.preset = QualityPreset::Medium;
+        assert_eq!(
+            save_document(&settings, &mut launch).graphics,
+            settings.graphics
+        );
+        assert!(launch.is_none());
+    }
+
     #[test]
     fn missing_fields_defaults_and_settings_round_trip() {
         let root = std::env::temp_dir().join(format!("rm-settings-{}", std::process::id()));

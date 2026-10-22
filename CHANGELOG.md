@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Add temporary graphics-preset/bloom launch overrides and a configurable
+  headless render limit. Keep saved graphics and physics timing independent;
+  document rendering costs and the limits of measurements under CPU contention.
+
 - Add leased Sentry head sweep/chassis counter-rotation and articulated LiDAR
   mounting. Preserve every IMU output period across fractional-nanosecond substeps.
 

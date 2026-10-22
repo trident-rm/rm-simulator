@@ -12,14 +12,21 @@ pub struct CaptureTarget(pub Option<Handle<Image>>);
 /// Keeps winit in continuous mode, and in headless mode drives the app from a
 /// schedule runner and gives the camera an offscreen render target, since no
 /// window or event loop exists to pace frames.
-pub struct PresentationPlugin;
+pub struct PresentationPlugin {
+    /// Headless render-loop limit in frames/s; zero means uncapped.
+    pub headless_fps: u32,
+}
 impl Plugin for PresentationPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CaptureTarget>()
             .insert_resource(bevy::winit::WinitSettings::continuous());
         if *app.world().resource::<WindowMode>() == WindowMode::Headless {
             app.add_plugins(bevy::app::ScheduleRunnerPlugin::run_loop(
-                std::time::Duration::from_secs_f64(1.0 / 60.0),
+                if self.headless_fps == 0 {
+                    std::time::Duration::ZERO
+                } else {
+                    std::time::Duration::from_secs_f64(1.0 / f64::from(self.headless_fps))
+                },
             ))
             .add_systems(Startup, setup_headless.after(crate::scene::setup_camera))
             .add_systems(Update, resize_headless);

@@ -154,7 +154,9 @@ fn main() -> AppExit {
     app.insert_resource(args.window_mode);
     app.add_plugins(plugins)
         .add_plugins(rm_simulator_render::team_robot::TeamRobotVisualsPlugin)
-        .add_plugins(presentation::PresentationPlugin)
+        .add_plugins(presentation::PresentationPlugin {
+            headless_fps: args.headless_fps,
+        })
         .add_plugins(screenshot::ScreenshotReadinessPlugin)
         .add_plugins(video_capture::VideoCapturePlugin)
         .add_plugins(CadScenePlugin {
@@ -179,7 +181,10 @@ fn main() -> AppExit {
             ..default()
         })
         .init_resource::<auto_aim::AutoAim>()
-        .add_plugins(preferences::PreferencesPlugin)
+        .add_plugins(preferences::PreferencesPlugin {
+            graphics_preset: args.graphics_preset.map(args::GraphicsPreset::quality),
+            no_bloom: args.no_bloom,
+        })
         .add_plugins(graphics::GraphicsPlugin)
         .add_plugins(hud::HudPlugin)
         .add_plugins(assembly::AssemblyPlugin)

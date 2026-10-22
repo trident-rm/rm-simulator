@@ -20,6 +20,31 @@ pub const DEFAULT_RUNE_FLASH_HZ: f64 = 2.0;
 /// How many times an activated rune blinks before its arms stay lit.
 pub const DEFAULT_RUNE_FLASHES: u32 = 3;
 
+/// Temporary graphics preset selected for this launch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum GraphicsPreset {
+    /// Unshadowed, single-sample rendering.
+    Low,
+    /// Reduced shadows and two-sample antialiasing.
+    Medium,
+    /// Normal shadows and four-sample antialiasing.
+    High,
+    /// Highest shadow resolution and distance.
+    Ultra,
+}
+impl GraphicsPreset {
+    /// Shared renderer preset corresponding to this command-line choice.
+    pub fn quality(self) -> rm_simulator_render::graphics_settings::QualityPreset {
+        use rm_simulator_render::graphics_settings::QualityPreset;
+        match self {
+            Self::Low => QualityPreset::Low,
+            Self::Medium => QualityPreset::Medium,
+            Self::High => QualityPreset::High,
+            Self::Ultra => QualityPreset::Ultra,
+        }
+    }
+}
+
 /// A performance type named on the command line (Tables 5-12 to 5-14).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum PerformanceChoice {
@@ -125,6 +150,15 @@ pub struct Args {
     /// Window presentation; headless still renders on the GPU.
     #[arg(long, value_enum, default_value_t = WindowMode::Normal)]
     pub window_mode: WindowMode,
+    /// Headless render-loop limit in frames/s; 0 uncaps it. Does not change physics timing.
+    #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u32).range(0..=1000))]
+    pub headless_fps: u32,
+    /// Use a clean graphics preset for this launch without changing saved graphics.
+    #[arg(long, value_enum)]
+    pub graphics_preset: Option<GraphicsPreset>,
+    /// Disable bloom for this launch without changing saved graphics.
+    #[arg(long)]
+    pub no_bloom: bool,
 
     /// Robot to pilot. Hero fires 42 mm, Infantry/Sentry/Drone 17 mm;
     /// Engineer has no launcher. Applies on local/remote hosts.
@@ -406,6 +440,17 @@ mod tests {
                 .unwrap()
                 .no_prediction
         );
+    }
+
+    #[test]
+    fn headless_render_limit_accepts_uncapped_and_validates_bounds() {
+        let default = Args::parse_from(["rm-simulator"]);
+        assert_eq!(default.headless_fps, 60);
+        for rate in ["0", "30", "120"] {
+            let args = Args::parse_from(["rm-simulator", "--headless-fps", rate]);
+            assert_eq!(args.headless_fps, rate.parse::<u32>().unwrap());
+        }
+        assert!(Args::try_parse_from(["rm-simulator", "--headless-fps", "1001"]).is_err());
     }
 
     #[test]

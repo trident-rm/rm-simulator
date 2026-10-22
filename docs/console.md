@@ -13,7 +13,7 @@ console stands in for, see [app options](app-options.md).
 Start the app with a local console. Window mode is chosen at launch.
 
 ~~~sh
-just run --console --window-mode headless
+just run --console --window-mode headless --graphics-preset low --no-bloom --headless-fps 30
 ~~~
 
 ## Window modes

@@ -245,6 +245,11 @@ The renderer converts to Bevy's right/up/back frame at the scene boundary.
 Crate ownership, tick order, restore and ECS boundaries are documented in
 [simulation architecture](docs/architecture-refactor.md).
 
+For inexpensive offscreen debug views, use `--window-mode headless
+--graphics-preset low --no-bloom --headless-fps 30`. These launch options leave
+saved graphics and physics timing unchanged; use `--headless-fps 0` for uncapped
+rendering. See [graphics measurements](docs/performance-graphics-20261023.md).
+
 ## Field assets
 
 [RMUC 2027 map support](docs/rmuc2027-field.md) describes the bound `field-2027/`

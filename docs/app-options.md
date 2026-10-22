@@ -26,6 +26,9 @@ joined with `--connect` takes those from the server.
 | `--performance TYPE` | Section 5.4.2 performance type requested after joining: `long-range` or `melee` for the Hero, `hp-cooling`, `hp-burst`, `power-cooling` or `power-burst` for an infantry. Unset keeps the rulebook default; a host refuses a type for the other class or during a running round |
 | `--assembly-assets DIR` / `--assembly-area DIR` | Verified in-game Engineer/Core rig and matching station terrain; see [assembly workbench](assembly-workbench.md#in-game-automatic-assembly) |
 | `--assembly-hints FILE` | Optional completed source recording for warm IK seeds; every new path is validated |
+| `--graphics-preset low\|medium\|high\|ultra` | Clean graphics preset for this launch; leaves saved graphics unchanged |
+| `--no-bloom` | Disable bloom for this launch, useful for debug/automation views |
+| `--headless-fps N` | Headless render-loop limit, default 60, range 0–1000; 0 uncaps rendering. Does not change the simulation step rate |
 | `--robot-assets DIR` | Optional verified source-derived Omni, folding Hero, stair Heavy or tunnel Infantry/Heavy/EGA Sentry package; selects its fitted local physics and validated replacement armor when supplied |
 | `--stair-heavy` | Host selects the DreamChaser stair linkage; pilot with `--robot engineer` |
 | `--folding-hero` | Host selects the reference folding Hero preset; live 2027 deployment uses Heavy |
@@ -643,3 +646,26 @@ external control; gimbal and folding state are preserved. The optional ROS bridg
 accepts stamped velocity commands for an unpiloted in-game Sentry. See the
 [setup, JSON examples and control modes](../integrations/ros2/README.md#control-a-robot-in-an-existing-game).
 This controls a live host; it does not yet export that host's LiDAR or odometry.
+
+## Lightweight visualization
+
+For debug and automation views where lighting effects are secondary:
+
+```sh
+just run --fly --window-mode headless --graphics-preset low --no-bloom --headless-fps 30
+```
+
+This disables shadows, multisample antialiasing and bloom, and limits the
+headless render loop to 30 frames/s. Physics and match clocks retain their
+configured rates. An overloaded machine can still render below that limit.
+Use `--headless-fps 0` when measuring uncapped throughput or requesting the
+maximum available offscreen frame rate. The option has no effect on windowed
+presentation.
+
+Launch graphics flags do not overwrite saved graphics, even when unrelated
+controls are saved. Editing graphics in the settings menu deliberately replaces
+the launch selection and saves that new choice normally. Omitting these flags
+keeps existing preferences and the default High preset. High/Ultra remain
+available for manual driving and explicit vision-rendering experiments.
+See [the measured graphics costs](performance-graphics-20261023.md) before
+attributing end-to-end simulation latency to the GPU.
