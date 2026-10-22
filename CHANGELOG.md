@@ -4,10 +4,27 @@
 
 ## Unreleased
 
+- Separate Field layout records and checkpoint capture/restore from live world
+  coordination while preserving public paths, serialized records and scheduling.
+
 - Add opt-in live sensor stage telemetry for capture, acquisition, input/output
   queues, owner requests and off-owner JSON encoding, with separate loss counters
   and a bounded profiling script. Preserve ordinary payloads, measured values,
   dynamic carriers and simulation timestamps.
+
+- Add optional source-color 3D scenario inspection with CPU depth occlusion,
+  orbit controls, nearest-surface picking and collision overlays. Preserve source
+  motion bindings and disclose unsupported texture/PBR/alpha rendering.
+
+- Compose checked equipment, explicit terrain, robot spawns and RFID metadata
+  with FLU placements and reversible source identities. Cook once at preparation
+  and share geometry across sessions/reset; reject aliased mechanism channels.
+- Expose borrowed chassis/payload truth, lazy wheel/projectile iteration and
+  retained event drains without full snapshots. Evaluate source turret ancestry
+  without allocating full articulation pose arrays.
+- Add opt-in bounded scoped CPU rollout workers over independent persistent
+  sessions, joined per-request progress and ordinary transactional selective
+  resets. Keep sequential stepping and per-session clocks unchanged.
 
 - Add physical omni spawn, drive/torque/aim/fire controls, scripted episodes and
   bounded raw armor-contact inspection to the optional RXUI scenario inspector.

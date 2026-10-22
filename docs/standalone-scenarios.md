@@ -118,6 +118,14 @@ record bounded raw armor contacts. Its orthographic collision views and
 robot/projectile/detector/RFID overlays show privileged physical truth; they do not add gameplay
 rules to the toolkit or replace source-material 3D rendering.
 
+## Compose several components
+
+[Composition](composable-scenarios.md) combines existing presets or checked
+components with explicit additional FLU placements, static terrain, robot spawns
+and caller-authored RFID volumes. It retains reverse source identity maps and
+validates target/channel independence before preparing reusable cooked geometry.
+Repeated instances cannot silently share a fixed mechanism channel.
+
 ## Independent rollout batches
 
 [`RobotBatch` and `MatchBatch`](batched-rollouts.md) group independent sessions
@@ -128,3 +136,10 @@ immutable shapes in recipes; each slot retains its own bodies, contacts and rule
 The implementation is sequential CPU execution, with measured stepping costs
 comparable to ordinary per-session loops. Task/reward state and simulated sensor
 sampling remain caller responsibilities.
+
+[Parallel stepping](parallel-rollouts.md) optionally runs independent session
+requests on bounded scoped CPU workers. Every admitted request is joined before
+return and reports its own runtime progress; unlike sequential fail-fast stepping,
+one failed slot does not cancel independent selected slots. Small dispatches may
+cost more than inline stepping. [Borrowed telemetry](telemetry.md) avoids full
+snapshot copies when reading wheel, payload, projectile and event truth.

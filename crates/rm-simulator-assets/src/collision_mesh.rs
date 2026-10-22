@@ -306,6 +306,8 @@ impl GroundMesh {
 #[derive(Deserialize)]
 struct Gltf {
     #[serde(default)]
+    materials: Vec<Material>,
+    #[serde(default)]
     scene: Option<usize>,
     #[serde(default)]
     scenes: Vec<Scene>,
@@ -345,10 +347,39 @@ struct Node {
 struct Mesh {
     primitives: Vec<Primitive>,
 }
+#[derive(Deserialize, Default)]
+struct Material {
+    #[serde(default)]
+    name: String,
+    #[serde(default, rename = "pbrMetallicRoughness")]
+    pbr: Pbr,
+    #[serde(default, rename = "emissiveFactor")]
+    emissive: [f64; 3],
+}
+#[derive(Deserialize)]
+struct Pbr {
+    #[serde(default = "white", rename = "baseColorFactor")]
+    color: [f64; 4],
+    #[serde(rename = "baseColorTexture")]
+    texture: Option<serde_json::Value>,
+}
+fn white() -> [f64; 4] {
+    [1.; 4]
+}
+impl Default for Pbr {
+    fn default() -> Self {
+        Self {
+            color: white(),
+            texture: None,
+        }
+    }
+}
+
 /// One glTF primitive: its attribute accessors, optional index accessor and
 /// mode.
 #[derive(Deserialize)]
 struct Primitive {
+    material: Option<usize>,
     attributes: std::collections::BTreeMap<String, usize>,
     indices: Option<usize>,
     #[serde(default = "default_mode")]
@@ -473,32 +504,7 @@ fn parse_glb_filtered(
     excluded: &[usize],
     subtree: Option<usize>,
 ) -> anyhow::Result<Vec<CollisionPart>> {
-    ensure!(u32_at(bytes, 0)? == GLB_MAGIC, "not a binary glTF file");
-    ensure!(u32_at(bytes, 4)? == 2, "unsupported GLB version");
-    let mut offset = 12;
-    let mut json: Option<&[u8]> = None;
-    let mut bin: Option<&[u8]> = None;
-    while offset + 8 <= bytes.len() {
-        let length = u32_at(bytes, offset)? as usize;
-        let kind = u32_at(bytes, offset + 4)?;
-        let data = bytes
-            .get(offset + 8..offset + 8 + length)
-            .ok_or_else(|| anyhow!("chunk runs past the end of the file"))?;
-        match kind {
-            CHUNK_JSON => json = Some(data),
-            CHUNK_BIN => bin = Some(data),
-            _ => {}
-        }
-        offset += 8 + length;
-    }
-    let json = json.ok_or_else(|| anyhow!("GLB lacks a JSON chunk"))?;
-    let gltf: Gltf = serde_json::from_slice(json).context("glTF JSON")?;
-    ensure!(
-        gltf.extensions_required.is_empty(),
-        "glTF requires extensions {:?}",
-        gltf.extensions_required
-    );
-    let bin = bin.unwrap_or(&[]);
+    let (gltf, bin) = glb_document(bytes)?;
     let mut parts = Vec::new();
     let scene = gltf
         .scenes
@@ -561,6 +567,147 @@ fn parse_glb_filtered(
         );
     }
     Ok(parts)
+}
+
+fn glb_document(bytes: &[u8]) -> anyhow::Result<(Gltf, &[u8])> {
+    ensure!(u32_at(bytes, 0)? == GLB_MAGIC, "not a binary glTF file");
+    ensure!(u32_at(bytes, 4)? == 2, "unsupported GLB version");
+    let mut offset = 12;
+    let mut json: Option<&[u8]> = None;
+    let mut bin: Option<&[u8]> = None;
+    while offset + 8 <= bytes.len() {
+        let length = u32_at(bytes, offset)? as usize;
+        let kind = u32_at(bytes, offset + 4)?;
+        let data = bytes
+            .get(offset + 8..offset + 8 + length)
+            .ok_or_else(|| anyhow!("chunk runs past the end of the file"))?;
+        match kind {
+            CHUNK_JSON => json = Some(data),
+            CHUNK_BIN => bin = Some(data),
+            _ => {}
+        }
+        offset += 8 + length;
+    }
+    let json = json.ok_or_else(|| anyhow!("GLB lacks a JSON chunk"))?;
+    let gltf: Gltf = serde_json::from_slice(json).context("glTF JSON")?;
+    ensure!(
+        gltf.extensions_required.is_empty(),
+        "glTF requires extensions {:?}",
+        gltf.extensions_required
+    );
+    let bin = bin.unwrap_or(&[]);
+    Ok((gltf, bin))
+}
+
+/// One visual primitive with source material factors and baked node transforms.
+/// Geometry remains in asset-local glTF axes; use [`CollisionMesh::placed`] once.
+#[derive(Clone, Debug)]
+pub struct VisualPart {
+    /// Original glTF mesh-node index, usable for picking/provenance.
+    pub node: usize,
+    /// Primitive index within that node's mesh.
+    pub primitive: usize,
+    /// Nearest named source node, matching source-body motion records.
+    pub name: String,
+    /// Original source material name, empty for an unnamed/default material.
+    pub material: String,
+    /// Linear RGBA base-color factor, before lighting or texture sampling.
+    pub base_color_linear: [f64; 4],
+    /// Linear RGB emissive factor; no additional emissive-strength extension.
+    pub emissive_linear: [f64; 3],
+    /// Whether base color also requires a texture. This reader exposes factors
+    /// only; a caller must disclose missing texture sampling rather than claim parity.
+    pub textured: bool,
+    /// Original triangles with node hierarchy transforms applied.
+    pub mesh: CollisionMesh,
+}
+
+/// Load primitive-level visual triangles and material factors from a verified GLB.
+/// Uses the same triangle/accessor/transform validation as collision loading.
+/// This is a data reader, not a PBR renderer: textures, blending, normal maps,
+/// metallic/roughness shading and material extensions are not evaluated.
+/// Obtain the path from an already checked [`crate::cad_assets::CadAssets`].
+pub fn load_glb_visuals(path: &Path) -> anyhow::Result<Vec<VisualPart>> {
+    parse_visuals(&std::fs::read(path)?)
+}
+fn parse_visuals(bytes: &[u8]) -> anyhow::Result<Vec<VisualPart>> {
+    let (gltf, bin) = glb_document(bytes)?;
+    let scene = gltf
+        .scenes
+        .get(gltf.scene.unwrap_or(0))
+        .context("glTF has no scene")?;
+    let mut stack: Vec<_> = scene
+        .nodes
+        .iter()
+        .rev()
+        .map(|&i| (i, Mat4::IDENTITY, 0, String::new()))
+        .collect();
+    let mut output = Vec::new();
+    while let Some((index, parent, depth, inherited)) = stack.pop() {
+        ensure!(depth < 64, "node tree is too deep or cyclic");
+        let node = gltf.nodes.get(index).context("visual node out of range")?;
+        let name = if node.name.is_empty() {
+            inherited
+        } else {
+            node.name.clone()
+        };
+        let local = match node.matrix {
+            Some(m) => Mat4::from_cols_array(&m),
+            None => Mat4::from_scale_rotation_translation(
+                node.scale.unwrap_or([1.; 3]),
+                node.rotation.unwrap_or([0., 0., 0., 1.]),
+                node.translation.unwrap_or([0.; 3]),
+            ),
+        };
+        let world = parent.mul(&local);
+        if let Some(mesh) = node.mesh {
+            for (primitive, source) in gltf
+                .meshes
+                .get(mesh)
+                .context("visual mesh out of range")?
+                .primitives
+                .iter()
+                .enumerate()
+            {
+                let default = Material::default();
+                let material = match source.material {
+                    Some(i) => gltf
+                        .materials
+                        .get(i)
+                        .context("visual material out of range")?,
+                    None => &default,
+                };
+                ensure!(
+                    material
+                        .pbr
+                        .color
+                        .iter()
+                        .all(|v| v.is_finite() && (0. ..=1.).contains(v))
+                        && material.emissive.iter().all(|v| v.is_finite() && *v >= 0.),
+                    "invalid visual material factors"
+                );
+                let mut triangles = CollisionMesh::default();
+                append_primitive(&mut triangles, &gltf, bin, source, &world)?;
+                output.push(VisualPart {
+                    node: index,
+                    primitive,
+                    name: name.clone(),
+                    material: material.name.clone(),
+                    base_color_linear: material.pbr.color,
+                    emissive_linear: material.emissive,
+                    textured: material.pbr.texture.is_some(),
+                    mesh: triangles,
+                });
+            }
+        }
+        stack.extend(
+            node.children
+                .iter()
+                .rev()
+                .map(|&i| (i, world, depth + 1, name.clone())),
+        );
+    }
+    Ok(output)
 }
 
 /// Transforms one primitive's positions by `world` and appends its triangles to
@@ -722,6 +869,62 @@ fn read_accessor<'a>(gltf: &Gltf, bin: &'a [u8], index: usize) -> anyhow::Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visual_reader_preserves_node_geometry_and_default_material() {
+        let bytes = sample_glb();
+        let visual = parse_visuals(&bytes).unwrap();
+        let collision = parse_glb(&bytes).unwrap();
+        assert_eq!(visual.len(), collision.len());
+        for (v, c) in visual.iter().zip(collision) {
+            assert_eq!(v.mesh, c.mesh);
+            assert_eq!(v.name, c.name);
+            assert_eq!(v.base_color_linear, [1.; 4]);
+            assert!(!v.textured);
+        }
+    }
+
+    #[test]
+    fn visual_reader_keeps_source_factors_and_rejects_invalid_materials() {
+        let bytes = sample_glb();
+        let length = u32_at(&bytes, 12).unwrap() as usize;
+        let mut json: serde_json::Value = serde_json::from_slice(&bytes[20..20 + length]).unwrap();
+        json["materials"] = serde_json::json!([{
+            "name":"paint", "pbrMetallicRoughness":{
+                "baseColorFactor":[0.2,0.4,0.6,1.0], "baseColorTexture":{"index":0}},
+            "emissiveFactor":[0.1,0.0,0.2]}]);
+        json["meshes"][0]["primitives"][0]["material"] = serde_json::json!(0);
+        let pack = |value: &serde_json::Value| {
+            let mut text = serde_json::to_vec(value).unwrap();
+            while !text.len().is_multiple_of(4) {
+                text.push(b' ');
+            }
+            let rest = &bytes[20 + length..];
+            let mut output = Vec::new();
+            for word in [
+                GLB_MAGIC,
+                2,
+                (20 + text.len() + rest.len()) as u32,
+                text.len() as u32,
+                CHUNK_JSON,
+            ] {
+                output.extend_from_slice(&word.to_le_bytes());
+            }
+            output.extend(text);
+            output.extend_from_slice(rest);
+            output
+        };
+        let visual = parse_visuals(&pack(&json)).unwrap();
+        assert_eq!(visual[0].base_color_linear, [0.2, 0.4, 0.6, 1.]);
+        assert_eq!(visual[0].emissive_linear, [0.1, 0., 0.2]);
+        assert_eq!(visual[0].material, "paint");
+        assert!(visual[0].textured);
+        json["meshes"][0]["primitives"][0]["material"] = serde_json::json!(1);
+        assert!(parse_visuals(&pack(&json)).is_err());
+        json["meshes"][0]["primitives"][0]["material"] = serde_json::json!(0);
+        json["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"][0] = serde_json::json!(2.);
+        assert!(parse_visuals(&pack(&json)).is_err());
+    }
 
     /// A GLB with one right triangle in the xy plane and one raised copy of it
     /// under a translated node (so node transforms are exercised).

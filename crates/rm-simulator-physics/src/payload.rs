@@ -13,7 +13,10 @@
 //!     angular_velocity_rad_s:[0.;3],prescribed:true})?;
 //! physics.set_payload_motion(1,false,at,[0.;3],[0.;3])?;
 //! physics.step(0,&TargetFrames::new(vec![]))?;
-//! assert!(physics.payload(1).unwrap().pose.translation_m[2]<1.);
+//! let truth = physics.payload_telemetry(1).unwrap();
+//! assert!(truth.pose.translation_m[2]<1.);
+//! assert_eq!(truth.pose, physics.payload(1).unwrap().pose);
+//! assert_eq!(truth.shape.mass_kg, 0.25);
 //! # Ok::<(), &'static str>(())
 //! ```
 use super::*;
@@ -201,6 +204,23 @@ pub struct PayloadSnapshot {
     /// True while held or socket-coupled; colliders are disabled to avoid pushing its carrier.
     pub prescribed: bool,
 }
+/// Borrowed payload geometry plus copied physical motion, without cloning source hulls.
+/// This is privileged truth, not a complete physical checkpoint or a measured sensor.
+#[derive(Clone, Copy, Debug)]
+pub struct PayloadTelemetry<'a> {
+    /// Stable caller-owned identity.
+    pub id: u32,
+    /// Borrowed immutable convex envelopes and assumed mass.
+    pub shape: &'a PayloadShape,
+    /// Object-local to world FLU pose in metres and wxyz quaternion.
+    pub pose: Pose,
+    /// World linear velocity, in metres per second.
+    pub velocity_m_s: [f64; 3],
+    /// World angular velocity, in radians per second.
+    pub angular_velocity_rad_s: [f64; 3],
+    /// Whether motion is prescribed with collision disabled while coupled.
+    pub prescribed: bool,
+}
 pub(super) struct Body {
     id: u32,
     body: RigidBodyHandle,
@@ -268,6 +288,23 @@ impl WorldPhysics {
             state.angular_velocity_rad_s,
         )?;
         Ok(())
+    }
+    /// Borrow payload hulls and copy motion without allocating; unknown identities return `None`.
+    pub fn payload_telemetry(&self, id: u32) -> Option<PayloadTelemetry<'_>> {
+        let p = self.payloads.iter().find(|p| p.id == id)?;
+        let body = &self.world.bodies[p.body];
+        let q = body.rotation();
+        Some(PayloadTelemetry {
+            id,
+            shape: &p.shape,
+            pose: Pose {
+                translation_m: body.translation().to_array(),
+                rotation_wxyz: [q.w, q.x, q.y, q.z],
+            },
+            velocity_m_s: body.linvel().to_array(),
+            angular_velocity_rad_s: body.angvel().to_array(),
+            prescribed: body.is_kinematic(),
+        })
     }
     /// Current physical state of an installed payload, including resting objects.
     pub fn payload(&self, id: u32) -> Option<PayloadSnapshot> {
@@ -378,6 +415,15 @@ mod tests {
             world.step(i * tick_ns(), &frames).unwrap();
         }
         let state = world.payload(4).unwrap();
+        let view = world.payload_telemetry(4).unwrap();
+        assert_eq!(view.id, state.id);
+        assert_eq!(*view.shape, state.shape);
+        assert_eq!(view.pose, state.pose);
+        assert_eq!(view.velocity_m_s, state.velocity_m_s);
+        assert_eq!(view.angular_velocity_rad_s, state.angular_velocity_rad_s);
+        assert_eq!(view.prescribed, state.prescribed);
+        assert!(std::ptr::eq(view.shape, &world.payloads[0].shape));
+        assert!(world.payload_telemetry(999).is_none());
         assert!(
             (state.pose.translation_m[2] - 0.28).abs() < 0.004,
             "{state:?}"

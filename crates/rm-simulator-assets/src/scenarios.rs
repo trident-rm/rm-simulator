@@ -16,6 +16,8 @@ use rm_simulator_physics::{
 };
 use std::path::PathBuf;
 
+pub mod composition;
+
 /// Small isolated setups; source presets retain their approved arena placement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Preset {
@@ -237,21 +239,7 @@ impl Scenario {
         state: &MechanismState,
         output: &mut Vec<TargetFace>,
     ) -> anyhow::Result<()> {
-        validate_state(state)?;
-        output.clear();
-        output.extend(self.targets.iter().map(|target| {
-            let mut face = target.face;
-            if let Some(rotation) = target.rotation {
-                face.pose = OutpostModel::rotate_pose(
-                    face.pose,
-                    rotation.pivot_m,
-                    rotation.axis,
-                    state.fraction(rotation.mechanism, rotation.team),
-                );
-            }
-            face
-        }));
-        Ok(())
+        resolve_targets(&self.targets, state, output)
     }
     /// Create a fresh bare physical session with explicit timing and robot spawns.
     /// Catch ground is flat at z=0 for these isolated presets. Recipe reset retains
@@ -278,6 +266,27 @@ impl Scenario {
         .map_err(anyhow::Error::msg)?;
         RobotSession::new(recipe).map_err(anyhow::Error::msg)
     }
+}
+fn resolve_targets(
+    targets: &[ScenarioTarget],
+    state: &MechanismState,
+    output: &mut Vec<TargetFace>,
+) -> anyhow::Result<()> {
+    validate_state(state)?;
+    output.clear();
+    output.extend(targets.iter().map(|target| {
+        let mut face = target.face;
+        if let Some(rotation) = target.rotation {
+            face.pose = OutpostModel::rotate_pose(
+                face.pose,
+                rotation.pivot_m,
+                rotation.axis,
+                state.fraction(rotation.mechanism, rotation.team),
+            );
+        }
+        face
+    }));
+    Ok(())
 }
 fn validate_state(state: &MechanismState) -> anyhow::Result<()> {
     ensure!(

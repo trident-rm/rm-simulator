@@ -4,8 +4,9 @@
 
 `physics::session::batch::RobotBatch` and
 `world::session::batch::MatchBatch` own bounded collections of independent
-sessions. They use ordinary session commands and stepping, sequentially on the
-calling CPU thread. Each slot keeps its own physical world and, for a match,
+sessions. Their default `step` uses ordinary session commands and stepping,
+sequentially on the calling CPU thread. Optional [bounded CPU workers](parallel-rollouts.md)
+advance independent sessions with joined per-request outcomes. Each slot keeps its own physical world and, for a match,
 its native authority. There is no transport, renderer, policy inference, task,
 reward, GPU, worker pool or additional dependency. Batching organizes caller
 work and storage; it does not automatically make the physics solver faster.
@@ -181,12 +182,19 @@ Median microseconds per session operation across the five repetitions:
 Stepping costs are effectively unchanged here. The small reset differences are
 sensitive to execution/allocator order and are not evidence that whole-set
 transactional reset is inherently faster. Observation differences are only a few
-nanoseconds in this cache-resident fixture. No parallelism is offered by this
-foundation: the measurements do not justify changing solver ownership or adding
-threadpool dependencies.
+nanoseconds in this cache-resident fixture. These baseline measurements cover
+the sequential API only; the [parallel probe](parallel-rollouts.md) separately
+measures independent-environment throughput and scoped-thread dispatch costs.
 
 Raw output/check logs are retained at
 `local-assets/batched-rollouts-20261023/` in the development checkout and
 `/tmp/rm-batch-rollouts-20261023/logs/` on Talos. The private remote source and
 Cargo target directories are sibling `source/` and `target/` directories; they
 do not reuse the parent's baseline/final verification source or target.
+
+## Opt-in CPU workers
+
+The [parallel rollout guide](parallel-rollouts.md) describes `step_parallel`,
+finite worker admission, complete per-request runtime progress, synchronous
+selected-set reset and the independent-environment throughput probe. Existing
+sequential calls retain their completed-prefix failure behavior.

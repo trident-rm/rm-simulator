@@ -425,30 +425,62 @@ impl ArticulationConfig {
         self.joints
             .iter()
             .map(|j| {
-                let value = match j.drive {
-                    JointDrive::Transform => {
-                        if self.limit_rad > 0. {
-                            (input_rad / self.limit_rad).clamp(0., 1.)
-                        } else {
-                            0.
-                        }
-                    }
-                    JointDrive::Yaw => aim_rad[0],
-                    JointDrive::Pitch => aim_rad[1],
-                };
                 let pivot = Pose3::from_translation(Vector::from_array(j.pivot_m));
-                let rotation =
-                    Rotation::from_scaled_axis(Vector::from_array(j.axis) * (j.angle_rad * value));
-                let change =
-                    Pose3::from_parts(Vector::from_array(j.translation_m) * value, rotation);
-                let delta = j.parent.map_or(Pose3::IDENTITY, |p| deltas[p])
-                    * pivot
-                    * change
-                    * pivot.inverse();
+                let delta = self.joint_delta(
+                    j,
+                    j.parent.map_or(Pose3::IDENTITY, |p| deltas[p]),
+                    input_rad,
+                    aim_rad,
+                );
                 deltas.push(delta);
                 pose(delta * pivot)
             })
             .collect()
+    }
+    /// Evaluate one frame without allocating the full pose chain. The graph must
+    /// already be validated: chassis construction enforces <=64 topologically ordered joints.
+    pub(crate) fn joint_pose(&self, index: usize, input_rad: f64, aim_rad: [f64; 2]) -> Pose {
+        fn delta(
+            config: &ArticulationConfig,
+            index: usize,
+            input_rad: f64,
+            aim_rad: [f64; 2],
+        ) -> Pose3 {
+            let joint = &config.joints[index];
+            let parent = joint
+                .parent
+                .map_or(Pose3::IDENTITY, |p| delta(config, p, input_rad, aim_rad));
+            config.joint_delta(joint, parent, input_rad, aim_rad)
+        }
+        pose(
+            delta(self, index, input_rad, aim_rad)
+                * Pose3::from_translation(Vector::from_array(self.joints[index].pivot_m)),
+        )
+    }
+
+    fn joint_delta(
+        &self,
+        joint: &SourceJoint,
+        parent: Pose3,
+        input_rad: f64,
+        aim_rad: [f64; 2],
+    ) -> Pose3 {
+        let value = match joint.drive {
+            JointDrive::Transform => {
+                if self.limit_rad > 0. {
+                    (input_rad / self.limit_rad).clamp(0., 1.)
+                } else {
+                    0.
+                }
+            }
+            JointDrive::Yaw => aim_rad[0],
+            JointDrive::Pitch => aim_rad[1],
+        };
+        let pivot = Pose3::from_translation(Vector::from_array(joint.pivot_m));
+        let rotation =
+            Rotation::from_scaled_axis(Vector::from_array(joint.axis) * (joint.angle_rad * value));
+        let change = Pose3::from_parts(Vector::from_array(joint.translation_m) * value, rotation);
+        parent * pivot * change * pivot.inverse()
     }
     /// Body-local conservative envelopes in the same poses as their source shells.
     pub fn collision_parts(&self, input_rad: f64, aim_rad: [f64; 2]) -> Vec<(Pose, [f64; 3])> {
@@ -524,6 +556,36 @@ mod serial_tests {
         assert_eq!(b.len(), 1);
         assert!((b[0].0.translation_m[2] - 0.1).abs() < 1e-12);
         assert_eq!(c.poses(2., [0.; 2]), p);
+    }
+    #[test]
+    fn single_joint_matches_full_chain_for_nested_branches_and_maximum_depth() {
+        let mut c = fixture();
+        c.joints[0].pivot_m = [0.12, -0.25, 0.3];
+        c.joints[0].translation_m = [0.01, 0.02, -0.03];
+        c.joints[1].drive = JointDrive::Yaw;
+        c.joints[1].angle_rad = 1.;
+        let mut branch = c.joints[1].clone();
+        branch.name = "branch".into();
+        branch.parent = Some(0);
+        branch.pivot_m = [-0.1, 0.24, 0.17];
+        branch.drive = JointDrive::Pitch;
+        c.joints.push(branch);
+        // Extend one branch to the maximum admitted depth while retaining the sibling.
+        for index in 3..64 {
+            let mut joint = c.joints[2].clone();
+            joint.name = format!("joint-{index}");
+            joint.parent = Some(index - 1);
+            joint.pivot_m[0] += index as f64 * 0.001;
+            c.joints.push(joint);
+        }
+        c.validate().unwrap();
+        for input in [-0.5, 0., 0.4, 1., 2.] {
+            for aim in [[0.; 2], [0.6, -0.2], [-1., 0.5]] {
+                for (index, expected) in c.poses(input, aim).into_iter().enumerate() {
+                    assert_eq!(c.joint_pose(index, input, aim), expected);
+                }
+            }
+        }
     }
     #[test]
     fn invalid_graph_and_collision_frames_are_rejected() {

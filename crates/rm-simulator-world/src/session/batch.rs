@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! Bounded sequential CPU rollouts through the ordinary complete-match sessions.
+//! Bounded CPU rollouts through the ordinary complete-match sessions.
 //!
 //! Each slot owns its physics, clock and native authority. Task/reward state,
-//! sensor schedules and RNGs remain caller-owned; there is no worker or transport.
+//! sensor schedules and RNGs remain caller-owned. Sequential execution remains
+//! the default; [`parallel`] supplies opt-in scoped workers without a transport.
+
+/// Opt-in bounded CPU execution through ordinary match sessions.
+pub mod parallel;
 
 use super::{MatchCheckpoint, MatchSession, RobotCommand, Stamp};
 use crate::FieldError;

@@ -216,6 +216,12 @@ impl RobotSession {
         self.physics.chassis_control_state(robot)
     }
 
+    /// Borrow compact body, wheel and prescribed mechanism truth at [`Self::stamp`].
+    /// No configuration, hull or torque-request arrays are cloned; wheel hubs are derived lazily.
+    pub fn robot_telemetry(&self, robot: u32) -> Option<crate::chassis::ChassisTelemetry<'_>> {
+        self.physics.chassis_telemetry(robot)
+    }
+
     /// Read one robot's truth without constructing a full physical checkpoint.
     /// This clones its model configuration and wheel arrays; use
     /// [`Self::robot_control_state`] for an allocation-free controller observation.

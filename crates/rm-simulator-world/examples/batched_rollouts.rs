@@ -317,8 +317,14 @@ fn match_probe(count: usize, steps: usize, limits: BatchLimits, reverse: bool) -
     Ok(())
 }
 
+#[path = "batched_rollouts/parallel.rs"]
+mod parallel;
+
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|value| value == "--parallel") {
+        return parallel::run(&args[1..]);
+    }
     if args.len() > 3 {
         return Err("usage: batched_rollouts [sessions] [steps] [repetitions]".into());
     }

@@ -497,3 +497,109 @@ The navigation controller derives chassis forward from that box rotation,
 placing the real wheel layout in its X stance for a ramp. Following the resting
 barrel frame had unloaded one diagonal pair at the approach and stalled the
 omni drive. Suspension calibration and the rendered meshes remain as documented.
+
+## Native SolidWorks parser experiment (2026-10-23)
+
+An isolated evaluation of [sldkit](https://github.com/monozukuri-ai/sldkit) 0.2.0,
+revision `133d940daedd2fb710d424c658c7e28f8abf67f0`, used the original EGA
+release's 340 native documents (295 Parts, 45 Assemblies). It adds no simulator
+build dependency or runtime importer. The tool's current license includes
+PolyForm Noncommercial; it is outside this workspace's dependency policy.
+
+All 340 metadata parses returned `partial`, without a process/JSON failure.
+There were 1,418 saved configurations, 617 with cached mass-property records;
+325 files, including all 45 Assemblies, contained at least one such record.
+These are saved source tokens, not freshly calculated physical properties.
+The Sentry root had 112 component occurrences and 112 raw transform records.
+Its project scan parsed 196 documents and resolved 549 of 689 reference edges;
+140 were unresolved and one virtual component was unresolved. This is not a
+complete placed scene. The root also emitted a compression-size diagnostic.
+
+The root cache's mass token is `17.2538162690225612`; its three diagonal inertia
+tokens are approximately `760.870`, `1168.987`, `757.876`. Do **not** feed those
+numbers directly into physics. Interpreting all of them as SI violates the
+necessary inertia bounds from the saved metre-scale bounding box (about
+`4.828`, `5.988`, `4.925 kg m²`, respectively, using the cached COM). This flags
+unvalidated cache scale/frame/freshness; it does not establish a correction factor.
+The parser's unit labels also need verification: raw mass-unit code `3` is
+labelled `pound`, while the
+[SolidWorks enum it cites](https://help.solidworks.com/2026/English/api/swconst/SolidWorks.Interop.swconst~SolidWorks.Interop.swconst.swUnitsMassPropMass_e.html)
+assigns `3` to kilograms. Its volume label similarly disagrees with the cited
+[volume enum](https://help.solidworks.com/2024/english/api/swconst/SolidWorks.Interop.swconst~SolidWorks.Interop.swconst.swUnitsMassPropVolume_e.html)
+for code `4`. Internal saved-property semantics remain independently unverified.
+
+Part geometry recovery varied: a motor yielded 47 display meshes and plausible
+42 × 44 × 47 mm bounds; a bracket yielded analytic edges and 38 meshes; an LED
+module remained partial; a mirrored washer had no evaluated geometry. All recovered
+meshes in those samples were open per-face meshes, with no closed-mesh volume.
+Assembly geometry was explicitly unsupported. As documented by upstream,
+occurrence placement and mate semantics are not implemented. Raw matrix tokens
+are evidence rather than validated transforms.
+
+The practical boundary is an optional offline metadata/geometry probe. It is not
+currently a replacement for a checked SolidWorks assembly export. URDF is a
+reasonable input format for authored links, joints, visual/collision references
+and validated inertials; retain simulator wheel, actuator, armor and sensor
+semantics separately. Aggregate rigid subassemblies into physical links rather
+than treating each fastener as a dynamic link. Validate COM frames, tensor units,
+positive principal moments and parallel-axis transforms against an independent
+SolidWorks mass-property report before changing fitted dynamics. Importing URDF
+metadata alone does not replace the existing ray-wheel/prescribed-joint plant.
+
+Reproduce with upstream `cargo build --release --locked -p sldkit-cli`, then
+`sldkit-rs parse MODEL.SLDASM`, `sldkit-rs evaluate PART.SLDPRT` and
+`sldkit-rs scan MODEL.SLDASM --project-root SOURCE_DIRECTORY --summary`.
+The original files and raw probe results remain ignored development scratch at
+`local-assets/sldkit-eval/`; no source CAD or external parser code is redistributed.
+
+Other native-reader candidates are [openswx](https://github.com/schwitters/openswx)
+(MIT, C++20 metadata/BOM/cached physical properties plus partial Parasolid
+inspection), [swformat](https://github.com/KenM76/swformat) (Apache-2.0, Python
+partial native I/O) and [sldprt2xt](https://github.com/Emilien-Etadam/sldprt2xt)
+(AGPL-3.0, Part-to-Parasolid geometry extraction rather than a complete robot
+importer). swformat and sldprt2xt were documentation-reviewed, not tested against this EGA corpus.
+The next useful native comparison is openswx's cached property/occurrence output
+against the same files and an independent API report. For an export workflow,
+[sw2robot](https://github.com/jsk-ros-pkg/solidworks_urdf_exporter2) supplies an
+Apache-2.0 URDF pipeline, but its extraction phase still requires Windows and
+SolidWorks; its editor/build stages are cross-platform.
+
+
+### openswx comparison
+
+Tested [openswx](https://github.com/schwitters/openswx) at revision
+`a838a83e267fadbf8f01fd75a288b2ae517c9133` against the same 340 EGA files.
+An isolated Release CMake build compiled the upstream `swx_dump` CLI and parser
+libraries, excluding the unrelated HTTP server. No simulator dependency or
+upstream source modification was needed. Unlike sldkit's current combined
+license, openswx is MIT licensed.
+
+All 340 invocations returned valid JSON and exit status zero. They recovered
+1,418 configurations, 617 cached mass records across 325 files and 916 component
+occurrences. All 617 mass/COM/volume/area/inertia records matched sldkit's parsed
+numeric cache tokens exactly. This confirms cache extraction agreement, not the
+cache's physical correctness: the Sentry root still reports inertia diagonals
+around 761–1169, despite the metre-scale bounds discussed above. openswx labels
+these values SI but directly copies the saved tokens without conversion. An
+independent SolidWorks report is still required.
+
+The typed component interface includes a documented column-major parent-relative
+4×4 transform. Every one of the 916 exposed matrices passed orthonormal-basis and
+homogeneous-row checks at tolerance `1e-6`; the maximum basis error was
+`6.7e-16`. This establishes rigid-matrix structure only. Transform direction,
+parent composition and alignment to exported part geometry were not independently
+validated. Absent or malformed source transforms default to identity, so matrix
+validity alone cannot establish complete placement recovery.
+
+Its Parasolid library explicitly describes full topology, delta application and
+B-Rep construction as future work. Native reading therefore remains an optional
+offline metadata/occurrence candidate, not a complete replacement for our checked
+STEP-to-geometry pipeline or an automatic URDF/inertial importer. The next useful
+experiment is aligning a small resolved assembly to a trusted STEP export and
+comparing its link properties against SolidWorks API output.
+
+Reproduce the metadata probe with the upstream `swx_dump MODEL.SLDASM` command.
+The pinned source, minimal CMake harness, bounded four-process corpus probe,
+per-file results and aggregate `summary.json` remain ignored scratch in
+`local-assets/openswx-eval/`. No EGA source files or external parser code are
+redistributed by this repository.

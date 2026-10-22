@@ -31,6 +31,14 @@ impl Plane {
 }
 #[derive(Clone)]
 pub struct Options {
+    /// Use the CPU depth-rasterized orthographic source-material view.
+    pub orbit: bool,
+    /// Orbit azimuth around world +z, in radians.
+    pub yaw_rad: f64,
+    /// Orbit elevation above the world xy plane, in radians.
+    pub elevation_rad: f64,
+    /// Add x-ray collider edges over the 3D surfaces; wire planes always draw edges.
+    pub collision_overlay: bool,
     pub plane: Plane,
     pub fixed: bool,
     pub moving: bool,
@@ -42,6 +50,10 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            orbit: false,
+            yaw_rad: 0.7,
+            elevation_rad: 0.45,
+            collision_overlay: false,
             plane: Plane::Top,
             fixed: true,
             moving: true,
@@ -57,6 +69,7 @@ struct Canvas {
     center: [f64; 2],
     scale: f64,
     plane: Plane,
+    orbit: Option<crate::viewport::Camera>,
 }
 impl Canvas {
     fn new(min: [f64; 2], max: [f64; 2], options: &Options) -> Self {
@@ -68,9 +81,14 @@ impl Canvas {
             center: [(min[0] + max[0]) / 2., (min[1] + max[1]) / 2.],
             scale,
             plane: options.plane,
+            orbit: None,
         }
     }
     fn pixel(&self, p: [f64; 3]) -> [f64; 2] {
+        if let Some(camera) = &self.orbit {
+            let p = camera.project(p);
+            return [p[0], p[1]];
+        }
         let p = self.plane.project(p);
         [
             WIDTH as f64 / 2. + (p[0] - self.center[0]) * self.scale,
@@ -134,7 +152,18 @@ fn clip(a: [f64; 2], b: [f64; 2]) -> Option<([f64; 2], [f64; 2])> {
     ))
 }
 
+/// Render the selected view; source-load failure returns a dark red error image.
+/// Call `viewport::render` to retain error details, depth and source picking.
 pub fn render(model: &Inspector, options: &Options) -> Vec<u8> {
+    if options.orbit {
+        return crate::viewport::render(model, options)
+            .map(|f| f.pixels)
+            .unwrap_or_else(|_| [80, 15, 25, 255].repeat((WIDTH * HEIGHT) as usize));
+    }
+    render_wire(model, options)
+}
+
+fn render_wire(model: &Inspector, options: &Options) -> Vec<u8> {
     let mut points = model.placed.fixed.vertices_m.clone();
     for (i, part) in model.placed.moving.iter().enumerate() {
         points.extend(
@@ -186,6 +215,28 @@ pub fn render(model: &Inspector, options: &Options) -> Vec<u8> {
             c.line(to3(a), to3(b), [29, 41, 55, 255]);
         }
     }
+    draw_overlays(model, options, &mut c);
+    c.pixels
+}
+
+/// Draw x-ray diagnostic overlays in the exact orbit projection used by surfaces.
+pub(crate) fn orbit_overlays(
+    model: &Inspector,
+    options: &Options,
+    camera: crate::viewport::Camera,
+    pixels: Vec<u8>,
+) -> Vec<u8> {
+    let mut c = Canvas {
+        pixels,
+        center: [0.; 2],
+        scale: 1.,
+        plane: options.plane,
+        orbit: Some(camera),
+    };
+    draw_overlays(model, options, &mut c);
+    c.pixels
+}
+fn draw_overlays(model: &Inspector, options: &Options, c: &mut Canvas) {
     let mut mesh =
         |vertices: &[[f64; 3]], triangles: &[[u32; 3]], channel: Option<usize>, color| {
             for t in triangles {
@@ -198,7 +249,7 @@ pub fn render(model: &Inspector, options: &Options) -> Vec<u8> {
                 }
             }
         };
-    if options.fixed {
+    if options.fixed && (!options.orbit || options.collision_overlay) {
         mesh(
             &model.placed.fixed.vertices_m,
             &model.placed.fixed.triangles,
@@ -206,7 +257,7 @@ pub fn render(model: &Inspector, options: &Options) -> Vec<u8> {
             [74, 148, 135, 255],
         );
     }
-    if options.moving {
+    if options.moving && (!options.orbit || options.collision_overlay) {
         for (i, p) in model.placed.moving.iter().enumerate() {
             mesh(
                 &p.mesh.vertices_m,
@@ -277,9 +328,9 @@ pub fn render(model: &Inspector, options: &Options) -> Vec<u8> {
             }
         }
         for wheel in robot.wheels {
-            cross(&mut c, wheel.hub_m, [80, 225, 244, 255], 3.);
+            cross(c, wheel.hub_m, [80, 225, 244, 255], 3.);
             if let Some(contact) = wheel.contact {
-                cross(&mut c, contact.point_m, [119, 239, 160, 255], 2.);
+                cross(c, contact.point_m, [119, 239, 160, 255], 2.);
             }
         }
         c.line(
@@ -292,19 +343,40 @@ pub fn render(model: &Inspector, options: &Options) -> Vec<u8> {
         );
     }
     for projectile in model.projectiles() {
-        cross(&mut c, projectile.position_m, [255, 230, 90, 255], 4.);
+        cross(c, projectile.position_m, [255, 230, 90, 255], 4.);
     }
     for contact in model.contacts() {
-        cross(&mut c, contact.position_m, [255, 80, 180, 255], 6.);
+        cross(c, contact.position_m, [255, 80, 180, 255], 6.);
     }
-    // Always visible orientation glyph, same world axes as detector frames.
     let origin = [38., HEIGHT as f64 - 38.];
-    c.pixel_line(origin, [origin[0] + 26., origin[1]], [255, 100, 108, 255]);
-    c.pixel_line(origin, [origin[0], origin[1] - 26.], [119, 239, 160, 255]);
-    c.pixels
+    if c.orbit.is_some() {
+        let zero = c.pixel([0.; 3]);
+        let vectors = [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]].map(|p| {
+            let q = c.pixel(p);
+            [q[0] - zero[0], q[1] - zero[1]]
+        });
+        let extent = vectors.iter().map(|v| v[0].hypot(v[1])).fold(1., f64::max);
+        for (v, color) in vectors.into_iter().zip([
+            [255, 100, 108, 255],
+            [119, 239, 160, 255],
+            [111, 177, 255, 255],
+        ]) {
+            c.pixel_line(
+                origin,
+                [
+                    origin[0] + 26. * v[0] / extent,
+                    origin[1] + 26. * v[1] / extent,
+                ],
+                color,
+            );
+        }
+    } else {
+        c.pixel_line(origin, [origin[0] + 26., origin[1]], [255, 100, 108, 255]);
+        c.pixel_line(origin, [origin[0], origin[1] - 26.], [119, 239, 160, 255]);
+    }
 }
 
-fn box_corners(pose: rm_simulator_physics::Pose, half: [f64; 3]) -> [[f64; 3]; 8] {
+pub(crate) fn box_corners(pose: rm_simulator_physics::Pose, half: [f64; 3]) -> [[f64; 3]; 8] {
     std::array::from_fn(|i| {
         math::add(
             pose.translation_m,

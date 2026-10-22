@@ -1330,6 +1330,77 @@ pub struct ChassisSnapshot {
     pub defeated: bool,
 }
 
+/// Borrowed privileged chassis truth, without cloning configuration or wheel storage.
+///
+/// Scalar poses and motion are copied from the current body. Wheel hubs are derived
+/// lazily; this view does not expose solver contacts or warm starts. Gimbal and
+/// folding coordinates describe the existing prescribed mechanisms, not articulated
+/// joint torque dynamics. Holding the view prevents mutation of its physical world.
+pub struct ChassisTelemetry<'a> {
+    /// Stable chassis identity.
+    pub id: u32,
+    /// Assigned team.
+    pub team: Team,
+    /// Body pose in world FLU metres and wxyz quaternion.
+    pub pose: Pose,
+    /// Stabilized gun pivot pose in world FLU.
+    pub turret: Pose,
+    /// World linear velocity in metres per second.
+    pub velocity_m_s: [f64; 3],
+    /// World angular velocity in radians per second.
+    pub angular_velocity_rad_s: [f64; 3],
+    /// Actual prescribed gimbal heading and elevation, in radians.
+    pub held_aim_rad: [f64; 2],
+    /// Actual prescribed gimbal motor rates, in radians per second.
+    pub gimbal_velocity_rad_s: [f64; 2],
+    /// Actual prescribed folding/linkage coordinate, in radians.
+    pub fold_angle_rad: f64,
+    /// Held high-level input; drive components may be dormant in torque mode.
+    pub command: ChassisCommand,
+    /// Borrowed drive mode and wheel torque requests; no request array is cloned.
+    pub drive_control: &'a DriveControl,
+    /// Placement/revival revision, for detecting discontinuities.
+    pub placement_revision: u64,
+    /// Whether defeat disables actuation.
+    pub defeated: bool,
+    /// Measured drive motor load, in watts.
+    pub drive_power_w: f64,
+    chassis: &'a Chassis,
+    world: &'a PhysicsWorld,
+}
+impl ChassisTelemetry<'_> {
+    /// Derive compact wheel values in configured hub order, without allocating.
+    /// Contact values are the wheel model's stored ray observations, not solver state.
+    pub fn wheels(&self) -> impl ExactSizeIterator<Item = WheelSnapshot> + '_ {
+        let pose = *self.world.bodies[self.chassis.body].position();
+        self.chassis
+            .wheels
+            .iter()
+            .zip(&self.chassis.geometry)
+            .map(move |(wheel, geometry)| WheelSnapshot {
+                hub_m: pose
+                    .transform_point(
+                        geometry.hub_m
+                            + Vector::Z
+                                * (wheel.suspension_compression_m
+                                    - self.chassis.config.suspension_rest_m),
+                    )
+                    .to_array(),
+                spin_rad: wheel.spin_rad,
+                angular_velocity_rad_s: wheel.angular_velocity_rad_s,
+                suspension_compression_m: wheel.suspension_compression_m,
+                target_m_s: wheel.target_m_s,
+                contact: wheel.contact,
+            })
+    }
+
+    /// Replace caller wheel output, retaining its allocation when capacity suffices.
+    pub fn wheels_into(&self, out: &mut Vec<WheelSnapshot>) {
+        out.clear();
+        out.extend(self.wheels());
+    }
+}
+
 /// Allocation-free state for a controller; excludes geometry, configuration and wheel arrays.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChassisControlState {
@@ -1801,11 +1872,12 @@ impl Chassis {
                     self.aim_rad[1].cos() * self.aim_rad[0].sin(),
                     self.aim_rad[1].sin(),
                 );
-            let frames = a.poses(
+            let frame = a.joint_pose(
+                index,
                 self.fold_angle_rad,
                 [local.y.atan2(local.x), local.z.clamp(-1., 1.).asin()],
             );
-            let head = body.position() * rapier_pose(frames[index]);
+            let head = body.position() * rapier_pose(frame);
             return Pose {
                 translation_m: head.translation.to_array(),
                 rotation_wxyz: [
@@ -2374,51 +2446,47 @@ impl Chassis {
             defeated: self.defeated,
         }
     }
-    /// Read the body, wheel and gimbal state into a serializable snapshot.
-    pub(crate) fn snapshot(&self, world: &PhysicsWorld) -> ChassisSnapshot {
+    pub(crate) fn telemetry<'a>(&'a self, world: &'a PhysicsWorld) -> ChassisTelemetry<'a> {
         let body = &world.bodies[self.body];
-        let rotation = body.rotation();
-        let pose = *body.position();
-        let turret = self.turret_pose(world);
-        ChassisSnapshot {
-            fold_angle_rad: self.fold_angle_rad,
-            placement_revision: self.placement_revision,
+        ChassisTelemetry {
             id: self.id,
             team: self.team,
-            config: self.config.clone(),
-            pose: Pose {
-                translation_m: body.translation().to_array(),
-                rotation_wxyz: [rotation.w, rotation.x, rotation.y, rotation.z],
-            },
-            turret,
+            pose: pose_of(body),
+            turret: self.turret_pose(world),
             velocity_m_s: body.linvel().to_array(),
             angular_velocity_rad_s: body.angvel().to_array(),
-            command: self.command,
-            drive_control: self.drive_control.clone(),
-            jump_held: self.jump_held,
             held_aim_rad: self.aim_rad,
             gimbal_velocity_rad_s: self.gimbal_velocity_rad_s,
-            wheels: self
-                .wheels
-                .iter()
-                .zip(&self.geometry)
-                .map(|(wheel, geometry)| WheelSnapshot {
-                    hub_m: pose
-                        .transform_point(
-                            geometry.hub_m
-                                + Vector::Z
-                                    * (wheel.suspension_compression_m
-                                        - self.config.suspension_rest_m),
-                        )
-                        .to_array(),
-                    spin_rad: wheel.spin_rad,
-                    angular_velocity_rad_s: wheel.angular_velocity_rad_s,
-                    suspension_compression_m: wheel.suspension_compression_m,
-                    target_m_s: wheel.target_m_s,
-                    contact: wheel.contact,
-                })
-                .collect(),
+            fold_angle_rad: self.fold_angle_rad,
+            command: self.command,
+            drive_control: &self.drive_control,
+            placement_revision: self.placement_revision,
             defeated: self.defeated,
+            drive_power_w: self.drive_power_w,
+            chassis: self,
+            world,
+        }
+    }
+    /// Read the body, wheel and gimbal state into a serializable snapshot.
+    pub(crate) fn snapshot(&self, world: &PhysicsWorld) -> ChassisSnapshot {
+        let truth = self.telemetry(world);
+        ChassisSnapshot {
+            fold_angle_rad: truth.fold_angle_rad,
+            placement_revision: truth.placement_revision,
+            id: truth.id,
+            team: truth.team,
+            config: self.config.clone(),
+            pose: truth.pose,
+            turret: truth.turret,
+            velocity_m_s: truth.velocity_m_s,
+            angular_velocity_rad_s: truth.angular_velocity_rad_s,
+            command: truth.command,
+            drive_control: truth.drive_control.clone(),
+            jump_held: self.jump_held,
+            held_aim_rad: truth.held_aim_rad,
+            gimbal_velocity_rad_s: truth.gimbal_velocity_rad_s,
+            wheels: truth.wheels().collect(),
+            defeated: truth.defeated,
         }
     }
 }
@@ -3757,6 +3825,94 @@ mod tests {
             let after = run(&mut physics, 22);
             assert!(after.pose.translation_m[2] < before.pose.translation_m[2] + 0.02);
         }
+    }
+
+    #[test]
+    fn source_chain_turret_telemetry_matches_full_pose_evaluation() {
+        use crate::mechanism::{ArticulationConfig, JointDrive, SourceJoint};
+        let mut config = ChassisConfig::default();
+        config.articulation = Some(ArticulationConfig {
+            profile: "telemetry-source-chain-fixture".into(),
+            limit_rad: 1.,
+            speed_rad_s: 0.5,
+            muzzle_offset_m: [0.2, 0., 0.],
+            camera_offset_m: [0.1, 0., 0.],
+            armor_faces: config.armor_faces(),
+            joints: vec![
+                SourceJoint {
+                    name: "mount".into(),
+                    parent: None,
+                    pivot_m: [0.1, -0.2, 0.15],
+                    axis: [0., 1., 0.],
+                    angle_rad: 0.5,
+                    translation_m: [0.02, 0.01, -0.03],
+                    drive: JointDrive::Transform,
+                    collision: None,
+                },
+                SourceJoint {
+                    name: "yaw".into(),
+                    parent: Some(0),
+                    pivot_m: [0.04, 0.02, 0.2],
+                    axis: [0., 0., 1.],
+                    angle_rad: 1.,
+                    translation_m: [0.; 3],
+                    drive: JointDrive::Yaw,
+                    collision: None,
+                },
+                SourceJoint {
+                    name: "pitch".into(),
+                    parent: Some(1),
+                    pivot_m: [0.1, 0.03, 0.25],
+                    axis: [0., 1., 0.],
+                    angle_rad: -1.,
+                    translation_m: [0.; 3],
+                    drive: JointDrive::Pitch,
+                    collision: None,
+                },
+            ],
+        });
+        let mut world = crate::WorldPhysics::new(&[], 0.);
+        let id = world
+            .add_chassis(Team::Red, config, Pose::yawed([1., -2., 0.4], 0.7))
+            .unwrap();
+        world
+            .command_chassis(
+                id,
+                ChassisCommand {
+                    folded: true,
+                    aim_yaw_rad: -0.4,
+                    aim_pitch_rad: 0.2,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let frames = crate::TargetFrames::new(vec![]);
+        for tick in 0..8 {
+            world.step(tick * crate::tick_ns(), &frames).unwrap();
+        }
+        let full = world.chassis_snapshot(id).unwrap();
+        let articulation = full.config.articulation.as_ref().unwrap();
+        let body = rapier_pose(full.pose);
+        let local = body.rotation.inverse()
+            * Vector::new(
+                full.held_aim_rad[1].cos() * full.held_aim_rad[0].cos(),
+                full.held_aim_rad[1].cos() * full.held_aim_rad[0].sin(),
+                full.held_aim_rad[1].sin(),
+            );
+        let poses = articulation.poses(
+            full.fold_angle_rad,
+            [local.y.atan2(local.x), local.z.clamp(-1., 1.).asin()],
+        );
+        let expected = body * rapier_pose(poses[2]);
+        let q = expected.rotation;
+        let expected = Pose {
+            translation_m: expected.translation.to_array(),
+            rotation_wxyz: [q.w, q.x, q.y, q.z],
+        };
+        let view = world.chassis_telemetry(id).unwrap();
+        assert_eq!(view.turret, expected);
+        assert_eq!(view.turret, full.turret);
+        assert_eq!(view.wheels().collect::<Vec<_>>(), full.wheels);
     }
 
     #[test]

@@ -187,3 +187,9 @@ integration duration and timestamp. Selection/limits/overflow failures are
 rejected before mutation; runtime command or integration errors report retained
 partial progress. Selective reset prepares all replacements before swapping.
 There is no thread pool, task/reward policy or implicit sensor reset.
+
+For reusable multi-equipment fixtures, use [scenario composition](composable-scenarios.md).
+Read [borrowed telemetry](telemetry.md) when a controller needs wheel or prescribed
+joint state without cloning a complete checkpoint/model. [Scoped CPU workers](parallel-rollouts.md)
+parallelize independent session requests with explicit per-request results and
+no background work surviving a call; sensors and task/reward state remain external.

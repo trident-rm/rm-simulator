@@ -21,7 +21,7 @@ use std::collections::HashMap;
 pub use crate::geometry::{MovingGeometry, StaticGeometry};
 #[path = "payload.rs"]
 mod payload;
-pub use payload::{PayloadShape, PayloadSnapshot};
+pub use payload::{PayloadShape, PayloadSnapshot, PayloadTelemetry};
 
 fn outside_projectile_bounds(bounds: Option<[[f64; 3]; 2]>, point: Vector, radius_m: f64) -> bool {
     bounds.is_some_and(|[low, high]| {
@@ -1024,6 +1024,11 @@ impl WorldPhysics {
             out.append(trace);
         }
     }
+    /// Borrow undrained IMU carrier samples without consuming them.
+    /// `None` means tracing is disabled; an empty slice means enabled with no samples.
+    pub fn carrier_trace(&self) -> Option<&[crate::sensors::imu::CarrierSample]> {
+        self.carrier_trace.as_deref()
+    }
     /// Substep samples dropped because the trace was full since it was enabled.
     pub fn carrier_trace_dropped(&self) -> u64 {
         self.carrier_trace_dropped
@@ -1224,6 +1229,21 @@ impl WorldPhysics {
     pub fn chassis_control_state(&self, id: u32) -> Option<crate::chassis::ChassisControlState> {
         self.chassis_ref(id).map(|c| c.control_state(&self.world))
     }
+    /// Borrow compact body, prescribed gimbal/folding and wheel truth without cloning geometry.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{WorldPhysics, Team, Pose, chassis::ChassisConfig};
+    /// let mut world = WorldPhysics::new(&[], 0.);
+    /// let id = world.add_chassis(Team::Red, ChassisConfig::default(), Pose::at([0., 0., 0.4]))?;
+    /// let mut wheels = Vec::new();
+    /// let truth = world.chassis_telemetry(id).unwrap();
+    /// truth.wheels_into(&mut wheels);
+    /// assert_eq!(wheels.len(), truth.wheels().len());
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn chassis_telemetry(&self, id: u32) -> Option<crate::chassis::ChassisTelemetry<'_>> {
+        self.chassis_ref(id).map(|c| c.telemetry(&self.world))
+    }
     /// One chassis' state without walking the rules, for a replay that reads
     /// its own robot every tick and nothing else.
     pub fn chassis_snapshot(&self, id: u32) -> Option<ChassisSnapshot> {
@@ -1368,6 +1388,14 @@ impl WorldPhysics {
         }
         self.policy = policy;
         Ok(())
+    }
+    /// Borrow pending projectile removal records, oldest first, without draining them.
+    pub fn removals(&self) -> impl ExactSizeIterator<Item = &Removal> {
+        self.removals.iter()
+    }
+    /// Append pending removals to caller storage and empty the queue, retaining its capacity.
+    pub fn drain_removals(&mut self, out: &mut Vec<Removal>) {
+        out.extend(self.removals.drain(..));
     }
     /// Take the recent removal records, oldest first, leaving none behind.
     /// Instrumentation for lifetime studies; stepping never reads them.
@@ -1975,6 +2003,14 @@ impl WorldPhysics {
             self.chassis[index].armor_touching = touching;
         }
     }
+    /// Borrow pending raw armor collisions in substep order, without draining them.
+    pub fn armor_collisions(&self) -> &[ArmorCollision] {
+        &self.armor_collisions
+    }
+    /// Append pending raw armor collisions and empty the queue, retaining both allocations.
+    pub fn drain_armor_collisions(&mut self, out: &mut Vec<ArmorCollision>) {
+        out.append(&mut self.armor_collisions);
+    }
     /// Take the armor collisions recorded since the last call, in the order
     /// the substeps found them. The caller decides whether they score.
     pub fn take_armor_collisions(&mut self) -> Vec<ArmorCollision> {
@@ -1982,23 +2018,41 @@ impl WorldPhysics {
     }
     /// Every projectile in flight, oldest first.
     pub fn snapshot(&self) -> Vec<ProjectileSnapshot> {
-        self.projectiles
-            .iter()
-            .map(|projectile| {
-                let body = &self.world.bodies[projectile.body];
-                ProjectileSnapshot {
-                    id: projectile.id,
-                    caliber: projectile.caliber,
-                    launched_ns: projectile.launched_ns,
-                    position_m: body.translation().to_array(),
-                    velocity_m_s: body.linvel().to_array(),
-                    angular_velocity_rad_s: body.angvel().to_array(),
-                    shooter: projectile.shooter,
-                    first_contact_ns: projectile.first_contact_ns,
-                    dwell_since_ns: projectile.dwell_since_ns,
-                }
-            })
-            .collect()
+        self.projectile_states().collect()
+    }
+    /// Iterate derived scalar projectile states, oldest first, without allocating.
+    /// Body coordinates are copied; no solver state or event queue is exposed or drained.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{WorldPhysics, Pose, Shot, Caliber};
+    /// let mut world = WorldPhysics::new(&[], 0.);
+    /// world.fire(0, Pose::at([0., 0., 1.]), Shot::at_limit(Caliber::Mm17), None)?;
+    /// let mut states = Vec::with_capacity(64);
+    /// world.projectile_states_into(&mut states);
+    /// assert_eq!(states.len(), world.projectile_states().len());
+    /// assert_eq!(states, world.snapshot());
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn projectile_states(&self) -> impl ExactSizeIterator<Item = ProjectileSnapshot> + '_ {
+        self.projectiles.iter().map(|projectile| {
+            let body = &self.world.bodies[projectile.body];
+            ProjectileSnapshot {
+                id: projectile.id,
+                caliber: projectile.caliber,
+                launched_ns: projectile.launched_ns,
+                position_m: body.translation().to_array(),
+                velocity_m_s: body.linvel().to_array(),
+                angular_velocity_rad_s: body.angvel().to_array(),
+                shooter: projectile.shooter,
+                first_contact_ns: projectile.first_contact_ns,
+                dwell_since_ns: projectile.dwell_since_ns,
+            }
+        })
+    }
+    /// Replace caller projectile output, retaining its allocation when capacity suffices.
+    pub fn projectile_states_into(&self, out: &mut Vec<ProjectileSnapshot>) {
+        out.clear();
+        out.extend(self.projectile_states());
     }
 }
 
@@ -2041,6 +2095,142 @@ pub fn scoring_offset(target: ArmorTarget, local_m: [f64; 3]) -> Option<[f64; 2]
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn telemetry_matches_snapshots_and_retains_caller_storage() {
+        for config in [ChassisConfig::default(), ChassisConfig::folding_hero()] {
+            let mut world = WorldPhysics::new(&[], 0.);
+            let id = world
+                .add_chassis(Team::Red, config, Pose::at([0., 0., 0.4]))
+                .unwrap();
+            world
+                .command_chassis(
+                    id,
+                    ChassisCommand {
+                        forward_m_s: 1.,
+                        aim_yaw_rad: 0.3,
+                        aim_pitch_rad: 0.2,
+                        folded: true,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            world
+                .command_chassis_wheel_torques(
+                    id,
+                    crate::control::WheelTorques::new(vec![0.2; 4]).unwrap(),
+                )
+                .unwrap();
+            let frames = TargetFrames::new(vec![]);
+            for i in 0..4 {
+                world.step(i * tick_ns(), &frames).unwrap();
+            }
+            let full = world.chassis_snapshot(id).unwrap();
+            let view = world.chassis_telemetry(id).unwrap();
+            assert_eq!(view.id, full.id);
+            assert_eq!(view.team, full.team);
+            assert_eq!(view.pose, full.pose);
+            assert_eq!(view.turret, full.turret);
+            assert_eq!(view.velocity_m_s, full.velocity_m_s);
+            assert_eq!(view.angular_velocity_rad_s, full.angular_velocity_rad_s);
+            assert_eq!(view.command, full.command);
+            assert_eq!(view.drive_control, &full.drive_control);
+            assert_eq!(view.held_aim_rad, full.held_aim_rad);
+            assert_eq!(view.gimbal_velocity_rad_s, full.gimbal_velocity_rad_s);
+            assert_eq!(view.fold_angle_rad, full.fold_angle_rad);
+            assert_eq!(view.placement_revision, full.placement_revision);
+            assert_eq!(view.defeated, full.defeated);
+            let mut wheels = Vec::with_capacity(16);
+            let allocation = wheels.as_ptr();
+            view.wheels_into(&mut wheels);
+            view.wheels_into(&mut wheels);
+            assert_eq!(wheels, full.wheels);
+            assert_eq!(allocation, wheels.as_ptr());
+            assert!(world.chassis_telemetry(id + 1).is_none());
+        }
+        let mut world = WorldPhysics::new(&[], 0.);
+        for y in [0., 1.] {
+            world
+                .fire(
+                    0,
+                    Pose::at([0., y, 2.]),
+                    Shot::at_limit(Caliber::Mm17),
+                    None,
+                )
+                .unwrap();
+        }
+        let full = world.snapshot();
+        let mut states = Vec::with_capacity(64);
+        let allocation = states.as_ptr();
+        world.projectile_states_into(&mut states);
+        world.projectile_states_into(&mut states);
+        assert_eq!(states, full);
+        assert_eq!(allocation, states.as_ptr());
+    }
+
+    #[test]
+    fn telemetry_reads_preserve_pending_events_and_explicit_drains_reuse_storage() {
+        let mut world = WorldPhysics::new(&[], 0.);
+        world.set_carrier_trace(true);
+        world
+            .add_chassis(Team::Red, ChassisConfig::default(), Pose::at([0., 0., 0.4]))
+            .unwrap();
+        world.step(0, &TargetFrames::new(vec![])).unwrap();
+        let samples = world.carrier_trace().unwrap().to_vec();
+        assert!(!samples.is_empty());
+        assert_eq!(world.carrier_trace().unwrap(), samples);
+        let mut trace = Vec::with_capacity(samples.len() * 2);
+        let allocation = trace.as_ptr();
+        world.drain_carrier_trace(&mut trace);
+        assert_eq!(trace, samples);
+        assert_eq!(allocation, trace.as_ptr());
+        assert!(world.carrier_trace().unwrap().is_empty());
+        world.set_carrier_trace(false);
+        assert!(world.carrier_trace().is_none());
+
+        // Inject ordered pending events to isolate observation/drain semantics.
+        let collision = ArmorCollision {
+            chassis: 0,
+            plate: 0,
+            other_chassis: None,
+            position_m: [0.; 3],
+            normal_speed_m_s: 2.,
+        };
+        world.armor_collisions.push(collision);
+        let queue_allocation = world.armor_collisions.as_ptr();
+        assert_eq!(world.armor_collisions(), &[collision]);
+        assert_eq!(world.armor_collisions(), &[collision]);
+        let mut collisions = Vec::with_capacity(2);
+        let allocation = collisions.as_ptr();
+        world.drain_armor_collisions(&mut collisions);
+        assert_eq!(collisions, vec![collision]);
+        assert_eq!(allocation, collisions.as_ptr());
+        assert_eq!(queue_allocation, world.armor_collisions.as_ptr());
+        assert!(world.armor_collisions().is_empty());
+
+        world
+            .fire(
+                0,
+                Pose::at([0., 0., 2.]),
+                Shot::at_limit(Caliber::Mm17),
+                None,
+            )
+            .unwrap();
+        for i in 1..=520 {
+            world
+                .step(i * tick_ns(), &TargetFrames::new(vec![]))
+                .unwrap();
+        }
+        let count = world.removals().len();
+        assert!(count > 0);
+        assert_eq!(world.removals().len(), count);
+        let mut removals = Vec::with_capacity(count);
+        let allocation = removals.as_ptr();
+        world.drain_removals(&mut removals);
+        assert_eq!(removals.len(), count);
+        assert_eq!(allocation, removals.as_ptr());
+        assert_eq!(world.removals().len(), 0);
+    }
+
     #[test]
     fn compact_chassis_control_state_tracks_pose_input_revision_and_defeat() {
         let mut world = super::WorldPhysics::new(&[], 0.);

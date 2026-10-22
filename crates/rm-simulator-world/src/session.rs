@@ -102,6 +102,15 @@ impl MatchSession {
         self.field.chassis_control_state(robot)
     }
 
+    /// Borrow compact body, wheel and prescribed mechanism truth at [`Self::stamp`].
+    /// No configuration, hull or torque-request arrays are cloned; wheel hubs are derived lazily.
+    pub fn robot_telemetry(
+        &self,
+        robot: u32,
+    ) -> Option<rm_simulator_physics::chassis::ChassisTelemetry<'_>> {
+        self.field.chassis_telemetry(robot)
+    }
+
     /// Read one robot's actual state; unknown identities return `None`.
     pub fn robot_truth(&self, robot: u32) -> Option<RobotTruth> {
         self.field.chassis_snapshot(robot).map(|state| RobotTruth {
@@ -229,6 +238,21 @@ mod tests {
             ..Default::default()
         })
         .unwrap()
+    }
+
+    #[test]
+    fn telemetry_facades_match_current_snapshot() {
+        let mut session = MatchSession::new(scenario());
+        session.step(4).unwrap();
+        let full = session.robot_truth(0).unwrap();
+        let view = session.robot_telemetry(0).unwrap();
+        assert_eq!(view.pose, full.state.pose);
+        assert_eq!(view.wheels().collect::<Vec<_>>(), full.state.wheels);
+        assert_eq!(
+            session.ground_truth().chassis_telemetry(0).unwrap().turret,
+            view.turret
+        );
+        assert!(session.robot_telemetry(99).is_none());
     }
 
     #[test]

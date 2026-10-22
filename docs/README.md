@@ -21,7 +21,10 @@ Git history.
 | Source equipment presets, recipe resets and modular rule observations | [Standalone scenarios](standalone-scenarios.md) |
 | Standalone native Outpost/Base transitions and Rune authority | [Equipment rule modules](equipment-rule-modules.md) |
 | Independent CPU batches, selective reset and rollout measurements | [Batched rollouts](batched-rollouts.md) |
-| Optional RXUI equipment inspector, robot controls and orthographic overlays | [Scenario inspector](scenario-inspector.md) |
+| Composable equipment, terrain, robot and RFID scenarios | [Scenario composition](composable-scenarios.md) |
+| Borrowed wheel, payload, projectile and event truth | [Telemetry](telemetry.md) |
+| Bounded CPU rollout workers and measured scaling | [Parallel rollouts](parallel-rollouts.md) |
+| Optional RXUI inspector, source-color 3D, robot controls and overlays | [Scenario inspector](scenario-inspector.md) |
 | Live-game navigation integration design, joint feedback and deferred MuJoCo | [Robotics next steps](robotics-next-steps.md) |
 | Graphics presets, render limits and CPU-contention measurements | [Graphics performance](performance-graphics-20261023.md) |
 | Nearest-hit geometry and ideal LiDAR acquisition | [Navigation sensors](navigation-sensors.md) |

@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! Bounded sequential CPU rollouts over independent physical worlds.
+//! Bounded CPU rollouts over independent physical worlds.
 //!
 //! Slots keep their own immutable step duration and clock. Grouping independent
 //! sessions changes neither their commands nor their integration order. Task,
 //! reward, seeds, sensors and sampling schedules remain caller-owned. This facade
-//! does not accelerate the solver or create threads.
+//! uses sequential execution by default; [`parallel`] adds opt-in scoped workers.
+
+/// Opt-in bounded CPU execution and complete per-request progress.
+pub mod parallel;
 
 use super::{RobotCommand, RobotSession, Stamp};
 use crate::{StepDuration, chassis::ChassisControlState, projectile::Contact};

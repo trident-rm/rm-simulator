@@ -3,7 +3,7 @@
 # Runtime and game separation design
 
 Status: sessions, the backend-neutral wheel model, standalone equipment presets,
-borrowed structure transitions and sequential rollout batches are implemented
+borrowed structure transitions, composable scenarios, compact telemetry and bounded CPU rollout batches are implemented
 (2026-10-23). Further model and solver extraction below remain proposed; the
 Rapier dynamics backend is unchanged. This design extends the [current architecture](architecture-refactor.md)
 and [embedding interface](simulation-embedding.md) so a second physical backend
@@ -275,3 +275,38 @@ A throughput win must include actual observations and required synchronization,
 not just an isolated solver kernel. Report single-world p95 tick latency separately
 from parallel environment-steps/s, policy action rate, reset cost and memory.
 No GPU performance gain or backend replacement is established by this design.
+
+
+## Next mechanical extractions
+
+The Field layout records now live in private `config.rs`; observer/continuation
+records and their capture/restore implementation live in private `snapshot.rs`.
+Root re-exports preserve the existing public API and serialization field order.
+The original Field regressions live in `tests.rs`. These are ownership/file moves,
+not changes to rule scheduling, checkpoint guarantees or physics behavior.
+
+The next larger boundaries, in priority order, are:
+
+1. Physical payload attachments versus Energy Unit stock/spent/seating rules.
+   Extract reusable grip-relative pose and release-velocity calculations while
+   retaining match permission and lifecycle authority in world. Preserve the
+   prescribed/loose transition and restoration behavior before exposing a generic
+   attachment API; avoid a second Unit state store.
+2. Immutable robot model and source rig construction versus host admission and
+   assembly policy. Reuse checked assets in standalone sessions without requiring
+   server/GNS. Link frames, inertial provenance, collision proxies and actuator
+   limits need explicit descriptions; importing CAD caches is not validation.
+3. Chassis/model configuration versus Rapier body/query/force adaptation.
+   Wheel equations already have a reusable boundary. Group the remaining code by
+   body construction, prescribed mechanisms and dynamics before attempting a
+   general backend interface. Do not change integration ordering while moving it.
+4. Collision-aware kinematics/planning versus assembly task orchestration.
+   Keep immutable query scenes and trajectory generation reusable, while task
+   stages, target revelation, rewards and bounded worker ownership remain with
+   match/host. Full physical arm dynamics are a separately validated feature.
+
+Composed scenarios, borrowed telemetry and scoped CPU rollout workers already
+provide consumers for these boundaries. The GPU experiments do not establish a
+throughput win; a new engine abstraction or crate split is not a prerequisite
+for this work. Each move should preserve ordinary match/restore behavior and
+pass standalone and full-match checks before replacing its compatibility facade.

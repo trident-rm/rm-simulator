@@ -12,21 +12,38 @@ struct App {
     model: Inspector,
     options: Options,
     image: Image,
+    frame: Option<rm_scenario_inspector::viewport::Frame>,
+    picked: String,
     error: Option<String>,
     timer: Option<Task>,
     loading: Option<Task>,
 }
 impl App {
     fn refresh(&mut self) {
-        match Image::from_rgba8(
-            raster::WIDTH,
-            raster::HEIGHT,
-            raster::render(&self.model, &self.options),
-        ) {
+        self.picked.clear();
+        let pixels = if self.options.orbit {
+            match rm_scenario_inspector::viewport::render(&self.model, &self.options) {
+                Ok(frame) => {
+                    let pixels = frame.pixels.clone();
+                    self.frame = Some(frame);
+                    pixels
+                }
+                Err(e) => {
+                    self.error = Some(format!("{e:#}"));
+                    self.frame = None;
+                    return;
+                }
+            }
+        } else {
+            self.frame = None;
+            raster::render(&self.model, &self.options)
+        };
+        match Image::from_rgba8(raster::WIDTH, raster::HEIGHT, pixels) {
             Ok(image) => self.image = image,
             Err(e) => self.error = Some(e.to_string()),
         }
     }
+
     fn apply(&mut self, action: impl FnOnce(&mut Inspector) -> anyhow::Result<()>) {
         self.error = action(&mut self.model).err().map(|e| e.to_string());
         self.refresh();
@@ -140,10 +157,67 @@ impl View for App {
         for plane in [Plane::Top, Plane::Front, Plane::Side] {
             projections = projections.child(button(plane.label()).key(plane.label()).on_click(
                 cx.listener(move |s, _, _| {
+                    s.options.orbit = false;
                     s.options.plane = plane;
                     s.refresh();
                 }),
             ));
+        }
+        projections = projections.child(button("3D CPU orbit").key("orbit").on_click(cx.listener(
+            |s, _, _| {
+                s.options.orbit = true;
+                s.refresh();
+            },
+        )));
+        let mut orbit_controls = column().gap(6.);
+        if self.options.orbit {
+            orbit_controls=orbit_controls.child(label("CPU depth-rasterized orthographic diagnostic 3D • source color/emission factors • no textures/PBR/alpha • diagnostic overlays are x-ray. Click surface to pick."));
+            for (axis, name, value, low, high) in [
+                (
+                    0,
+                    "Orbit yaw (rad)",
+                    self.options.yaw_rad,
+                    -std::f64::consts::PI,
+                    std::f64::consts::PI,
+                ),
+                (
+                    1,
+                    "Orbit elevation (rad)",
+                    self.options.elevation_rad,
+                    -1.55,
+                    1.55,
+                ),
+            ] {
+                orbit_controls = orbit_controls
+                    .child(label(format!("{name}: {value:.3}")))
+                    .child(
+                        slider(value as f32)
+                            .key(format!("orbit-{axis}"))
+                            .range(low as f32, high as f32)
+                            .width(380.)
+                            .accessibility_label(name)
+                            .on_change(cx.listener(move |s, e: &SliderEvent, _| {
+                                if axis == 0 {
+                                    s.options.yaw_rad = e.value as f64;
+                                } else {
+                                    s.options.elevation_rad = e.value as f64;
+                                }
+                                s.refresh();
+                            })),
+                    );
+            }
+            orbit_controls = orbit_controls.child(
+                checkbox(self.options.collision_overlay, "X-ray collision edges")
+                    .key("collision-overlay")
+                    .on_change(cx.listener(|s, e: &ToggleEvent, _| {
+                        s.options.collision_overlay = e.checked;
+                        s.refresh();
+                    })),
+            );
+            if let Some(frame) = &self.frame {
+                orbit_controls=orbit_controls.child(label(format!("CPU viewport: {:.2} ms • {} triangles • excludes parsing, physics and GPU upload",frame.elapsed_ms,frame.triangles)));
+            }
+            orbit_controls = orbit_controls.child(label(self.picked.clone()));
         }
         let mut robot_controls = column().gap(6.).child(label(
             "Physical robot • privileged truth, not simulated sensors",
@@ -319,7 +393,7 @@ impl View for App {
                 .child(button("Reset").key("reset").on_click(cx.listener(|s,_,_| { s.timer=None; s.apply(|m| m.reset()); })))
                 .child(label(format!("{} ns / {:.6} s",self.model.timeline.time_ns,self.model.timeline.time_ns as f64/1e9))))
             .child(label("Inspection time: 7.8125 ms/tick. Play adds 16 ticks/pulse. Illustrative motion: 0.5 rad/s or 0.1 fraction/s."))
-            .child(projections)
+            .child(projections).child(orbit_controls)
             .child(row().gap(12.)
                 .child(checkbox(self.options.fixed,"Fixed colliders").key("fixed").on_change(cx.listener(|s,e: &ToggleEvent,_| {s.options.fixed=e.checked; s.refresh();})))
                 .child(checkbox(self.options.moving,"Moving colliders").key("moving").on_change(cx.listener(|s,e: &ToggleEvent,_| {s.options.moving=e.checked; s.refresh();})))
@@ -330,32 +404,47 @@ impl View for App {
                 .child(slider(self.options.zoom as f32).key("zoom").range(0.5,4.).width(300.).accessibility_label("Projection zoom")
                     .on_change(cx.listener(|s,e: &SliderEvent,_| {s.options.zoom=e.value as f64; s.refresh();}))))
             .child(image(self.image.clone()).key("projection").width(960.).height(640.).fit(ImageFit::Contain)
-                .accessibility_label("Orthographic collider wire projection, fixed teal, moving amber, RFID purple, robot cyan, projectile yellow, contact pink; detector axes red green blue"))
+                .on_pointer_down(cx.listener(|s,e: &PointerInput,_| {
+                    if let Some(frame)=&s.frame {
+                        let scale=(e.bounds.width/raster::WIDTH as f32).min(e.bounds.height/raster::HEIGHT as f32);
+                        let x=(e.local_position[0]-(e.bounds.width-raster::WIDTH as f32*scale)*0.5)/scale;
+                        let y=(e.local_position[1]-(e.bounds.height-raster::HEIGHT as f32*scale)*0.5)/scale;
+                        s.picked=if x>=0. && y>=0. {frame.pick(&s.model,x as u32,y as u32).map(|p|p.to_string()).unwrap_or_else(||"No source surface at pixel".into())} else {"Outside image".into()};
+                    }
+                }))
+                .accessibility_label("Orthographic diagnostic projection; fixed teal, moving amber, RFID purple, robot cyan, projectile yellow, contact pink; detector axes red green blue"))
             .child(label(format!("{} • teal fixed {} triangles • amber moving {} triangles / {} channels • {} detector frames • {} RFID footprints",
-                self.options.plane.label(),self.model.placed.fixed.triangles.len(),self.model.placed.moving.iter().map(|p|p.mesh.triangles.len()).sum::<usize>(),self.model.placed.moving.len(),self.model.detectors().len(),self.model.zones().len())))
+                if self.options.orbit {"CPU orthographic orbit 3D"} else {self.options.plane.label()},self.model.placed.fixed.triangles.len(),self.model.placed.moving.iter().map(|p|p.mesh.triangles.len()).sum::<usize>(),self.model.placed.moving.len(),self.model.detectors().len(),self.model.zones().len())))
             .child(label(if self.model.zones().is_empty() {"RFID unavailable in this source package: import caller geometry with --rfid ZONES_JSON."} else {"Purple: RFID footprint and vertical band; caller overlays are unverified inspection geometry."}))
             .child(robot_controls)
             .child(channels)
-            .child(label("Sliders restart at t=0 with the chosen channel offset and pause. Reset clears time and all offsets. Fit follows each pose; there is no perspective or occlusion."))
+            .child(label("Sliders restart at t=0 with the chosen channel offset and pause. Reset clears time and all offsets. Fit follows each pose. 3D uses orthographic depth occlusion; wire planes show all edges."))
             .child(label(format!("Visual source: {}\nCollider source: {}\nPlacement root (basis included): {:?}",self.model.cad.root.join(&self.model.asset().file).display(),self.model.asset().physics_file(&self.model.cad.root).display(),self.model.root())))
             .child(label(format!("Source STEP SHA-256: {}",self.model.cad.rmuc_2027.as_ref().map(|b|b.source_sha256.as_str()).unwrap_or("no native binding"))))
             .child(label(if self.loading.is_some() {"Loading verified geometry…".into()} else {self.error.clone().unwrap_or_default()}))
-            .child(label("Wireframe only: source materials/textures are not rendered. Source presets use RobotSession with the existing omni profile. Cyan robot, yellow projectile, pink raw armor contact. No RF simulation or match authority.").color(ThemeColor::TextMuted))
+            .child(label("Wire planes or CPU diagnostic 3D with source color/emission factors. Textures, alpha and PBR are unsupported. Source presets use RobotSession with the existing omni profile. Cyan robot, yellow projectile, pink raw armor contact. No RF simulation or match authority.").color(ThemeColor::TextMuted))
     }
 }
 pub fn run(model: Inspector, options: Options) -> anyhow::Result<()> {
-    let image = Image::from_rgba8(
-        raster::WIDTH,
-        raster::HEIGHT,
-        raster::render(&model, &options),
-    )
-    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let frame = if options.orbit {
+        Some(rm_scenario_inspector::viewport::render(&model, &options)?)
+    } else {
+        None
+    };
+    let pixels = frame
+        .as_ref()
+        .map(|f| f.pixels.clone())
+        .unwrap_or_else(|| raster::render(&model, &options));
+    let image = Image::from_rgba8(raster::WIDTH, raster::HEIGHT, pixels)
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     Application::new()
         .run(move |cx| {
             let state = cx.new(|_| App {
                 model,
                 options,
                 image,
+                frame,
+                picked: String::new(),
                 error: None,
                 timer: None,
                 loading: None,
@@ -416,6 +505,8 @@ mod tests {
                 model,
                 options,
                 image,
+                frame: None,
+                picked: String::new(),
                 error: None,
                 timer: None,
                 loading: None,
@@ -456,5 +547,42 @@ mod tests {
             .unwrap();
 
         assert!(ui.elements().any(|e| e.key == Some(&"coordinate-1".into())));
+        // Exercise the actual image pointer route in 3D, without a window server.
+        runtime.update(|cx| {
+            entity.update(cx, |app, _| {
+                app.options.orbit = true;
+                app.refresh();
+            })
+        });
+        ui.prepare(&mut runtime, [1120., 5000.], &mut Measure)
+            .unwrap();
+        for key in ["orbit-0", "orbit-1", "collision-overlay"] {
+            assert!(ui.elements().any(|e| e.key == Some(&key.into())));
+        }
+        let bounds = ui
+            .elements()
+            .find(|e| e.key == Some(&"projection".into()))
+            .unwrap()
+            .bounds;
+        let pixel = runtime.update(|cx| {
+            let app = entity.read(cx);
+            let frame = app.frame.as_ref().unwrap();
+            let i = frame.owners.iter().position(|&o| o != usize::MAX).unwrap();
+            [
+                (i % raster::WIDTH as usize) as f32 + 0.5,
+                (i / raster::WIDTH as usize) as f32 + 0.5,
+            ]
+        });
+        let scale =
+            (bounds.width / raster::WIDTH as f32).min(bounds.height / raster::HEIGHT as f32);
+        let point = [
+            bounds.x + (bounds.width - raster::WIDTH as f32 * scale) * 0.5 + pixel[0] * scale,
+            bounds.y + (bounds.height - raster::HEIGHT as f32 * scale) * 0.5 + pixel[1] * scale,
+        ];
+        ui.pointer(&mut runtime, rxui::PointerEvent::Pressed(point))
+            .unwrap();
+        ui.pointer(&mut runtime, rxui::PointerEvent::Released(point))
+            .unwrap();
+        assert!(runtime.update(|cx| entity.read(cx).picked.contains("primitive")));
     }
 }

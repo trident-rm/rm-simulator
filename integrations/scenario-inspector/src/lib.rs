@@ -4,3 +4,6 @@
 //! Future scenario/session adapters belong behind `model`, never in RXUI views.
 pub mod model;
 pub mod raster;
+
+/// CPU depth-rasterized diagnostic source-material viewport.
+pub mod viewport;

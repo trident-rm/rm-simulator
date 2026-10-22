@@ -166,9 +166,40 @@ pub struct Inspector {
     pub overlay_zones: Vec<rm_simulator_assets::rmuc_2027::Zone>,
     /// Caller-supplied overlay path, explicitly outside package verification.
     pub overlay_source: Option<std::path::PathBuf>,
+    visual_cache: std::sync::OnceLock<Result<Vec<crate::viewport::Visual>, String>>,
     physical: Option<PhysicalPreview>,
 }
 impl Inspector {
+    /// Lazily parse and place source visuals once per selected asset/placement.
+    /// Errors are retained too, so an unsupported source does not repeatedly parse.
+    pub fn visuals(&self) -> anyhow::Result<&[crate::viewport::Visual]> {
+        self.visual_cache
+            .get_or_init(|| {
+                let motions = self
+                    .cad
+                    .rmuc_2027
+                    .as_ref()
+                    .map(|b| b.motions(&self.cad, self.asset()))
+                    .unwrap_or_default();
+                rm_simulator_assets::collision_mesh::load_glb_visuals(
+                    &self.cad.root.join(&self.asset().file),
+                )
+                .map(|parts| {
+                    parts
+                        .into_iter()
+                        .map(|mut part| {
+                            let channel =
+                                motions.iter().position(|m| m.bodies.contains(&part.name));
+                            part.mesh = part.mesh.placed(&self.root());
+                            crate::viewport::Visual { part, channel }
+                        })
+                        .collect()
+                })
+                .map_err(|e| format!("source visuals: {e:#}"))
+            })
+            .as_deref()
+            .map_err(|e| anyhow::anyhow!(e.clone()))
+    }
     /// Verify a package and construct one source selection, paused at time zero.
     pub fn load(root: &Path, name: &str, placement: usize) -> anyhow::Result<Self> {
         let cad = cad_assets::load(root)?;
@@ -194,6 +225,7 @@ impl Inspector {
             coordinates,
             overlay_zones: vec![],
             overlay_source: None,
+            visual_cache: std::sync::OnceLock::new(),
             physical,
         })
     }
@@ -519,6 +551,7 @@ impl Inspector {
             .context("asset index out of range")?;
         let placed = Self::compose(&self.cad, name, placement)?;
         let physical = Self::physical(&self.cad, name, placement)?;
+        self.visual_cache = std::sync::OnceLock::new();
         self.physical = physical;
         self.coordinates = vec![0.; placed.moving.len()];
         self.placed = placed;
@@ -699,7 +732,7 @@ impl Inspector {
             })).collect::<Vec<_>>()),
             "detector_poses": self.detectors(), "rfid_footprints": self.zones(),
             "rfid_overlay_source_unverified": self.overlay_source,
-            "limitations": "collider wire projection only; no visual materials/textures, occlusion, RF or match authority; isolated preset catch floor is flat z=0"
+            "limitations": "wire planes or optional CPU depth-rasterized source-factor 3D; no textures/PBR, RF or match authority; isolated preset catch floor is flat z=0"
         })
     }
 }
