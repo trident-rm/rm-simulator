@@ -109,3 +109,79 @@ impl LivoxPublisher {
         Ok(())
     }
 }
+
+/// SI inertial publisher with no orientation estimate or privileged world pose.
+pub struct ImuPublisher {
+    publisher: DynamicPublisher,
+    frame_id: String,
+}
+impl ImuPublisher {
+    /// Create a best-effort volatile IMU endpoint (depth 200) in a named sensor frame.
+    pub fn new(node: &Node, topic: &str, frame_id: &str) -> Result<Self> {
+        anyhow::ensure!(
+            !frame_id.is_empty() && !frame_id.contains('\0'),
+            "invalid IMU frame ID"
+        );
+        Ok(Self {
+            publisher: node.create_dynamic_publisher(
+                MessageTypeName::try_from("sensor_msgs/msg/Imu")?,
+                topic.keep_last(200).best_effort(),
+            )?,
+            frame_id: frame_id.into(),
+        })
+    }
+    /// Current IMU subscription count for bounded startup discovery.
+    pub fn subscription_count(&self) -> Result<usize> {
+        Ok(self.publisher.get_subscription_count()?)
+    }
+    /// Publish rad/s and m/s² at the actual simulation sample time in nanoseconds.
+    /// Orientation covariance[0] is -1 (unavailable); other zero covariances mean
+    /// unknown, not perfect measurements. No acceleration conversion to g occurs.
+    pub fn publish(&self, sample: &rm_simulator_physics::sensors::imu::ImuSample) -> Result<()> {
+        anyhow::ensure!(
+            sample
+                .angular_velocity_rad_s
+                .iter()
+                .chain(&sample.specific_force_m_s2)
+                .all(|v| v.is_finite()),
+            "nonfinite inertial measurement"
+        );
+        let stamp = RosTime::from_ns(sample.time_ns).map_err(anyhow::Error::msg)?;
+        let mut msg = DynamicMessage::new(MessageTypeName::try_from("sensor_msgs/msg/Imu")?)?;
+        if let Some(ValueMut::Simple(SimpleValueMut::Message(mut header))) = msg.get_mut("header") {
+            scalar!(header, "frame_id", String, self.frame_id.as_str().into());
+            if let Some(ValueMut::Simple(SimpleValueMut::Message(mut time))) =
+                header.get_mut("stamp")
+            {
+                scalar!(time, "sec", Int32, stamp.sec);
+                scalar!(time, "nanosec", Uint32, stamp.nanosec);
+            } else {
+                bail!("IMU stamp schema mismatch");
+            }
+        } else {
+            bail!("IMU header schema mismatch");
+        }
+        for (field, values) in [
+            ("angular_velocity", sample.angular_velocity_rad_s),
+            ("linear_acceleration", sample.specific_force_m_s2),
+        ] {
+            if let Some(ValueMut::Simple(SimpleValueMut::Message(mut vector))) = msg.get_mut(field)
+            {
+                scalar!(vector, "x", Double, values[0]);
+                scalar!(vector, "y", Double, values[1]);
+                scalar!(vector, "z", Double, values[2]);
+            } else {
+                bail!("IMU vector schema mismatch");
+            }
+        }
+        if let Some(ValueMut::Array(rclrs::ArrayValueMut::DoubleArray(values))) =
+            msg.get_mut("orientation_covariance")
+        {
+            values[0] = -1.;
+        } else {
+            bail!("IMU covariance schema mismatch");
+        }
+        self.publisher.publish(msg)?;
+        Ok(())
+    }
+}

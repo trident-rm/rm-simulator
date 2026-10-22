@@ -34,6 +34,7 @@ pub mod protocol;
 pub mod referee_protocol;
 pub mod rmuc_2027;
 pub mod roster;
+pub mod sensor_stream;
 pub mod simulation;
 pub mod snapshot_codec;
 pub mod zone_catalog;

@@ -381,8 +381,10 @@ budget. Mesh queries dominate the loaded-world difference. Reports remain in
 ignored `local-assets/rolling-*-example.log` files.
 
 An [optional rclrs adapter](../integrations/ros2/README.md) publishes measured
-rolling frames as Livox Driver 2 CustomMsg and simulation `/clock`. Its standalone
-probe and native DDS tests use Pixi/RoboStack; no ROS dependency enters this core.
+rolling frames as Livox Driver 2 CustomMsg and simulation `/clock`. Its live-host
+mode also exports synchronized mounted IMU measurements from the same world;
+see [synchronized sensors](synchronized-sensors.md). Its native ROS checks use
+Pixi/RoboStack; no ROS dependency enters this core.
 
 ## Mounted inertial measurements
 
@@ -422,6 +424,10 @@ expect acceleration in g; convert exactly once at the bridge. Rapier contact
 jitter appears in the accelerometer as deterministic numerical noise. It is not
 a vibration model, so check a stationary and a spinning robot before tuning an
 estimator's noise parameters.
+
+The [live synchronized stream](synchronized-sensors.md) pairs these measurements
+with rolling LiDAR, using bounded workers outside the host owner and optional
+ROS SI publication. It publishes no perfect orientation or odometry.
 
 App overlays, noisy wheel odometry, estimated-pose
 SLAM, incidence/material response and angular measurement noise remain future

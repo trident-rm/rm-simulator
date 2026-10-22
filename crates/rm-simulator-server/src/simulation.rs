@@ -178,6 +178,7 @@ pub struct FireRecord {
 /// [`advance`](Simulation::advance) and [`step`](Simulation::step), and only in
 /// whole fixed 128 Hz ticks.
 pub struct Simulation {
+    sensors: crate::sensor_stream::Service,
     competition: crate::host_args::Competition,
     external_control: crate::external_control::Service,
     navigation: Option<crate::navigation::Service>,
@@ -353,6 +354,7 @@ impl Simulation {
                     crate::host_args::Competition::Rmul2027
                 }
             }),
+            sensors: Default::default(),
             external_control: Default::default(),
             navigation: None,
             sentry_tracking: Default::default(),
@@ -380,6 +382,22 @@ impl Simulation {
             pilot_spawns: Default::default(),
             fire_records: VecDeque::new(),
         })
+    }
+    /// Attach measured LiDAR/IMU to the existing world; no motion authority is granted.
+    /// Returns an attachment ID; poll within five host seconds to retain it.
+    pub fn attach_sensors(
+        &mut self,
+        config: rm_simulator_physics::sensors::synchronized::Config,
+    ) -> Result<u64, String> {
+        self.sensors.attach(&mut self.field, config)
+    }
+    /// Drain at most two synchronized measured packets; timestamps are simulation ns.
+    pub fn poll_sensors(&mut self, id: u64) -> Result<crate::sensor_stream::Poll, String> {
+        self.sensors.poll(&mut self.field, id)
+    }
+    /// Remove a read-only sensor attachment and its bounded queues.
+    pub fn detach_sensors(&mut self, id: u64) {
+        self.sensors.detach(&mut self.field, id);
     }
     /// Poll the bounded worker without advancing the world, including while paused.
     pub(crate) fn is_sentry_bot(&self, id: u32) -> bool {
@@ -1071,6 +1089,7 @@ impl Simulation {
         if let Some(service) = &mut self.assembly {
             service.poll(&mut self.field);
         }
+        self.sensors.prune(&mut self.field);
         if self.paused {
             return Ok(0);
         }
@@ -1096,7 +1115,8 @@ impl Simulation {
             service.poll(&mut self.field);
         }
         self.poll_navigation();
-        if !self.external_control.any_active()
+        if !self.sensors.active()
+            && !self.external_control.any_active()
             && self.navigation.is_none()
             && !self.sentry_tracking.active()
             && self.input_streams.is_empty()
@@ -1131,6 +1151,7 @@ impl Simulation {
             self.external_control.tick(&mut self.field);
             self.execute_pending_shots();
             self.field.step_with_hits(1, observer)?;
+            self.sensors.capture(&mut self.field);
         }
         Ok(())
     }

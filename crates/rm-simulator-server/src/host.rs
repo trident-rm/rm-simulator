@@ -176,6 +176,12 @@ pub struct CollisionCapture {
 
 type Reply<T> = SyncSender<T>;
 enum Request {
+    AttachSensors(
+        rm_simulator_physics::sensors::synchronized::Config,
+        Reply<Result<u64, String>>,
+    ),
+    PollSensors(u64, Reply<Result<crate::sensor_stream::Poll, String>>),
+    DetachSensors(u64, Reply<()>),
     Bounded(Box<Request>, Instant, Stop),
     Apply(Command, Reply<Result<CommandReceipt, String>>),
     State(Reply<SimulationState>),
@@ -238,6 +244,21 @@ impl HostHandle {
         let mut handle = self.clone();
         handle.request_limit = Some((deadline, stop));
         handle
+    }
+    /// Attach a read-only synchronized sensor stream to an existing chassis.
+    pub fn attach_sensors(
+        &self,
+        config: rm_simulator_physics::sensors::synchronized::Config,
+    ) -> Result<u64, String> {
+        self.request(|reply| Request::AttachSensors(config, reply))?
+    }
+    /// Drain bounded measured sensor packets and the current simulation clock in ns.
+    pub fn poll_sensors(&self, id: u64) -> Result<crate::sensor_stream::Poll, String> {
+        self.request(|reply| Request::PollSensors(id, reply))?
+    }
+    /// Release a sensor attachment without changing the addressed robot's controls.
+    pub fn detach_sensors(&self, id: u64) -> Result<(), String> {
+        self.request(|reply| Request::DetachSensors(id, reply))
     }
     fn wait_budget(&self) -> Result<Duration, String> {
         let (deadline, stop) = self.request_limit.as_ref().expect("bounded HTTP handle");
@@ -692,6 +713,16 @@ impl Owner {
                     Ok(())
                 };
                 let _ = reply.send(result);
+            }
+            Request::AttachSensors(config, reply) => {
+                let _ = reply.send(self.simulation.attach_sensors(config));
+            }
+            Request::PollSensors(id, reply) => {
+                let _ = reply.send(self.simulation.poll_sensors(id));
+            }
+            Request::DetachSensors(id, reply) => {
+                self.simulation.detach_sensors(id);
+                let _ = reply.send(());
             }
             Request::StaticGeometry(reply) => {
                 let _ = reply.send(self.simulation.field().fixed_geometry_snapshot());

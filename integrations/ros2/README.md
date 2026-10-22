@@ -8,7 +8,11 @@ publishes `rosgraph_msgs/msg/Clock` on `/clock`. The Rust package has its own
 workspace and lockfile: ordinary app/server builds need no ROS libraries or
 ROS Cargo features. No ROS dependency is added to physics, world or rendering.
 
-The included executable is a standalone headless probe with one driven chassis
+Use `--host 127.0.0.1:7780 --robot ID` to export synchronized LiDAR and SI IMU
+measurements from the actual running app/server. See [synchronized sensors](../../docs/synchronized-sensors.md)
+for mounts, clock authority, bounded queues and the CAD end-to-end test.
+
+Without `--host`, the included executable is a standalone headless probe with one driven chassis
 and the bare physical ground. It is not a switch on the multiplayer server or
 interactive app, does not load the arena, and does not control a running match. The separate `control` task below can drive
 an existing app/server session through its operator API.
@@ -96,8 +100,9 @@ for the full probe reference. `--wait-for-subscriber-ms` bounds startup discover
 - Point topics are best-effort, volatile, depth 5. `/clock` is best-effort,
   volatile, depth 1. Subscribers must accept best-effort QoS. Configure ROS
   consumers with `use_sim_time=true`; wall time never replaces point timestamps.
-- No IMU, odometry or TF is published. `physics::sensors::imu` measures mounted
-  IMU samples, but this adapter does not yet publish them. The existing Sentry controller remains a ground-truth baseline.
+- Live-host mode publishes measured `sensor_msgs/Imu` in rad/s and m/s², with
+  unavailable orientation; the standalone probe remains LiDAR-only. No odometry
+  or TF is published. The existing Sentry controller remains a ground-truth baseline.
 
 The upstream [message definitions](https://github.com/Livox-SDK/livox_ros_driver2/tree/21445540f0d100dc86a7e6df312dd70bbdb4afdf/msg)
 are copied into the interface-only package, with its MIT notice. Only trailing
@@ -300,8 +305,8 @@ requires matching current app/server builds. The lease lives in the host
 controller, not physical checkpoints; it does not authorize referee edits.
 
 No live-match LiDAR/IMU/odometry/TF export is added by this control bridge. A real
-planner can now actuate the in-game robot, but sensor-driven navigation still
-needs those adapters. Clock/control discovery now uses compact metadata endpoints
+planner can now actuate the in-game robot. The separate synchronized sensor
+bridge supplies LiDAR/IMU; odometry and TF adapters remain future work. Clock/control discovery now uses compact metadata endpoints
 rather than polling full match state. HTTP remains a prototype control transport;
 a future telemetry stream can provide higher rates without per-request connections.
 

@@ -313,6 +313,30 @@ pub fn respond(request: &Request, host: &HostHandle) -> Response {
                 Err(_) => Response::error(400, "invalid chassis ID"),
             }
         }
+        ("POST", "/api/sensors/attach") => match serde_json::from_slice::<
+            rm_simulator_physics::sensors::synchronized::Config,
+        >(&request.body)
+        {
+            Ok(config) => match host.attach_sensors(config) {
+                Ok(id) => Response::json(200, &serde_json::json!({"id": id})),
+                Err(e) => Response::error(400, e),
+            },
+            Err(e) => Response::error(400, e.to_string()),
+        },
+        ("POST", "/api/sensors/poll") => match serde_json::from_slice::<u64>(&request.body) {
+            Ok(id) => match host.poll_sensors(id) {
+                Ok(batch) => Response::json(200, &batch),
+                Err(e) => Response::error(404, e),
+            },
+            Err(e) => Response::error(400, e.to_string()),
+        },
+        ("POST", "/api/sensors/detach") => match serde_json::from_slice::<u64>(&request.body) {
+            Ok(id) => match host.detach_sensors(id) {
+                Ok(()) => Response::json(200, &serde_json::json!({"ok": true})),
+                Err(e) => Response::error(503, e),
+            },
+            Err(e) => Response::error(400, e.to_string()),
+        },
         ("GET", "/api/state") => match host.state() {
             Ok(state) => Response::json(200, &state),
             Err(reason) => Response::error(503, reason),

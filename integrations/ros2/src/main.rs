@@ -2,6 +2,7 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Standalone native ROS 2 publishing probe using a real driven physical chassis.
 //! An in-process consumer of the same Field/rolling LiDAR APIs as other hosts.
+mod live;
 use anyhow::{Result, ensure};
 use clap::Parser;
 use rclrs::CreateBasicExecutor;
@@ -19,6 +20,22 @@ use std::time::{Duration, Instant};
     about = "Publish a driven simulator chassis' rolling LiDAR as Livox Driver 2 CustomMsg. ROS options/remapping are accepted after --ros-args."
 )]
 struct Args {
+    /// Export from this running host's operator HTTP address; creates no world.
+    #[arg(long)]
+    host: Option<std::net::SocketAddr>,
+    /// Chassis ID in the running host (unless a sensor config file is supplied).
+    #[arg(long, default_value_t = 0)]
+    robot: u32,
+    /// Explicit synchronized sensor mounts, rates and noise, as JSON.
+    #[arg(long)]
+    sensor_config: Option<std::path::PathBuf>,
+    #[arg(long, default_value = "/livox/imu")]
+    imu_topic: String,
+    #[arg(long, default_value = "livox_imu")]
+    imu_frame_id: String,
+    /// Become the live match's single /clock authority; disabled by default.
+    #[arg(long)]
+    publish_clock: bool,
     #[arg(long, default_value = "/livox/lidar")]
     topic: String,
     #[arg(long, default_value = "livox_frame")]
@@ -52,6 +69,9 @@ struct Args {
 }
 fn main() -> Result<()> {
     let args = Args::parse_from(rclrs::extract_non_ros_args(std::env::args())?);
+    if let Some(address) = args.host {
+        return live::run(&args, address);
+    }
     ensure!(
         1_000_000_000u64.is_multiple_of(u64::from(args.rate_hz)),
         "frame rate must divide one billion nanoseconds exactly"

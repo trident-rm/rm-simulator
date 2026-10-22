@@ -22,3 +22,4 @@ test = { cmd = "bash scripts/with-ros.sh cargo test --features ros2 --locked", d
 smoke = { cmd = "bash scripts/with-ros.sh python scripts/smoke.py", depends-on = ["build"] }
 control = { cmd = "bash scripts/with-ros.sh python scripts/control.py", depends-on = ["interfaces"] }
 control-smoke = { cmd = "bash scripts/with-ros.sh python scripts/control_smoke.py", depends-on = ["interfaces"] }
+sensors-smoke = { cmd = "bash scripts/with-ros.sh python scripts/sensors_smoke.py", depends-on = ["build"] }

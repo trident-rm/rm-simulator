@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Stream synchronized mounted LiDAR/IMU from the actual live app/server world.
+  Add bounded capture/acquisition queues, read-only HTTP attachments and rclrs
+  `--host` publishing with shared simulation stamps and SI inertial units.
+  Discard incomplete/discontinuous bundles and report queue loss; keep ROS and
+  encoding outside the authoritative worker. Add a live CAD sensor smoke check.
+
 - Add selectable ROS middleware smoke checks with bounded native teardown and
   longer packet runs. Defer point validation until after bounded reception to
   avoid starving dense-packet delivery. Supply an opt-in Cyclone DDS loopback profile validated

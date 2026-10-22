@@ -21,6 +21,7 @@ Git history.
 | Live-game navigation integration design, joint feedback and deferred MuJoCo | [Robotics next steps](robotics-next-steps.md) |
 | Graphics presets, render limits and CPU-contention measurements | [Graphics performance](performance-graphics-20261023.md) |
 | Nearest-hit geometry and ideal LiDAR acquisition | [Navigation sensors](navigation-sensors.md) |
+| Live synchronized LiDAR/IMU, mounts and bounded attachments | [Synchronized sensors](synchronized-sensors.md) |
 | ROS delivery/shutdown and middleware trials | [ROS transport](ros-transport.md) |
 | Optional ROS 2 / Livox Driver 2 publishing through rclrs | [ROS 2 adapter](../integrations/ros2/README.md) |
 | Calibrated serial-arm IK optimization and paired benchmark | [Serial arm search](serial-arm-search.md) |

@@ -66,6 +66,13 @@ dynamic-obstacle navigation support.
 
 ## Running a real navigation stack during a game
 
+Update 2026-10-23: [live synchronized LiDAR/IMU attachments](synchronized-sensors.md)
+now implement per-step host captures, bounded acquisition/output queues and an
+optional rclrs consumer of measured HTTP bundles. The first path uses operator
+HTTP polling; a dedicated binary stream remains an optional optimization. The
+historical plan below retains its context; sensor publication and SI IMU are no
+longer deferred, while odometry, TF and navigation-stack qualification remain open.
+
 Integration review, 2026-10-21. The leased motion boundary and a separate ROS
 command bridge are now implemented; live-host sensor streaming, odometry and TF
 below remain design work. See the [control bridge instructions](../integrations/ros2/README.md#control-a-robot-in-an-existing-game).

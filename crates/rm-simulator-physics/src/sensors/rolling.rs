@@ -143,7 +143,7 @@ impl RangeEffects {
 
 /// One emission, including explicit misses. Coordinates are in the sensor frame
 /// at this point's time; accumulating them requires estimated motion/deskewing.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TimedReturn {
     /// Global pattern index, retained through deterministic decimation.
     pub sample_index: u64,
@@ -157,7 +157,7 @@ pub struct TimedReturn {
 }
 /// Bounded acquisition storage. No per-point ground-truth robot/world poses are
 /// exposed; the caller must provide its own motion estimate for deskewing.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RollingFrame {
     /// Points in requested pattern-window order, with timestamps even for misses.
     pub points: Vec<TimedReturn>,

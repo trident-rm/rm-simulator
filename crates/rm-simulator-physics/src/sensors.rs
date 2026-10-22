@@ -15,6 +15,7 @@ use rapier3d_f64::prelude::{Ray, Vector};
 pub mod imu;
 pub mod mid360;
 pub mod rolling;
+pub mod synchronized;
 
 /// Maximum rays per frame, a bounded allocation policy, not a rulebook constant.
 pub const MAX_LIDAR_RAYS: usize = 262_144;
