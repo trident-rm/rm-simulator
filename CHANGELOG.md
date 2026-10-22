@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Add bounded continuous console MP4 capture with asynchronous GPU readbacks,
+  off-thread encoding, wall-time resampling and actual unique/drop statistics.
+  Transfer readback buffers without a second frame copy, move channel conversion
+  off the app thread, bound encoder threads and expose frame diagnostic averages
+  through the console for recording-on/off comparisons.
+
 - Keep local pilot owner anchors at 4 ms while encoding world checkpoints at
   32 ms, preserving pending world updates and reliable queue barriers. Share
   checkpoint preparation across peers while retaining independent baselines,

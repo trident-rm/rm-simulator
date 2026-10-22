@@ -50,6 +50,7 @@ mod steam_support;
 mod test_fixtures;
 mod title;
 mod ui_theme;
+mod video_capture;
 mod zone_debug;
 
 use bevy::prelude::*;
@@ -155,6 +156,7 @@ fn main() -> AppExit {
         .add_plugins(rm_simulator_render::team_robot::TeamRobotVisualsPlugin)
         .add_plugins(presentation::PresentationPlugin)
         .add_plugins(screenshot::ScreenshotReadinessPlugin)
+        .add_plugins(video_capture::VideoCapturePlugin)
         .add_plugins(CadScenePlugin {
             instances: Vec::new(),
             rendering: RenderingConfig::field(),

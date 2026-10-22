@@ -121,6 +121,8 @@ positive pitch looks up. Camera pitch follows the existing gameplay limits.
 | `pause` | `paused: bool` | Set the clock's paused state |
 | `step` | `ticks: 1..60000` | Advance a paused world by this many physics ticks (7.8125 ms per tick at the fixed 128 Hz rate) |
 | `screenshot` | `path: "file.png"` | Save the current rendered view and HUD; relative paths use the app's working directory; parent directory must exist |
+| `record_video` | `path: "new.mp4"`, optional `fps: 24/30/60` (30) | Continuously capture the view/HUD; requires FFmpeg with libx264; new files only |
+| `stop_video` | None | Drain GPU readbacks and finalize MP4 asynchronously; returns frame/drop counters and source timestamps |
 | `key` | `key: string`, `pressed: bool` | Hold or release a game key |
 | `mouse_button` | `button: "left"`, `"right"` or `"middle"`, `pressed: bool` | Press or release a button in gameplay and UI picking |
 | `mouse_motion` | `dx`, `dy` | Relative mouse motion in pixels; aiming requires capture and no blocking panel |
@@ -130,6 +132,36 @@ positive pitch looks up. Camera pitch follows the existing gameplay limits.
 | `inspect` | Optional `debug_panel`, `wireframe`, `render_stats`, `zones`, `rfid_zones`, `zone_labels` booleans, `collision_view: "hidden"`, `"overlay"` or `"alone"` | Set runtime inspection options |
 | `world` | `command`: multiplayer protocol `Command` object | Submit a world command through the existing session, with its normal host permissions |
 | `quit` | None | Reply, then exit |
+
+Continuous video bypasses screenshot warmup, PNG compression and per-frame console
+round trips. Six GPU readbacks and three encoder inputs bound pending work; a slow
+encoder drops frames rather than blocking the app. Wall-time slots preserve
+playback speed by repeating the last frame across gaps. The stop report separates
+`unique_frames`, `duplicated_frames`, `skipped_capture_slots`, `queue_drops` and
+`readback_limit_skips`; `unique_frames / elapsed_s` is the actual capture rate.
+`fps` is the container rate, not a claim of that many distinct captures.
+`samples` holds `[output_slot, presentation_time_ns]` for accepted source frames,
+so diagnostics can follow the renderer's presentation time, including held frames.
+Recordings stop automatically at ten minutes or when leaving the match. Keep the
+resolution fixed while recording and call `stop_video` before quitting. Raw
+capture includes the HUD; annotation/composition can run offline. Readback pixel
+buffers transfer directly to the encoder worker; channel conversion runs there,
+and FFmpeg is limited to two encoding threads to reduce contention with rendering.
+
+`state.performance` exposes the existing Bevy diagnostic averages (including `fps`
+and `frame_time` in milliseconds; render pass measurements appear when available).
+Compare settled recording-on/off windows in the same scene: capture rate alone
+cannot tell whether rendering, readback or unrelated machine load limited a run.
+
+A 2026-10-22 check alternated two recording periods with three idle periods in a
+fixed 1280 × 720 headless RMUC scene (no ROS/Nav2 workers). Excluding the initial
+settling period, diagnostic mean frame times were 20.85 ms idle / 21.29 ms recording
+before the buffer change, and 26.67 / 27.06 ms afterward. The machine's CPU load
+varied substantially; these runs establish neither a speedup nor a regression.
+Distinct capture rates were 29.2–29.5 fps before and 24.4–26.0 fps afterward, with
+zero encoder-queue or readback-limit drops. The similar small recording-on/off
+separation points to background contention as a contributor, rather than a fixed
+22.5 fps capture ceiling. This isolated scene does not measure live Nav2 overhead.
 
 ## Keys
 

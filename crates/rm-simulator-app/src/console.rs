@@ -54,6 +54,16 @@ pub enum ConsoleCommand {
     },
     /// Counts loaded mesh geometry and instances before view culling or render passes.
     Geometry {},
+    /// Begin asynchronous MP4 capture of the view and HUD; requires ffmpeg.
+    RecordVideo {
+        /// New .mp4 destination, never overwritten.
+        path: std::path::PathBuf,
+        /// Constant output rate, 24, 30 or 60; defaults to 30.
+        #[serde(default = "default_video_fps")]
+        fps: u32,
+    },
+    /// Drain pending readbacks and finalize the current recording off-thread.
+    StopVideo {},
     /// Sets the free-camera pose, or the local pilot's aim yaw and pitch.
     Camera {
         /// New eye position in world FLU metres; refused while a local pilot is driven.
@@ -196,6 +206,10 @@ impl Connection {
     }
 }
 
+fn default_video_fps() -> u32 {
+    30
+}
+
 /// How a pending request finishes; the completion stage polls it on every later frame.
 pub(crate) enum Wait {
     /// Completes when scenery, pipelines and confirmed commands are ready.
@@ -206,6 +220,8 @@ pub(crate) enum Wait {
     Applied(u32),
     /// Completes when the pending `ScreenshotRequest` reports a saved or failed capture.
     Screenshot,
+    /// Wait for encoder finalization and report actual capture/drop counts.
+    Video,
     /// Queues the quit acknowledgement; the app exits after the client reads it.
     Quit,
     /// The acknowledgement is queued; the app exits once it has been written out.
@@ -414,6 +430,12 @@ pub(crate) fn execute(world: &mut World, command: ConsoleCommand) -> Result<Wait
         // Handled as immediate queries by the completion stage, including during loading.
         return Ok(Wait::Applied(0));
     }
+    if matches!(command, ConsoleCommand::StopVideo { .. }) {
+        world
+            .resource_mut::<crate::video_capture::Recorder>()
+            .stop()?;
+        return Ok(Wait::Video);
+    }
     if let ConsoleCommand::Resize { width, height } = command {
         if !(640..=3840).contains(&width) || !(360..=2160).contains(&height) {
             return Err("resize requires 640..3840 by 360..2160 pixels".into());
@@ -442,6 +464,18 @@ pub(crate) fn execute(world: &mut World, command: ConsoleCommand) -> Result<Wait
             .unwrap_or_else(|| "scene is still loading; use ready".into()));
     }
     match command {
+        ConsoleCommand::RecordVideo { path, fps } => {
+            if !world.resource::<CaptureReadiness>().ready() {
+                return Err("wait for ready before recording".into());
+            }
+            let mut q = world.query_filtered::<&Window, With<bevy::window::PrimaryWindow>>();
+            let w = q.single(world).map_err(|e| e.to_string())?;
+            let (width, height) = (w.physical_width(), w.physical_height());
+            world
+                .resource_mut::<crate::video_capture::Recorder>()
+                .start(path, fps, width, height)?;
+        }
+        ConsoleCommand::StopVideo { .. } => unreachable!(),
         ConsoleCommand::Camera {
             position_m,
             yaw_deg,
@@ -678,6 +712,11 @@ fn complete(world: &mut World) {
             Some(Err("console command timed out after 120 seconds".into()))
         } else {
             match &mut pending.wait {
+                Wait::Video => world
+                    .resource::<crate::video_capture::Recorder>()
+                    .result
+                    .clone()
+                    .map(|r| r.map(|r| serde_json::to_value(r).expect("finite video report"))),
                 Wait::Geometry => Some(Ok(geometry(world))),
                 Wait::Quit => {
                     // Queue the reply first; exit only after the next pump flushed it.
@@ -806,9 +845,47 @@ fn state(world: &mut World) -> Value {
         })),
         "ui": world.get_resource::<crate::hud::HudState>().map(|ui| json!({"debug_panel":ui.debug, "settings":ui.settings, "show_reticle":ui.show_reticle, "show_map":ui.show_map, "sensitivity_percent":(ui.sensitivity / 0.000025).round(), "blocks_input":ui.blocks_input(), "unfocused":ui.unfocused, "consumed":ui.consumed})),
         "referee_link": referee_link_status(world),
-        "commands":["help","ready","state","resize","geometry","camera","spawn","pause","step","screenshot","key",
-            "mouse_button","mouse_motion","cursor","capture","release_inputs","inspect","world","quit"],
+
     });
+    // Expose existing Bevy measurements without enabling another profiler.
+    value["performance"] = world
+        .get_resource::<bevy::diagnostic::DiagnosticsStore>()
+        .map(|diagnostics| {
+            diagnostics
+                .iter()
+                .filter_map(|d| {
+                    d.average()
+                        .map(|value| (d.path().as_str().to_owned(), json!(value)))
+                })
+                .collect::<serde_json::Map<String, Value>>()
+        })
+        .map_or(Value::Null, Value::Object);
+    value["commands"] = json!([
+        "help",
+        "ready",
+        "state",
+        "resize",
+        "geometry",
+        "camera",
+        "spawn",
+        "pause",
+        "step",
+        "screenshot",
+        "record_video",
+        "stop_video",
+        "key",
+        "mouse_button",
+        "mouse_motion",
+        "cursor",
+        "capture",
+        "release_inputs",
+        "inspect",
+        "world",
+        "quit"
+    ]);
+    value["video"] = world
+        .get_resource::<crate::video_capture::Recorder>()
+        .map_or(Value::Null, |r| r.status());
     value["sentry_tracking"] = json!(session.sentry_tracking);
     value["enemy_contacts"] = json!(rm_simulator_server::sentry_controller::contacts(
         &session.snapshot,
