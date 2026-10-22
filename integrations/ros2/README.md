@@ -40,9 +40,19 @@ avoid repeatedly installing already-patched macOS shared libraries. Rebuilding
 changed interfaces recreates only the generated `.ros/install/` directory.
 
 Fast DDS (`rmw_fastrtps_cpp`) is the default backend, preserving a caller-supplied
-`RMW_IMPLEMENTATION` override. An initial CycloneDDS trial on this Mac hung in
-`wait_for_receive_threads` during node destruction; Fast DDS passed delivery and
-clean process shutdown. The smoke test selects Fast DDS explicitly.
+`RMW_IMPLEMENTATION` override. The smoke test now also respects that override or
+an explicit `--rmw`. On this Mac, automatic interface selection produced discovery
+failures and shutdown stalls with both Fast DDS and Cyclone. An explicit Cyclone
+IPv4 loopback profile and a separate Zenoh RMW trial passed strict delivery and
+clean shutdown checks. For local processes, after building:
+
+```sh
+CYCLONEDDS_URI="file://$PWD/config/cyclonedds-loopback.xml" \
+  pixi run smoke --rmw rmw_cyclonedds_cpp --discovery-range SYSTEM_DEFAULT
+```
+
+This profile is local-only. See the [transport investigation](../../docs/ros-transport.md)
+for evidence, full-rate/decimated checks, Zenoh setup and deployment limits.
 
 `run` uses real-time pacing, 128 Hz physical integration, nominal 200,000 emissions/s
 and 10 Hz message batching. It settles the chassis for one simulated second before
@@ -137,7 +147,11 @@ The smoke test uses a separate local ROS domain and a real rclpy subscriber with
 the generated Livox Python interfaces. It verifies DDS delivery, counts, ordering,
 header/timebase correspondence, nanosecond offsets, lane/tag/reserved values,
 finite coordinates, frame/device IDs and monotonic `/clock`. It requires process
-shutdown to complete. Tested initial full-rate run: six CustomMsg packets,
+shutdown to complete, with a 40 s process-group watchdog covering native teardown.
+`--domain-id` isolates concurrent runs; `--frames 60` extends the default six-packet
+check without relaxing its assertions. Point validation runs after bounded
+collection so dense-packet checks do not starve the receive callback.
+Tested initial full-rate run: six CustomMsg packets,
 14,589 measured returns and 78 clock samples.
 
 The 2026-10-23 angular-adoption check passed native conversion tests and Clippy,
@@ -146,7 +160,9 @@ lost packets or timed out; a sampled publisher was waiting in Fast DDS 2.14.6
 `MessageReceiver::removeEndpoint` during publisher destruction after acquisition.
 This occurred with angular noise disabled as well. The angular model's native
 geometry tests pass independently; they do not establish reliable DDS delivery
-or shutdown. Keep this transport issue separate from Linux runtime validation.
+or shutdown. The subsequent investigation isolated a successful local Cyclone
+interface configuration and verified Zenoh independently; see the report above.
+Keep these macOS results separate from Linux runtime validation.
 
 The optional package is outside `just verify` so that core checks remain ROS-free.
 Run its native tests/Clippy and dependency checks separately when editing it.

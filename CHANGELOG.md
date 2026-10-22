@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Add selectable ROS middleware smoke checks with bounded native teardown and
+  longer packet runs. Defer point validation until after bounded reception to
+  avoid starving dense-packet delivery. Supply an opt-in Cyclone DDS loopback profile validated
+  alongside Zenoh; document interface-selection failures and deployment limits.
+
 - Adopt the shared `mid360-sim` angular-effects model for mounted rolling LiDAR.
   Add opt-in `with_angular_noise(radians)` and ROS probe `--angular-noise-deg`;
   preserve default measurements, indexed range/dropout streams and dynamic mounts.
