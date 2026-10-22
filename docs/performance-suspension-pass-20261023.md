@@ -204,7 +204,7 @@ a portable serialization contract or exhaustive correctness proof.
   Future Infantry remains at zero fold, so this fixture does not validate its
   folded traversal. These are flat physical sessions, not loaded-CAD navigation
   or source-link inertial validation.
-- The private differential test compares collider identity, TOI bits, normal
+- The private differential test compares collider identity, impact time bits, normal
   bits and feature IDs for 131,072 deterministic rays. Its final version includes
   a sloped trimesh, roof and side walls, tied surfaces, moving supports,
   self colliders and a projectile. Interleaved changes replace a shape, change

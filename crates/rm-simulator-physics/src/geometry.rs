@@ -101,7 +101,10 @@ impl StaticGeometry {
         max_distance_m: f64,
     ) -> Result<Option<RayHit>, &'static str> {
         let query = RayQuery::new(origin_m, direction, max_distance_m)?;
-        Ok(self.cast_metric_ray(&query.metric_ray(), query.max_distance_m()))
+        Ok(self.cast_metric_ray(
+            &Ray::new(vector(query.origin_m()), vector(query.direction())),
+            query.max_distance_m(),
+        ))
     }
 
     /// Query a prepared batch into exact-size caller-owned output storage.
@@ -132,7 +135,10 @@ impl StaticGeometry {
             return Err("ray batch output length must match request length");
         }
         for (query, hit) in rays.iter().zip(hits) {
-            *hit = self.cast_metric_ray(&query.metric_ray(), query.max_distance_m());
+            *hit = self.cast_metric_ray(
+                &Ray::new(vector(query.origin_m()), vector(query.direction())),
+                query.max_distance_m(),
+            );
         }
         Ok(())
     }

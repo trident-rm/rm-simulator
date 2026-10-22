@@ -15,6 +15,7 @@ Git history.
 | Environment, `just` targets, tests and commits | [Development](development.md) |
 | CI checks, validation reuse and releases | [CI and releases](releases.md) |
 | Crate ownership, ticks, restore and ECS | [Simulation architecture](architecture-refactor.md) |
+| Engine core, component lifecycle and staged architecture migration | [Engine architecture](engine-architecture.md) |
 | Runtime/game split, two session layers and backend migration risks | [Runtime split](runtime-game-split.md) |
 | Batch boundaries, resource lifetimes, identities and performance acceptance | [Engine performance contract](engine-performance-contract.md) |
 | Standalone physics and optional rendering | [Physics reuse](physics-reuse.md) |

@@ -2,6 +2,11 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Simulation architecture
 
+The solver-free `rm-simulator-engine` owns shared poses/timing, query and drive
+records, and scalar wheel laws. Physics re-exports these contracts and retains
+Rapier execution. See [Engine architecture](engine-architecture.md) for the
+implemented split and planned component lifecycle.
+
 Physics and prescribed motion live in `rm-simulator-physics`. The complete
 `Field` facade in `rm-simulator-world` coordinates them with live rules and the
 referee on one explicit clock (128 Hz by default, with configurable in-process
@@ -46,8 +51,9 @@ there distinguishes further proposals from the unchanged Rapier backend.
 | Snapshot-to-appearance adaptation and presentation clock | App |
 | Roster, command authority and transport delivery | Server host |
 
-The physics library has no dependency on other simulator crates; numerical
-helpers, serialization and the MID360 pattern remain ordinary library dependencies. Its RM-specific caliber
+The physics library depends on the solver-free engine core and no other
+simulator crate; numerical helpers, serialization and the MID360 pattern remain
+ordinary library dependencies. Its RM-specific caliber
 lookup helpers remain available for source compatibility; physical stepping does
 not apply their damage or detection policy. The renderer depends on neither
 physics nor world. `scripts/check-module-dependencies.py` enforces these boundaries.

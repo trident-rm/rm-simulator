@@ -28,12 +28,16 @@ def dependencies(name):
     return {packages[node]["name"] for node in seen}
 
 
+engine = dependencies("rm-simulator-engine")
+assert not any(d.startswith(("bevy", "rapier", "parry", "rm-simulator-")) for d in engine), engine
+assert not ({"game-networking-sockets", "rclrs", "ros-env", "rosidl_runtime_rs", "r2r"} & engine), engine
+
 gameplay = dependencies("rm-simulator-gameplay")
 assert not any(d.startswith(("bevy", "rapier")) for d in gameplay), gameplay
 assert not any(d.startswith("rm-simulator-") for d in gameplay), gameplay
 physics = dependencies("rm-simulator-physics")
 assert not any(d.startswith("bevy") for d in physics), physics
-assert not any(d.startswith("rm-simulator-") for d in physics), physics
+assert not any(d.startswith("rm-simulator-") and d != "rm-simulator-engine" for d in physics), physics
 assets = dependencies("rm-simulator-assets")
 assert not any(d.startswith("bevy") for d in assets), assets
 assert not ({"rm-simulator-world", "rm-simulator-server", "rm-simulator-render",
@@ -53,7 +57,8 @@ assert not ({"rm-simulator-physics", "rm-simulator-world", "rm-simulator-server"
 assert not any(d.startswith("rapier") for d in bench), bench
 assert not any(p["name"] in ("rm-sim", "rm-sim-api", "rm-sim-viewer", "rm-vision-world",
                              "rm-vision-runtime", "rm-vision-runner") for p in packages.values())
-print("PASS: physics has no gameplay or renderer, gameplay is independent of physics and the simulator, "
+print("PASS: engine has no solver, application or simulator dependency; physics' only simulator dependency is engine, "
+      "gameplay is independent of physics and the simulator, "
       "assets have no world, networking or renderer, "
       "world and server have no renderer, renderer has no world or server, "
       "and no sibling simulator crate is imported")

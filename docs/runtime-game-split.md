@@ -2,6 +2,10 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Runtime and game separation design
 
+The current target and migration stages are defined in [Engine architecture](engine-architecture.md).
+The solver-free core extraction is implemented; backend/resource and component
+lifecycle migration remain incremental work.
+
 Status: sessions, the backend-neutral wheel model, standalone equipment presets,
 borrowed structure transitions, composable scenarios, compact telemetry and bounded CPU rollout batches are implemented
 (2026-10-23). Further model and solver extraction below remain proposed; the

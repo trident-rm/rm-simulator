@@ -7,7 +7,7 @@ dynamics, projectile flight, raw armor contacts, shared collision geometry and
 prescribed mechanism motion. It knows no match rules, CAD package, socket, Bevy or
 host clock; callers supply target endpoint poses and resolved mechanism state and
 step it once per explicit tick. It sits under the world crate and depends on no
-other simulator crate.
+simulator crate except the solver-free `rm-simulator-engine` core.
 
 ## Modules
 
@@ -37,7 +37,7 @@ detection intervals; the world crate owns those decisions.
 
 ## Dependencies
 
-`rapier3d-f64`, `serde`, `glam` for source rig FK (the same locked version as
+`rm-simulator-engine` (shared contracts and wheel laws), `rapier3d-f64`, `serde`, `glam` for source rig FK (the same locked version as
 world), and the standalone `mid360-sim` pattern generator. The
 crate never depends on `rm-simulator-world`,
 `rm-simulator-gameplay`, `rm-simulator-server`, `rm-simulator-render` or Bevy,
@@ -106,3 +106,7 @@ aimed firing stage. `ChassisConfig::folding_hero()` provides the source-fitted
 actual angle. Moving collision proxies, muzzle and drawing poses share that
 state. External-clearance checks stop the actuator without teleporting geometry;
 this is not a motor-torque or source leg-linkage simulation.
+
+Shared poses/time, query records, drive controls and wheel laws now have one
+definition in engine core. Existing physics paths re-export them. The chassis
+conversion remains here, and engine core contains no solver/game dependency.

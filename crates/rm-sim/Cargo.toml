@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright (c) 2026 hxyulin <hxyulin@proton.me>
+[package]
+name = "rm-sim"
+version = "0.0.0-dev"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["hxyulin <hxyulin@proton.me>"]
+description = "Development placeholder for the RoboMaster simulator and modular robotics simulation engine"
+repository = "https://github.com/trident-rm/rm-simulator"
+homepage = "https://github.com/trident-rm/rm-simulator"
+readme = "README.md"
+keywords = ["robomaster", "robotics", "simulation"]
+categories = ["simulation", "science::robotics"]
+publish = ["crates-io"]
+include = ["src/lib.rs", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+
+# This early registry package is independent of the unpublished runtime workspace.
+# It will become the public distribution entry point as that API is stabilized.
+[workspace]

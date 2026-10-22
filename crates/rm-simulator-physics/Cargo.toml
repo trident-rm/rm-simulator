@@ -11,6 +11,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+rm-simulator-engine = { version = "0.1.0", path = "../rm-simulator-engine" }
 glam.workspace = true
 rapier3d-f64 = "0.35.3"
 serde.workspace = true

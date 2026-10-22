@@ -2453,6 +2453,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rm-simulator-engine"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "serde",
+]
+
+[[package]]
 name = "rm-simulator-gameplay"
 version = "0.1.0"
 dependencies = [
@@ -2464,8 +2472,10 @@ dependencies = [
 name = "rm-simulator-physics"
 version = "0.1.0"
 dependencies = [
+ "glam 0.33.12",
  "mid360-sim",
  "rapier3d-f64",
+ "rm-simulator-engine",
  "serde",
 ]
 

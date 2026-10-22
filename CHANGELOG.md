@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Extract solver-free engine core with poses, exact timing, query/drive contracts
+  and wheel laws. Preserve physical facade paths and serialized records, and
+  enforce the new dependency boundary. Document the incremental component design.
+- Publish `rm-sim` 0.0.0-dev as the project's development placeholder on crates.io.
+
 - Add reusable validated metric ray requests and ordered batch queries into
   caller-owned output slices; retain scalar query and RayHit compatibility paths.
 

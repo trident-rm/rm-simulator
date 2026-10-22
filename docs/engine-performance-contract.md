@@ -11,6 +11,12 @@ patches were also inspected read-only; their source fingerprints appear below.
 They are not commits in this document's branch. Parent integration and the full
 workspace gate remain separate work.
 
+The first core ownership extraction now lives in `rm-simulator-engine`:
+poses/time, query and drive records, and wheel laws have one solver-free
+definition, with physics compatibility exports. See [Engine architecture](engine-architecture.md)
+for the current migration stages. The richer identity/lifecycle/device contracts
+below remain design proposals.
+
 ## Start with two concrete boundaries
 
 Extract immutable physical descriptions and a borrowed, concrete CPU query view
