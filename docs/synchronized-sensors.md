@@ -126,6 +126,12 @@ The same API is available to in-process callers through `Simulation` and
 | `/api/sensors/attach` | Sensor configuration (defaults permitted) | `{"id": attachment_id}` |
 | `/api/sensors/poll` | Numeric attachment ID | Current simulation `time_ns`, up to two measured `frames`, cumulative `dropped_intervals` |
 | `/api/sensors/detach` | Numeric attachment ID | `{"ok": true}` |
+| `/api/sensors/attach-profiled` | Same sensor configuration | New attachment with opt-in host telemetry |
+| `/api/sensors/poll-profiled` | Profiled attachment ID | Same measurements plus bounded telemetry and response timing headers |
+
+See [sensor transport telemetry](sensor-transport-telemetry.md) for stage timing,
+separate loss counters and a repeatable profiling script. Host durations never
+replace simulation stamps; normal attachments retain their existing payloads.
 
 At most four attachments exist. Each has four queued capture brackets and two
 queued output bundles. The host uses nonblocking sends; an overloaded acquisition

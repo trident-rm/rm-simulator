@@ -26,6 +26,7 @@ Git history.
 | Graphics presets, render limits and CPU-contention measurements | [Graphics performance](performance-graphics-20261023.md) |
 | Nearest-hit geometry and ideal LiDAR acquisition | [Navigation sensors](navigation-sensors.md) |
 | Live synchronized LiDAR/IMU, mounts and bounded attachments | [Synchronized sensors](synchronized-sensors.md) |
+| Live sensor queue, acquisition and HTTP stage profiling | [Sensor transport telemetry](sensor-transport-telemetry.md) |
 | ROS delivery/shutdown and middleware trials | [ROS transport](ros-transport.md) |
 | Optional ROS 2 / Livox Driver 2 publishing through rclrs | [ROS 2 adapter](../integrations/ros2/README.md) |
 | Calibrated serial-arm IK optimization and paired benchmark | [Serial arm search](serial-arm-search.md) |

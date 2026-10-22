@@ -391,6 +391,22 @@ impl Simulation {
     ) -> Result<u64, String> {
         self.sensors.attach(&mut self.field, config)
     }
+    /// Attach the same measured sensors with opt-in server wall-duration telemetry.
+    /// Timing metadata stays outside physics and never changes simulation ns stamps.
+    pub fn attach_sensors_profiled(
+        &mut self,
+        config: rm_simulator_physics::sensors::synchronized::Config,
+    ) -> Result<u64, String> {
+        self.sensors.attach_profiled(&mut self.field, config)
+    }
+    /// Drain up to two measured bundles and their host durations in nanoseconds.
+    /// Requires a profiled attachment; direct calls have no owner mailbox timing.
+    pub fn poll_sensors_profiled(
+        &mut self,
+        id: u64,
+    ) -> Result<crate::sensor_stream::ProfiledPoll, String> {
+        self.sensors.poll_profiled(&mut self.field, id)
+    }
     /// Drain at most two synchronized measured packets; timestamps are simulation ns.
     pub fn poll_sensors(&mut self, id: u64) -> Result<crate::sensor_stream::Poll, String> {
         self.sensors.poll(&mut self.field, id)

@@ -181,6 +181,15 @@ enum Request {
         Reply<Result<u64, String>>,
     ),
     PollSensors(u64, Reply<Result<crate::sensor_stream::Poll, String>>),
+    AttachSensorsProfiled(
+        rm_simulator_physics::sensors::synchronized::Config,
+        Reply<Result<u64, String>>,
+    ),
+    PollSensorsProfiled(
+        u64,
+        Instant,
+        Reply<Result<crate::sensor_stream::ProfiledPoll, String>>,
+    ),
     DetachSensors(u64, Reply<()>),
     Bounded(Box<Request>, Instant, Stop),
     Apply(Command, Reply<Result<CommandReceipt, String>>),
@@ -251,6 +260,20 @@ impl HostHandle {
         config: rm_simulator_physics::sensors::synchronized::Config,
     ) -> Result<u64, String> {
         self.request(|reply| Request::AttachSensors(config, reply))?
+    }
+    /// Attach measured sensors with opt-in server durations, keeping sensor stamps in simulation ns.
+    pub fn attach_sensors_profiled(
+        &self,
+        config: rm_simulator_physics::sensors::synchronized::Config,
+    ) -> Result<u64, String> {
+        self.request(|reply| Request::AttachSensorsProfiled(config, reply))?
+    }
+    /// Poll profiled sensors. Owner wait includes admission/mailbox delay in host ns.
+    pub fn poll_sensors_profiled(
+        &self,
+        id: u64,
+    ) -> Result<crate::sensor_stream::ProfiledPoll, String> {
+        self.request(|reply| Request::PollSensorsProfiled(id, Instant::now(), reply))?
     }
     /// Drain bounded measured sensor packets and the current simulation clock in ns.
     pub fn poll_sensors(&self, id: u64) -> Result<crate::sensor_stream::Poll, String> {
@@ -716,6 +739,17 @@ impl Owner {
             }
             Request::AttachSensors(config, reply) => {
                 let _ = reply.send(self.simulation.attach_sensors(config));
+            }
+            Request::AttachSensorsProfiled(config, reply) => {
+                let _ = reply.send(self.simulation.attach_sensors_profiled(config));
+            }
+            Request::PollSensorsProfiled(id, submitted, reply) => {
+                let wait = crate::sensor_stream::duration_ns(submitted.elapsed());
+                let result = self.simulation.poll_sensors_profiled(id).map(|mut poll| {
+                    poll.telemetry.owner_request_wait_ns = Some(wait);
+                    poll
+                });
+                let _ = reply.send(result);
             }
             Request::PollSensors(id, reply) => {
                 let _ = reply.send(self.simulation.poll_sensors(id));

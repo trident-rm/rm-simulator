@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Add opt-in live sensor stage telemetry for capture, acquisition, input/output
+  queues, owner requests and off-owner JSON encoding, with separate loss counters
+  and a bounded profiling script. Preserve ordinary payloads, measured values,
+  dynamic carriers and simulation timestamps.
+
 - Add physical omni spawn, drive/torque/aim/fire controls, scripted episodes and
   bounded raw armor-contact inspection to the optional RXUI scenario inspector.
   Keep robot/projectile overlays labelled as privileged physical truth.

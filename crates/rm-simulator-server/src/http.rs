@@ -182,6 +182,15 @@ pub struct Request {
     pub body: Vec<u8>,
 }
 
+/// Opt-in HTTP sensor response durations, measured on the handler in host ns.
+#[derive(Clone, Copy, Debug)]
+pub struct SensorResponseTiming {
+    /// HostHandle call wall duration, including admission/mailbox, poll and reply wake, ns.
+    pub host_call_wall_ns: u64,
+    /// JSON body encoding wall duration, including allocation, ns. Excludes socket writes.
+    pub json_encode_wall_ns: u64,
+}
+
 /// A reply: status, content type and body.
 pub struct Response {
     /// HTTP status code, which also selects the reason phrase.
@@ -190,6 +199,8 @@ pub struct Response {
     pub content_type: &'static str,
     /// Body bytes, one image of the length written as `Content-Length`.
     pub body: Vec<u8>,
+    /// Present only on successful profiled sensor polls; emitted as integer-ns headers.
+    pub sensor_timing: Option<SensorResponseTiming>,
 }
 impl Response {
     /// A JSON reply. A serialization failure yields an empty body and no error
@@ -199,6 +210,7 @@ impl Response {
             status,
             content_type: "application/json",
             body: serde_json::to_vec(value).unwrap_or_default(),
+            sensor_timing: None,
         }
     }
     /// A JSON reply of `{"error": message}`.
@@ -293,6 +305,7 @@ pub fn respond(request: &Request, host: &HostHandle) -> Response {
             status: 200,
             content_type: "text/html; charset=utf-8",
             body: PANEL_HTML.as_bytes().to_vec(),
+            sensor_timing: None,
         },
         ("GET", "/api/fire-records") => match host.fire_records() {
             Ok(records) => Response::json(200, &records),
@@ -323,6 +336,40 @@ pub fn respond(request: &Request, host: &HostHandle) -> Response {
             },
             Err(e) => Response::error(400, e.to_string()),
         },
+        ("POST", "/api/sensors/attach-profiled") => match serde_json::from_slice::<
+            rm_simulator_physics::sensors::synchronized::Config,
+        >(&request.body)
+        {
+            Ok(config) => match host.attach_sensors_profiled(config) {
+                Ok(id) => Response::json(200, &serde_json::json!({"id":id})),
+                Err(e) => Response::error(400, e),
+            },
+            Err(e) => Response::error(400, e.to_string()),
+        },
+        ("POST", "/api/sensors/poll-profiled") => {
+            match serde_json::from_slice::<u64>(&request.body) {
+                Ok(id) => {
+                    let begin = Instant::now();
+                    match host.poll_sensors_profiled(id) {
+                        Ok(batch) => {
+                            let host_call_wall_ns =
+                                crate::sensor_stream::duration_ns(begin.elapsed());
+                            let encode = Instant::now();
+                            let mut response = Response::json(200, &batch);
+                            let json_encode_wall_ns =
+                                crate::sensor_stream::duration_ns(encode.elapsed());
+                            response.sensor_timing = Some(SensorResponseTiming {
+                                host_call_wall_ns,
+                                json_encode_wall_ns,
+                            });
+                            response
+                        }
+                        Err(e) => Response::error(404, e),
+                    }
+                }
+                Err(e) => Response::error(400, e.to_string()),
+            }
+        }
         ("POST", "/api/sensors/poll") => match serde_json::from_slice::<u64>(&request.body) {
             Ok(id) => match host.poll_sensors(id) {
                 Ok(batch) => Response::json(200, &batch),
@@ -419,12 +466,20 @@ fn handle(stream: TcpStream, host: &HostHandle, stop: Stop, lifetime: Duration) 
 pub fn write_response<W: Write>(mut writer: W, response: &Response) -> io::Result<()> {
     write!(
         writer,
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n",
         response.status,
         response.reason(),
         response.content_type,
         response.body.len()
     )?;
+    if let Some(timing) = response.sensor_timing {
+        write!(
+            writer,
+            "X-RM-Sensor-Host-Call-Ns: {}\r\nX-RM-Sensor-Encode-Ns: {}\r\n",
+            timing.host_call_wall_ns, timing.json_encode_wall_ns
+        )?;
+    }
+    writer.write_all(b"\r\n")?;
     writer.write_all(&response.body)?;
     writer.flush()
 }
@@ -507,6 +562,7 @@ mod tests {
                 status: 200,
                 content_type: "application/octet-stream",
                 body: vec![0; 32 << 20],
+                sensor_timing: None,
             };
             done.send(write_response(socket, &response)).unwrap();
         });
@@ -904,5 +960,92 @@ mod tests {
         let before = simulation.state().unwrap();
         assert_eq!(post(serde_json::json!({"SetRuneBuff":{"team":"Red","defense_pct":101,"attack_pct":100,"cooling_multiplier":1,"duration_ns":1000000000_u64}})).status, 400);
         assert_eq!(simulation.state().unwrap(), before);
+    }
+    #[test]
+    fn profiling_endpoints_are_opt_in_and_preserve_the_simulation_clock() {
+        let (mut simulation, _) = crate::workload::simulation(1);
+        simulation.set_paused(true);
+        let host = Host::new(simulation, true).unwrap();
+        let handle = host.handle();
+        let request = |path: &str, body: Vec<u8>| Request {
+            method: "POST".into(),
+            path: path.into(),
+            body,
+        };
+        let profiled = respond(
+            &request("/api/sensors/attach-profiled", b"{}".to_vec()),
+            &handle,
+        );
+        assert_eq!(profiled.status, 200);
+        let id = serde_json::from_slice::<serde_json::Value>(&profiled.body).unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        let body = serde_json::to_vec(&id).unwrap();
+        let poll = respond(
+            &request("/api/sensors/poll-profiled", body.clone()),
+            &handle,
+        );
+        assert_eq!(poll.status, 200);
+        let json: serde_json::Value = serde_json::from_slice(&poll.body).unwrap();
+        assert_eq!(json["time_ns"], 0);
+        assert!(json["telemetry"]["owner_request_wait_ns"].is_u64());
+        let timing = poll.sensor_timing.unwrap();
+        assert!(
+            timing.host_call_wall_ns
+                >= json["telemetry"]["owner_request_wait_ns"].as_u64().unwrap()
+        );
+        let mut wire = Vec::new();
+        write_response(&mut wire, &poll).unwrap();
+        let wire = String::from_utf8(wire).unwrap();
+        assert!(wire.contains("X-RM-Sensor-Host-Call-Ns: "));
+        assert!(wire.contains("X-RM-Sensor-Encode-Ns: "));
+        let plain = respond(&request("/api/sensors/poll", body.clone()), &handle);
+        assert!(plain.sensor_timing.is_none());
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&plain.body)
+                .unwrap()
+                .get("telemetry")
+                .is_none()
+        );
+        let attached = respond(&request("/api/sensors/attach", b"{}".to_vec()), &handle);
+        let plain_id = serde_json::from_slice::<serde_json::Value>(&attached.body).unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        assert_eq!(
+            respond(
+                &request(
+                    "/api/sensors/poll-profiled",
+                    serde_json::to_vec(&plain_id).unwrap()
+                ),
+                &handle
+            )
+            .status,
+            404
+        );
+        assert_eq!(
+            respond(&request("/api/sensors/detach", body), &handle).status,
+            200
+        );
+        assert_eq!(handle.control_status(None).unwrap().time_ns, 0);
+        drop(host);
+    }
+    #[test]
+    fn timing_headers_do_not_change_response_body_or_plain_response_headers() {
+        let mut response = Response::json(200, &serde_json::json!({"ok":true}));
+        let mut plain = Vec::new();
+        write_response(&mut plain, &response).unwrap();
+        assert!(!String::from_utf8(plain).unwrap().contains("X-RM-Sensor"));
+        let body = response.body.clone();
+        response.sensor_timing = Some(SensorResponseTiming {
+            host_call_wall_ns: 1234,
+            json_encode_wall_ns: 5678,
+        });
+        let mut profiled = Vec::new();
+        write_response(&mut profiled, &response).unwrap();
+        let separator = profiled.windows(4).position(|b| b == b"\r\n\r\n").unwrap();
+        assert_eq!(&profiled[separator + 4..], body);
+        let header = std::str::from_utf8(&profiled[..separator]).unwrap();
+        assert!(header.contains("X-RM-Sensor-Host-Call-Ns: 1234"));
+        assert!(header.contains("X-RM-Sensor-Encode-Ns: 5678"));
     }
 }
