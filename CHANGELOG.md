@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+- Add verified robot-package descriptors with typed profile/provenance, immutable
+  source bytes and path-independent raw-model identities. Resolve app packages
+  once and keep simulator actuator tuning separate from source configuration.
+- Add independent physical motion IDs, transactional coordinate updates and
+  composed same-team equipment instances with stable mappings across reset and
+  capture. Preserve legacy match drivers and sensor continuity checks.
+
 - Extract reusable physical payload attachment operations while keeping Energy
   Unit permissions and lifecycle in world. Separate chassis model descriptions
   from Rapier construction, prescribed mechanisms and dynamics.

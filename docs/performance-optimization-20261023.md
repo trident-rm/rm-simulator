@@ -122,3 +122,99 @@ initial offload candidates when each result is immediately needed by CPU physics
 [wgpu mapping waits for prior GPU use before CPU access](https://docs.rs/wgpu/30.0.0/wgpu/struct.Buffer.html).
 Even shared-memory hardware still needs synchronization. GPU acceleration must be
 judged end to end, including submission, updates, readback and consumer latency.
+
+## Release headless profile after the runtime extraction
+
+A second measurement used revision `881f71e`, release optimization with
+`CARGO_PROFILE_RELEASE_DEBUG=1`, on a Ryzen 9 9950X3D (32 logical CPUs, Linux).
+There was no renderer, transport, wall-clock pacing or policy inference.
+Existing `match_cost`, `rollout_cost` and `mounted_lidar_cost` examples supplied
+workloads. The latter now accepts an optional 1–60 second acquisition duration
+so sampling need not be dominated by loading a one-second scene.
+
+The checked RMUC arena contains 187,661 ground, 94,274 fixture and 165,950
+additional equipment collision triangles: 447,885 placed triangles in total.
+The match probe used eight default omni robots, native rules, held drive/yaw,
+17 mm firing once per robot per simulated second, explicit benchmark ammunition,
+a 500-tick post-countdown warmup and 256 batches of 16 ticks. Each run advances
+32 simulated seconds per match. These are default physical robots, not all
+source-CAD chassis or a manipulation workload.
+
+Across three separate unprofiled runs:
+
+- One eight-robot world: 8.58–11.84 seconds wall time, or **346–477 world ticks/s**
+  and 2.70–3.73 simulated seconds per wall second. Median 16-tick stepping cost
+  was 27.86–43.80 ms; p95 was 69.77–84.94 ms. These batch statistics are not
+  individual-tick latency percentiles.
+- Four concurrent eight-robot worlds: 9.34–11.65 seconds wall time for the same
+  32 seconds in each world, or **1,406–1,753 aggregate world ticks/s**. This is
+  roughly 3.7–4.1 times paired single-world aggregate throughput. Some concurrent
+  batch tails exceed the 125 ms real-time budget. These scoped-worker numbers
+  do not establish a maximum environment count or PPO training speed.
+- A single-world checkpoint capture had 13–23 µs median cost; restore had
+  2.05–3.54 ms median cost. Restore is measured on a temporary Field, not applied
+  to the retained rollout. Copy removal remains useful, but checkpoint capture
+  is small relative to physical stepping in this fixture. This does not measure
+  large image observations, source-backed robot checkpoints or allocation bytes.
+- One 200,000-emission rolling MID360 acquisition interval: 311–347 ms for ray
+  acquisition, 0.204–0.340 ms for capture and 62.6–70.8 ms for physics. The longer
+  ten-second sampled probe produced 2,000,000 emissions in 3.066 s of acquisition,
+  2.078 ms capture and 477.6 ms physics. The chassis is commanded to drive but
+  settles against geometry near its initial location; this is a throughput
+  fixture, not a high-velocity distortion or navigation test.
+
+The first single-world repetition was slower than the next two. Background agent
+builds were allowed to run, and no CPU affinity/frequency isolation was imposed;
+retain the full range rather than attributing that variation to a code change.
+The flat `rollout_cost` probe reported about 101 µs/tick for one robot and
+833 µs/tick for eight. It has different geometry and no firing, so it is not a
+controlled estimate of terrain overhead. Its three snapshot hashes still match
+our established compatibility fixtures.
+
+Linux `perf` sampled a separate 1,024-batch match run at 499 Hz with user-cycle
+samples and DWARF stack capture. Self-symbol shares included approximately:
+point-cloud AABB calculation 11.76%, narrow-phase pair update 10.52%, contact
+constraint solve 9.33%, ray/AABB tests 8.36%, contact generation 5.06%, and
+constraint updates 4.27%. These are whole-process shares, including setup,
+warmup, firing, checkpoint and restore; they are not exclusive timing of
+`Field::step`. Stack unwinding was incomplete for some hot optimized frames,
+so a particular caller of the AABB hotspot has not been established. The match
+profile retained roughly 15,000 samples without reported lost samples.
+
+The initial one-second LiDAR process profile included substantial terrain/BVH
+construction. The ten-second follow-up reduced that startup bias: ray/AABB tests
+accounted for approximately 46.2% of whole-process self samples. Neither percentage
+should be presented as a steady-state BVH rebuild cost. Sampling required a
+privileged perf process on this host; the workload itself ran as the ordinary
+user, and no system profiling settings were changed.
+
+The measured next priorities are collision/query and contact work: attribute
+repeated bounding calculations, inspect the number and shape of active contact
+pairs, and distinguish wheel-support queries from projectile/CCD work before
+changing shapes or substep policy. Preserve collision fidelity and current wheel
+integration during any cache or filtering optimization. For dense sensor batches,
+measure persistent batched ray acceleration separately. These results do not
+justify a GPU rules rewrite or claim that replacing Rapier improves throughput.
+
+Reproduce the unprofiled workload in the normal native development environment:
+
+```sh
+CARGO_PROFILE_RELEASE_DEBUG=1 cargo build --release --locked \
+  -p rm-simulator-server --example match_cost --example mounted_lidar_cost \
+  -p rm-simulator-world --example rollout_cost
+target/release/examples/rollout_cost
+target/release/examples/match_cost "$CAD_PATH" 1 8 256
+target/release/examples/match_cost "$CAD_PATH" 4 8 256
+target/release/examples/mounted_lidar_cost "$CAD_PATH" 10
+```
+
+Use the actual `CARGO_TARGET_DIR` when it differs from `target`. Repeated probes
+must retain the same package, input sequence, profile, sampling cadence and native
+library environment. Sampling can use `perf record -e cycles:u -F 499
+--call-graph dwarf,8192` around the executable; inspect self samples with
+`perf report --stdio --no-children`. Archive profiler overhead measurements
+separately from the three unprofiled timing repetitions. Raw timing/profiling
+reports, binaries, commands and `summary.json` remain ignored scratch under
+`local-assets/headless-profile-20261023/` and the corresponding remote probe
+directory. No integration-rate, rule, collision-fidelity or solver change was
+made by this profiling pass.

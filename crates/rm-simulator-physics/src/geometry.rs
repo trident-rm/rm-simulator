@@ -44,8 +44,7 @@ pub struct StaticGeometry {
     /// Articulated parts as shape index, role, team and typed source motion frame.
     pub(crate) mechanisms: Vec<(
         usize,
-        crate::motion::Mechanism,
-        Team,
+        crate::motion::MotionChannel,
         crate::motion::MotionFrame,
     )>,
 }
@@ -59,6 +58,17 @@ pub struct MovingGeometry {
     /// Rest frame and prescribed translation endpoints or source rotor axis.
     pub motion: crate::motion::MotionFrame,
     /// The part's own shapes, held at the origin of its untranslated frame.
+    pub geometry: StaticGeometry,
+}
+
+/// A physical moving shape with its explicit or compatibility driver.
+/// Rest-frame shape buffers are shared; current coordinates live in captures/worlds.
+pub struct AddressedMovingGeometry {
+    /// Driver identity; instance channels are never driven by legacy team state.
+    pub channel: crate::motion::MotionChannel,
+    /// Prescribed frame in world FLU coordinates.
+    pub motion: crate::motion::MotionFrame,
+    /// Shared geometry in the frame before applying the prescribed transform.
     pub geometry: StaticGeometry,
 }
 
@@ -169,25 +179,47 @@ impl StaticGeometry {
         }
     }
 
-    /// Retain each moving shape in its untranslated frame, sharing CAD buffers.
+    /// Compatibility projection of legacy-driven parts in their rest frames.
+    /// Explicit instance parts are available through [`Self::motion_parts`].
     pub fn moving_parts(&self) -> Vec<MovingGeometry> {
+        self.motion_parts()
+            .into_iter()
+            .filter_map(|part| {
+                let crate::motion::MotionChannel::Legacy { kind, team } = part.channel else {
+                    return None;
+                };
+                Some(MovingGeometry {
+                    kind,
+                    team,
+                    motion: part.motion,
+                    geometry: part.geometry,
+                })
+            })
+            .collect()
+    }
+
+    /// Drivers in captured shape order, including repeated shapes of one channel.
+    /// No shape storage is cloned; callers may deduplicate IDs for inspection.
+    pub fn motion_channels(&self) -> impl Iterator<Item = crate::motion::MotionChannel> + '_ {
+        self.mechanisms.iter().map(|(_, channel, _)| *channel)
+    }
+
+    /// All prescribed parts with their exact driver and unchanged source frames.
+    /// This includes explicit instances and shares cooked shape buffers.
+    pub fn motion_parts(&self) -> Vec<AddressedMovingGeometry> {
         self.mechanisms
             .iter()
-            .map(|(index, kind, team, offsets)| {
-                let (mut pose, shape) = self.shapes[*index].clone();
-                pose.translation = Vector::ZERO;
-                if matches!(
-                    kind,
-                    crate::motion::Mechanism::Outpost | crate::motion::Mechanism::Rune
-                ) {
-                    pose = Default::default();
+            .map(|(index, channel, frame)| {
+                let (mut position, shape) = self.shapes[*index].clone();
+                position.translation = Vector::ZERO;
+                if matches!(frame, crate::motion::MotionFrame::Rotation { .. }) {
+                    position = Default::default();
                 }
-                MovingGeometry {
-                    kind: *kind,
-                    team: *team,
-                    motion: *offsets,
+                AddressedMovingGeometry {
+                    channel: *channel,
+                    motion: *frame,
                     geometry: Self {
-                        shapes: vec![(pose, shape)],
+                        shapes: vec![(position, shape)],
                         ..Self::default()
                     },
                 }
@@ -364,16 +396,51 @@ impl StaticGeometry {
         if !self.mechanisms.is_empty() {
             result.bounds.take();
         }
-        for (index, kind, team, offsets) in &self.mechanisms {
+        for (index, channel, offsets) in &self.mechanisms {
+            let crate::motion::MotionChannel::Legacy { kind, team } = channel else {
+                continue;
+            };
             let fraction = state.fraction(*kind, *team);
             result.shapes[*index].0 = pose(offsets.pose(fraction));
         }
         result
     }
 
+    /// Preflight a partial explicit coordinate batch without copying shape data.
+    /// Repeated shapes sharing a channel are supported; duplicate update entries,
+    /// unknown IDs and nonfinite/out-of-range coordinates return an error.
+    pub fn validate_motions(
+        &self,
+        updates: &[crate::motion::MotionUpdate],
+    ) -> Result<(), &'static str> {
+        crate::motion::validate_updates(updates, self.mechanisms.iter().map(|(_, c, f)| (*c, *f)))
+    }
+
+    /// Resolve a partial batch of explicit coordinates, retaining all other poses.
+    /// Duplicate/unknown IDs and invalid coordinates fail before any change. Mesh
+    /// buffers and rest frames remain shared, including captures made after motion.
+    pub fn at_motions(
+        &self,
+        updates: &[crate::motion::MotionUpdate],
+    ) -> Result<Self, &'static str> {
+        crate::motion::validate_updates(updates, self.mechanisms.iter().map(|(_, c, f)| (*c, *f)))?;
+        let mut result = self.clone();
+        if !updates.is_empty() {
+            result.bounds.take();
+        }
+        for (index, channel, frame) in &self.mechanisms {
+            if let crate::motion::MotionChannel::Instance(id) = channel
+                && let Some(update) = updates.iter().find(|u| u.id == *id)
+            {
+                result.shapes[*index].0 = pose(frame.pose(update.coordinate));
+            }
+        }
+        Ok(result)
+    }
+
     /// Interpolate the captured collider transforms across a displayed frame interval.
     pub fn interpolate(&self, next: &Self, fraction: f64) -> Result<Self, &'static str> {
-        if self.shapes.len() != next.shapes.len() {
+        if self.shapes.len() != next.shapes.len() || self.mechanisms != next.mechanisms {
             return Err("scenery lifecycle changed");
         }
         let mut result = next.clone();

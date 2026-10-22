@@ -107,6 +107,12 @@ pub struct Args {
     /// Additional verified folding Hero package for Heavy conversion visuals.
     #[arg(long, requires = "robot_assets")]
     pub hero_assets: Option<std::path::PathBuf>,
+    /// Checked immutable package retained locally after argument resolution.
+    #[arg(skip)]
+    pub robot_descriptor: Option<std::sync::Arc<rm_simulator_assets::robots::RobotDescriptor>>,
+    /// Checked conversion package; never included in host arguments or protocol.
+    #[arg(skip)]
+    pub hero_descriptor: Option<std::sync::Arc<rm_simulator_assets::robots::RobotDescriptor>>,
     #[command(flatten)]
     pub host: HostArgs,
     /// Lobby directory as HOST:PORT.
@@ -313,6 +319,8 @@ impl Args {
     /// CLI-relative paths are based on the launch working directory, including
     /// when Bevy would otherwise choose the executable's directory.
     pub fn resolve_asset_path(&mut self) -> std::io::Result<()> {
+        self.robot_descriptor = None;
+        self.hero_descriptor = None;
         self.host
             .validate_competition_assets()
             .map_err(std::io::Error::other)?;
@@ -321,9 +329,12 @@ impl Args {
         }
         if let Some(path) = &mut self.robot_assets {
             *path = std::path::absolute(&*path)?;
-            self.host.folding_hero = crate::robot_assets::verify(path)?;
-            self.host.stair_heavy = crate::robot_assets::is_stair_heavy(path)?;
-            self.host.source_chassis = crate::robot_assets::source_chassis(path)?;
+            use rm_simulator_assets::robots::{RobotDescriptor, RobotProfile};
+            let descriptor = std::sync::Arc::new(RobotDescriptor::load(path)?);
+            self.host.folding_hero = descriptor.profile() == RobotProfile::ArtisansFoldingHero;
+            self.host.stair_heavy = descriptor.profile() == RobotProfile::DreamchaserStairHeavy;
+            self.host.source_chassis = crate::robot_assets::tuned_source_chassis(&descriptor)?;
+            self.robot_descriptor = Some(descriptor);
             self.host.team_cad = !(self.host.folding_hero
                 || self.host.stair_heavy
                 || self.host.source_chassis.is_some());
@@ -352,12 +363,22 @@ impl Args {
         }
         if let Some(path) = &mut self.hero_assets {
             *path = std::path::absolute(&*path)?;
-            if !crate::robot_assets::verify(path)? || !crate::robot_assets::replacement_armor(path)?
+            use rm_simulator_assets::robots::{ArmorIdentity, RobotDescriptor, RobotProfile};
+            let descriptor = if self.robot_assets.as_ref() == Some(path) {
+                self.robot_descriptor
+                    .clone()
+                    .expect("resolved robot package")
+            } else {
+                std::sync::Arc::new(RobotDescriptor::load(path)?)
+            };
+            if descriptor.profile() != RobotProfile::ArtisansFoldingHero
+                || !matches!(descriptor.armor(), ArmorIdentity::Replacement { .. })
             {
                 return Err(std::io::Error::other(
                     "Hero conversion requires a verified folding Hero with replacement armor",
                 ));
             }
+            self.hero_descriptor = Some(descriptor);
         }
         Ok(())
     }
@@ -421,6 +442,54 @@ mod tests {
     use super::*;
     use rm_simulator_server::protocol::WeaponConfig;
     use rm_simulator_world::{Caliber, Shot};
+
+    #[test]
+    #[ignore = "requires RM_ROBOT_PACKAGES with external checked package paths"]
+    fn checked_packages_keep_app_tuning_and_argument_compatibility() {
+        use crate::robot_assets::{is_stair_heavy, source_chassis, verify};
+        use clap::Parser;
+        use rm_simulator_assets::robots::{ArmorIdentity, RobotDescriptor, RobotProfile};
+        let paths = std::env::var_os("RM_ROBOT_PACKAGES").expect("set external package paths");
+        let mut count = 0;
+        for root in std::env::split_paths(&paths) {
+            let descriptor = RobotDescriptor::load(&root).unwrap();
+            let mut args = crate::args::Args::try_parse_from([
+                std::ffi::OsString::from("rm-simulator"),
+                std::ffi::OsString::from("--robot-assets"),
+                root.clone().into_os_string(),
+            ])
+            .unwrap();
+            // Reuse the same package for both roles to exercise descriptor sharing.
+            if descriptor.profile() == RobotProfile::ArtisansFoldingHero
+                && matches!(descriptor.armor(), ArmorIdentity::Replacement { .. })
+            {
+                args.hero_assets = Some(root.clone());
+            }
+            args.resolve_asset_path().unwrap();
+            let retained = args.robot_descriptor.as_ref().unwrap();
+            assert_eq!(descriptor.identity_sha256(), retained.identity_sha256());
+            assert_eq!(args.host.source_chassis, source_chassis(&root).unwrap());
+            assert_eq!(args.host.folding_hero, verify(&root).unwrap());
+            assert_eq!(args.host.stair_heavy, is_stair_heavy(&root).unwrap());
+            assert_eq!(
+                args.host.team_cad,
+                descriptor.profile() == RobotProfile::TeamCad
+            );
+            if let Some(mut expected) = rm_simulator_assets::robots::source_chassis(&root).unwrap()
+            {
+                expected.set_transform_duration_s(0.5).unwrap();
+                assert_eq!(args.host.source_chassis, Some(expected));
+            }
+            if args.hero_assets.as_ref() == Some(&root) {
+                assert!(std::sync::Arc::ptr_eq(
+                    retained,
+                    args.hero_descriptor.as_ref().unwrap()
+                ));
+            }
+            count += 1;
+        }
+        assert!(count > 0);
+    }
 
     #[test]
     fn rmul_asset_admission_requires_no_cad_package() {

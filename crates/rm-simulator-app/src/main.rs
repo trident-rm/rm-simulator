@@ -119,8 +119,13 @@ fn main() -> AppExit {
                         .collect()
                 })
                 .unwrap_or_default(),
-            replace_armor: robot_assets::replacement_armor(path)
-                .expect("verified robot armor mounts"),
+            replace_armor: matches!(
+                args.robot_descriptor
+                    .as_ref()
+                    .expect("resolved robot package")
+                    .armor(),
+                rm_simulator_assets::robots::ArmorIdentity::Replacement { .. }
+            ),
         });
     }
     if let Err(error) = assembly::register(&mut app, args.host.assembly_assets.as_deref()) {

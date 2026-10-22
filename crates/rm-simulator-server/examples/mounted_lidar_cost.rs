@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Loaded-CAD mounted rolling LiDAR cost for one moving robot, no rendering.
-//! Usage: mounted_lidar_cost CAD_PATH. Includes self-occlusion and range effects.
+//! Usage: mounted_lidar_cost CAD_PATH [SECONDS=1]. Includes self-occlusion and range effects.
 use rm_simulator_physics::sensors::{
     mid360::Mid360Pattern,
     rolling::{MountedLidar, RangeEffects, RollingFrame},
@@ -12,7 +12,10 @@ use rm_simulator_world::{
 };
 use std::{path::PathBuf, time::Instant};
 fn main() -> anyhow::Result<()> {
-    let root = PathBuf::from(std::env::args().nth(1).expect("CAD_PATH required"));
+    let mut args = std::env::args().skip(1);
+    let root = PathBuf::from(args.next().expect("CAD_PATH required"));
+    let seconds: u64 = args.next().unwrap_or_else(|| "1".into()).parse()?;
+    anyhow::ensure!((1..=60).contains(&seconds), "SECONDS must be in 1..=60");
     let cad = cad_assets::load(&root)?;
     let terrain = layout::load_terrain(&cad)?;
     let mut field = Field::new(&layout::field_config(
@@ -62,7 +65,7 @@ fn main() -> anyhow::Result<()> {
     let mut frame = RollingFrame::default();
     let (mut points, mut hits) = (0, 0);
     let (mut scan_s, mut capture_s, mut physics_s) = (0., 0., 0.);
-    for _ in 0..128 {
+    for _ in 0..128 * seconds {
         let start = Instant::now();
         field.step(1)?;
         physics_s += start.elapsed().as_secs_f64();
@@ -86,7 +89,7 @@ fn main() -> anyhow::Result<()> {
     }
     println!("{}; CAD root={}", terrain.describe(), root.display());
     println!(
-        "One simulated second, one moving robot: {points} points, {hits} returns; capture {:.3} ms, ray acquisition {:.3} ms, physics {:.3} ms; final chassis {:?}",
+        "{seconds} simulated second(s), one moving robot: {points} points, {hits} returns; capture {:.3} ms, ray acquisition {:.3} ms, physics {:.3} ms; final chassis {:?}",
         capture_s * 1000.,
         scan_s * 1000.,
         physics_s * 1000.,

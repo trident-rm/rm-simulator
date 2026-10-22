@@ -22,6 +22,7 @@ use rapier3d_f64::prelude::{
 #[derive(Clone)]
 pub(crate) struct SensorCollider {
     pub handle: ColliderHandle,
+    pub motion_channel: Option<crate::motion::MotionChannel>,
     pub pose: Pose3,
     pub shape: SharedShape,
 }
@@ -354,7 +355,9 @@ impl<'a> SceneBracket<'a> {
             return Err("invalid LiDAR scene times, robot identity or placement continuity");
         }
         let matching = |a: &SensorCollider, b: &SensorCollider| {
-            a.handle == b.handle && std::ptr::addr_eq(a.shape.as_ref(), b.shape.as_ref())
+            a.handle == b.handle
+                && a.motion_channel == b.motion_channel
+                && std::ptr::addr_eq(a.shape.as_ref(), b.shape.as_ref())
         };
         if before.fixed.len() != after.fixed.len()
             || before.moving.len() != after.moving.len()
@@ -807,6 +810,41 @@ mod tests {
         assert!((scene.cast(&ray, 10., 0.5).unwrap().distance_m - start - 1.).abs() < 1e-8);
         assert!((scene.cast(&ray, 10., 1.).unwrap().distance_m - start - 2.).abs() < 1e-8);
     }
+    #[test]
+    fn instance_motion_is_continuous_but_channel_swaps_require_recapture() {
+        use crate::motion::{MotionChannel, MotionFrame, MotionId, MotionUpdate};
+        let (mut world, robot) = rig();
+        let id = MotionId {
+            instance: 30,
+            channel: 4,
+        };
+        world
+            .add_motion_mesh(
+                vec![[2., -1., 0.], [2., 1., 0.], [2., 1., 2.], [2., -1., 2.]],
+                vec![[0, 1, 2], [0, 2, 3]],
+                id,
+                MotionFrame::Translation {
+                    offsets_m: [[0.; 3], [2., 0., 0.]],
+                },
+            )
+            .unwrap();
+        let before = world.lidar_scene_capture(robot, 0).unwrap();
+        world
+            .sync_motions(&[MotionUpdate { id, coordinate: 1. }])
+            .unwrap();
+        let mut after = world.lidar_scene_capture(robot, 1000).unwrap();
+        let bracket = SceneBracket::new(&before, &after).unwrap();
+        let ray = Ray::new(Vector::new(1., 0., 1.), Vector::X);
+        assert!((bracket.cast(&ray, 10., 0.5).unwrap().distance_m - 2.).abs() < 1e-9);
+        let moving = after
+            .moving
+            .iter_mut()
+            .find(|c| c.motion_channel == Some(MotionChannel::Instance(id)))
+            .unwrap();
+        moving.motion_channel = Some(MotionChannel::Instance(MotionId { instance: 31, ..id }));
+        assert!(SceneBracket::new(&before, &after).is_err());
+    }
+
     #[test]
     fn rotating_corners_are_not_culled_by_endpoint_bounds() {
         let (world, robot) = rig();

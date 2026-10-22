@@ -23,6 +23,80 @@ pub enum Mechanism {
     Rune,
 }
 
+/// Stable physical channel identity in a caller-owned instance namespace.
+/// Reuse it only for shapes intentionally driven by the same coordinate. Prepared
+/// compositions derive it from structural instance/source identities, not order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct MotionId {
+    /// Caller-owned namespace; disjoint independently installed instances need distinct values.
+    pub instance: u64,
+    /// Channel within the instance, independent of competition team ownership.
+    pub channel: u64,
+}
+
+/// Driver of a prescribed physical shape; instance drivers ignore legacy state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MotionChannel {
+    /// Compatibility binding used by the ordinary match adapter.
+    Legacy {
+        /// Original competition equipment role.
+        kind: Mechanism,
+        /// Original competition side (ignored by the shared DartTarget).
+        team: Team,
+    },
+    /// Explicit physical channel with no inferred role or team.
+    Instance(MotionId),
+}
+
+/// One caller-resolved coordinate. Updates never advance a clock or scheduler.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MotionUpdate {
+    /// Physical channel to update.
+    pub id: MotionId,
+    /// Rotation in radians, or translation fraction in the inclusive range 0..=1.
+    pub coordinate: f64,
+}
+
+/// Validate a partial update batch before changing any shape or caller output.
+pub(crate) fn validate_updates(
+    updates: &[MotionUpdate],
+    channels: impl Iterator<Item = (MotionChannel, MotionFrame)> + Clone,
+) -> Result<(), &'static str> {
+    for (index, update) in updates.iter().enumerate() {
+        if updates[..index].iter().any(|other| other.id == update.id) {
+            return Err("duplicate motion ID update");
+        }
+        if !update.coordinate.is_finite() {
+            return Err("nonfinite motion coordinate");
+        }
+        let mut found = false;
+        for (channel, frame) in channels.clone() {
+            if channel != MotionChannel::Instance(update.id) {
+                continue;
+            }
+            found = true;
+            if matches!(frame, MotionFrame::Translation { .. })
+                && !(0. ..=1.).contains(&update.coordinate)
+            {
+                return Err("translation coordinate outside 0..=1");
+            }
+            let pose = frame.pose(update.coordinate);
+            if !pose
+                .translation_m
+                .into_iter()
+                .chain(pose.rotation_wxyz)
+                .all(f64::is_finite)
+            {
+                return Err("nonfinite resolved motion pose");
+            }
+        }
+        if !found {
+            return Err("unknown motion ID");
+        }
+    }
+    Ok(())
+}
+
 /// Resolved positions supplied by the caller; physics never consults a referee.
 ///
 /// ```

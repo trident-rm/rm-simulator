@@ -27,8 +27,10 @@ the public view must exactly match its hidden checkpoint authority. All formats
 use the same physics and explicit step clock. See [RMUL coverage](rmul-2027.md).
 
 For the initial two-session split and proposed backend-neutral runtime migration,
-see [runtime/game split](runtime-game-split.md). Only the session API boundary is
-implemented; the later backend/model extraction remains proposed.
+see [runtime/game split](runtime-game-split.md). Sessions, reusable wheel equations,
+composable equipment, compact telemetry, bounded CPU rollout workers and initial
+model/source-package extractions are implemented. The remaining coupling audit
+there distinguishes further proposals from the unchanged Rapier backend.
 
 ## Ownership
 

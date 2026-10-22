@@ -2,15 +2,14 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Checked composition of immutable presets, terrain, robots and explicit RFID.
 //! Preparation expands and cooks geometry once; sessions/resets share the result.
-//! Mechanism channels remain the existing fixed kind/side slots. Independent
-//! instances sharing a slot are rejected, rather than implicitly moving together.
+//! Each instance receives structural physical motion IDs; competition roles remain
+//! inspectable source metadata and never implicitly drive repeated equipment.
 use super::*;
-use crate::{
-    collision_mesh::CollisionMesh,
-    components::{MechanismMesh, PlacedComponent},
-    math,
+use crate::{collision_mesh::CollisionMesh, components::PlacedComponent, math};
+use rm_simulator_physics::{
+    arena::ZoneFootprint,
+    motion::{MotionChannel, MotionFrame, MotionId, MotionUpdate},
 };
-use rm_simulator_physics::{arena::ZoneFootprint, motion::MotionFrame};
 use std::collections::HashSet;
 
 /// Caller-owned stable identity, independent of insertion order and team policy.
@@ -155,6 +154,19 @@ pub struct TargetIdentity {
     pub physical: ArmorTarget,
 }
 
+/// Inspectable source role/side to independently driven physical channel mapping.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MotionIdentity {
+    /// Owning component; its ID supplies the physical namespace.
+    pub instance: InstanceId,
+    /// Original source role, retained solely as caller interpretation metadata.
+    pub kind: Mechanism,
+    /// Canonical original source side (Red for the shared DartTarget).
+    pub team: Team,
+    /// Structural physical identity, stable across preparation order and resets.
+    pub physical: MotionId,
+}
+
 /// Mapping from caller robot identity to the reset-stable physical chassis ID.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RobotIdentity {
@@ -205,6 +217,8 @@ pub struct ComposedScenario {
     robots: Vec<RobotSpawn>,
     robot_ids: Vec<RobotIdentity>,
     target_ids: Vec<TargetIdentity>,
+    motion_ids: Vec<MotionIdentity>,
+    target_motion_ids: Vec<Option<MotionId>>,
     visuals: Vec<PlacedVisual>,
     rfid: Vec<RfidVolume>,
     catch_floor_m: Option<f64>,
@@ -213,7 +227,7 @@ pub struct ComposedScenario {
 }
 
 impl Composition {
-    /// Validate identities, poses, cardinality and channel independence, then cook.
+    /// Validate identities, poses and cardinality, allocate instance channels, then cook.
     /// Preparation expands source shapes into triangles and rebuilds their BVHs;
     /// it is deliberately outside session creation/reset and stepping.
     ///
@@ -248,7 +262,8 @@ impl Composition {
             ensure!(ids.insert(id), "duplicate instance ID {id:?}");
         }
         let mut physical_ids = HashSet::new();
-        let mut channels = Vec::new();
+        let mut motion_ids = Vec::new();
+        let mut target_motion_ids = Vec::new();
         let mut targets = Vec::new();
         let mut target_ids = Vec::new();
         let mut visuals = Vec::new();
@@ -270,15 +285,18 @@ impl Composition {
                     .filter_map(|t| t.rotation.map(|r| (r.mechanism, r.team))),
             ) {
                 let channel = canonical_channel(kind, team);
-                ensure!(
-                    !channels.contains(&channel),
-                    "independent instances alias mechanism channel {channel:?}"
-                );
                 if !own_channels.contains(&channel) {
                     own_channels.push(channel);
                 }
             }
-            channels.extend(own_channels);
+            for (kind, team) in &own_channels {
+                motion_ids.push(MotionIdentity {
+                    instance: instance.id,
+                    kind: *kind,
+                    team: *team,
+                    physical: physical_motion_id(instance.id, *kind, *team),
+                });
+            }
             for (source, physical) in instance.source.targets.iter().zip(&instance.targets) {
                 ensure!(
                     same_surface(source.face.target, *physical),
@@ -299,6 +317,11 @@ impl Composition {
                     rotation.pivot_m = transform_point(instance.placement, rotation.pivot_m);
                     rotation.axis = math::rotate(instance.placement.rotation_wxyz, rotation.axis);
                 }
+                target_motion_ids.push(
+                    source
+                        .rotation
+                        .map(|r| physical_motion_id(instance.id, r.mechanism, r.team)),
+                );
                 targets.push(target);
                 target_ids.push(TargetIdentity {
                     instance: instance.id,
@@ -318,32 +341,38 @@ impl Composition {
                 });
             }
             let fixed = transformed_mesh(instance.source.geometry.fixed_only(), instance.placement);
-            let moving = parts
-                .into_iter()
-                .map(|p| MechanismMesh {
-                    mesh: transformed_mesh(p.geometry, instance.placement),
-                    mechanism: p.kind,
-                    team: p.team,
-                    motion: match p.motion {
-                        MotionFrame::Rotation { pivot_m, axis } => MotionFrame::Rotation {
-                            pivot_m: transform_point(instance.placement, pivot_m),
-                            axis: math::rotate(instance.placement.rotation_wxyz, axis),
-                        },
-                        MotionFrame::Translation { offsets_m } => MotionFrame::Translation {
-                            offsets_m: offsets_m
-                                .map(|v| math::rotate(instance.placement.rotation_wxyz, v)),
-                        },
+            PlacedComponent {
+                fixed,
+                moving: vec![],
+            }
+            .install(&mut physics)
+            .map_err(anyhow::Error::msg)?;
+            for part in parts {
+                let mesh = transformed_mesh(part.geometry, instance.placement);
+                let frame = match part.motion {
+                    MotionFrame::Rotation { pivot_m, axis } => MotionFrame::Rotation {
+                        pivot_m: transform_point(instance.placement, pivot_m),
+                        axis: math::rotate(instance.placement.rotation_wxyz, axis),
                     },
-                })
-                .collect();
-            PlacedComponent { fixed, moving }
-                .install(&mut physics)
-                .map_err(anyhow::Error::msg)?;
+                    MotionFrame::Translation { offsets_m } => MotionFrame::Translation {
+                        offsets_m: offsets_m
+                            .map(|v| math::rotate(instance.placement.rotation_wxyz, v)),
+                    },
+                };
+                physics
+                    .add_motion_mesh(
+                        mesh.vertices_m,
+                        mesh.triangles,
+                        physical_motion_id(instance.id, part.kind, part.team),
+                        frame,
+                    )
+                    .map_err(anyhow::Error::msg)?;
+            }
         }
         for terrain in &self.terrain {
             validate_pose(terrain.placement)?;
             ensure!(
-                terrain.geometry.moving_parts().is_empty(),
+                terrain.geometry.motion_parts().is_empty(),
                 "terrain contains moving channels"
             );
             PlacedComponent {
@@ -370,6 +399,8 @@ impl Composition {
             robots: self.robots.into_iter().map(|r| r.spawn).collect(),
             robot_ids,
             target_ids,
+            motion_ids,
+            target_motion_ids,
             visuals,
             rfid: self.rfid,
             catch_floor_m: self.catch_floor_m,
@@ -391,7 +422,7 @@ impl Composition {
                 .collect(),
         };
         // Validate robot configurations and the complete target topology before publishing.
-        definition.session(StepDuration::HZ_1000, MechanismState::default())?;
+        definition.session_with_motions(StepDuration::HZ_1000, &definition.default_motions())?;
         Ok(definition)
     }
 }
@@ -450,7 +481,8 @@ impl ComposedScenario {
         state: &MechanismState,
         output: &mut Vec<TargetFace>,
     ) -> anyhow::Result<()> {
-        resolve_targets(&self.targets, state, output)
+        let updates = self.legacy_motions(state)?;
+        self.targets_at_motions(&updates, output)
     }
     /// Create an independent session sharing prepared shapes and initial topology.
     /// Reset preserves IDs, robots, targets and initial coordinates. Caller sensor,
@@ -460,17 +492,153 @@ impl ComposedScenario {
         duration: StepDuration,
         state: MechanismState,
     ) -> anyhow::Result<RobotSession> {
+        let updates = self.legacy_motions(&state)?;
+        self.session_with_motions(duration, &updates)
+    }
+
+    /// Structural source-to-instance motion mappings. Disjoint component instance
+    /// IDs yield disjoint physical namespaces, including across compositions.
+    pub fn motion_identities(&self) -> &[MotionIdentity] {
+        &self.motion_ids
+    }
+
+    /// Complete rest coordinates (zero angle/fraction, open legacy DartDoors).
+    /// This is explicit initial data; no automatic motion is scheduled.
+    pub fn default_motions(&self) -> Vec<MotionUpdate> {
+        self.motion_ids
+            .iter()
+            .map(|m| MotionUpdate {
+                id: m.physical,
+                coordinate: f64::from(m.kind == Mechanism::DartDoor),
+            })
+            .collect()
+    }
+
+    /// Explicitly translate unambiguous source roles into instance coordinates.
+    /// Repeated source channels reject rather than silently synchronize instances.
+    pub fn legacy_motions(&self, state: &MechanismState) -> anyhow::Result<Vec<MotionUpdate>> {
+        validate_state(state)?;
+        for (index, channel) in self.motion_ids.iter().enumerate() {
+            ensure!(
+                !self.motion_ids[..index]
+                    .iter()
+                    .any(|other| (other.kind, other.team) == (channel.kind, channel.team)),
+                "ambiguous legacy mechanism channel; use explicit motion IDs"
+            );
+        }
+        Ok(self
+            .motion_ids
+            .iter()
+            .map(|m| MotionUpdate {
+                id: m.physical,
+                coordinate: state.fraction(m.kind, m.team),
+            })
+            .collect())
+    }
+
+    fn validate_motions(&self, updates: &[MotionUpdate]) -> anyhow::Result<()> {
+        ensure!(
+            updates.len() == self.motion_ids.len(),
+            "complete motion coordinates required"
+        );
+        for (index, update) in updates.iter().enumerate() {
+            ensure!(
+                !updates[..index].iter().any(|u| u.id == update.id),
+                "duplicate motion ID"
+            );
+            let identity = self
+                .motion_ids
+                .iter()
+                .find(|m| m.physical == update.id)
+                .context("unknown motion ID")?;
+            ensure!(update.coordinate.is_finite(), "nonfinite motion coordinate");
+            ensure!(
+                matches!(identity.kind, Mechanism::Outpost | Mechanism::Rune)
+                    || (0. ..=1.).contains(&update.coordinate),
+                "translation coordinate outside 0..=1"
+            );
+        }
+        // Also validate resolved source-frame translations before publishing targets.
+        self.geometry
+            .validate_motions(
+                updates
+                    .iter()
+                    .filter(|u| self.geometry_channels().any(|id| id == u.id))
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+            )
+            .map_err(anyhow::Error::msg)?;
+        Ok(())
+    }
+
+    fn geometry_channels(&self) -> impl Iterator<Item = MotionId> + '_ {
+        self.geometry
+            .motion_channels()
+            .filter_map(|channel| match channel {
+                MotionChannel::Instance(id) => Some(id),
+                MotionChannel::Legacy { .. } => None,
+            })
+    }
+
+    /// Resolve detector endpoints from a complete explicit coordinate table.
+    /// Unknown/duplicate/missing IDs and invalid coordinates leave output unchanged.
+    pub fn targets_at_motions(
+        &self,
+        updates: &[MotionUpdate],
+        output: &mut Vec<TargetFace>,
+    ) -> anyhow::Result<()> {
+        self.validate_motions(updates)?;
+        let mut resolved = Vec::with_capacity(self.targets.len());
+        for (target, id) in self.targets.iter().zip(&self.target_motion_ids) {
+            let mut face = target.face;
+            if let (Some(rotation), Some(id)) = (target.rotation, id) {
+                let coordinate = updates
+                    .iter()
+                    .find(|u| u.id == *id)
+                    .expect("validated complete coordinates")
+                    .coordinate;
+                face.pose = OutpostModel::rotate_pose(
+                    face.pose,
+                    rotation.pivot_m,
+                    rotation.axis,
+                    coordinate,
+                );
+                validate_pose(face.pose)?;
+            }
+            resolved.push(face);
+        }
+        *output = resolved;
+        Ok(())
+    }
+
+    /// Create a session with explicit initial coordinates, retained by recipe reset.
+    /// Subsequent partial physical updates use `physics_mut().sync_motions`; target
+    /// endpoint resolution needs a complete caller-owned coordinate table. IDs and
+    /// rest frames survive reset, captures and checked insertion into another world.
+    pub fn session_with_motions(
+        &self,
+        duration: StepDuration,
+        updates: &[MotionUpdate],
+    ) -> anyhow::Result<RobotSession> {
         let mut targets = Vec::new();
-        self.targets_at(&state, &mut targets)?;
-        let geometry = self.geometry.clone();
+        self.targets_at_motions(updates, &mut targets)?;
+        let geometry_updates: Vec<_> = updates
+            .iter()
+            .filter(|u| self.geometry_channels().any(|id| id == u.id))
+            .copied()
+            .collect();
+        let geometry = self
+            .geometry
+            .at_motions(&geometry_updates)
+            .map_err(anyhow::Error::msg)?;
         let robots = self.robots.clone();
         let floor = self.catch_floor_m;
         let recipe = RobotScenario::new(targets, floor.unwrap_or(0.), duration, move |world| {
             if floor.is_none() {
                 world.remove_catch_floor();
             }
-            world.insert_geometry(&geometry);
-            world.sync_mechanisms(&state);
+            world.try_insert_geometry(&geometry)?;
             for robot in &robots {
                 world.add_chassis(robot.team, robot.config.clone(), robot.pose)?;
             }
@@ -478,6 +646,21 @@ impl ComposedScenario {
         })
         .map_err(anyhow::Error::msg)?;
         RobotSession::new(recipe).map_err(anyhow::Error::msg)
+    }
+}
+
+fn physical_motion_id(instance: InstanceId, kind: Mechanism, team: Team) -> MotionId {
+    let (kind, team) = canonical_channel(kind, team);
+    let channel = match kind {
+        Mechanism::Outpost => 0,
+        Mechanism::Rune => 2,
+        Mechanism::Base => 4,
+        Mechanism::DartDoor => 6,
+        Mechanism::DartTarget => 8,
+    } + team.index() as u64;
+    MotionId {
+        instance: instance.0,
+        channel,
     }
 }
 

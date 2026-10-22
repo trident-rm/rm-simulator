@@ -666,3 +666,71 @@ Native metadata preserves useful assembly context absent from a flattened STEP,
 but importing it does not establish a more accurate dynamic model. Validate a
 small assembly's placed meshes and a SolidWorks mass-property report before
 promoting any cache values into simulator configuration.
+
+### Independent native-source verification (2026-10-23)
+
+A separate Python raw-deflate/XML probe checked the original native streams,
+without using openswx's semantic reader. All 1,418 configuration names/indices,
+916 occurrence matrices and 617 twelve-value physical-property records matched
+the catalogue. All 916 transforms and suppression/visibility attributes were
+present in the source; none of these matrices relied on identity fallback.
+This verifies extraction fidelity, not physical correctness. The corpus has
+144 suppressed and 157 hidden occurrences (including suppressed ones), 290
+missing references, no duplicate case-folded native basenames and no ambiguous
+matches. Of 626 resolved edges, 532 use unique basenames and 94 path suffixes;
+their requested child configurations resolve. Missing files include active
+components, so retaining suppressed instances does not explain incompleteness.
+
+The fully resolved, single-configuration
+`小装甲板模块-标准件V2-哨ver-0517.SLDASM` provides a small rigid check: two bracket
+occurrences and one AM02 Part. All three products/configurations occur in each
+of the checked STEP's four module instances (`1/8`, `1/22`, `1/23`, `1/24`).
+Relative transforms, anchored on the first bracket, match with maximum
+translation error below `6e-14 mm` when native translations are read as metres,
+and rotation-entry error below `3e-16`. This tests scale and relative placement
+without guessing a robot-wide frame conversion. Reading the original
+checksum-pinned STEP with Open CASCADE also confirms the Part-local display-mesh
+envelopes: maximum coordinate discrepancies are `0.0065 mm` for the bracket
+(206 native face meshes) and `0.000007 mm` for AM02 (995). These are envelope
+checks, not surface-distance or watertight-solid certification. AM02's native
+reader combined edge/mesh bound extends to 495 mm while its STEP and display
+mesh extend to 141 mm on that axis; that combined bound is unsuitable as a
+physical envelope.
+
+Two four-component friction-wheel instances also match relative placement.
+Articulated controls do not: the MHF9025 rotor differs by about 135.06° and two
+brake components by 22.84° from the STEP. These may reflect saved assembly poses;
+the comparison does not establish their cause or validate flexible assemblies.
+At the robot root, 112 native occurrences comprise 97 visible, 13 suppressed
+and two additionally hidden instances. The STEP's 96 children match the visible
+product/configuration multiset except for the native-only `防大弹丸打印件`.
+That Part and the virtual `装配体1^底盘总装V2-哨ver-0517` reference are missing from
+the native inventory; the virtual assembly is present in STEP. Whole-robot
+native scene completeness remains unverified.
+
+Material custom-property strings are available in 248 documents and 456
+configuration rows, including unspecified-material placeholders. Raw
+`MATERIALTREE` streams additionally contain 214 material definitions in 186
+documents, including density and configuration bindings; the CLI/catalogue
+does not expose that full tree. The tested bracket and AM02 have empty material
+configuration lists and unspecified custom material strings. Their cache masses
+therefore cannot be justified by those strings. For these two Parts only,
+interpreting cached volume as m³ agrees with STEP integration within 10 ppm,
+and cached COM as metres agrees with the uniform-volume centroid in the same
+Part frame within `0.0003 mm`. Diagonal inertia divided by cached mass agrees
+with uniform STEP geometry in m² within 16 ppm. These checks support local
+geometric consistency; they do not independently establish mass or density.
+No independent SolidWorks API mass-property report was found in the supplied
+source/export artifacts. The
+root's implausible inertia values are present literally in the saved XML;
+mass/tensor units, reference frames, overrides and freshness must remain
+unvalidated for physical import.
+
+Reproducible read-only probes, source-stream extracts, quantitative comparisons
+and original STEP envelope measurements remain ignored at
+`local-assets/native-independent-verification/` (`probe.py`, `raw_probe.py`,
+`step_probe.py`, `report.json`, `raw-report.json`, `step-report.json` and
+`materials.json`, plus `physical_probe.py` / `physical-report.json`).
+The STEP hash is the EGA hash documented above. Original CAD
+and sibling-repository geometry were not modified; no parser or runtime changes
+were made for this verification.

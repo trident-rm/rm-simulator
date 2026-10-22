@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 use super::*;
+use crate::components::MechanismMesh;
 
 fn tunnel() -> ComponentDefinition {
     Scenario::tunnel(TunnelModel {
@@ -191,7 +192,11 @@ fn arbitrary_rigid_placement_commutes_with_motion_and_preserves_visual_basis() {
                 ..Default::default()
             };
             let (before, _) = source_geometry.at_mechanisms(&state).into_triangles();
-            let (after, _) = definition.geometry().at_mechanisms(&state).into_triangles();
+            let (after, _) = definition
+                .geometry()
+                .at_motions(&definition.legacy_motions(&state).unwrap())
+                .unwrap()
+                .into_triangles();
             assert_eq!(before.len(), after.len());
             for point in before {
                 let expected = transform_point(rotation(), point);
@@ -324,7 +329,7 @@ fn duplicate_ids_invalid_pose_cardinality_and_target_aliasing_are_rejected() {
 }
 
 #[test]
-fn fixed_channel_aliasing_is_rejected_without_linking_independent_components() {
+fn repeated_source_channels_receive_independent_ids_and_reject_ambiguous_legacy_control() {
     for kind in [
         Mechanism::Outpost,
         Mechanism::Rune,
@@ -349,17 +354,69 @@ fn fixed_channel_aliasing_is_rejected_without_linking_independent_components() {
                 face: 0,
             };
         }
-        let error = Composition {
+        let definition = Composition {
             components: vec![a, b],
             ..Default::default()
         }
         .prepare()
-        .err()
         .unwrap();
-        assert!(
-            error.to_string().contains("alias mechanism channel"),
-            "{error}"
+        assert_eq!(definition.motion_identities().len(), 2);
+        let mappings = definition.motion_identities();
+        assert_ne!(mappings[0].physical, mappings[1].physical);
+        assert!(definition.legacy_motions(&Default::default()).is_err());
+        let mut coordinates = definition.default_motions();
+        coordinates[0].coordinate = 0.2;
+        coordinates[1].coordinate = 0.8;
+        let mut session = definition
+            .session_with_motions(StepDuration::HZ_1000, &coordinates)
+            .unwrap();
+        let initial = session.ground_truth().static_geometry_snapshot(true);
+        session
+            .physics_mut()
+            .sync_motions(&[MotionUpdate {
+                id: coordinates[0].id,
+                coordinate: 0.6,
+            }])
+            .unwrap();
+        let changed = session.ground_truth().static_geometry_snapshot(true);
+        assert_ne!(initial.clone().into_triangles(), changed.into_triangles());
+        let mut faces = Vec::new();
+        definition
+            .targets_at_motions(&coordinates, &mut faces)
+            .unwrap();
+        if !faces.is_empty() {
+            assert_ne!(faces[0].pose, faces[1].pose);
+            let previous = faces.clone();
+            for invalid in [
+                vec![coordinates[0]; 2],
+                vec![MotionUpdate {
+                    id: MotionId {
+                        instance: 999,
+                        channel: 0,
+                    },
+                    coordinate: 0.,
+                }],
+                vec![
+                    MotionUpdate {
+                        coordinate: f64::NAN,
+                        ..coordinates[0]
+                    },
+                    coordinates[1],
+                ],
+            ] {
+                assert!(definition.targets_at_motions(&invalid, &mut faces).is_err());
+                assert_eq!(faces, previous);
+            }
+        }
+        session.step_with_targets(&faces).unwrap();
+        session.reset().unwrap();
+        assert_eq!(session.stamp().time_ns, 0);
+        let reset = session.ground_truth().static_geometry_snapshot(true);
+        assert_eq!(
+            initial.motion_channels().collect::<Vec<_>>(),
+            reset.motion_channels().collect::<Vec<_>>()
         );
+        assert_eq!(initial.into_triangles(), reset.into_triangles());
     }
     let a = instance(1, moving(Mechanism::Outpost, Team::Red));
     let mut b = instance(2, moving(Mechanism::Outpost, Team::Blue));
@@ -416,17 +473,18 @@ fn checked_source_outposts_compose_with_unique_targets_and_reset() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../field-2027");
     let cad = crate::cad_assets::load(&root).unwrap();
     let mut components = Vec::new();
-    for team in Team::BOTH {
-        let source = Scenario::load(&cad, Preset::Outpost(team)).unwrap();
-        let mut part = instance(100 + team.index() as u64, source.into());
+    for index in 0..2 {
+        let source = Scenario::load(&cad, Preset::Outpost(Team::Red)).unwrap();
+        let mut part = instance(100 + index as u64, source.into());
         part.placement = rotation();
+        part.placement.translation_m[1] += index as f64 * 4.;
         part.targets = part
             .source
             .targets
             .iter()
             .map(|t| match t.face.target {
                 ArmorTarget::Outpost { face, .. } => ArmorTarget::Outpost {
-                    outpost: 500 + team.index() as u32,
+                    outpost: 500 + index as u32,
                     face,
                 },
                 _ => unreachable!(),
@@ -445,13 +503,22 @@ fn checked_source_outposts_compose_with_unique_targets_and_reset() {
     assert_eq!(definition.visuals().len(), 2);
     assert_eq!(definition.target_identities().len(), 6);
     assert!(definition.rfid().is_empty());
-    let state = MechanismState {
-        outpost_angle_rad: [0.4, -0.2],
-        ..Default::default()
-    };
-    let mut session = definition.session(StepDuration::HZ_1000, state).unwrap();
+    assert!(
+        definition
+            .motion_identities()
+            .iter()
+            .all(|m| m.team == Team::Red)
+    );
+    let mut coordinates = definition.default_motions();
+    coordinates[0].coordinate = 0.4;
+    coordinates[1].coordinate = -0.2;
+    let mut session = definition
+        .session_with_motions(StepDuration::HZ_1000, &coordinates)
+        .unwrap();
     let mut targets = Vec::new();
-    definition.targets_at(&state, &mut targets).unwrap();
+    definition
+        .targets_at_motions(&coordinates, &mut targets)
+        .unwrap();
     session.step_with_targets(&targets).unwrap();
     session.reset().unwrap();
     assert_eq!(session.stamp().time_ns, 0);
@@ -604,4 +671,98 @@ fn raw_projectile_contacts_keep_explicit_physical_and_source_identity_maps() {
     }
     session.reset().unwrap();
     assert!(session.step(80).unwrap().is_empty());
+}
+
+#[test]
+fn motion_ids_are_structural_under_reorder_and_disjoint_instance_namespaces() {
+    let a = instance(10, moving(Mechanism::Rune, Team::Red));
+    let b = instance(20, moving(Mechanism::Rune, Team::Red));
+    let prepare = |components| {
+        Composition {
+            components,
+            ..Default::default()
+        }
+        .prepare()
+        .unwrap()
+    };
+    let forward = prepare(vec![a.clone(), b.clone()]);
+    let backward = prepare(vec![b, a]);
+    for mapping in forward.motion_identities() {
+        assert!(backward.motion_identities().contains(mapping));
+    }
+    let unrelated = prepare(vec![instance(30, moving(Mechanism::Rune, Team::Red))]);
+    let mut world = WorldPhysics::new(&[], 0.);
+    world.try_insert_geometry(forward.geometry()).unwrap();
+    world.try_insert_geometry(unrelated.geometry()).unwrap();
+    assert!(world.try_insert_geometry(backward.geometry()).is_err());
+    assert_eq!(
+        world
+            .static_geometry_snapshot(true)
+            .motion_channels()
+            .count(),
+        3
+    );
+}
+
+#[test]
+#[ignore = "requires the verified field-2027 CAD package"]
+fn checked_source_runes_have_independent_banks_and_reset() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../field-2027");
+    let cad = crate::cad_assets::load(&root).unwrap();
+    let source: ComponentDefinition = Scenario::load(&cad, Preset::Rune).unwrap().into();
+    let components = (0..2)
+        .map(|index| {
+            let mut component = instance(200 + index, source.clone());
+            component.placement = Pose::at([index as f64 * 8., 0., 0.]);
+            component.targets = component
+                .source
+                .targets
+                .iter()
+                .map(|t| match t.face.target {
+                    ArmorTarget::Rune { rune, blade } => ArmorTarget::Rune {
+                        rune: rune + index as u32 * 10,
+                        blade,
+                    },
+                    _ => unreachable!(),
+                })
+                .collect();
+            component
+        })
+        .collect();
+    let definition = Composition {
+        components,
+        ..Default::default()
+    }
+    .prepare()
+    .unwrap();
+    assert_eq!(definition.motion_identities().len(), 4);
+    assert_eq!(definition.targets().len(), 20);
+    assert!(definition.legacy_motions(&Default::default()).is_err());
+    let mut coordinates = definition.default_motions();
+    for (index, coordinate) in coordinates.iter_mut().enumerate() {
+        coordinate.coordinate = (index as f64 + 1.) * 0.3;
+    }
+    let mut session = definition
+        .session_with_motions(StepDuration::HZ_1000, &coordinates)
+        .unwrap();
+    let initial = session.ground_truth().static_geometry_snapshot(true);
+    let mut targets = Vec::new();
+    definition
+        .targets_at_motions(&coordinates, &mut targets)
+        .unwrap();
+    session
+        .physics_mut()
+        .sync_motions(&[MotionUpdate {
+            id: coordinates[0].id,
+            coordinate: -0.7,
+        }])
+        .unwrap();
+    session.step_with_targets(&targets).unwrap();
+    session.reset().unwrap();
+    let reset = session.ground_truth().static_geometry_snapshot(true);
+    assert_eq!(
+        initial.motion_channels().collect::<Vec<_>>(),
+        reset.motion_channels().collect::<Vec<_>>()
+    );
+    assert_eq!(initial.into_triangles(), reset.into_triangles());
 }

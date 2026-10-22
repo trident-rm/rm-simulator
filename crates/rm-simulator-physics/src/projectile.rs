@@ -583,8 +583,7 @@ pub struct WorldPhysics {
     targets: Vec<TargetBody>,
     mechanisms: Vec<(
         ColliderHandle,
-        crate::motion::Mechanism,
-        crate::Team,
+        crate::motion::MotionChannel,
         crate::motion::MotionFrame,
     )>,
     /// Every scoring collider: a face index into `targets`, or a chassis
@@ -811,8 +810,10 @@ impl WorldPhysics {
         let handle = self.add_static_mesh(vertices, triangles)?;
         self.mechanisms.push((
             handle,
-            mechanism,
-            team,
+            crate::motion::MotionChannel::Legacy {
+                kind: mechanism,
+                team,
+            },
             crate::motion::MotionFrame::Translation { offsets_m },
         ));
         Ok(())
@@ -861,12 +862,87 @@ impl WorldPhysics {
         let handle = self.add_static_mesh(vertices, triangles)?;
         self.mechanisms.push((
             handle,
-            mechanism,
-            team,
+            crate::motion::MotionChannel::Legacy {
+                kind: mechanism,
+                team,
+            },
             crate::motion::MotionFrame::Rotation { pivot_m, axis },
         ));
         Ok(())
     }
+    /// Install one independently addressed moving mesh in its world-FLU rest frame.
+    /// A channel may drive several shapes with the same coordinate units. Geometry
+    /// and frame validation precede mutation; no competition role/team is inferred.
+    pub fn add_motion_mesh(
+        &mut self,
+        vertices: Vec<[f64; 3]>,
+        triangles: Vec<[u32; 3]>,
+        id: crate::motion::MotionId,
+        frame: crate::motion::MotionFrame,
+    ) -> Result<(), &'static str> {
+        use crate::motion::{MotionChannel, MotionFrame};
+        match frame {
+            MotionFrame::Translation { offsets_m } if !offsets_m.iter().all(|v| finite(*v)) => {
+                return Err("nonfinite mechanism offset");
+            }
+            MotionFrame::Rotation { pivot_m, axis }
+                if !finite(pivot_m)
+                    || !finite(axis)
+                    || (axis.iter().map(|v| v * v).sum::<f64>() - 1.).abs() > 1e-6 =>
+            {
+                return Err("invalid rotor pivot/axis");
+            }
+            _ => {}
+        }
+        if self.mechanisms.iter().any(|(_, channel, existing)| {
+            *channel == MotionChannel::Instance(id)
+                && std::mem::discriminant(existing) != std::mem::discriminant(&frame)
+        }) {
+            return Err("motion channel mixes rotation and translation units");
+        }
+        let handle = self.add_static_mesh(vertices, triangles)?;
+        self.mechanisms
+            .push((handle, MotionChannel::Instance(id), frame));
+        Ok(())
+    }
+
+    /// Apply a partial explicit update batch without changing legacy-driven parts.
+    /// Unknown/duplicate IDs and invalid coordinates reject the whole batch before
+    /// any collider moves. Unmentioned channels retain their current coordinates.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{WorldPhysics, motion::{MotionId, MotionFrame, MotionUpdate}};
+    /// let mut world = WorldPhysics::new(&[], 0.);
+    /// let id = MotionId { instance: 12, channel: 3 };
+    /// world.add_motion_mesh(vec![[2.,-1.,0.], [2.,1.,0.], [2.,0.,2.]],
+    ///     vec![[0,1,2]], id, MotionFrame::Translation {
+    ///         offsets_m: [[0.; 3], [1.,0.,0.]],
+    ///     })?;
+    /// world.sync_motions(&[MotionUpdate { id, coordinate: 0.5 }])?;
+    /// let geometry = world.static_geometry_snapshot(true);
+    /// let hit = geometry.cast_ray([0.,0.,1.], [1.,0.,0.], 4.)?.unwrap();
+    /// assert!((hit.distance_m - 2.5).abs() < 1e-9);
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn sync_motions(
+        &mut self,
+        updates: &[crate::motion::MotionUpdate],
+    ) -> Result<(), &'static str> {
+        crate::motion::validate_updates(updates, self.mechanisms.iter().map(|(_, c, f)| (*c, *f)))?;
+        for (handle, channel, frame) in &self.mechanisms {
+            if let crate::motion::MotionChannel::Instance(id) = channel
+                && let Some(update) = updates.iter().find(|u| u.id == *id)
+            {
+                let position = pose(frame.pose(update.coordinate));
+                let collider = &mut self.world.colliders[*handle];
+                if *collider.position() != position {
+                    collider.set_position(position);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Whether resolving articulated scenery is necessary for this world.
     #[inline]
     pub fn has_mechanisms(&self) -> bool {
@@ -875,8 +951,11 @@ impl WorldPhysics {
     /// Only a moved mechanism is written back: marking an unchanged CAD
     /// collider dirty every millisecond rebuilds broad-phase work during replay.
     pub fn sync_mechanisms(&mut self, state: &crate::motion::MechanismState) {
-        for (handle, mechanism, team, offsets) in &self.mechanisms {
-            let fraction = state.fraction(*mechanism, *team);
+        for (handle, channel, offsets) in &self.mechanisms {
+            let crate::motion::MotionChannel::Legacy { kind, team } = channel else {
+                continue;
+            };
+            let fraction = state.fraction(*kind, *team);
             let position = pose(offsets.pose(fraction));
             let collider = &mut self.world.colliders[*handle];
             if *collider.position() != position {
@@ -935,7 +1014,7 @@ impl WorldPhysics {
                     self.mechanisms
                         .iter()
                         .find(|(h, ..)| h == handle)
-                        .map(|(_, kind, team, offsets)| (index, *kind, *team, *offsets))
+                        .map(|(_, channel, offsets)| (index, *channel, *offsets))
                 })
                 .collect(),
         }
@@ -986,6 +1065,11 @@ impl WorldPhysics {
                 handle,
                 pose: *collider.position(),
                 shape: collider.shared_shape().clone(),
+                motion_channel: self
+                    .mechanisms
+                    .iter()
+                    .find(|(h, ..)| *h == handle)
+                    .map(|(_, c, _)| *c),
             };
             if collider.parent().is_some() || self.mechanisms.iter().any(|(h, ..)| *h == handle) {
                 moving.push(sample);
@@ -1529,7 +1613,30 @@ impl WorldPhysics {
     }
     /// Insert shared collision shapes captured from another field, keeping
     /// their mechanism roles so `sync_mechanisms` still moves them.
+    ///
+    /// # Panics
+    /// Panics before mutation if an explicit motion ID overlaps installed geometry.
+    /// Use [`Self::try_insert_geometry`] when independent namespaces may overlap.
     pub fn insert_geometry(&mut self, geometry: &StaticGeometry) {
+        self.try_insert_geometry(geometry)
+            .expect("overlapping physical motion namespaces");
+    }
+
+    /// Insert a capture transactionally, preserving shared shapes, current poses,
+    /// driver IDs and rest frames. Repeated shapes in one captured channel are
+    /// allowed; a channel already installed in this world is rejected.
+    pub fn try_insert_geometry(&mut self, geometry: &StaticGeometry) -> Result<(), &'static str> {
+        for (_, channel, _) in &geometry.mechanisms {
+            if matches!(channel, crate::motion::MotionChannel::Instance(_))
+                && self
+                    .mechanisms
+                    .iter()
+                    .any(|(_, existing, _)| existing == channel)
+            {
+                return Err("overlapping physical motion namespaces");
+            }
+        }
+
         self.projectile_bounds_m = geometry.projectile_bounds_m;
         if geometry.no_catch_floor {
             self.remove_catch_floor();
@@ -1553,10 +1660,10 @@ impl WorldPhysics {
                 ),
             );
         }
-        for (index, kind, team, offsets) in &geometry.mechanisms {
-            self.mechanisms
-                .push((handles[*index], *kind, *team, *offsets));
+        for (index, channel, offsets) in &geometry.mechanisms {
+            self.mechanisms.push((handles[*index], *channel, *offsets));
         }
+        Ok(())
     }
     /// The next id [`Self::add_chassis`] will hand out. Ids are never reused,
     /// even after a chassis leaves.
@@ -2424,8 +2531,10 @@ mod tests {
             shapes: vec![(Pose3::IDENTITY, SharedShape::cuboid(0.5, 0.5, 0.5))],
             mechanisms: vec![(
                 0,
-                crate::motion::Mechanism::DartDoor,
-                Team::Red,
+                crate::motion::MotionChannel::Legacy {
+                    kind: crate::motion::Mechanism::DartDoor,
+                    team: Team::Red,
+                },
                 crate::motion::MotionFrame::Translation {
                     offsets_m: [[0.; 3], [10., 0., 0.]],
                 },
@@ -2827,3 +2936,6 @@ mod tests {
         assert_eq!(snapshot[0].id, 1);
     }
 }
+
+#[cfg(test)]
+mod motion_tests;

@@ -144,7 +144,8 @@ For each tick:
 
 1. Write start poses with `TargetFrames::begin`.
 2. Advance caller-owned motion and write end poses with `TargetFrames::update`.
-3. Supply resolved `MechanismState` if the world contains articulated scenery.
+3. Supply explicit `MotionUpdate`s for instance scenery, or resolved
+   `MechanismState` for legacy match equipment.
 4. Call `WorldPhysics::step(start_time_ns, &frames)` once, then process contacts
    in returned order before beginning another tick.
 
@@ -160,6 +161,18 @@ seeded selection and activation transitions. Rune pose
 helpers are available under `motion::rune`. `MechanismState` carries already
 resolved door states and dart-rail position. Physics never asks a referee why
 those states changed.
+
+Independently moving instances use `motion::{MotionId, MotionFrame, MotionUpdate}`
+and `WorldPhysics::add_motion_mesh`/`sync_motions`. Their IDs have caller-owned
+instance/channel namespaces and no inferred team driver. Partial update batches
+validate duplicate/unknown IDs, finite coordinates and translation bounds before
+moving anything. Legacy `sync_mechanisms` skips explicit instance channels.
+Geometry captures retain IDs, shared shapes, rest frames and current poses;
+`StaticGeometry::at_motions` resolves another coordinate without double motion.
+`try_insert_geometry` rejects installed ID overlap before mutation while allowing
+several incoming shapes sharing one channel. Use disjoint instance namespaces for
+independent captures. See [composable scenarios](composable-scenarios.md) for
+source mappings, complete target tables and recipe reset contracts.
 
 Time arguments are simulation time. The caller owns monotonicity, overflow checks,
 fixed-tick scheduling and the motion state associated with each checkpoint.

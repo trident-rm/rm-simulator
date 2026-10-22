@@ -24,7 +24,7 @@ not implement a traversal reward or Outpost rules.
 
 Build a `Composition`, then call `prepare()`. The preparation validates unique
 instance IDs, finite unit rigid poses, target mapping cardinality and uniqueness,
-source detector metadata, mechanism channel independence, RFID polygon/prism
+source detector metadata, explicit motion identities, RFID polygon/prism
 metadata and physical robot configurations. Errors return no prepared definition.
 Self-intersecting/degenerate RFID polygons and repeated vertices are rejected.
 A `ComponentDefinition` comes from `Scenario::load(...).into()`,
@@ -104,34 +104,63 @@ Renaming an Outpost index to 101 does not make it a native match team. The calle
 must explicitly map task/gameplay policy through the source/instance metadata;
 passing renamed physical labels directly to a native match adapter is incorrect.
 
-## Prescribed motion limits
+## Explicit prescribed motion
 
-The current physics `MechanismState` addresses fixed `(kind, side)` channels:
-two Outpost angles, two Rune angles, two Base fractions, two DartDoor booleans,
-and one DartTarget fraction shared across sides. Composition preserves the source
-channels and **rejects overlaps between independent component instances**. It does
-not silently couple repeated equipment or allocate new physics motion channels.
-Several parts within one source component may legitimately share a channel.
+Every composed moving channel has a `MotionId { instance, channel }`. The instance
+is the caller's `InstanceId`; the channel is a structural ordinal of the canonical
+source role/side (Outpost 0/1, Rune 2/3, Base 4/5, DartDoor 6/7, shared DartTarget
+8). IDs are independent of component order and placement and survive prepared
+resets and geometry capture/insertion. Separate compositions need disjoint caller
+instance namespaces when installed into one world. A fresh world does not assign
+new IDs automatically. `motion_identities()` retains the owning instance, source
+role/side and physical ID; physical target mappings remain separately explicit.
 
-Thus one red and one blue source Outpost can coexist, but two red source Outposts
-are rejected even with distinct target IDs. One complete Rune occupies both Rune
-channels, so a second complete Rune is rejected. DartTarget overlap is rejected
-even when two components use different team labels. Relocating equipment across
-the field does not change its source channel or infer new ownership. Supporting
-more independently driven repetitions needs a future per-instance physics motion
-interface; composition does not claim that capability.
+Two same-team Outposts, complete Runes or shared-role DartTargets can now coexist
+with independent coordinates. Source labels do not drive them. Several shapes
+within one source channel intentionally share its physical ID. No rule scheduler,
+team reassignment or native match interpretation is inferred.
 
-Resolve targets and scenery from the same validated coordinates before stepping:
+Use a complete explicit coordinate table for detector endpoints and session setup:
 
 ```rust,ignore
-definition.targets_at(&state, &mut target_scratch)?;
-session.physics_mut().sync_mechanisms(&state);
+let mut coordinates = definition.default_motions();
+coordinates[0].coordinate = 0.4; // radians for rotation, 0..=1 for translation
+let mut session = definition.session_with_motions(duration, &coordinates)?;
+definition.targets_at_motions(&coordinates, &mut target_scratch)?;
+session.physics_mut().sync_motions(&coordinates)?;
 let contacts = session.step_with_targets(&target_scratch)?;
 ```
 
-Target output validation precedes mutation. Session creation/reset retains its
-initial mechanism coordinates and topology. Controllers, RNG, sensor interpolation
-and acquisition schedules, task rewards and rule state remain caller-owned.
+The caller owns coordinates and task policy. `targets_at_motions` requires the
+complete table and leaves output unchanged on failure. `sync_motions` and
+`StaticGeometry::at_motions` accept partial batches: unmentioned channels retain
+their poses. Duplicate/unknown IDs, nonfinite values, out-of-range translation
+fractions and nonfinite resolved transforms reject the whole batch before any
+movement. Detector-only source channels have no scenery collider to update;
+pass only geometry channels to physical scenery updates in that case.
+
+`legacy_motions` explicitly translates an unambiguous `MechanismState` into the
+new IDs. The existing composed `targets_at` and `session` call that adapter and
+reject repeated source channels. After creation, composed scenery is controlled
+through `sync_motions`; global `sync_mechanisms` skips instance channels. Ordinary
+match equipment and standalone `Scenario` presets retain their legacy role/team
+API and unchanged defaults.
+
+`StaticGeometry::motion_parts()` exposes all moving geometry with its driver and
+shared rest-frame shapes. Existing `moving_parts()` remains the compatibility
+projection of legacy parts. `try_insert_geometry` preserves current transforms,
+IDs and rest frames, including a capture made after nonzero rotation. Applying
+the same coordinate after insertion does not apply the transform twice. It
+allows multiple shapes in one incoming channel and rejects an ID already
+installed in the destination before changing anything. The legacy infallible
+`insert_geometry` performs the same preflight and panics on such overlap.
+
+Recipe reset restores initial coordinates, physical IDs, targets and topology;
+there is no arbitrary running-world checkpoint API. Controllers, RNG, acquisition
+schedules, task rewards and rule state remain caller-owned. Captured geometry
+interpolation and rolling sensor brackets include channel identities in topology
+matching: a changed channel requires a new bracket. As before, reset/restore and
+robot placement discontinuities require recapture rather than interpolation.
 
 ## Explicit RFID metadata
 
@@ -151,7 +180,9 @@ team, buff, HP, grace-period or reward scheduler in this layer.
 CAD-free tests cover two tunnel instances plus terrain/robot/RFID, stable identity
 and topology after reset, arbitrary rotated rotor/slide/detector/visual frames,
 invalid poses/configuration/mapping cardinality, duplicate target/instance IDs,
-transactional target-output rejection and mechanism overlap rejection. The source
+transactional target-output rejection, independent repeated source channels,
+legacy adapter parity, moving ray queries, nonzero capture/insertion and rolling
+sensor channel continuity. The source
 check is explicit because ordinary tests must work without local CAD:
 
 ```sh

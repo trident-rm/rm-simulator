@@ -314,3 +314,70 @@ provide consumers for these boundaries. The GPU experiments do not establish a
 throughput win; a new engine abstraction or crate split is not a prerequisite
 for this work. Each move should preserve ordinary match/restore behavior and
 pass standalone and full-match checks before replacing its compatibility facade.
+
+
+## Remaining coupling audit (2026-10-23)
+
+The previous pass separated useful operations and files; it did not complete the
+runtime/game split. The next extractions below are ranked by value for standalone
+robotics consumers, not by file length. They are proposals, not new runtime APIs.
+
+1. **Mechanical model data and source-package loading.** `world::assembly`
+   still owns `Model`, `Jaw`, `Auxiliary`, `RigPose` and source-frame FK alongside
+   attempt playback and recovery. The new assets loader reads a private subset
+   of that calibration to avoid depending on world. Verified robot-package
+   preparation now lives in `assets::robots`; the app
+   retains one descriptor per resolved package and applies its explicit 500 ms
+   simulator tuning outside the raw source configuration. Shared assembly model
+   descriptions/FK still need extraction into physics. Keep world aliases and
+   serialized field order. Preserve stricter
+   source-profile guards separately from general mechanical validity. This gives
+   the openswx sidecar a clear future consumer without trusting its caches.
+2. **Complete arena preparation and match construction.** Individual equipment
+   already has standalone assets/scenario APIs, but `server::layout` still owns
+   full-arena terrain assembly, boundaries, spawns and `FieldConfig` construction.
+   `PredictionScene::geometry` also constructs a temporary Field to capture its
+   geometry. Separate prepared physical geometry from match binding/roster policy;
+   let non-host callers use the same preparation. Preserve the assets-to-world
+   dependency prohibition and use explicit data between those layers. Acceptance:
+   a complete arena can be built and stepped without server/GNS/HTTP or Bevy.
+3. **Assembly solver state versus task and worker ownership.** Source loading and
+   IK-hint validation are now extracted, but `server::assembly_rig::Rig` still
+   combines mechanical state, source collision queries, parking assumptions and
+   manipulation task state. The app workbench includes that private server source
+   with `#[path]`. Expose reusable mechanical/query inputs and planner results;
+   retain staged assembly semantics in its task adapter and bounded workers,
+   cancellation and wall-time measurement with the host. Keep hidden Q-target
+   revelation and actual-joint entry semantics intact. Acceptance: the diagnostic
+   no longer compiles private server implementation files directly.
+4. **Navigation algorithms versus host service.** `server::navigation` contains
+   surface queries, map baking, search and shortcutting, tunnel/posture constraints,
+   following, worker queues and Field control. Extract immutable map/search and
+   explicit-input follower logic first. The host keeps map-intent permissions,
+   Sentry enrollment, worker bounds, failure policy and protocol presentation.
+   Avoid physics depending on assets' `GroundMesh`; supply prepared data or a
+   narrow query input. Acceptance: the same route/follower can run over a bare
+   RobotSession without hosting a match.
+5. **Instance identity versus competition motion channels.** Physical moving geometry now supports explicit `MotionId` channels alongside
+   the existing `(Mechanism, Team)` adapter. Compositions can drive two same-team
+   Outposts independently, retaining identities through reset/capture/insertion;
+   malformed updates reject transactionally and rolling sensors check channel
+   continuity. The native match still uses its existing role/team drivers.
+   Migrating match bindings and serialized continuation to explicit IDs is future
+   work; standalone caller-owned coordinates are not a new match authority.
+6. **Reusable replay versus networking and backend-specific queries.** Server
+   prediction holds the reusable whole-Field replayer alongside package discovery,
+   owner anchors, sequence histories and network timing limits; the app separately
+   owns projectile replay worker orchestration. Move pure continuation/replay
+   operations behind the match session while keeping receipt/acknowledgment policy
+   with transport. A later backend comparison must also address `StaticGeometry`
+   carrying Rapier/Parry shapes and `ArmorTarget` carrying competition identities.
+   Preserve compatible labels initially; do not invent a universal engine trait
+   before a second backend or consumer requires it.
+
+Keep one solver for mutually interacting bodies and one match clock/rule order.
+Those are necessary coordination, not coupling to remove. No new crate, engine
+rewrite, independent rule plugin schedules or GPU port follows automatically
+from this audit. Start with the mechanical descriptions/package boundary, then
+arena preparation; each has a concrete standalone consumer and a bounded first
+implementation. Navigation can proceed independently once its inputs are explicit.
