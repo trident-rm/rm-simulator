@@ -1,35 +1,28 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! In-process simulation sessions without transport, pacing, rendering or workers.
+//! Match sessions composing physical simulation and rules without transport or pacing.
 //!
 //! This is a trusted embedding API, not a multiplayer authority boundary. External
 //! pilots must still use server commands and their ownership checks. Observations
 //! here are explicitly ground truth; simulated sensors belong in caller adapters.
-use crate::{
-    ChassisCommand, ChassisSnapshot, Field, FieldError, FieldSnapshot, RefereeCommand, Shot,
-    StaticGeometry,
-};
+use crate::{Field, FieldError, FieldSnapshot, RefereeCommand, StaticGeometry};
 
-/// Simulation timestamp. Nanoseconds are authoritative across different step rates.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stamp {
-    /// Completed simulation integration steps since field construction.
-    pub tick: u64,
-    /// Elapsed simulation nanoseconds, independent of the host clock.
-    pub time_ns: u64,
-}
+/// Shared physical commands, observations and timing primitives used by both session layers.
+pub use rm_simulator_physics::session::{
+    CommandResult, RobotCommand, RobotTruth, SampleSchedule, Stamp,
+};
 
 /// Complete in-memory reset point, including shared immutable collision geometry.
 ///
 /// Physics solver caches are rebuilt on restore, with the same limitations as
 /// [`Field::restore`]. Capture is explicit; normal stepping does not clone it.
 #[derive(Clone)]
-pub struct Checkpoint {
+pub struct MatchCheckpoint {
     snapshot: FieldSnapshot,
     geometry: StaticGeometry,
     floor_height_m: f64,
 }
-impl Checkpoint {
+impl MatchCheckpoint {
     /// Capture the entire physical field and native match authority.
     pub fn capture(field: &Field) -> Self {
         Self {
@@ -50,55 +43,11 @@ impl Checkpoint {
     }
 }
 
-/// An addressed high-level robot request for a trusted in-process controller.
-#[derive(Clone, Debug, PartialEq)]
-pub enum RobotCommand {
-    /// Body velocity, stabilized gimbal target and mechanism setpoints.
-    Drive {
-        /// Existing field-assigned robot identity.
-        robot: u32,
-        /// Validated through the ordinary field control path.
-        command: ChassisCommand,
-    },
-    /// Bypass velocity tracking with wheel-axis torque requests. Physical motor,
-    /// power and defeat limits still apply; gimbal/folding targets are retained.
-    WheelTorques {
-        /// Existing field-assigned robot identity.
-        robot: u32,
-        /// Newton metre requests in the configured wheel roster order.
-        torques: rm_simulator_physics::control::WheelTorques,
-    },
-    /// Launch from the robot's actual authoritative muzzle, applying native rules.
-    Fire {
-        /// Existing field-assigned robot identity.
-        robot: u32,
-        /// Caliber and speed in metres per second.
-        shot: Shot,
-    },
-}
-
-/// Result of an accepted robot request.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CommandResult {
-    /// A drive setpoint was accepted; no time has advanced.
-    Driven,
-    /// A projectile was launched, identified by its field identity.
-    Fired(u64),
-}
-
-/// Timestamped physical robot truth, without the full match checkpoint.
+/// A caller-paced match composition with physics, optional native rules and reset.
 ///
-/// Encoders, IMU estimates, camera frames and radio information must be derived
-/// separately. Reading this object grants perfect pose and velocity information.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RobotTruth {
-    /// Time at which the state was read.
-    pub stamp: Stamp,
-    /// Actual physical state, wheel telemetry and last control request.
-    pub state: ChassisSnapshot,
-}
-
-/// A caller-paced, single-owner simulation with explicit reset and truth access.
+/// Unlike a bare physical robot session, this facade owns a [`Field`] and its
+/// complete rule/assembly state. A rule-free Field remains accepted for existing
+/// embedding callers; new physics-only consumers should use the physics session.
 ///
 /// Configure geometry and robots on a [`Field`] before moving it here. This
 /// facade uses the same physical/rule paths as the multiplayer host, without a
@@ -106,24 +55,29 @@ pub struct RobotTruth {
 /// model. One call to [`Self::step`] can run faster or slower than real time.
 ///
 /// ```
-/// use rm_simulator_world::{Field, FieldConfig, session::Session};
+/// use rm_simulator_world::{Field, FieldConfig, session::MatchSession};
 /// let field = Field::new(&FieldConfig::default())?;
-/// let mut session = Session::new(field);
+/// let mut session = MatchSession::new(field);
 /// session.step(128)?;
 /// assert_eq!(session.stamp().time_ns, 1_000_000_000);
 /// session.reset(42)?;
 /// assert_eq!(session.stamp().time_ns, 0);
 /// # Ok::<(), rm_simulator_world::FieldError>(())
 /// ```
-pub struct Session {
+pub struct MatchSession {
     field: Field,
-    reset_point: Checkpoint,
+    reset_point: MatchCheckpoint,
+    commands: Vec<RobotCommand>,
 }
-impl Session {
+impl MatchSession {
     /// Own an already configured field and capture its initial reset point.
     pub fn new(field: Field) -> Self {
-        let reset_point = Checkpoint::capture(&field);
-        Self { field, reset_point }
+        let reset_point = MatchCheckpoint::capture(&field);
+        Self {
+            field,
+            reset_point,
+            commands: Vec::new(),
+        }
     }
 
     /// Read simulation time without advancing or copying the world.
@@ -139,6 +93,12 @@ impl Session {
         &self.field
     }
 
+    /// Read allocation-free controller truth without geometry or wheel arrays.
+    /// This is privileged pose/input/revision/defeat state at [`Self::stamp`].
+    pub fn robot_control_state(&self, robot: u32) -> Option<crate::chassis::ChassisControlState> {
+        self.field.chassis_control_state(robot)
+    }
+
     /// Read one robot's actual state; unknown identities return `None`.
     pub fn robot_truth(&self, robot: u32) -> Option<RobotTruth> {
         self.field.chassis_snapshot(robot).map(|state| RobotTruth {
@@ -152,21 +112,27 @@ impl Session {
     /// This is trusted control: transport ownership and weapon cadence belong
     /// to the server. Native phase, heat, allowance and defeat checks still run.
     pub fn command(&mut self, request: RobotCommand) -> Result<CommandResult, FieldError> {
+        Self::apply_command(&mut self.field, request)
+    }
+
+    fn apply_command(
+        field: &mut Field,
+        request: RobotCommand,
+    ) -> Result<CommandResult, FieldError> {
         match request {
             RobotCommand::Drive { robot, command } => {
-                self.field.command_chassis(robot, command)?;
+                field.command_chassis(robot, command)?;
                 Ok(CommandResult::Driven)
             }
             RobotCommand::WheelTorques { robot, torques } => {
-                self.field.command_chassis_wheel_torques(robot, torques)?;
+                field.command_chassis_wheel_torques(robot, torques)?;
                 Ok(CommandResult::Driven)
             }
             RobotCommand::Fire { robot, shot } => {
-                let muzzle = self
-                    .field
+                let muzzle = field
                     .chassis_muzzle_pose(robot)
                     .ok_or(FieldError::Chassis("unknown chassis"))?;
-                self.field
+                field
                     .fire(muzzle, shot, Some(robot))
                     .map(CommandResult::Fired)
             }
@@ -186,21 +152,20 @@ impl Session {
 
     /// Call an in-process controller before every physical step, then integrate.
     ///
-    /// The command buffer is cleared and reused each step. Requests apply in
-    /// order; an error retains previously accepted requests/steps and stops the
-    /// run. The controller sees truth deliberately; sensor adapters should
+    /// The command buffer is retained across calls, cleared and reused each step.
+    /// Requests apply in order; an error retains earlier accepted requests/steps
+    /// and stops the run. The controller sees truth deliberately; sensor adapters should
     /// provide their own observations instead of exposing this field directly.
     pub fn step_controlled(
         &mut self,
         steps: u64,
         mut controller: impl FnMut(&Field, &mut Vec<RobotCommand>),
     ) -> Result<Stamp, FieldError> {
-        let mut commands = Vec::new();
         for _ in 0..steps {
-            commands.clear();
-            controller(&self.field, &mut commands);
-            for request in commands.drain(..) {
-                self.command(request)?;
+            self.commands.clear();
+            controller(&self.field, &mut self.commands);
+            for request in self.commands.drain(..) {
+                Self::apply_command(&mut self.field, request)?;
             }
             self.field.step(1)?;
         }
@@ -208,12 +173,12 @@ impl Session {
     }
 
     /// Capture a branch point; does not replace the episode reset point.
-    pub fn checkpoint(&self) -> Checkpoint {
-        Checkpoint::capture(&self.field)
+    pub fn checkpoint(&self) -> MatchCheckpoint {
+        MatchCheckpoint::capture(&self.field)
     }
 
     /// Restore a branch point transactionally. Failure leaves this session intact.
-    pub fn restore(&mut self, checkpoint: &Checkpoint) -> Result<(), FieldError> {
+    pub fn restore(&mut self, checkpoint: &MatchCheckpoint) -> Result<(), FieldError> {
         self.field = checkpoint.restore()?;
         Ok(())
     }
@@ -236,49 +201,18 @@ impl Session {
     }
 }
 
-/// An explicit nanosecond sampling cadence for future sensor/controller adapters.
-///
-/// This schedules timestamps only; it does not render, simulate sensors or read
-/// host time. The caller must sample/interpolate the world at the returned time.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SampleSchedule {
-    period_ns: u64,
-    next_ns: Option<u64>,
-}
-impl SampleSchedule {
-    /// Create a schedule with a positive period and first timestamp, in nanoseconds.
-    pub fn new(period_ns: u64, first_ns: u64) -> Result<Self, &'static str> {
-        if period_ns == 0 {
-            return Err("sample period must be positive");
-        }
-        Ok(Self {
-            period_ns,
-            next_ns: Some(first_ns),
-        })
-    }
+/// Compatibility name for [`MatchSession`]. New callers should name the session layer explicitly.
+pub type Session = MatchSession;
 
-    /// Consume one due timestamp at or before `now_ns`, preserving exact phase.
-    /// Call again to drain missed samples; overflow exhausts the schedule.
-    ///
-    /// ```
-    /// use rm_simulator_world::session::SampleSchedule;
-    /// let mut camera = SampleSchedule::new(10_000_000, 0)?;
-    /// assert_eq!(camera.pop_due(15_000_000), Some(0));
-    /// assert_eq!(camera.pop_due(15_000_000), Some(10_000_000));
-    /// assert_eq!(camera.pop_due(15_000_000), None);
-    /// # Ok::<(), &'static str>(())
-    /// ```
-    pub fn pop_due(&mut self, now_ns: u64) -> Option<u64> {
-        let next = self.next_ns.filter(|&next| next <= now_ns)?;
-        self.next_ns = next.checked_add(self.period_ns);
-        Some(next)
-    }
-}
+/// Compatibility name for [`MatchCheckpoint`], including complete native match state.
+pub type Checkpoint = MatchCheckpoint;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ChassisConfig, ChassisPlacement, FieldConfig, Pose, RobotKind, Team};
+    use crate::{
+        ChassisCommand, ChassisConfig, ChassisPlacement, FieldConfig, Pose, RobotKind, Team,
+    };
 
     fn scenario() -> Field {
         Field::new(&FieldConfig {
@@ -337,7 +271,7 @@ mod tests {
                 vec![[0, 1, 2]],
             )
             .unwrap();
-        let mut session = Session::new(field);
+        let mut session = MatchSession::new(field);
         session.step(3).unwrap();
         let mut checkpoint = session.checkpoint();
         checkpoint.snapshot.time_ns += 1;
@@ -346,6 +280,77 @@ mod tests {
         assert_eq!(session.stamp(), before);
         session.reset(0).unwrap();
         assert_eq!(session.ground_truth().static_geometry().1.len(), 1);
+    }
+
+    #[test]
+    fn match_checkpoint_retains_authority_and_legacy_names_remain_compatible() {
+        use crate::gameplay::rmul_2027::{Format, Phase};
+        let field = Field::new(&FieldConfig {
+            rmul_2027: Some(Format::Infantry),
+            ..Default::default()
+        })
+        .unwrap();
+        let mut session: Session = MatchSession::new(field);
+        session.referee(RefereeCommand::StartMatch).unwrap();
+        session.step(32).unwrap();
+        let checkpoint: Checkpoint = session.checkpoint();
+        let expected = session.ground_truth().rmul_2027().unwrap().clone();
+        assert_eq!(expected.phase, Phase::Countdown);
+        session.step(16).unwrap();
+        assert_ne!(session.ground_truth().rmul_2027(), Some(&expected));
+        session.restore(&checkpoint).unwrap();
+        assert_eq!(session.stamp().tick, 32);
+        assert_eq!(session.ground_truth().rmul_2027(), Some(&expected));
+        session.reset(123).unwrap();
+        assert_eq!(session.stamp().tick, 0);
+        assert_eq!(
+            session.ground_truth().rmul_2027().unwrap().phase,
+            Phase::Idle
+        );
+    }
+
+    #[test]
+    fn controller_storage_survives_calls_and_failed_commands_preserve_order() {
+        let mut session = MatchSession::new(scenario());
+        let drive = |robot, forward_m_s| RobotCommand::Drive {
+            robot,
+            command: ChassisCommand {
+                forward_m_s,
+                ..Default::default()
+            },
+        };
+        assert!(
+            session
+                .step_controlled(1, |_, commands| {
+                    commands.push(drive(0, 1.));
+                    commands.push(drive(999, 2.));
+                    commands.push(drive(0, 3.));
+                })
+                .is_err()
+        );
+        assert_eq!(session.stamp().tick, 0);
+        assert_eq!(
+            session.robot_truth(0).unwrap().state.command.forward_m_s,
+            1.
+        );
+        assert!(session.commands.is_empty());
+        let storage = session.commands.as_ptr();
+        let capacity = session.commands.capacity();
+        for _ in 0..16 {
+            session
+                .step_controlled(1, |_, commands| {
+                    commands.push(drive(0, 0.5));
+                    commands.push(drive(0, 0.));
+                })
+                .unwrap();
+            assert_eq!(session.commands.as_ptr(), storage);
+            assert_eq!(session.commands.capacity(), capacity);
+            assert_eq!(
+                session.robot_truth(0).unwrap().state.command.forward_m_s,
+                0.
+            );
+        }
+        assert_eq!(session.stamp().tick, 16);
     }
 
     #[test]

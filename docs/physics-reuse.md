@@ -2,7 +2,8 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Reusing physics and armor motion
 
-`rm-simulator-physics` depends only on Rapier and serde. It contains chassis
+`rm-simulator-physics` depends on Rapier, serde and the standalone MID360 pattern
+generator. It contains chassis
 suspension and drive, gimbal dynamics, projectile flight, raw armor contacts,
 shared collision geometry and analytic armor motion. It does not depend on
 world, gameplay, server, rendering, a CAD loader or host time. Its
@@ -22,6 +23,45 @@ This is a reusable RM physical library, not a general physics-engine abstraction
 - [Optional rendering](#optional-rendering)
 
 ## Headless use
+
+For a caller-paced bare robot, use `physics::session::RobotSession`. It owns one
+`WorldPhysics`, explicit time and a repeatable initial `RobotScenario`; it does
+not construct a `Field`, native match authority or host. For example:
+
+```rust
+use rm_simulator_physics::{Pose, StepDuration, Team, chassis::ChassisConfig,
+    session::{RobotScenario, RobotSession, RobotCommand}};
+
+let scenario = RobotScenario::new(vec![], 0., StepDuration::HZ_1000, |physics| {
+    physics.add_chassis(Team::Red, ChassisConfig::default(), Pose::at([0., 0., 0.3]))?;
+    Ok(())
+})?;
+let mut session = RobotSession::new(scenario)?;
+session.command(RobotCommand::Drive { robot: 0, command: Default::default() })?;
+session.step(1000)?;
+assert_eq!(session.stamp().time_ns, 1_000_000_000);
+session.reset()?;
+# Ok::<(), &'static str>(())
+```
+
+The runnable `robot_session` example drives a real chassis for one second at
+1000 Hz and resets. `step_controlled` calls a controller before each integration
+step, with a reused command buffer. Drive, direct wheel torque and fire commands
+use existing physical controls and the actual muzzle. Physical power, motor and
+defeat limits remain; there is no match heat, allowance or firing cadence.
+`step` returns raw contacts in tick order. `step_with_targets` interpolates one
+tick's prescribed target endpoints, validating membership, identity order and
+poses before stepping. All batches check clock overflow before advancing.
+
+Read `robot_control_state` for allocation-free pose/input/revision/defeat truth,
+`robot_truth` for timestamped robot state including cloned model/wheel data, or
+`ground_truth` for privileged geometry/query access. None captures a checkpoint. LiDAR captures
+use session time through `lidar_scene_capture`; sensors and their schedules remain
+caller-owned. `physics_mut` permits model/geometry changes, resolved mechanisms,
+payload motion, carrier tracing and event drains through ordinary physics methods.
+Do not call `step` or change the synchronization clock through that accessor.
+
+The lower-level target and projectile example remains available:
 
 ```sh
 cargo run -p rm-simulator-physics --example moving_armor --locked
@@ -72,13 +112,28 @@ library's ordinary restore methods, inserts the shared geometry and restores
 identity counters before continuing normal stepping. Prediction uses that same
 facade, not a reduced local physics implementation.
 
-Standalone users can retain `chassis_snapshots`, projectile `snapshot`, geometry,
-`next_chassis_id`, `launched`, current target/motion state and the simulation time.
-Rebuild with `insert_geometry`, `restore_chassis`, `restore_projectile`,
-`restore_identity` and `mark_synced`, then resolve mechanisms at checkpoint time.
-Do this when the checkpoint changes, not once per rendered frame. Solver warm
-starts, contact manifolds and each projectile's touched-armor cache are rebuilt;
-restored contact residuals retain the existing simulator limitations.
+`RobotSession::reset` rebuilds its session-owned initial scenario recipe on a
+fresh physical world, swapping it into place only after setup succeeds. The
+recipe can retain shared geometry, robot models, payload shapes/initial motion,
+projectile policies and bounds, prescribed mechanism state and trace enablement.
+It must use repeatable inputs and must not step or change synchronization time.
+Reset restarts time and identities, clears pending physical events/traces, and
+discards runtime edits absent from that recipe. It does not reset caller sensor
+schedules, rolling brackets, IMU state or controller RNG; reset those explicitly.
+
+There is deliberately no arbitrary `RobotSession` checkpoint/restore API in this
+first version. `chassis_snapshots`, projectile `snapshot`, `restore_chassis`,
+`restore_projectile`, `insert_geometry`, `restore_identity` and `mark_synced` are
+low-level reconstruction tools, not a complete physical checkpoint contract.
+A correct running-world continuation must also account for per-projectile
+restitution/policy history, retirement timers and touched-armor memory, payload
+geometry/motion, prescribed target endpoints and mechanism state, floor and
+perimeter, power/defeat/control state, time/identity counters and pending contact,
+removal and trace output. Solver warm starts/manifolds are rebuilt by existing
+restore paths. In particular, restoring projectile snapshots with only the current
+policy can change restitution for previously launched balls. Do not infer complete
+or bitwise-equivalent continuation from these individual body restore methods.
+The existing match checkpoint remains the match composition's responsibility.
 
 The world facade re-exports existing `Pose`, `Team`, chassis and projectile types.
 Serialized hit reports and outpost restore fields retain their previous shape.

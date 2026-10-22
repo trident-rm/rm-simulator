@@ -38,6 +38,7 @@ pub mod mechanism;
 pub mod motion;
 pub mod projectile;
 pub mod sensors;
+pub mod session;
 pub use projectile::{
     ArmorTarget, Caliber, Contact, Shot, StaticGeometry, TargetFace, TargetFrames, WorldPhysics,
 };

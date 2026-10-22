@@ -15,6 +15,7 @@ Git history.
 | Environment, `just` targets, tests and commits | [Development](development.md) |
 | CI checks, validation reuse and releases | [CI and releases](releases.md) |
 | Crate ownership, ticks, restore and ECS | [Simulation architecture](architecture-refactor.md) |
+| Runtime/game split, two session layers and backend migration risks | [Runtime split](runtime-game-split.md) |
 | Standalone physics and optional rendering | [Physics reuse](physics-reuse.md) |
 | In-process sessions, clocks, controls and future adapters | [Simulation embedding](simulation-embedding.md) |
 | Live-game navigation integration design, joint feedback and deferred MuJoCo | [Robotics next steps](robotics-next-steps.md) |

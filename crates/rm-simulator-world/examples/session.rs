@@ -4,7 +4,7 @@
 use rm_simulator_world::{
     ChassisCommand, ChassisConfig, ChassisPlacement, Field, FieldConfig, Pose, RobotKind,
     StepDuration, Team,
-    session::{RobotCommand, SampleSchedule, Session},
+    session::{MatchSession, RobotCommand, SampleSchedule},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }],
         ..Default::default()
     })?;
-    let mut session = Session::new(field);
+    let mut session = MatchSession::new(field);
     let mut samples = SampleSchedule::new(10_000_000, 0)?;
     let mut observations = 0;
     session.step_controlled(1000, |field, commands| {

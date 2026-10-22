@@ -20,6 +20,7 @@ pub mod rune;
 mod scoring;
 pub mod session;
 pub mod zones;
+
 pub use chassis::{ChassisCommand, ChassisConfig, ChassisSnapshot, WheelContact, WheelSnapshot};
 pub use outpost::{Outpost, OutpostSnapshot};
 pub use projectile::{
@@ -35,6 +36,7 @@ pub use rm_simulator_physics::control::{DriveControl, WheelTorques};
 use rune::RuneError;
 pub use rune::{BigRuneMotion, HitOutcome, Rune, RuneKind, RuneSnapshot, RuneState};
 use serde::{Deserialize, Serialize};
+pub use session::{MatchCheckpoint, MatchSession};
 
 /// Native gameplay authority and shared serialized records.
 pub use rm_simulator_gameplay as gameplay;

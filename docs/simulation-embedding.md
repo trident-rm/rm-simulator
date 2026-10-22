@@ -22,11 +22,24 @@ runs on bounded workers outside ROS callbacks. Core libraries and multiplayer bu
 | Consumer | Entry point | Includes |
 |---|---|---|
 | Strategy evaluator | `rm-simulator-gameplay::rmuc_2027::match_rules::Match` | Native rules driven by caller observations and nanosecond durations; no physical travel/combat abstraction is invented. |
-| Robot physical/control test | `rm-simulator-physics::WorldPhysics` | Rapier, wheel/suspension dynamics, gimbal, projectiles and raw contacts. |
-| Complete physical match or robotics scenario | `rm-simulator-world::session::Session` | A `Field`, addressed controls, timestamps, checkpoints and explicit reset. |
+| Robot physical/control test | `rm-simulator-physics::session::RobotSession` | Caller-paced physics, shared commands and sensor access; initial-scenario reset without match rules. |
+| Complete physical match or robotics scenario | `rm-simulator-world::session::MatchSession` | A `Field`, addressed controls, timestamps, checkpoints and explicit reset. |
 | Verified map import | `rm-simulator-assets` | Manifests, checksums, collision GLBs, source bindings and articulation semantics, without server/network dependencies. |
 | Scene viewer / future camera adapter | `rm-simulator-render::sync::SceneState` | Caller-owned appearance and poses; rendering never steps the world. |
 | Multiplayer / external remote control | `rm-simulator-server` | Ownership, command admission, cadence, transport and real-time pacing. |
+
+The two session layers share `Stamp`, `SampleSchedule`, `RobotCommand`,
+`CommandResult` and `RobotTruth` from `physics::session`; the world session
+re-exports them for compatibility. A `RobotCommand::Fire` request uses the actual
+muzzle in both layers, but native heat/allowance/phase checks apply only through
+the match composition. Physical motor, power and defeat limits apply in both.
+
+For physics-only use, construct a `RobotScenario` and `RobotSession`; see
+[the bare session example](physics-reuse.md#headless-use). It resets by rerunning
+its initial setup recipe, not by restoring arbitrary running-world checkpoints.
+Reset caller sensor schedules, interpolation/IMU state and controller RNG too.
+Both sessions retain controller command storage across calls; sensor sampling and
+returned contact storage remain caller concerns.
 
 Use the lowest layer that supplies the behavior required. A strategy evaluator
 does not need to load CAD; a physical test does not need to create a referee.
@@ -66,19 +79,26 @@ network rate option must negotiate it end to end.
 
 ## Caller-owned sessions
 
+The world entry point is named `MatchSession`: it composes physical simulation
+with the Field's optional native competition authority, assembly and scoring.
+`session::Session` and `session::Checkpoint` remain compatibility aliases for
+`MatchSession` and `MatchCheckpoint`. Root imports also expose the explicit match
+names. Existing callers may still pass a rule-free Field; the name does not
+introduce an additional admission rule or a second physical world.
+
 Configure a `Field` with geometry, robots and optional native rules, then move it
-into `Session::new`. There is one world and one owner. The session delegates to
+into `MatchSession::new`. There is one world and one owner. The session delegates to
 the same `Field` methods used by the host; it does not implement alternate rules
 or a second physics world.
 
 ```rust
-use rm_simulator_world::{Field, FieldConfig, StepDuration, session::Session};
+use rm_simulator_world::{Field, FieldConfig, StepDuration, session::MatchSession};
 
 let field = Field::new(&FieldConfig {
     step_duration: StepDuration::HZ_1000,
     ..Default::default()
 })?;
-let mut session = Session::new(field);
+let mut session = MatchSession::new(field);
 session.step(1000)?;
 assert_eq!(session.stamp().time_ns, 1_000_000_000);
 let checkpoint = session.checkpoint();
@@ -96,7 +116,7 @@ cargo run -p rm-simulator-world --example session --locked
 ```
 
 `step_controlled` invokes a caller controller before each integration step and
-reuses its command buffer. Commands apply in order. An error stops the run and
+retains and reuses its command buffer across calls. Commands apply in order. An error stops the run and
 retains earlier accepted commands/steps; this is not a batch transaction.
 `checkpoint` captures a branch point without changing the initial episode reset
 point. `restore` is transactional. `reset(seed)` restores the original scenario
@@ -121,7 +141,7 @@ arm or gimbal torque plant. The held drive mode is included in physical snapshot
 `RobotCommand::Fire` derives the muzzle from the actual robot. Native phase,
 allowance and heat checks remain active. The trusted session does not add the
 server's per-seat ownership or weapon-cadence policy: untrusted remote callers
-must use the server protocol. `Session::referee` is explicitly privileged.
+must use the server protocol. `MatchSession::referee` is explicitly privileged.
 
 `ground_truth`, `robot_truth` and checkpoint access are named as privileged
 truth. They must not be confused with measured sensor outputs or team-visible

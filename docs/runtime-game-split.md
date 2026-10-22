@@ -1,0 +1,245 @@
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
+# Runtime and game separation design
+
+Status: initial session split implemented, 2026-10-23. Backend-neutral model
+and solver extraction below remain proposed; Rapier is unchanged. This design extends the [current architecture](architecture-refactor.md)
+and [embedding interface](simulation-embedding.md) so a second physical backend
+can be evaluated without making the multiplayer app its integration layer.
+The current AGENTS.md engineering contract continues to govern implementation.
+
+The reusable product is a robot simulation runtime, with RoboMaster match rules
+composed above it. The driving game, vision experiments, navigation adapters and
+training environments consume that composition or the bare runtime as needed.
+Keep the code in one workspace initially. Repository separation and a stable
+external SDK should follow a working second consumer/backend, avoiding duplicate
+asset importers, robot models and rule implementations during migration.
+
+## Implemented first step
+
+`physics::session::RobotSession` owns a single `WorldPhysics`, explicit time,
+ordinary physical commands, compact truth and sensor access. `RobotScenario`
+provides transactional initial-scenario reconstruction. Arbitrary bare physical
+checkpoint continuation is deferred until its complete state can be captured;
+body snapshots omit projectile policy/contact history and other continuation data.
+Caller sensors/controllers retain their own state and reset responsibilities.
+
+`world::session::MatchSession` is the explicit name for the existing Field facade;
+`MatchCheckpoint` preserves its existing match restore behavior and documented
+solver residuals. `Session` and `Checkpoint` remain compatibility aliases.
+Physical commands, truth and timing primitives have a single definition in the
+physics session and are re-exported by the world session. Both retain controller
+command storage across calls.
+
+Field still owns its existing WorldPhysics directly; it does not yet wrap a
+RobotSession. The two sessions use ordinary existing physical paths without
+stepping any body twice. Model/backend descriptors, moved server construction,
+GPU buffers, a second backend and multiplayer backend negotiation remain later
+migration steps. This first step introduces no new crate or runtime dependency.
+
+## Ownership
+
+These are logical modules, not a requirement to create a crate for every row.
+Retain existing crate names and compatibility exports where they remain useful.
+
+| Layer | Owns | Excludes |
+|---|---|---|
+| Runtime contracts | Explicit time, stable entity/link/joint/shape identities, physical model descriptions, actuator commands, measured state, contact/query records, backend capabilities | Match roles, HP, referee permissions, Bevy, transport |
+| Robot models | Mass/inertia, collision geometry, wheel/suspension/motor/slip laws, actuator limits, mounting frames, physical posture mechanisms | Ammo budgets, legal deployment slots, team victory |
+| Backend implementation | Solver bodies/handles, cooked shapes, native articulation/contact state, backend queries and resource lifetime | Why a match grants power, damage policy, UI |
+| Runtime session | Single physical-world owner, explicit stepping, prescribed physical motion, sensor sampling hooks, physical checkpoint/reset | Wall-clock pacing, match phase, pilot admission |
+| Sensors | MID360 pattern/cadence, rolling acquisition, IMU sampling, noise and measurement timestamps over coherent runtime state | Truth presented as measurement, ROS/DDS publication, Nav2 |
+| Assets | Checksums/provenance, parsed source hierarchy, geometry and articulation descriptions | Live world mutation, backend handles, competition authority |
+| RoboMaster rules | Existing gameplay authorities, timers, heat/HP/economy/control/assembly/Rune/victory and legal rosters | Collision integration or drawing |
+| Match composition | Runtime plus rule authority, source/zone bindings, physical-contact scoring, defeat/power effects, match checkpoint/reset | Network queues, window and host time |
+| Planning/controllers | IK/path search, navigation and optical aim/sweep consuming explicit inputs and yielding commands | Match permission decisions, direct access to solver internals from UI/ROS |
+| Host/transports | Seats/leases/ownership, command admission, real-time pacing, reliable ordering, codecs, HTTP/UDP | Independent rules or a second physical world |
+| Presentation | Passive scene drawing, game HUD/menus/input, camera and recording, graphics preferences | Advancing physics/rules |
+| Training/robotics adapters | Task/reward/termination, action cadence, observation selection, bounded environment workers, Python/ROS/robot interfaces | A copied competition engine or hidden truth in sensor inputs |
+
+The robot-model layer can remain RoboMaster-oriented. A backend-neutral boundary
+does not require turning this project into a general-purpose game engine.
+The existing rm-simulator-gameplay crate remains the independent rules engine;
+rm-simulator-world should become the match composition, rather than being renamed
+wholesale into a generic runtime while retaining its match-specific fields.
+
+## Concrete moves from the current code
+
+`physics::chassis` mixes reusable wheel/actuator equations with Rapier bodies,
+colliders and query calls. Extract the model computations and their explicit
+input/output data before replacing the solver. Preserve the existing equations,
+force order, motor limits and suspension semantics in the first backend comparison.
+A ray-wheel model and an articulated roller-wheel model are different plants;
+benchmarking them as interchangeable would confuse model changes with backend gains.
+
+`physics::projectile` combines dynamics with caliber labels, retirement policies,
+target identity and contact detection. Keep physical drag, CCD and contact state
+in the runtime/backend. The match supplies projectile profiles, maps opaque shape
+labels to armor identities, and applies detection intervals/damage. Preserve the
+existing public labels through compatibility adapters during migration.
+
+`physics::motion`, mechanism trajectories and manipulator FK/IK contain reusable
+physical/kinematic tools. Core assembly permissions, stages, LEDs and rewards stay
+in match rules/composition. Collision-aware planning operates on an immutable
+query scene; the match defines the task and the host owns its bounded worker.
+Planning output is a command trajectory, never a hidden alternative world step.
+
+`world::energy_unit` should separate a physical payload/grip attachment from its
+match-specific deployment stock, spent state and scoring lifecycle. Release,
+attachment and collision response belong to runtime physical state; the match
+says whether a Unit may be acquired or spent.
+
+`assets` currently depends on gameplay and physics. Split source parsing and
+backend-neutral geometry descriptors from competition-specific binding validation
+inside the existing crate first. Backend cooking consumes descriptors after
+verification. An asset manifest must never require a live physics backend merely
+to inspect it. Visual, sensor and dynamics meshes remain independently selectable
+with their source hashes and approximation provenance preserved.
+
+`server::layout` currently constructs terrain and a Field; `server::assembly_rig`
+contains reusable source rig setup and planning; `server::prediction` includes
+whole-match reconstruction/replay. Move construction/model loading toward assets
+and match composition, and separate pure replay from transport anchors, timing
+and acknowledgment policy. A bare simulation or match benchmark must eventually
+load a verified arena and control a robot without linking GNS, HTTP or Bevy.
+Keep layout compatibility wrappers until existing callers migrate.
+
+`app::scene` should remain an adapter from match/runtime observations into the
+renderer contract. Share immutable robot appearance descriptions and reuse pose
+buffers; do not require the renderer to understand a PhysX handle or Field.
+SceneState is a presentation record, not a complete checkpoint or a sensor output.
+
+The built-in Sentry planner/controller remains optional. Its geometry query and
+command interfaces can be reusable; operator map routing and team-visible contact
+policy belong to the game/host. A training adapter can select a different policy
+without changing the plant or granting an untrusted client direct runtime access.
+
+## Execution and data contracts
+
+A runtime owns exactly one authoritative dynamics backend for interacting bodies.
+Do not step a robot in PhysX while also stepping its contact partners in Rapier
+and copying poses between them. A separate query acceleration structure is fine
+when derived from the same verified geometry and timestamped authoritative poses;
+it is a measurement/query representation, not another dynamic simulation.
+
+Use coarse operations across the backend boundary: load/cook a scene, spawn or
+remove a batch, apply buffered controls/forces, query rays in a batch, advance a
+physical interval, read compact observations and drain ordered contact records.
+Avoid an FFI call or implicit synchronization for each body/property. Lifecycle
+changes occur at explicit step boundaries, with stable IDs/generations mapping to
+backend-local handles. Query result ordinals are not persistent entity IDs.
+
+Separate immutable model data from changing state. Arena mesh/index buffers,
+robot topology, joint names and physical parameters are shared by reference;
+body/link poses, wheel rates and contacts occupy reusable typed buffers. Revisions
+invalidate caches on geometry replacement, placement, topology changes or model
+conversion. Capacities and overflow status are explicit: never silently discard
+contacts, rays or articulation state because a fixed GPU buffer is full.
+
+Support a CPU observation path first and optional device-resident batches later.
+A device buffer needs declared element layout, device/context identity, ownership,
+completion event and lifetime; a borrowed CPU slice cannot stand in for it.
+GPU memory access remains behind the backend/adapter boundary. No pointer-based
+sharing is assumed across CUDA, wgpu, Python or another process. Versioned schemas
+and explicit synchronization are required even on unified-memory machines.
+
+The match retains its current order: gather physical observations; advance rule
+and mechanism state; integrate the physical tick; score contacts; apply resulting
+power/defeat/mechanism changes before the next tick. Preserve the implementation's
+exact ordering while extracting it. GPU substeps may contain the custom wheel
+model without CPU round trips. Multiple matches may advance together, each with
+its own rules, stable identity namespace and step duration. A GPU batch must not
+bypass per-tick rule effects just to run several match ticks without a host barrier.
+Bare physical sessions can batch longer intervals when their caller contract allows.
+Action repetition for PPO never means skipping integration or intermediate rules.
+
+The simulation clock stays caller-controlled. A real-time host paces it; a rollout
+runs unpaced; sensors sample at their own explicit timestamps. Rendering can run
+at 30/60 Hz regardless of physical integration frequency. Optional observation
+and render updates should not force full physical checkpoints or CPU readback on
+every solver substep.
+
+## Checkpoints and multiplayer
+
+Distinguish an ordinary observation, a physical checkpoint and a match checkpoint.
+A physical checkpoint identifies backend/version, model and geometry hashes,
+solver configuration, precision, integration duration, identities and restorable
+state. A match checkpoint adds the complete native authority, gameplay RNG and
+physical-to-rule bindings. An experiment checkpoint additionally captures caller
+controller, task and sensor schedules/RNG state when reproducible continuation is
+required. Sensors are not silently part of a physical checkpoint today.
+
+Cross-backend interchange is a scenario/state initialization facility, not exact
+rollback. Explicitly distinguish full native continuation from reconstruction
+that rebuilds warm starts/manifolds. Current Rapier restore already has documented
+residuals; neither extraction nor a new backend should promise bitwise equivalence
+that the existing implementation lacks. Test determinism within the selected
+backend/configuration, and physical tolerances across backends.
+
+Keep multiplayer on its existing backend initially. Later prediction admission
+must include backend/model/solver identity as well as field package and tick rate.
+Clients cannot replay a PhysX host using Rapier as if it were equivalent. A
+mismatched or unsupported predictor can use an explicitly supported drawing-only
+mode; otherwise reject admission. Preserve the complete-world replay contract,
+confirmation ordering and reliable command ownership.
+
+## Main risks and friction
+
+| Risk | Why it matters here | Design response |
+|---|---|---|
+| CPU/GPU synchronization | Wheel forces currently run every solver slice; rules consume state every match tick | Batch inputs/queries; retain state; measure wheel loop and compact per-tick readback together |
+| Collision model mismatch | Tunnels have roofs/overhangs; tiny fast projectiles hit moving armor | Validate cooked static meshes, two-sided contacts, filtering, CCD and source target masks; no whole-arena convex hull |
+| Precision/contact differences | Current dynamics use f64; another backend may use different precision and solvers | Declare precision and test penetration, settling, trajectories and bounded drift; preserve explicit rule time |
+| Geometry identity leaks | StaticGeometry and sensor captures contain Parry shapes and collider handles | Immutable source descriptors plus backend cooked handles; stable entity/part IDs and explicit query revisions |
+| Match-state duplication | Existing snapshots combine presentation records and full restore authority | Introduce compact observation APIs; share immutable configuration; keep checkpoint compatibility during transition |
+| Prescribed versus dynamic joints | Gimbal/arm/folding are largely prescribed today | Model capability flags; retain current behavior first; add torque plants as a separately validated model |
+| Model identification | CAD provides geometry/axes, not trustworthy link inertias, friction or motor constants | Preserve fitted current parameters; record assumptions; do not infer a validated plant merely from an imported STEP |
+| FFI and packaging | Native GPU libraries, contexts and unsafe bindings differ from a Rust-only build | Optional isolated adapter; keep core safe and CPU builds usable; review any narrow unsafe-policy exception explicitly |
+| Sensor continuity | Placement/topology changes invalidate rolling brackets and IMU traces | Backend-independent timestamps/generations and discontinuity tests; never interpolate across reset or missing capture intervals |
+| Parallel-world memory | Duplicating arena buffers/cooked geometry per PPO world can erase capacity gains | Share immutable data where backend supports it; measure GPU/CPU memory per world, capacity limits and reset costs |
+| Game/controller coupling | Assembly, optical aiming, prediction and construction still reside in server/app modules | Extract pure construction/planning/replay while retaining host authority and policy at transport boundary |
+| Scope and churn | A generic rewrite can break the working game before a second backend proves useful | Same-workspace migration, compatibility facades, incremental tests and a minimal working backend prototype |
+
+GPU backend feasibility also depends on the selected SDK's feature coverage.
+PhysX offers GPU dynamics and batched state access; the referenced 5.6.1 guide
+lists GPU mesh cooking requirements, CPU-side CCD/queries and fixed-buffer limits.
+Validate the chosen version rather than treating GPU dynamics as acceleration of
+all runtime operations. [PhysX GPU simulation](https://nvidia-omniverse.github.io/PhysX/physx/5.6.1/docs/GPURigidBodies.html).
+MJWarp targets parallel throughput rather than lowest single-world latency;
+it is a useful PPO comparison, not a guaranteed faster interactive plant.
+[MuJoCo Warp](https://mujoco.readthedocs.io/en/latest/mjwarp/).
+
+## Migration and acceptance
+
+1. Establish the runtime contract using current Rapier behavior: immutable model
+   descriptors, stable IDs, explicit command/state/query batches and compact
+   observations. Preserve public entry points with adapters. Add dependency
+   checks proving runtime users need no gameplay, networking, Bevy or host clock.
+2. Separate physical session ownership from match composition. Rehome reusable
+   scene/robot construction so standalone tools can load the approved field.
+   Preserve rule tick ordering, snapshots and all RMUC/RMUL authorities.
+3. Build the minimal second-backend experiment: one existing omni chassis,
+   equivalent wheel model, representative terrain, moving armor and 17 mm shots.
+   Compare Rapier and PhysX CPU/GPU with 1, 32 and 256 worlds, or stop at explicit
+   resource capacity. Record complete wheel/query/solver/contact/observation cost,
+   GPU memory and host/device transfer volume, after compilation and warmup.
+4. Refine the interface only where the second implementation demonstrates a
+   requirement. GPU batching/device observation support comes from that working
+   prototype; do not freeze a universal backend trait before it exists. Evaluate
+   MJWarp separately for articulated/control-heavy PPO workloads as warranted.
+5. Migrate the game through the unchanged match/session facade. Extend protocol
+   identity and optional prediction only when a second backend is admitted to
+   multiplayer. Keep the current CPU mode usable throughout.
+
+The prototype passes correctness gates before a speed comparison: settling/load,
+acceleration/braking, free wheelspin and slip, power limits, contact filtering,
+ramps/steps/tunnel clearances, moving armor and projectile CCD, defeat, physical
+attachment/release, reset, rolling scan distortion and IMU cadence. Run relevant
+rule/restore tests through match composition. Backend trajectories need not be
+identical, but source geometry, inputs and tested physical tolerances must be
+comparable and differences recorded.
+
+A throughput win must include actual observations and required synchronization,
+not just an isolated solver kernel. Report single-world p95 tick latency separately
+from parallel environment-steps/s, policy action rate, reset cost and memory.
+No GPU performance gain or backend replacement is established by this design.

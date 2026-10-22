@@ -13,6 +13,7 @@ other simulator crate.
 
 | File | Owns |
 |---|---|
+| `src/session.rs` | Caller-paced `RobotSession` over one `WorldPhysics`, repeatable `RobotScenario` reset, addressed commands, compact truth and explicit sampling schedules. No match authority or arbitrary checkpoint restore. |
 | `src/control.rs` | Validated held drive modes and per-wheel motor torque requests, independent of a transport or controller scheduler. |
 | `src/sensors.rs` | Prepared ideal planar/multi-layer LiDAR, caller-stamped instantaneous acquisition and reusable output buffers over explicit geometry captures. |
 | `src/sensors/imu.rs` | Mounted gyroscope/accelerometer on the chassis or actual gimbal frame, derived from opt-in solver-substep carrier traces, with restorable state and seeded noise, bias walk and saturation. |
@@ -31,16 +32,49 @@ detection intervals; the world crate owns those decisions.
 
 ## Dependencies
 
-`rapier3d-f64` and `serde`. The crate never depends on `rm-simulator-world`,
+`rapier3d-f64`, `serde` and the standalone `mid360-sim` pattern generator. The
+crate never depends on `rm-simulator-world`,
 `rm-simulator-gameplay`, `rm-simulator-server`, `rm-simulator-render` or Bevy,
-and it never reads host time. `rm-simulator-world` is its only normal consumer;
-`rm-simulator-app` takes it as a dev-dependency for the `physical_scene` example.
+and it never reads host time. Standalone callers can use `session::RobotSession`
+without `rm-simulator-world`; match composition continues to use the same physical
+plant. `rm-simulator-app` also uses it for the `physical_scene` example.
+
+## Bare robot sessions
+
+```sh
+cargo run -p rm-simulator-physics --release --example robot_session --locked
+```
+
+`session::RobotScenario::new(faces, floor_height_m, step_duration, setup)` defines
+an initial scene. Its repeatable setup recipe receives a fresh `WorldPhysics` at
+time zero and installs models, shared geometry, payloads, policies and resolved
+mechanisms with existing methods. `RobotSession::new(scenario)` owns that one
+world. `step` advances explicit integration steps and returns ordered raw contacts;
+`step_controlled` runs a controller before every tick. `step_with_targets` accepts
+one tick's prescribed target endpoints. Drive, direct wheel torques and muzzle
+fire use ordinary physical controls without match permissions or resource rules.
+
+`robot_control_state` reads allocation-free pose/input/revision/defeat truth.
+`stamp`, `robot_truth` and `ground_truth` expose privileged observations without
+capturing a whole-world checkpoint; `robot_truth` includes cloned model and wheel
+data for one robot. `lidar_scene_capture` uses session time;
+`physics_mut` provides payload/mechanism control, geometry/model editing, carrier
+trace hooks and event drains. Callers must keep stepping and synchronization under
+the session's clock. Sensor schedules, interpolation and IMU state remain external.
+
+`reset` transactionally rebuilds the initial recipe, including its payloads and
+geometry. It resets time, IDs, events and traces; it discards later runtime edits.
+The recipe must capture repeatable inputs and must not step the world. There is no
+arbitrary physical checkpoint/restore API yet: body snapshots do not represent
+policy history, touched-armor memory, all prescribed motion or solver continuation.
+Reset caller sensor/controller state separately; do not interpolate across reset.
 
 ## Testing
 
 `cargo test -p rm-simulator-physics --locked` runs the in-module tests in
-`chassis.rs` and `projectile.rs` and the integration test
-`tests/projectile_retirement.rs`. Coverage spans chassis settling on the floor,
+`chassis.rs` and `projectile.rs` and the integration tests
+`tests/projectile_retirement.rs` and `tests/robot_session.rs`. Coverage spans
+chassis settling on the floor,
 holonomic drive, motor limits, gimbal rate limiting and aim freezing, the shared
 power budget, scoring-face acceptance, closing speed, projectile bounds and
 retirement, and target-frame identity and ordering.

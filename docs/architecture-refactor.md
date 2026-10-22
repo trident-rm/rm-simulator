@@ -26,6 +26,10 @@ RMUC detector bindings. Configuration and restore reject mixed authorities;
 the public view must exactly match its hidden checkpoint authority. All formats
 use the same physics and explicit step clock. See [RMUL coverage](rmul-2027.md).
 
+For the initial two-session split and proposed backend-neutral runtime migration,
+see [runtime/game split](runtime-game-split.md). Only the session API boundary is
+implemented; the later backend/model extraction remains proposed.
+
 ## Ownership
 
 | Data or decision | Owner |
@@ -82,7 +86,9 @@ guide for the replacement of referee-dependent geometry queries with
 
 ## Embedding boundaries
 
-`world::session` provides caller-paced stepping, addressed controls, explicitly
+`physics::session::RobotSession` provides bare caller-paced physics and
+repeatable initial-scenario reset without match authority.
+`world::session::MatchSession` provides caller-paced match stepping, addressed controls, explicitly
 privileged truth access and complete in-memory reset points. Per-field
 `StepDuration` travels in checkpoints. Multiplayer admission remains 128 Hz until
 rate negotiation and all peer schedulers support customization.

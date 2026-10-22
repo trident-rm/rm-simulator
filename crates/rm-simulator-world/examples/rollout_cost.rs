@@ -6,7 +6,7 @@ use rm_simulator_world::{
     ChassisCommand, ChassisConfig, ChassisPlacement, Field, FieldConfig, Pose, RefereeCommand,
     RobotKind, Team,
     rmuc_2027::{Config, Detector, Point, Tower, Zone},
-    session::Session,
+    session::MatchSession,
 };
 use std::{
     collections::hash_map::DefaultHasher,
@@ -70,7 +70,7 @@ fn fixture(robots: usize) -> Field {
 fn main() {
     const STEPS: u64 = 1024;
     for robots in [0, 1, 8] {
-        let mut session = Session::new(fixture(robots));
+        let mut session = MatchSession::new(fixture(robots));
         let start = Instant::now();
         for _ in 0..STEPS {
             black_box(session.step(1).unwrap());

@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+- Add physics-only `RobotSession` with explicit timing, drive/torque/fire
+  commands, sensor access and transactional `RobotScenario` reset. Share physical
+  command/truth/time types with the match facade without adding dependencies.
+- Name the in-process match facade `MatchSession` and its full-authority reset
+  point `MatchCheckpoint`, retaining the `Session`/`Checkpoint` compatibility
+  aliases. Reuse controller command storage across repeated stepping calls.
+
 - Reuse wheel contact, traction and motor buffers across physics slices,
   preserving drive integration while removing their steady-state allocation.
 - Reuse RMUC terrain/observation storage and remove per-tick roster clones.
