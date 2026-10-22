@@ -245,3 +245,15 @@ one-robot flat rollouts, with six bit-identical baseline trajectories and unchan
 rollout hashes. No loaded-match speedup was established. Suspension queries were
 about 89% of measured chassis adapter time in that attribution probe; accelerating
 the scalar wheel equations alone does not eliminate that query cost.
+
+The [suspension investigation](performance-suspension-pass-20261023.md) retained
+no production change. Rapier's query view borrows existing acceleration; collider
+and triangle BVHs are already persistent. The instrumented loaded fixture counted
+about 54 top-level node tests, 8.29 candidate filter checks and two exact trimesh
+casts per support ray. Per-node timing perturbs these queries, so the counts are
+stronger evidence than the diagnostic timing shares. An exact early-filter trial
+slightly improved one-robot flat stepping but had inconsistent eight-robot and
+loaded results, and was discarded. Cached support hits alone cannot preserve
+nearest-hit semantics when supports, obstacles, groups or topology change. A
+four-ray candidate batch remains a future experiment requiring complete coverage,
+current transforms/filtering and tie-preserving nearest-hit validation.
