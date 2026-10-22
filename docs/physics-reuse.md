@@ -18,9 +18,72 @@ This is a reusable RM physical library, not a general physics-engine abstraction
 
 ## Contents
 
+- [Backend-neutral wheel model](#backend-neutral-wheel-model)
 - [Headless use](#headless-use)
 - [Restore and prediction](#restore-and-prediction)
 - [Optional rendering](#optional-rendering)
+
+## Backend-neutral wheel model
+
+`wheel_model::{WheelModel, WheelState, WheelDriveScratch}` runs the existing
+ray-wheel plant without constructing a `WorldPhysics` or using Rapier types.
+`WheelModel::from(&ChassisConfig)` copies only scalar motor, inertia, suspension
+and friction parameters; callers can also construct the record directly.
+Its module doctest demonstrates unsupported motor spin without a solver.
+
+For each backend solver slice, the adapter supplies wheel-order ground rolling
+speeds in m/s and grip limits in N through the reused `scratch.contacts` buffer,
+held velocity targets or a borrowed slice of wheel-axis torques in N m, a duration
+in seconds and an admitted shared motor budget in W. `integrate` updates borrowed
+wheel state and returns mean motor allocation and consumed power. Its reused
+`forces` buffer contains mean rolling traction in N. The same eight internal
+motor slices, torque envelopes, wheel inertia, slip law, non-regenerative power
+accounting and angle wrapping are preserved. `suspension_load_n` and
+`roller_force_n` supply the spring/damper/bump-stop and free-roller equations.
+Inputs must satisfy the documented finite/positive parameter and length contracts;
+this low-level API does not replace session command validation.
+
+The backend adapter still owns query filtering and contact acceptance, wheel
+geometry and moving-hub velocity, contact frames and point velocities. It computes
+compression/rate, calls the scalar suspension/roller model, and supplies rolling
+grip as `drive_friction * load_n`; unsupported wheels receive zero grip. It
+clears unsupported contact/compression and constructs contact presentation records.
+The adapter admits defeat/actuation cuts and configured power ceilings, resolves
+high-level body targets, and retains balance/jump, gimbal and folding behavior.
+It applies rolling forces first, then each wheel's roller and suspension forces
+at the original points and in the original order before advancing the solver.
+It copies traction into contact records; the model updates contact slip.
+
+The three existing contact/traction/motor vectors retain their capacities. Initial
+use or a new largest wheel count can allocate; fixed-topology calls allocate
+nothing in the model after warmup. No per-wheel copy or additional wheel-state
+buffer is introduced. Parameters are a small stack record, not a cloned chassis
+profile. This extraction establishes reuse, not a measured speedup.
+
+A 2026-10-23 Talos smoke comparison used seven unpaced 10,000-tick samples of
+three chassis (omni, mecanum and balancing), after 128 warmup ticks, including
+queries and solver work. With the development profile (workspace opt-level 1,
+dependencies opt-level 3), median tick time was 971.737 µs before and 990.941 µs
+after extraction (about 2% higher); ranges were 957–1001 and 959–1020 µs.
+Concurrent host work and one sequential comparison limit attribution: these
+samples do not isolate the refactor's effect. Existing steady-state scratch
+allocation behavior is preserved.
+
+`chassis::WheelContact` remains a compatibility export with unchanged fields and
+serde representation. Chassis snapshots, drive modes and restore semantics are
+unchanged. This is an f64 ray-wheel model, not an articulated roller model or a
+universal engine interface. The crate still links Rapier for its existing adapter;
+a future PhysX adapter must supply equivalent contacts, scheduling and force
+application and validate its solver differences independently.
+
+Regression coverage includes six one-second trajectories recorded before
+extraction from `8f4f44a` on Talos (omni, mecanum, low grip, landing, direct torque
+and balancing). Body pose/velocities and wheel spin/rate/compression/traction
+matched exactly on the reference machine; committed comparisons allow a small
+platform math tolerance. Independent scalar tests cover suspension, free spin,
+contact slip reaction, direct torques, shared/zero power and buffer reuse, without
+creating a solver world. Existing adapter tests cover defeat, power cuts,
+contact filtering, balance/jump and restore.
 
 ## Headless use
 
@@ -103,6 +166,52 @@ fixed-tick scheduling and the motion state associated with each checkpoint.
 Lengths and rotations use FLU metres and normalized wxyz quaternions. Existing
 physical assumptions, projectile lifetime/capacity and launch validation remain
 unchanged by extraction.
+
+## Standalone arena components
+
+`physics::arena` provides geometry without a complete `Field` or native match:
+
+- `ZoneFootprint` borrows a polygon and vertical band. It reports occupancy;
+  control capture, traversal history and buff effects remain gameplay authority.
+  RMUC control, supply, Vantage and terrain-card observations use this same query.
+- `OutpostModel` retains the source pivot, tilted axis and detector frames. Callers
+  supply the rotor angle and map detectors to target identities. RMUC uses the
+  same pose calculation while keeping spin-up, stopping, HP and damage rules.
+  `world::rmuc_2027::{Tower, Detector}` remain compatibility re-exports with the
+  same serialized fields.
+- `TunnelModel` produces three boxes (roof and side walls) for an open-ended
+  rectangular test passage. Placement and dimensions are explicit; no official
+  arena dimensions are inferred. It is an approximate fixture, not a replacement
+  for verified CAD, tunnel route bindings or RFID traversal rules.
+
+Run `cargo run -p rm-simulator-physics --example arena_components --locked` for
+an independent tunnel, occupancy and rotating detector example in `RobotSession`.
+Detectors remain the existing physical armor housings: this example does not
+load an Outpost visual shell or model its complete structural collision.
+
+A standalone model supplies geometry, target motion and observations. A match
+adapter associates these with team/card identities and submits observations to
+its existing authority. It must not instantiate a separate buff/HP scheduler.
+In particular, a tunnel's passage geometry and its RFID cards are independent;
+a robot fitting through the opening does not automatically earn a traversal.
+Reuse the existing rm-map-tools export pipeline for complete geometry:
+`cad_partition.py` preserves source bodies/shells and placements;
+`extract_entities.py` emits separate visual/collision GLBs; and
+`export_articulated.py` exports semantically bound rigid links and joints to
+SDF/URDF/USD. Work partitions describe source ownership, not automatically proven
+motion or scoring roles. Articulated exports carry kinematics, not calibrated
+mass/inertia or actuators. These tools require no simulator dependency on the
+sibling repository; consume their versioned output packages.
+
+The assets crate already verifies package checksums and semantic bindings, and
+`collision_mesh::load_glb_selected` / `load_glb_filtered` can select primitives
+and joint subtrees while preserving ancestor transforms. Server layout already
+uses those readers for fixed/moving geometry. The remaining extraction is to
+make that model composition reusable outside server layout: select an existing
+exported asset, apply its placement once, install its fixed/moving collision and
+bind its detector/zone observations. Do not build another CAD splitter or package
+format. The current arena module shares detector geometry and occupancy; it does
+not yet expose that complete composition or independent per-feature authorities.
 
 ## Restore and prediction
 

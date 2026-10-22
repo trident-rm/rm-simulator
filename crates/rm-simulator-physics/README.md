@@ -18,7 +18,8 @@ other simulator crate.
 | `src/sensors.rs` | Prepared ideal planar/multi-layer LiDAR, caller-stamped instantaneous acquisition and reusable output buffers over explicit geometry captures. |
 | `src/sensors/imu.rs` | Mounted gyroscope/accelerometer on the chassis or actual gimbal frame, derived from opt-in solver-substep carrier traces, with restorable state and seeded noise, bias walk and saturation. |
 | `src/sensors/rolling.rs` | Mounted procedural MID-360 acquisitions with interpolated robot/obstacle motion, self-occlusion, timestamps and seeded range noise/dropout. |
-| `src/chassis.rs` | The four-wheel chassis: an octagonal omni deck and compact lower bumper (box on other presets), a turret cuboid, ray-cast spring/damper suspension, independent wheel inertia, motor torque and slip-limited omni tyres, four armor housings, gimbal dynamics and the shared drivetrain power budget. `ChassisConfig` presets are the omni Infantry and the mecanum Hero. |
+| `src/wheel_model.rs` | Backend-neutral scalar suspension/roller, wheel inertia, motor/slip and shared-power equations over explicit parameters, borrowed state/torques and reused buffers. No solver handles or queries. |
+| `src/chassis.rs` | Chassis configuration and the Rapier adapter: bodies, wheel rays/contact kinematics, ordered force application, gimbal/folding, balance/jump and snapshot compatibility. |
 | `src/projectile.rs` | `WorldPhysics`, `Shot`, `Caliber`, `Contact`, `TargetFace`, `TargetFrames`, `StaticGeometry` and `ProjectilePolicy`: projectile flight, scoring faces and raw contacts in physical order. |
 | `src/geometry.rs` | Shared collision captures and read-only clearance queries consumed by the world facade. |
 | `src/motion.rs` | Prescribed rotor and rail motion (`RotorMotion`, `SinusoidalMotion`, `MechanismState`) and fitted armor geometry; rune pose helpers live under `motion::rune`. |

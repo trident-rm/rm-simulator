@@ -5,24 +5,8 @@ pub use crate::gameplay::rmuc_2027::{Point, match_rules};
 use crate::{ArmorTarget, Pose, TargetFace, Team};
 use serde::{Deserialize, Serialize};
 
-/// One fitted detector; dimensions are measured from the source CAD, not artwork.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Detector {
-    /// Face at rest, in world FLU metres, +x outward.
-    pub pose: Pose,
-    /// Effective rectangular half-width/half-height in metres.
-    pub half_m: [f64; 2],
-}
-/// Outpost source geometry, keyed by its original field side.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Tower {
-    /// World FLU rotor pivot in metres.
-    pub pivot_m: [f64; 3],
-    /// Unit rotor axis in world FLU, including the source tower tilt.
-    pub axis: [f64; 3],
-    /// Three source detector faces at rest.
-    pub detectors: Vec<Detector>,
-}
+/// Standalone source geometry shared with physics-only arena fixtures.
+pub use rm_simulator_physics::arena::{Detector, OutpostModel as Tower};
 /// A reviewed functional RFID footprint. Polygon x/y and floor are in FLU metres.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Zone {
@@ -40,22 +24,12 @@ pub struct Zone {
 impl Zone {
     /// Whether an antenna/body centre is inside the footprint and height band.
     pub fn contains(&self, p: [f64; 3]) -> bool {
-        if p[2] < self.floor_m || p[2] > self.floor_m + self.height_m {
-            return false;
+        rm_simulator_physics::arena::ZoneFootprint {
+            polygon_m: &self.polygon_m,
+            floor_m: self.floor_m,
+            height_m: self.height_m,
         }
-        let mut inside = false;
-        for (a, b) in self
-            .polygon_m
-            .iter()
-            .zip(self.polygon_m.iter().cycle().skip(1))
-        {
-            if (a[1] > p[1]) != (b[1] > p[1])
-                && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]
-            {
-                inside = !inside;
-            }
-        }
-        inside
+        .contains(p)
     }
 }
 /// Source-derived targets and field RFID, carried through authoritative restore.
@@ -225,7 +199,7 @@ impl State {
             return pose;
         };
         let angle = self.game.runes[side.index()].angle_at(round_ns);
-        Self::rotate_source(pose, r.pivot_m, r.axis, angle)
+        Tower::rotate_pose(pose, r.pivot_m, r.axis, angle)
     }
     /// Rotor angle in radians, with five-second spin-up and a permanent first stop.
     pub fn angle_rad(&self, side: Team) -> f64 {
@@ -249,31 +223,7 @@ impl State {
         let angle = self.angle_at(side, round_ns);
         let pivot = self.config.outposts[side.index()].pivot_m;
         let axis = self.config.outposts[side.index()].axis;
-        Self::rotate_source(pose, pivot, axis, angle)
-    }
-    fn rotate_source(pose: Pose, pivot: [f64; 3], axis: [f64; 3], angle: f64) -> Pose {
-        let half = angle / 2.;
-        let q = [
-            half.cos(),
-            axis[0] * half.sin(),
-            axis[1] * half.sin(),
-            axis[2] * half.sin(),
-        ];
-        let delta = std::array::from_fn(|i| pose.translation_m[i] - pivot[i]);
-        let rotated = rm_simulator_physics::motion::outpost::rotate(q, delta);
-        Pose {
-            translation_m: std::array::from_fn(|i| pivot[i] + rotated[i]),
-            rotation_wxyz: {
-                let [a, b, c, d] = q;
-                let [w, x, y, z] = pose.rotation_wxyz;
-                [
-                    a * w - b * x - c * y - d * z,
-                    a * x + b * w + c * z - d * y,
-                    a * y - b * z + c * w + d * x,
-                    a * z + b * y - c * x + d * w,
-                ]
-            },
-        }
+        Tower::rotate_pose(pose, pivot, axis, angle)
     }
     pub(crate) fn detector(&self, target: ArmorTarget) -> Option<&Detector> {
         match target {

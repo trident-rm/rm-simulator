@@ -17,6 +17,9 @@
 //! the wheel, motor and suspension figures below are typical of a RoboMaster
 //! infantry with 153 mm omni wheels and M3508 drives and are assumed, not
 //! measured.
+#[cfg(test)]
+use crate::wheel_model::drive_power_scale;
+use crate::wheel_model::{WheelDriveScratch, WheelModel, WheelState};
 use crate::{
     Pose, Team,
     control::{DriveControl, WheelTorques},
@@ -1262,20 +1265,8 @@ impl ChassisCommand {
     }
 }
 
-/// Ground contact of one wheel at the end of a tick.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct WheelContact {
-    /// Contact point in world FLU metres.
-    pub point_m: [f64; 3],
-    /// Ground normal, turned to face the body's up axis.
-    pub normal: [f64; 3],
-    /// Suspension force pressing the wheel onto the ground.
-    pub load_n: f64,
-    /// Wheel tread minus ground surface speed along the rolling direction.
-    pub slip_m_s: f64,
-    /// Applied rolling traction at this contact, in newtons.
-    pub drive_force_n: f64,
-}
+/// Compatibility export of the backend-neutral wheel contact record.
+pub use crate::wheel_model::WheelContact;
 /// One wheel's state at the end of a tick.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct WheelSnapshot {
@@ -1352,6 +1343,26 @@ pub struct ChassisControlState {
     pub defeated: bool,
 }
 
+impl From<&ChassisConfig> for WheelModel {
+    fn from(config: &ChassisConfig) -> Self {
+        Self {
+            wheel_radius_m: config.wheel_radius_m,
+            wheel_inertia_kg_m2: config.wheel_inertia_kg_m2,
+            slip_stiffness_n_s_m: config.slip_stiffness_n_s_m,
+            wheel_stall_force_n: config.wheel_stall_force_n,
+            wheel_no_load_speed_m_s: config.wheel_no_load_speed_m_s,
+            motor_stall_loss_w: config.dynamics.motor_stall_loss_w,
+            suspension_travel_m: config.dynamics.suspension_travel_m,
+            bump_stop_stiffness_n_m: config.dynamics.bump_stop_stiffness_n_m,
+            suspension_stiffness_n_m: config.suspension_stiffness_n_m,
+            suspension_damping_n_s_m: config.suspension_damping_n_s_m,
+            drive_friction: config.drive_friction,
+            roller_friction: config.roller_friction,
+            mecanum: config.mecanum,
+        }
+    }
+}
+
 /// Body-frame wheel geometry in `ChassisConfig::wheel_hubs_m` order.
 fn wheel_geometry(config: &ChassisConfig) -> Vec<WheelGeometry> {
     wheel_geometry_at(config, 0.)
@@ -1398,98 +1409,6 @@ struct WheelGeometry {
     /// Signed contact speed per unit yaw rate, from the hub cross rolling direction.
     lever_m: f64,
 }
-#[derive(Clone, Copy)]
-struct WheelState {
-    spin_rad: f64,
-    angular_velocity_rad_s: f64,
-    suspension_compression_m: f64,
-    target_m_s: f64,
-    contact: Option<WheelContact>,
-}
-
-/// Reusable per-wheel solver storage; none of it is physical restore state.
-#[derive(Default)]
-struct WheelDriveScratch {
-    contacts: Vec<(f64, f64)>,
-    forces: Vec<f64>,
-    motors: Vec<f64>,
-}
-impl WheelDriveScratch {
-    /// Integrate motor torque and equal/opposite tyre reaction, with shared power.
-    /// Eight internal slices per Rapier slice resolve the stiff slip law without
-    /// changing the caller-selected integration duration.
-    fn integrate(
-        &mut self,
-        config: &ChassisConfig,
-        wheels: &mut [WheelState],
-        dt_s: f64,
-        budget_w: f64,
-        torques: Option<&WheelTorques>,
-    ) -> (f64, f64) {
-        let contacts = &self.contacts;
-        let ratio = config.wheel_radius_m
-            / if config.mecanum {
-                std::f64::consts::SQRT_2
-            } else {
-                1.0
-            };
-        let slices = 8;
-        let dt = dt_s / f64::from(slices);
-        self.forces.resize(wheels.len(), 0.0);
-        self.forces.fill(0.0);
-        self.motors.resize(wheels.len(), 0.0);
-        let forces = &mut self.forces;
-        let motors = &mut self.motors;
-        let mut average_scale = 0.0;
-        let mut power_w = 0.0;
-        for _ in 0..slices {
-            let mut mechanical_w = 0.0;
-            let mut copper_w = 0.0;
-            for (index, (wheel, motor)) in wheels.iter().zip(motors.iter_mut()).enumerate() {
-                let speed = wheel.angular_velocity_rad_s * ratio;
-                let requested_force = torques.map_or_else(
-                    || 4.0 * config.slip_stiffness_n_s_m * (wheel.target_m_s - speed),
-                    |torques| torques.as_nm()[index] / ratio,
-                );
-                let limit = config.wheel_stall_force_n
-                    * if requested_force * speed > 0.0 {
-                        (1.0 - speed.abs() / config.wheel_no_load_speed_m_s).clamp(0.0, 1.0)
-                    } else {
-                        1.0
-                    };
-                *motor = requested_force.clamp(-limit, limit);
-                mechanical_w += (*motor * speed).max(0.0);
-                copper_w += config.dynamics.motor_stall_loss_w
-                    * (*motor / config.wheel_stall_force_n).powi(2);
-            }
-            let scale = drive_power_scale(mechanical_w, copper_w, budget_w);
-            average_scale += scale / f64::from(slices);
-            power_w += (mechanical_w * scale + copper_w * scale * scale) / f64::from(slices);
-            for (((wheel, &motor), &(ground_speed, grip)), force) in wheels
-                .iter_mut()
-                .zip(motors.iter())
-                .zip(contacts)
-                .zip(forces.iter_mut())
-            {
-                let speed = wheel.angular_velocity_rad_s * ratio;
-                let traction =
-                    (config.slip_stiffness_n_s_m * (speed - ground_speed)).clamp(-grip, grip);
-                // Tyre reaction resists the motor even when the body cannot move.
-                wheel.angular_velocity_rad_s +=
-                    (motor * scale - traction) * ratio / config.wheel_inertia_kg_m2 * dt;
-                wheel.spin_rad = wrap_angle(wheel.spin_rad + wheel.angular_velocity_rad_s * dt);
-                *force += traction / f64::from(slices);
-            }
-        }
-        for (wheel, &(ground_speed, _)) in wheels.iter_mut().zip(contacts) {
-            if let Some(contact) = &mut wheel.contact {
-                contact.slip_m_s = wheel.angular_velocity_rad_s * ratio - ground_speed;
-            }
-        }
-        (average_scale, power_w)
-    }
-}
-
 /// One chassis inside a physics world: its Rapier bodies and colliders, the
 /// wheel geometry resolved from its configuration, and the drive and gimbal
 /// state carried between ticks.
@@ -2150,6 +2069,7 @@ impl Chassis {
             self.jump_held = self.command.jump;
             return;
         }
+        let model = WheelModel::from(cfg);
         let reach = cfg.wheel_radius_m + cfg.suspension_rest_m;
         // Projectile group 2 must not act as a suspension support. A ray spring
         // resting on a loose 17 mm ball would invent a rigid terrain column.
@@ -2195,14 +2115,7 @@ impl Chassis {
             let hub_velocity =
                 linvel + angvel.cross(hub - com) + pose.rotation * geometry.velocity_m_s;
             let compression_rate = -hub_velocity.dot(up);
-            let overtravel = (compression - cfg.dynamics.suspension_travel_m).max(0.0);
-            let bump_stop = cfg.dynamics.bump_stop_stiffness_n_m
-                * overtravel
-                * (1.0 + overtravel / cfg.dynamics.suspension_travel_m);
-            let load = (bump_stop
-                + cfg.suspension_stiffness_n_m * compression
-                + cfg.suspension_damping_n_s_m * compression_rate)
-                .max(0.0);
+            let load = model.suspension_load_n(compression, compression_rate);
             let point = ray.point_at(distance);
             let contact_velocity =
                 linvel + angvel.cross(point - com) + pose.rotation * geometry.velocity_m_s;
@@ -2217,11 +2130,9 @@ impl Chassis {
             }
             let roll_speed = contact_velocity.dot(roll_dir);
             let roller_speed = contact_velocity.dot(roller_dir);
-            let grip = cfg.drive_friction * load;
+            let grip = model.drive_friction * load;
             self.wheel_drive.contacts.push((roll_speed, grip));
-            let roller_grip = cfg.roller_friction * load;
-            let roller =
-                (-cfg.slip_stiffness_n_s_m * roller_speed).clamp(-roller_grip, roller_grip);
+            let roller = model.roller_force_n(roller_speed, load);
             self.drive_forces.push((roll_dir, point));
             self.forces.push((roller_dir * roller, point));
             self.forces.push((up * load, hub));
@@ -2248,9 +2159,13 @@ impl Chassis {
             }
             _ => None,
         };
-        let (scale, power) =
-            self.wheel_drive
-                .integrate(cfg, &mut self.wheels, dt_s, budget, torques);
+        let (scale, power) = self.wheel_drive.integrate(
+            &model,
+            &mut self.wheels,
+            dt_s,
+            budget,
+            torques.map(WheelTorques::as_nm),
+        );
         self.drive_power_w = power;
         for ((wheel, (force, _)), traction) in self
             .wheels
@@ -2528,7 +2443,6 @@ pub fn yaw_of(pose: Pose) -> f64 {
     (2.0 * (w * z + x * y)).atan2(1.0 - 2.0 * (y * y + z * z))
 }
 
-/// Uniform motor allocation: mechanical output scales linearly and copper loss quadratically.
 // Closed-form continuous LQR for x=[pitch, pitch_rate], A=[[0,1],[mgh/I,0]],
 // B=[0,1/I], Q=diag(1000,60), R=0.01. These cost weights and the fitted
 // centre-of-mass height are prototype choices. Solve once per chassis creation.
@@ -2540,21 +2454,6 @@ fn balance_lqr_gains(config: &ChassisConfig) -> [f64; 2] {
     let kp = gravity + (gravity * gravity + 1000.0 / 0.01).sqrt();
     let kd = (2.0 * inertia * kp + 60.0 / 0.01).sqrt();
     [kp, kd]
-}
-
-fn drive_power_scale(mechanical_w: f64, copper_w: f64, budget_w: f64) -> f64 {
-    if budget_w <= 0.0 {
-        return 0.0;
-    }
-    if mechanical_w + copper_w <= budget_w {
-        return 1.0;
-    }
-    if copper_w <= f64::EPSILON {
-        return (budget_w / mechanical_w).min(1.0);
-    }
-    (2.0 * budget_w
-        / (mechanical_w + (mechanical_w * mechanical_w + 4.0 * copper_w * budget_w).sqrt()))
-    .min(1.0)
 }
 
 #[cfg(test)]
@@ -2572,12 +2471,262 @@ mod tests {
         budget_w: f64,
         torques: Option<&WheelTorques>,
     ) -> (Vec<f64>, f64, f64) {
-        let mut scratch = WheelDriveScratch {
-            contacts: contacts.to_vec(),
-            ..Default::default()
-        };
-        let (scale, power) = scratch.integrate(config, wheels, dt_s, budget_w, torques);
+        let mut scratch = WheelDriveScratch::default();
+        scratch.contacts.extend_from_slice(contacts);
+        let (scale, power) = scratch.integrate(
+            &WheelModel::from(config),
+            wheels,
+            dt_s,
+            budget_w,
+            torques.map(WheelTorques::as_nm),
+        );
         (scratch.forces, scale, power)
+    }
+
+    #[test]
+    fn wheel_adapter_preserves_reference_trajectories() {
+        // Recorded from unextracted 8f4f44a on x86_64 Talos. Values are pose,
+        // linear/angular velocity, then (spin, rate, compression, traction) per wheel.
+        // Tolerance permits platform math differences; extraction matched exactly
+        // on the reference machine. This is not a cross-backend rollback promise.
+        let expected: [&[f64]; 6] = [
+            &[
+                1.1278962312570662,
+                0.04918715234064451,
+                0.17154571812301148,
+                0.9986919547605752,
+                0.02022946191615501,
+                -0.03518365792332064,
+                0.03110078105480534,
+                1.8628788938899397,
+                0.30300184429688903,
+                -0.0003751604487589825,
+                0.017960229218667783,
+                0.13821415336731366,
+                0.1972271083889787,
+                -0.09984539343403531,
+                -14.99443540998521,
+                0.015290338717257296,
+                -3.558742144512922,
+                -0.5876099379558508,
+                -20.147895300108654,
+                0.04020386381014841,
+                -21.50915948818211,
+                -0.1620988854003631,
+                16.272654095098574,
+                0.0534802530101947,
+                3.6870706338657047,
+                1.7078025455215107,
+                21.425418111299273,
+                0.028566727917303608,
+                21.669369628545393,
+            ],
+            &[
+                1.257968118263863,
+                0.11327483539257603,
+                0.16031875346086052,
+                0.9988658670630445,
+                0.0004963222141976348,
+                -0.0014154591022035945,
+                0.04758917688069798,
+                1.9141094021285805,
+                0.4210133031862688,
+                -0.00039614322114683045,
+                -0.0020819522601602386,
+                0.003196299496580201,
+                0.20303637568428812,
+                -1.468225957028715,
+                20.62568377048302,
+                0.006039297368145152,
+                -0.5294312349561168,
+                2.866939237218757,
+                31.0326916602818,
+                0.0065115769948708435,
+                9.881616806182318,
+                1.3745062790297675,
+                28.20581093962577,
+                0.0075791602183434975,
+                10.161219936598666,
+                -0.2632990536429838,
+                23.452565919959497,
+                0.008051336820973184,
+                -0.8090804173565072,
+            ],
+            &[
+                0.008887430823029655,
+                6.103680294671354e-19,
+                0.152544911670361,
+                0.9999999997512101,
+                -2.7495839012429914e-19,
+                -2.230649923469587e-5,
+                -9.402552968391045e-19,
+                0.01013929081454977,
+                -3.309957122566318e-19,
+                4.757049352022981e-6,
+                5.7980457038271445e-18,
+                0.00015088738271461382,
+                -3.9261171512908155e-18,
+                -2.2013358573974475,
+                -15.049453403042229,
+                0.05394733844861191,
+                -1.0790059569387038,
+                -1.1652719947240788,
+                -20.595385276371445,
+                0.05396284726134011,
+                -1.0791740391666094,
+                -2.861036324307832,
+                16.33049548928741,
+                0.05396284726134011,
+                1.0791740391666094,
+                2.363812639780557,
+                21.876434693394238,
+                0.05394733844861191,
+                1.0790059569387038,
+            ],
+            &[
+                0.04811244214069459,
+                -0.041169258828440414,
+                0.15194596695402218,
+                0.9991945456239851,
+                0.0020558032563690737,
+                -0.03993553940699272,
+                0.003344601698529911,
+                0.5272745466006543,
+                -0.17350064354100653,
+                0.06788074911879097,
+                0.0019413079328810966,
+                -0.2884203219679275,
+                -0.033823664062315725,
+                -1.6819863321210926,
+                -13.706827409372522,
+                0.03964633363767252,
+                -29.223759682335576,
+                2.087596133410184,
+                -6.394329587075259,
+                0.06729301213770685,
+                -29.80984385342221,
+                1.6516994571541534,
+                9.292896613301025,
+                0.06862814019722556,
+                27.94874998029869,
+                0.9709377894795743,
+                17.849207849116144,
+                0.04098146169719123,
+                30.44306790555788,
+            ],
+            &[
+                -3.985211603722404e-18,
+                1.454687428728153e-17,
+                0.15254479104665658,
+                0.4528082288575059,
+                -7.216610033218708e-18,
+                3.957901064715192e-18,
+                0.891607933947948,
+                -1.470826545201026e-17,
+                1.732453152756608e-17,
+                5.347019716041867e-6,
+                2.1228856546778087e-17,
+                -7.690961958841481e-18,
+                4.220519094902586,
+                0.9759939756996525,
+                13.746270475767705,
+                0.05395521420911864,
+                2.6927838726517423,
+                0.9759939756996525,
+                13.746270475767702,
+                0.05395521420911864,
+                2.692783872651705,
+                0.9759939756996525,
+                13.746270475767705,
+                0.05395521420911864,
+                2.6927838726517423,
+                0.9759939756996525,
+                13.746270475767705,
+                0.05395521420911864,
+                2.692783872651709,
+            ],
+            &[
+                1.4642750779796954,
+                0.028713767038826582,
+                0.3057431730939594,
+                0.9989839328007772,
+                0.0008549495126304336,
+                -0.006177785459202768,
+                0.044634135300722494,
+                1.9839965076900623,
+                0.14709372583135819,
+                -0.0031226314971125398,
+                -0.002721057275582049,
+                0.035081789865150606,
+                0.19595665781539892,
+                2.679524473064732,
+                -19.476674865712084,
+                0.003952319035837731,
+                -2.5938477128581856,
+                -2.2133326737971752,
+                20.432793270493676,
+                0.0045073731376823745,
+                2.82673967876978,
+            ],
+        ];
+        for (case, expected) in expected.into_iter().enumerate() {
+            let mut cfg = if case == 1 {
+                ChassisConfig::folding_hero()
+            } else if case == 5 {
+                ChassisConfig::balance()
+            } else {
+                ChassisConfig::default()
+            };
+            if case == 2 {
+                cfg.drive_friction = 0.02;
+            }
+            let height = if case == 3 { 3.0 } else { cfg.rest_height_m() };
+            let mut world = chassis_world(cfg, Pose::at([0., 0., height]));
+            world
+                .command_chassis(
+                    0,
+                    ChassisCommand {
+                        forward_m_s: 2.,
+                        left_m_s: 0.3,
+                        yaw_rate_rad_s: 0.2,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            if case == 4 {
+                world
+                    .command_chassis_wheel_torques(0, WheelTorques::new(vec![0.3; 4]).unwrap())
+                    .unwrap();
+            }
+            let frames = TargetFrames::new(vec![]);
+            for tick in 0..128 {
+                world.step(tick * tick_ns(), &frames).unwrap();
+            }
+            let state = world.chassis_snapshot(0).unwrap();
+            let actual: Vec<f64> = state
+                .pose
+                .translation_m
+                .into_iter()
+                .chain(state.pose.rotation_wxyz)
+                .chain(state.velocity_m_s)
+                .chain(state.angular_velocity_rad_s)
+                .chain(state.wheels.iter().flat_map(|w| {
+                    [
+                        w.spin_rad,
+                        w.angular_velocity_rad_s,
+                        w.suspension_compression_m,
+                        w.contact.map_or(0., |c| c.drive_force_n),
+                    ]
+                }))
+                .collect();
+            assert_eq!(actual.len(), expected.len());
+            for (index, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
+                assert!(
+                    (actual - expected).abs() < 1e-9,
+                    "case {case}, component {index}: {actual} != {expected}"
+                );
+            }
+        }
     }
 
     fn chassis_world(config: ChassisConfig, spawn: Pose) -> WorldPhysics {
@@ -2621,7 +2770,13 @@ mod tests {
                     budget,
                     direct,
                 );
-                let result = scratch.integrate(&config, &mut actual, 0.001, budget, direct);
+                let result = scratch.integrate(
+                    &WheelModel::from(&config),
+                    &mut actual,
+                    0.001,
+                    budget,
+                    direct.map(WheelTorques::as_nm),
+                );
                 assert_eq!(result, (fresh.1, fresh.2));
                 assert_eq!(scratch.forces, fresh.0);
                 for (actual, expected) in actual.iter().zip(&expected) {
@@ -2631,11 +2786,7 @@ mod tests {
                         expected.angular_velocity_rad_s
                     );
                 }
-                let pointers = (
-                    scratch.contacts.as_ptr(),
-                    scratch.forces.as_ptr(),
-                    scratch.motors.as_ptr(),
-                );
+                let pointers = (scratch.contacts.as_ptr(), scratch.forces.as_ptr());
                 if let Some(previous) = storage {
                     assert_eq!(
                         pointers, previous,

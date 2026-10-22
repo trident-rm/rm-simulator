@@ -28,6 +28,7 @@
 //! # Ok::<(), &'static str>(())
 //! ```
 #![deny(missing_docs)]
+pub mod arena;
 pub mod chassis;
 pub mod control;
 pub mod geometry;
@@ -39,6 +40,7 @@ pub mod motion;
 pub mod projectile;
 pub mod sensors;
 pub mod session;
+pub mod wheel_model;
 pub use projectile::{
     ArmorTarget, Caliber, Contact, Shot, StaticGeometry, TargetFace, TargetFrames, WorldPhysics,
 };

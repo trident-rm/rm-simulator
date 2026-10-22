@@ -2,8 +2,9 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Runtime and game separation design
 
-Status: initial session split implemented, 2026-10-23. Backend-neutral model
-and solver extraction below remain proposed; Rapier is unchanged. This design extends the [current architecture](architecture-refactor.md)
+Status: initial session split and backend-neutral wheel model implemented,
+2026-10-23. Further model and solver extraction below remain proposed; the
+Rapier dynamics backend is unchanged. This design extends the [current architecture](architecture-refactor.md)
 and [embedding interface](simulation-embedding.md) so a second physical backend
 can be evaluated without making the multiplayer app its integration layer.
 The current AGENTS.md engineering contract continues to govern implementation.
@@ -37,6 +38,33 @@ stepping any body twice. Model/backend descriptors, moved server construction,
 GPU buffers, a second backend and multiplayer backend negotiation remain later
 migration steps. This first step introduces no new crate or runtime dependency.
 
+The first model extraction now lives in `physics::wheel_model`: scalar
+suspension/roller laws and the wheel inertia/motor/slip/shared-power integrator,
+with explicit parameters, borrowed wheel state/torques and reusable scratch.
+`physics::chassis` adapts Rapier queries and forces to it. There are no backend
+handles in the model, no second backend or generic engine trait, and no changes
+to physical equations, force/substep ordering, snapshots or protocol. See the
+[wheel-model contract](physics-reuse.md#backend-neutral-wheel-model) for backend
+responsibilities and its scope. Other concrete moves below remain future work.
+
+## Standalone arena components
+
+The first field-feature boundary is `physics::arena`: borrowed occupancy
+footprints, source Outpost detector frames/rotation and an explicitly approximate
+three-box tunnel fixture. Native RMUC adapters use these geometry calculations;
+team ownership, control timers, traversal history, buffs, HP and rotor schedules
+remain in the single gameplay authority. See [physics reuse](physics-reuse.md#standalone-arena-components)
+for the runnable `arena_components` example and its source-CAD limitations.
+
+This establishes reusable models and observations, not a plugin scheduler.
+Standalone gameplay experiments can drive existing pure rule modules separately;
+full matches continue to advance all effects through their ordinary clock.
+Source partitioning and articulated export already exist in rm-map-tools;
+verified package and collision-subtree readers already exist in the assets crate.
+Reuse those outputs and readers. The remaining step is reusable composition of
+fixed/moving models outside server layout, followed by per-feature rule-state
+extraction, without introducing a second `Field` or bypassing host admission.
+
 ## Ownership
 
 These are logical modules, not a requirement to create a crate for every row.
@@ -65,9 +93,9 @@ wholesale into a generic runtime while retaining its match-specific fields.
 
 ## Concrete moves from the current code
 
-`physics::chassis` mixes reusable wheel/actuator equations with Rapier bodies,
-colliders and query calls. Extract the model computations and their explicit
-input/output data before replacing the solver. Preserve the existing equations,
+`physics::wheel_model` now separates the reusable wheel/actuator equations
+from `physics::chassis` Rapier bodies, colliders and queries. Continue extracting
+other model computations only when the next consumer needs them. Preserve the existing equations,
 force order, motor limits and suspension semantics in the first backend comparison.
 A ray-wheel model and an articulated roller-wheel model are different plants;
 benchmarking them as interchangeable would confuse model changes with backend gains.

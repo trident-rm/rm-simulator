@@ -4,6 +4,14 @@
 
 ## Unreleased
 
+- Expose the existing chassis wheel model independently of a solver world:
+  suspension, motor/inertia, slip/traction and shared power use explicit inputs
+  and reusable buffers. Preserve Rapier integration, controls and snapshots.
+
+- Extract reusable arena occupancy and source Outpost detector geometry into
+  physics, preserving world compatibility imports and native match authority.
+  Add an explicit approximate tunnel fixture and standalone arena example.
+
 - Add physics-only `RobotSession` with explicit timing, drive/torque/fire
   commands, sensor access and transactional `RobotScenario` reset. Share physical
   command/truth/time types with the match facade without adding dependencies.

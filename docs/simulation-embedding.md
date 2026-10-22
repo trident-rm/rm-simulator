@@ -151,6 +151,12 @@ The separate physics sensor module supplies ideal geometric LiDAR and a mounted
 IMU over substep carrier traces; camera and encoder measurement models remain
 separate future adapters.
 
+The lower-level [wheel model](physics-reuse.md#backend-neutral-wheel-model)
+now exposes scalar suspension, motor/inertia, slip/traction and power allocation
+without a solver world. Existing sessions use it through the same Rapier chassis
+adapter. Backend queries, ordered force application and stepping remain adapter
+responsibilities; no backend selection or session/protocol change is introduced.
+
 ## Subsequent integrations
 
 Camera readback/calibration, accelerated scan queries, Python environments and
