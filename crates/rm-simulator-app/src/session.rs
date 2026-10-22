@@ -205,6 +205,9 @@ impl Session {
         progress: impl Fn(f32, &str),
     ) -> anyhow::Result<Opened> {
         // Admission follows the loaded package; native rules need source bindings.
+        args.host
+            .validate_competition_assets()
+            .map_err(anyhow::Error::msg)?;
         cad.season.require_current()?;
         let role = if args.staging && !args.referee {
             Role::Spectator
@@ -229,30 +232,43 @@ impl Session {
         } else {
             let team: Team = args.team.into();
             let options = args.host.layout_options();
-            let simulation = Simulation::from_cad(
-                cad,
-                &options,
-                Some(if let Some(c) = &args.host.source_chassis {
-                    c.clone()
-                } else if args.host.stair_heavy {
-                    ChassisConfig::stair_heavy()
-                } else if args.host.folding_hero {
-                    ChassisConfig::folding_hero()
-                } else if args.host.team_cad {
-                    ChassisConfig::team_cad()
-                } else {
-                    ChassisConfig::default()
-                }),
-                args.host.start_paused,
-                |stage| match stage {
-                    BuildProgress::ReadingTerrain => progress(0.3, "Reading terrain triangles"),
-                    BuildProgress::BuildingPhysics => progress(0.5, "Building field physics"),
-                    BuildProgress::TerrainReady(description) => println!("{description}"),
-                    BuildProgress::PreparingChassis => {
-                        progress(0.65, "Preparing chassis and session")
-                    }
-                },
-            )?
+            let simulation = if args.host.competition.rmul_format().is_some() {
+                anyhow::ensure!(
+                    args.host.assembly_assets.is_none(),
+                    "UC assembly source assets are unavailable in RMUL practice"
+                );
+                Simulation::rmul_practice(
+                    args.host.competition,
+                    !args.host.no_referee,
+                    Some(ChassisConfig::default()),
+                    args.host.start_paused,
+                )?
+            } else {
+                Simulation::from_cad(
+                    cad,
+                    &options,
+                    Some(if let Some(c) = &args.host.source_chassis {
+                        c.clone()
+                    } else if args.host.stair_heavy {
+                        ChassisConfig::stair_heavy()
+                    } else if args.host.folding_hero {
+                        ChassisConfig::folding_hero()
+                    } else if args.host.team_cad {
+                        ChassisConfig::team_cad()
+                    } else {
+                        ChassisConfig::default()
+                    }),
+                    args.host.start_paused,
+                    |stage| match stage {
+                        BuildProgress::ReadingTerrain => progress(0.3, "Reading terrain triangles"),
+                        BuildProgress::BuildingPhysics => progress(0.5, "Building field physics"),
+                        BuildProgress::TerrainReady(description) => println!("{description}"),
+                        BuildProgress::PreparingChassis => {
+                            progress(0.65, "Preparing chassis and session")
+                        }
+                    },
+                )?
+            }
             .with_password(args.password.clone())
             .with_assembly_assets(
                 args.host.assembly_assets.as_deref(),
@@ -345,6 +361,12 @@ impl Session {
             rune_flashes: args.rune_flashes,
         };
         let welcome = client.welcome().clone();
+        anyhow::ensure!(
+            args.host.competition == welcome.competition,
+            "host runs {}; reconnect with --competition {}",
+            welcome.competition.id(),
+            welcome.competition.id()
+        );
         let role = welcome.role;
         let team = welcome.team.unwrap_or(args.team.into());
         let client_id = welcome.client_id;
@@ -372,6 +394,25 @@ impl Session {
             .ok_or_else(|| anyhow::anyhow!("the host sent no initial state"))?
             .clone();
         let snapshot = state.field;
+        let selected = args.host.competition.rmul_format();
+        if let Some(game) = &snapshot.rmul_2027 {
+            anyhow::ensure!(
+                selected == Some(game.format),
+                "host runs {:?}; reconnect with --competition {}",
+                game.format,
+                if game.format == rm_simulator_world::gameplay::rmul_2027::Format::Infantry {
+                    "rmul-infantry-2027"
+                } else {
+                    "rmul-2027"
+                }
+            );
+        } else if snapshot.rmuc_2027.is_some() {
+            anyhow::ensure!(
+                selected.is_none(),
+                "host runs RMUC 2027; reconnect with --competition rmuc-2027"
+            );
+        }
+
         anyhow::ensure!(
             snapshot.rmuc_2027.is_some()
                 || (snapshot.referee.is_none()
@@ -1471,9 +1512,96 @@ pub(crate) fn wait_for_session(session: &mut Session, done: impl Fn(&Session) ->
     }
 }
 
+/// Empty presentation metadata for an RMUL practice scene. No package is loaded,
+/// and empty placement lists prevent any UC geometry or equipment from spawning.
+pub(crate) fn practice_assets() -> CadAssets {
+    use rm_simulator_server::cad_assets::CadAsset;
+    let asset = CadAsset {
+        file: String::new(),
+        semantics: None,
+        placements: vec![],
+        collision: None,
+        source_tessellated_collision: false,
+    };
+    CadAssets {
+        rmuc_2027: None,
+        season: rm_simulator_world::season::Season::Rm2027,
+        rest_pose_only: true,
+        root: Default::default(),
+        floor_top_cad_m: 0.0,
+        collision_solids: false,
+        floor: asset.clone(),
+        arena_static: asset.clone(),
+        rune: asset.clone(),
+        outpost: asset.clone(),
+        base: asset.clone(),
+        tech_core: asset,
+        static_assets: vec![],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rmul_competition_admission_includes_practice_without_a_referee() {
+        use clap::Parser;
+        use rm_simulator_server::host_args::Competition;
+        assert!(crate::scene::cad_instances(&practice_assets(), true, true).is_empty());
+        for (competition, referee) in [Competition::Rmul2027, Competition::RmulInfantry2027]
+            .into_iter()
+            .flat_map(|competition| [false, true].map(|referee| (competition, referee)))
+        {
+            for selected in [
+                Competition::Rmuc2027,
+                Competition::Rmul2027,
+                Competition::RmulInfantry2027,
+            ] {
+                let simulation =
+                    Simulation::rmul_practice(competition, referee, Some(Default::default()), true)
+                        .unwrap();
+                let server = Server::in_process(simulation, false).unwrap();
+                server.spawn_clock().unwrap();
+                let client = server
+                    .connect_owner(
+                        "admission",
+                        Team::Red,
+                        Role::Pilot,
+                        rm_simulator_server::protocol::Robot::Infantry3,
+                        [1.0, 0.0, 0.5],
+                        180.0,
+                    )
+                    .unwrap();
+                assert_eq!(client.welcome().competition, competition);
+                let args = Args::try_parse_from([
+                    "rm-simulator",
+                    "--competition",
+                    selected.id(),
+                    "--no-prediction",
+                ])
+                .unwrap();
+                let opened = Session::from_client(
+                    client,
+                    TimeSource::system(),
+                    &args,
+                    &practice_assets(),
+                    [0.; 3],
+                    |_, _| {},
+                );
+                if selected == competition {
+                    let opened = opened.unwrap();
+                    assert_eq!(opened.session.snapshot.rmul_2027.is_some(), referee);
+                    assert!(opened.session.snapshot.rmuc_2027.is_none());
+                } else {
+                    let error = opened
+                        .err()
+                        .expect("a different practice layout must be rejected");
+                    assert!(error.to_string().contains(competition.id()));
+                }
+            }
+        }
+    }
+
     #[test]
     fn runtime_admission_rejects_2026_before_connecting_to_a_host() {
         use clap::Parser;

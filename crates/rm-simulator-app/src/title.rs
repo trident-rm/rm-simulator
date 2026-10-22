@@ -165,6 +165,9 @@ pub struct TitleFields {
     /// Address the local host listens on as ADDR:PORT; empty means
     /// `DEFAULT_LISTEN`.
     pub host: String,
+    /// Competition CLI spelling selected for local practice or hosting.
+    #[serde(default)]
+    pub competition: String,
     /// Play for the blue team; false plays for red, whose half is +x.
     #[serde(default)]
     pub blue: bool,
@@ -243,6 +246,11 @@ impl TitleFields {
             name: pick(remembered.name, Some(base.name.clone()), DEFAULT_NAME),
             address: pick(remembered.address, base.connect.clone(), ""),
             host: pick(remembered.host, base.host.listen.clone(), DEFAULT_LISTEN),
+            competition: pick(
+                remembered.competition,
+                Some(base.host.competition.id().into()),
+                "rmuc-2027",
+            ),
             blue: base.team == crate::args::TeamArg::Blue || remembered.blue,
             spectate: base.fly || remembered.spectate,
             // A slot a shrinking board no longer has falls back to the first.
@@ -353,6 +361,13 @@ impl TitleFields {
 /// The arguments a choice joins with, or what is missing for it.
 pub fn join_args(base: &Args, fields: &TitleFields, choice: Choice) -> Result<Args, String> {
     let mut args = base.clone();
+    args.host.competition = match fields.competition.trim() {
+        "" => base.host.competition,
+        "rmuc-2027" => rm_simulator_server::host_args::Competition::Rmuc2027,
+        "rmul-2027" => rm_simulator_server::host_args::Competition::Rmul2027,
+        "rmul-infantry-2027" => rm_simulator_server::host_args::Competition::RmulInfantry2027,
+        _ => return Err("Competition: rmuc-2027, rmul-2027 or rmul-infantry-2027".into()),
+    };
     let name = fields.name.trim();
     // Only multiplayer asks for a name, so a local match falls back instead.
     let name = match (name.is_empty(), choice) {
@@ -621,6 +636,7 @@ fn preview_progress(world: &mut World) {
 #[derive(Component)]
 enum TitleInput {
     Directory,
+    Competition,
     PlayerName,
     Address,
     Host,
@@ -640,6 +656,7 @@ enum TitleInput {
 impl TitleInput {
     fn value_mut<'a>(&self, fields: &'a mut TitleFields) -> &'a mut String {
         match self {
+            Self::Competition => &mut fields.competition,
             Self::Directory => &mut fields.lobby_host,
             Self::PlayerName => &mut fields.name,
             Self::Address => &mut fields.address,
@@ -1087,6 +1104,13 @@ fn spawn_title(mut commands: Commands, base: Res<BaseArgs>, mut state: ResMut<Ti
             ..default()
         },
     ));
+    field(
+        &mut commands,
+        card,
+        "Competition: rmuc-2027 / rmul-2027 / rmul-infantry-2027",
+        &mut fields,
+        TitleInput::Competition,
+    );
     button(&mut commands, row, "Single Player", Choice::Practice);
     button(&mut commands, row, "Multiplayer", Choice::Multiplayer);
     commands.spawn_scene(bsn! {
@@ -2021,6 +2045,20 @@ mod tests {
 
     fn base() -> Args {
         Args::try_parse_from(["rm-simulator", "--name", "cli", "--team", "blue"]).unwrap()
+    }
+
+    #[test]
+    fn title_competition_selects_local_host_rules() {
+        let base = base();
+        let mut fields = TitleFields::initial(&base, None);
+        fields.competition = "rmul-infantry-2027".into();
+        let args = join_args(&base, &fields, Choice::Practice).unwrap();
+        assert_eq!(
+            args.host.competition,
+            rm_simulator_server::host_args::Competition::RmulInfantry2027
+        );
+        fields.competition = "rmul-2026".into();
+        assert!(join_args(&base, &fields, Choice::Practice).is_err());
     }
 
     #[test]

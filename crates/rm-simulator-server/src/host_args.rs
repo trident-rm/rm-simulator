@@ -17,8 +17,66 @@
 //! "serve the default loopback panel" to the headless host.
 use crate::layout::LayoutOptions;
 use crate::protocol::{BulletSpread, DEFAULT_HTTP_PORT, DEFAULT_PORT, WeaponConfig, WeaponLimits};
-use clap::Args;
+use clap::{Args, ValueEnum};
 use rm_simulator_world::{Caliber, RuneKind, Shot, outpost, projectile::ProjectilePolicy};
+
+/// Competition identity; RMUL currently uses an approximate practice floor.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum, serde::Serialize, serde::Deserialize,
+)]
+pub enum Competition {
+    /// Source-bound RMUC 2027 V1.0.0 field and rules.
+    #[default]
+    #[value(name = "rmuc-2027")]
+    Rmuc2027,
+    /// RMUL 2027 three-versus-three on a 12 × 8 metre practice floor.
+    #[value(name = "rmul-2027")]
+    Rmul2027,
+    /// RMUL 2027 Infantry confrontation on a 5 × 5 metre practice floor.
+    #[value(name = "rmul-infantry-2027")]
+    RmulInfantry2027,
+}
+impl Competition {
+    /// Stable CLI spelling.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Rmuc2027 => "rmuc-2027",
+            Self::Rmul2027 => "rmul-2027",
+            Self::RmulInfantry2027 => "rmul-infantry-2027",
+        }
+    }
+    /// Native RMUL format; UC has its own source-bound authority.
+    pub fn rmul_format(self) -> Option<rm_simulator_world::gameplay::rmul_2027::Format> {
+        use rm_simulator_world::gameplay::rmul_2027::Format;
+        match self {
+            Self::Rmuc2027 => None,
+            Self::Rmul2027 => Some(Format::ThreeVsThree),
+            Self::RmulInfantry2027 => Some(Format::Infantry),
+        }
+    }
+    /// Approximate practice extent in FLU metres, excluding any official terrain claim.
+    pub fn practice_bounds(self) -> [[f64; 3]; 2] {
+        let [x, y] = if self == Self::RmulInfantry2027 {
+            [2.5, 2.5]
+        } else {
+            [6.0, 4.0]
+        };
+        [[-x, -y, 0.0], [x, y, 3.0]]
+    }
+    /// Initial practice chassis position and inward heading in degrees.
+    pub fn practice_spawn(self, team: rm_simulator_world::Team, slot: usize) -> ([f64; 3], f64) {
+        let bounds = self.practice_bounds();
+        let sign = if team == rm_simulator_world::Team::Red {
+            1.0
+        } else {
+            -1.0
+        };
+        (
+            [sign * (bounds[1][0] - 1.0), (slot as f64 - 1.0) * 1.0, 0.5],
+            if sign > 0.0 { 180.0 } else { 0.0 },
+        )
+    }
+}
 
 /// Field, rune, weapon and chassis options shared by every host.
 ///
@@ -27,6 +85,9 @@ use rm_simulator_world::{Caliber, RuneKind, Shot, outpost, projectile::Projectil
 /// accepted by the other. `source_chassis` is embedding-only, populated after asset verification.
 #[derive(Args, Debug, Clone)]
 pub struct HostArgs {
+    /// Competition rules and field identity; RMUL uses an approximate practice floor.
+    #[arg(long, value_enum, default_value = "rmuc-2027")]
+    pub competition: Competition,
     /// Verified Engineer/Core source rig for in-game automatic assembly.
     #[arg(long, requires = "assembly_area")]
     pub assembly_assets: Option<std::path::PathBuf>,
@@ -49,8 +110,8 @@ pub struct HostArgs {
     #[arg(long)]
     pub team_cad: bool,
     /// Directory holding the bound RMUC 2027 CAD (`manifest.json`, `*.glb`, `equipment/`).
-    #[arg(long, default_value_os_t = crate::cad_assets::default_cad_assets())]
-    pub cad_assets: std::path::PathBuf,
+    #[arg(long)]
+    pub cad_assets: Option<std::path::PathBuf>,
     /// Use the Big Rune sinusoidal motion and two-target groups instead of the Small Rune.
     #[arg(long)]
     pub big_rune: bool,
@@ -130,6 +191,26 @@ pub struct HostArgs {
 }
 
 impl HostArgs {
+    /// Resolve an explicit CAD package or the ordinary UC package discovery path.
+    /// RMUL callers validate admission and never read this package.
+    pub fn cad_assets_path(&self) -> std::path::PathBuf {
+        self.cad_assets
+            .clone()
+            .unwrap_or_else(crate::cad_assets::default_cad_assets)
+    }
+    /// Reject UC CAD and source assembly assets for an RMUL practice session.
+    pub fn validate_competition_assets(&self) -> Result<(), &'static str> {
+        if self.competition.rmul_format().is_some() && self.cad_assets.is_some() {
+            return Err(
+                "--cad-assets is unavailable for RMUL 2027; dedicated UL assets are not available",
+            );
+        }
+        if self.competition.rmul_format().is_some() && self.assembly_assets.is_some() {
+            return Err("UC assembly source assets are unavailable in RMUL practice");
+        }
+        Ok(())
+    }
+
     /// The host's default caliber: 17 mm. Every pilot's own robot overrides it
     /// with its caliber, so this is only what a chassis with no named robot
     /// (a training bot) fires.
@@ -267,7 +348,29 @@ mod tests {
     fn parse(arguments: &[&str]) -> Result<Host, clap::Error> {
         let mut argv = vec!["host-under-test"];
         argv.extend_from_slice(arguments);
-        Host::try_parse_from(argv)
+        let host = Host::try_parse_from(argv)?;
+        host.host.validate_competition_assets().map_err(|message| {
+            clap::Error::raw(clap::error::ErrorKind::ArgumentConflict, message)
+        })?;
+        Ok(host)
+    }
+
+    #[test]
+    fn competition_selection_and_explicit_cad_admission() {
+        assert_eq!(parse(&[]).unwrap().host.competition, Competition::Rmuc2027);
+        for mode in ["rmul-2027", "rmul-infantry-2027"] {
+            assert!(
+                parse(&["--competition", mode])
+                    .unwrap()
+                    .host
+                    .competition
+                    .rmul_format()
+                    .is_some()
+            );
+            assert!(parse(&["--competition", mode, "--cad-assets", "field-2027"]).is_err());
+        }
+        assert!(parse(&["--competition", "rmuc-2027", "--cad-assets", "field-2027"]).is_ok());
+        assert!(parse(&["--competition", "rmul-2026"]).is_err());
     }
 
     #[test]

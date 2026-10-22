@@ -53,6 +53,28 @@ const RM2027: [Slot; 7] = [
 pub fn slots() -> &'static [Slot] {
     &RM2027
 }
+/// Official selectable equipment for a competition. UL Table 3-1 separates the
+/// three-versus-three Heavy/Infantry/Sentry roster from Infantry confrontation.
+pub fn slots_for(competition: crate::host_args::Competition) -> &'static [Slot] {
+    use crate::host_args::Competition;
+    const UL: [Slot; 3] = [
+        slot(1, "Heavy", "1 robot", Some(Robot::Engineer)),
+        slot(3, "Infantry", "1 robot", Some(Robot::Infantry3)),
+        slot(7, "Sentry", "1 robot", Some(Robot::Sentry)),
+    ];
+    const INFANTRY: [Slot; 1] = [slot(3, "Infantry", "1 robot", Some(Robot::Infantry3))];
+    match competition {
+        Competition::Rmuc2027 => slots(),
+        Competition::Rmul2027 => &UL,
+        Competition::RmulInfantry2027 => &INFANTRY,
+    }
+}
+/// Whether a named robot is admitted by the selected competition.
+pub fn supports_for(competition: crate::host_args::Competition, robot: Robot) -> bool {
+    slots_for(competition)
+        .iter()
+        .any(|slot| slot.prototype == Some(robot))
+}
 /// Whether a prototype belongs to the RMUC 2027 official roster.
 /// Reference Hero/Drone presets are not independent deployable roles.
 pub fn supports(robot: Robot) -> bool {
@@ -61,6 +83,24 @@ pub fn supports(robot: Robot) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rmul_rosters_have_distinct_admission() {
+        use crate::host_args::Competition::*;
+        assert_eq!(slots_for(Rmul2027).len(), 3);
+        assert_eq!(slots_for(RmulInfantry2027).len(), 1);
+        for robot in [Robot::Engineer, Robot::Infantry3, Robot::Sentry] {
+            assert!(supports_for(Rmul2027, robot));
+        }
+        for robot in [
+            Robot::Hero,
+            Robot::Infantry4,
+            Robot::Infantry5,
+            Robot::Drone,
+        ] {
+            assert!(!supports_for(Rmul2027, robot));
+        }
+        assert!(!supports_for(RmulInfantry2027, Robot::Sentry));
+    }
     #[test]
     fn complete_numbered_rosters_and_subordinate_equipment() {
         assert_eq!(

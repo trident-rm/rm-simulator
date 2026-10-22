@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-"""Verify native RMUC 2027 rules with optional integrations disabled."""
+"""Verify native 2027 competition rules with optional integrations disabled."""
 
 from pathlib import Path
 import json
@@ -21,8 +21,11 @@ def main():
     for package, test_filter in [
         ("rm-simulator-gameplay", "season::tests"),
         ("rm-simulator-gameplay", "rmuc_2027::"),
+        ("rm-simulator-gameplay", "rmul_2027::"),
+        ("rm-simulator-world", "rmul_2027::tests"),
         ("rm-simulator-world", "rmuc_2027::tests"),
         ("rm-simulator-server", "runtime_admission"),
+        ("rm-simulator-server", "rmul"),
     ]:
         subprocess.run([
             "cargo", "test", "--locked", "-p", package,

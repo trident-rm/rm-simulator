@@ -386,6 +386,7 @@ struct DerivedRules {
     arms: Vec<rm_simulator_world::assembly::ArmState>,
     energy_units: Vec<EnergyUnitWire>,
     rmuc_2027: Option<rm_simulator_world::rmuc_2027::State>,
+    rmul_2027: Option<rm_simulator_world::gameplay::rmul_2027::Match>,
     next_chassis_id: u32,
     last_detection_ns: Vec<(rm_simulator_world::ArmorTarget, u64)>,
     projectile_policy: PolicyWire,
@@ -407,6 +408,7 @@ impl DerivedRules {
                 .map(AssemblyWire)
                 .collect(),
             rmuc_2027: restore.rmuc_2027.clone(),
+            rmul_2027: restore.rmul_2027.clone(),
             next_chassis_id: restore.next_chassis_id,
             last_detection_ns: restore.last_detection_ns.clone(),
             projectile_policy: PolicyWire::new(restore.projectile_policy),
@@ -423,6 +425,7 @@ impl DerivedRules {
                 .map(EnergyUnitWire::into_unit)
                 .collect(),
             rmuc_2027: self.rmuc_2027,
+            rmul_2027: self.rmul_2027,
             next_chassis_id: self.next_chassis_id,
             last_detection_ns: self.last_detection_ns,
             projectile_policy: self.projectile_policy.into_policy(),
@@ -643,7 +646,9 @@ impl PlayerSnapshot {
                     && field.outposts.is_empty()
                     && field.bases.is_empty()
                     && field.referee.is_none()
-                    && field.rmuc_2027 == restore.rmuc_2027 =>
+                    && field.rmuc_2027 == restore.rmuc_2027
+                    && field.rmul_2027 == restore.rmul_2027
+                    && !(restore.rmuc_2027.is_some() && restore.rmul_2027.is_some()) =>
             {
                 DerivedRules::new(restore)
             }
@@ -783,6 +788,12 @@ impl PlayerSnapshot {
             projectiles,
         } = self;
         let restore = rules.0.into_restore();
+        if restore.rmuc_2027.is_some() && restore.rmul_2027.is_some() {
+            return Err(invalid("checkpoint mixes competition authorities"));
+        }
+        if let Some(game) = &restore.rmul_2027 {
+            game.validate().map_err(invalid)?;
+        }
         let runes = Vec::new();
         let outposts = Vec::new();
         let referee = None;
@@ -895,6 +906,7 @@ impl PlayerSnapshot {
                 hits_detected: header.hits_detected,
                 referee,
                 rmuc_2027: restore.as_ref().and_then(|rules| rules.rmuc_2027.clone()),
+                rmul_2027: restore.as_ref().and_then(|rules| rules.rmul_2027.clone()),
                 restore,
             },
         })
@@ -1709,6 +1721,75 @@ mod tests {
             field: Field::new(&FieldConfig::default()).unwrap().snapshot(),
         }
     }
+    #[test]
+    fn rmul_checkpoint_preserves_format_authority_and_rejects_view_mismatch() {
+        use crate::{
+            host_args::Competition,
+            protocol::{Command, Robot},
+        };
+        for competition in [Competition::Rmul2027, Competition::RmulInfantry2027] {
+            let mut sim = crate::simulation::Simulation::rmul_practice(
+                competition,
+                true,
+                Some(Default::default()),
+                false,
+            )
+            .unwrap();
+            sim.spawn_robot(rm_simulator_world::Team::Red, Robot::Infantry3)
+                .unwrap();
+            sim.apply(&Command::Referee(
+                rm_simulator_world::RefereeCommand::StartMatch,
+            ))
+            .unwrap();
+            let mut state = sim.state();
+            let message = ServerMessage::Snapshot(Box::new(state.clone()));
+            let decoded = decode_player_message(&encode_player_message(&message)).unwrap();
+            let ServerMessage::Snapshot(decoded) = decoded else {
+                panic!("expected snapshot")
+            };
+            assert_eq!(decoded.field.rmul_2027, state.field.rmul_2027);
+            assert_eq!(decoded.field.restore, state.field.restore);
+            assert!(checkpoint_node(&state).is_ok());
+            sim.step(6 * 128).unwrap();
+            for command in [
+                rm_simulator_world::RefereeCommand::DamageRobot {
+                    robot: 0,
+                    amount: 20,
+                },
+                rm_simulator_world::RefereeCommand::FinishMatch,
+                rm_simulator_world::RefereeCommand::ResetMatch,
+            ] {
+                sim.apply(&Command::Referee(command)).unwrap();
+                let state = sim.state();
+                let message = ServerMessage::Snapshot(Box::new(state.clone()));
+                let ServerMessage::Snapshot(decoded) =
+                    decode_player_message(&encode_player_message(&message)).unwrap()
+                else {
+                    panic!("expected snapshot")
+                };
+                assert_eq!(decoded.field.rmul_2027, state.field.rmul_2027);
+                assert_eq!(decoded.field.restore, state.field.restore);
+                let restored = rm_simulator_world::Field::restore(
+                    &decoded.field,
+                    &sim.field().static_geometry_snapshot(),
+                    0.0,
+                )
+                .unwrap();
+                assert_eq!(restored.rmul_2027(), sim.field().rmul_2027());
+            }
+            let game = sim.field().rmul_2027().unwrap();
+            assert_eq!(
+                game.phase,
+                rm_simulator_world::gameplay::rmul_2027::Phase::Idle
+            );
+            assert_eq!(game.elapsed_ns, 0);
+            assert_eq!(game.robots[0].hp, game.robots[0].max_hp);
+            assert_eq!(game.teams[0].gold, 0);
+            state.field.rmul_2027 = None;
+            assert!(checkpoint_node(&state).is_err());
+        }
+    }
+
     fn equivalent(a: &serde_json::Value, b: &serde_json::Value) {
         use serde_json::Value;
         match (a, b) {

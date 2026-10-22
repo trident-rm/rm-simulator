@@ -23,7 +23,7 @@ source file.
 | Build, test, release and commit workflow | `docs/development.md`, `CONTRIBUTING.md` |
 | Current rule sources and historical archive | `docs/referee-rules.md` |
 | RM2027 manuals, interpretation and unresolved requirements | `docs/rules-2027.md` |
-| Current runtime, archived seasons and admission | `docs/seasons.md` |
+| Current competitions, archived seasons and admission | `docs/seasons.md` |
 | Standalone gameplay engine and its live integration | `docs/gameplay.md` |
 | Crate ownership, ticks, restore, ECS | `docs/architecture-refactor.md` |
 | Physics reuse without a match or server | `docs/physics-reuse.md` |
@@ -39,8 +39,10 @@ two disagree, this file wins.
 
 ## Context
 
-- **Season scope.** The app and headless CAD host target RMUC 2027 V1.0.0
-  exclusively, using the bound repaired Low `field-2027/`. There are no season
+- **Season scope.** The app and headless host support RMUC 2027 V1.0.0 using the bound
+  repaired Low `field-2027/`, plus distinct RMUL 2027 V1.0.0 3v3 and
+  Infantry 1v1 authorities on explicitly approximate practice layouts.
+  RMUL never loads or relabels RMUC CAD; official RMUL geometry is unavailable. There are no season
   Cargo features. The final dual-season revision is tagged `rm2026-final`.
   The 2026 runtime engines and field package are removed; shared data types,
   model descriptors and physics remain. Never reintroduce a 2026 execution path. The supplied 2027 manuals
@@ -70,6 +72,8 @@ two disagree, this file wins.
   spectators and referees own none. The host enforces ownership, weapon cadence
   and authoritative muzzle poses. IDs are never reused. The native 2027 Match
   owns HP, heat, economy, respawn, control, Rune, assembly and adaptive armor.
+  `gameplay::rmul_2027` owns the separate RMUL 3v3 and Infantry authorities;
+  it does not execute RMUC control, assembly, adaptive armor or Rune rules.
   `world::referee` retains shared commands and presentation records, not a second
   scheduler. `FieldConfig::default()` is a bare physical world; old rule configs
   are rejected. App inputs always travel through protocol Commands.

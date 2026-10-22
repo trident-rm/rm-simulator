@@ -65,6 +65,16 @@ struct CadCache(Arc<cad_assets::CadAssets>);
 struct Preload(Arc<OnceLock<Result<Arc<cad_assets::CadAssets>, String>>>);
 
 fn preload(world: &mut World) {
+    if world
+        .resource::<crate::title::BaseArgs>()
+        .0
+        .host
+        .competition
+        .rmul_format()
+        .is_some()
+    {
+        return;
+    }
     if world.contains_resource::<Preload>() || world.contains_resource::<CadCache>() {
         return;
     }
@@ -72,8 +82,7 @@ fn preload(world: &mut World) {
         .resource::<crate::title::BaseArgs>()
         .0
         .host
-        .cad_assets
-        .clone();
+        .cad_assets_path();
     let shared = Arc::new(OnceLock::new());
     let worker = shared.clone();
     if let Err(error) = std::thread::Builder::new()
@@ -192,10 +201,13 @@ fn despawn_splash(mut commands: Commands, splash: Query<Entity, With<Splash>>) {
     }
 }
 fn start(world: &mut World) {
-    let args = world
+    let mut args = world
         .remove_resource::<JoinRequest>()
         .expect("join request")
         .0;
+    if args.host.competition.rmul_format().is_some() {
+        args.staging = false;
+    }
     let multiplayer = args.connect.is_some() || args.host.listen.is_some();
     world.resource_mut::<TitleScreen>().status = None;
     let cached = world.get_resource::<CadCache>().cloned();
@@ -208,38 +220,55 @@ fn start(world: &mut World) {
                 let _ = sender.send(Update::Progress(value, text.into()));
             };
             let result = (|| {
-                let cad = match cached {
-                    Some(cache) => cache.0,
-                    None => {
-                        progress(0.05, "Verifying field files");
-                        if let Some(job) = preload {
-                            job.0
-                                .get_or_init(|| {
-                                    cad_assets::load(&args.host.cad_assets)
-                                        .map(Arc::new)
-                                        .map_err(|e| format!("{e:#}"))
-                                })
-                                .clone()
-                                .map_err(anyhow::Error::msg)?
-                        } else {
-                            Arc::new(cad_assets::load(&args.host.cad_assets)?)
+                let practice = args.host.competition.rmul_format().is_some();
+                let cad = if practice {
+                    Arc::new(crate::session::practice_assets())
+                } else {
+                    match cached {
+                        Some(cache) => cache.0,
+                        None => {
+                            progress(0.05, "Verifying field files");
+                            if let Some(job) = preload {
+                                job.0
+                                    .get_or_init(|| {
+                                        cad_assets::load(&args.host.cad_assets_path())
+                                            .map(Arc::new)
+                                            .map_err(|e| format!("{e:#}"))
+                                    })
+                                    .clone()
+                                    .map_err(anyhow::Error::msg)?
+                            } else {
+                                Arc::new(cad_assets::load(&args.host.cad_assets_path())?)
+                            }
                         }
                     }
                 };
-                let (side_spawn, side_yaw) = default_spawn(args.team.into());
+                let (side_spawn, side_yaw) = if practice {
+                    args.host.competition.practice_spawn(args.team.into(), 1)
+                } else {
+                    default_spawn(args.team.into())
+                };
                 let spawn = args.spawn.unwrap_or(side_spawn);
                 let yaw = args.spawn_yaw_deg.map_or(side_yaw, f64::from);
-                let minimap = crate::minimap::load(&args.host.cad_assets);
+                let minimap = if practice {
+                    None
+                } else {
+                    crate::minimap::load(&args.host.cad_assets_path())
+                };
                 let opened = Session::open(&args, &cad, spawn, yaw, progress)?;
-                let floor = rm_simulator_server::collision_mesh::load_glb(
-                    &cad.floor.physics_file(&cad.root),
-                )?
-                .into_flu(cad.floor_top_cad_m);
-                let scenery = rm_simulator_server::collision_mesh::load_glb(
-                    &cad.arena_static.physics_file(&cad.root),
-                )?
-                .into_flu(cad.floor_top_cad_m);
-                let bounds = rm_simulator_server::layout::arena_boundary_bounds(&floor, &scenery)?;
+                let bounds = if practice {
+                    args.host.competition.practice_bounds()
+                } else {
+                    let floor = rm_simulator_server::collision_mesh::load_glb(
+                        &cad.floor.physics_file(&cad.root),
+                    )?
+                    .into_flu(cad.floor_top_cad_m);
+                    let scenery = rm_simulator_server::collision_mesh::load_glb(
+                        &cad.arena_static.physics_file(&cad.root),
+                    )?
+                    .into_flu(cad.floor_top_cad_m);
+                    rm_simulator_server::layout::arena_boundary_bounds(&floor, &scenery)?
+                };
                 Ok((cad, opened, args, yaw, minimap, bounds))
             })();
             let _ = sender.send(Update::Complete(Box::new(result)));
@@ -383,7 +412,9 @@ fn poll(world: &mut World) {
                             rendering: RenderingConfig::field(),
                         });
                     }
-                    world.insert_resource(CadCache(cad));
+                    if args.host.competition.rmul_format().is_none() {
+                        world.insert_resource(CadCache(cad));
+                    }
                     world.insert_resource(CollisionDebug::new(args.collision_view));
                     world.insert_resource(Player::at(
                         flu_position(opened.eye_flu),
@@ -556,6 +587,7 @@ fn teardown(world: &mut World) {
     despawn_all::<rm_simulator_render::outpost::BaseArmor>(world);
     despawn_all::<crate::hud::HudRoot>(world);
     despawn_all::<crate::hud::VideoBlackout>(world);
+    despawn_all::<crate::scene::PracticeFloor>(world);
     despawn_all::<crate::hud::Toolbar>(world);
     despawn_all::<crate::hud::Settings>(world);
     despawn_all::<crate::debug_panel::DebugPanel>(world);

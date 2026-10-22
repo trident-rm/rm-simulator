@@ -2100,6 +2100,7 @@ mod tests {
                 outbox,
                 inbox: Arc::default(),
                 welcome: Welcome {
+                    competition: Default::default(),
                     prediction_scene: None,
                     protocol: PROTOCOL_VERSION,
                     client_id: 1,

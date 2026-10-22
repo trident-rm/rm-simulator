@@ -123,6 +123,15 @@ fn update(
 }
 /// HP and ceiling known to this pilot, or unrestricted referee/allied authority.
 pub(crate) fn health(session: &Session, id: u32) -> (Option<u32>, Option<u32>) {
+    if let Some(game) = &session.snapshot.rmul_2027 {
+        // UL has no UC Radar information authority. The native round scoreboard
+        // reports its robots directly, consistently with the team HP display.
+        return game
+            .robots
+            .iter()
+            .find(|r| r.id == id)
+            .map_or((None, None), |r| (Some(r.hp), Some(r.max_hp)));
+    }
     let robot = session
         .rmuc_2027()
         .and_then(|s| s.game.robots.iter().find(|r| r.id == id));

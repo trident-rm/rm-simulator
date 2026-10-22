@@ -313,7 +313,12 @@ impl Args {
     /// CLI-relative paths are based on the launch working directory, including
     /// when Bevy would otherwise choose the executable's directory.
     pub fn resolve_asset_path(&mut self) -> std::io::Result<()> {
-        self.host.cad_assets = std::path::absolute(&self.host.cad_assets)?;
+        self.host
+            .validate_competition_assets()
+            .map_err(std::io::Error::other)?;
+        if let Some(path) = &mut self.host.cad_assets {
+            *path = std::path::absolute(&*path)?;
+        }
         if let Some(path) = &mut self.robot_assets {
             *path = std::path::absolute(&*path)?;
             self.host.folding_hero = crate::robot_assets::verify(path)?;
@@ -418,13 +423,25 @@ mod tests {
     use rm_simulator_world::{Caliber, Shot};
 
     #[test]
+    fn rmul_asset_admission_requires_no_cad_package() {
+        for competition in ["rmul-2027", "rmul-infantry-2027"] {
+            let mut args =
+                Args::try_parse_from(["rm-simulator", "--competition", competition]).unwrap();
+            args.resolve_asset_path().unwrap();
+            assert!(args.host.cad_assets.is_none());
+            args.host.cad_assets = Some("field-2027".into());
+            assert!(args.resolve_asset_path().is_err());
+        }
+    }
+
+    #[test]
     fn asset_paths_are_absolute_before_manifest_and_bevy_loading() {
         let mut args =
             Args::try_parse_from(["rm-simulator", "--cad-assets", "field-2027"]).unwrap();
         args.resolve_asset_path().unwrap();
         assert_eq!(
             args.host.cad_assets,
-            std::env::current_dir().unwrap().join("field-2027")
+            Some(std::env::current_dir().unwrap().join("field-2027"))
         );
         let resolved = args.host.cad_assets.clone();
         args.resolve_asset_path().unwrap();

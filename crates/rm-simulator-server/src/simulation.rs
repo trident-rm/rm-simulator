@@ -178,6 +178,7 @@ pub struct FireRecord {
 /// [`advance`](Simulation::advance) and [`step`](Simulation::step), and only in
 /// whole fixed 128 Hz ticks.
 pub struct Simulation {
+    competition: crate::host_args::Competition,
     external_control: crate::external_control::Service,
     navigation: Option<crate::navigation::Service>,
     sentry_tracking: crate::sentry_controller::Service,
@@ -216,6 +217,64 @@ pub struct Simulation {
 }
 
 impl Simulation {
+    /// Construct an explicitly approximate RMUL practice floor without loading UC CAD.
+    /// The native match remains the rules authority; terrain and equipment are absent.
+    ///
+    /// ```
+    /// use rm_simulator_server::{host_args::Competition, simulation::Simulation};
+    /// let simulation = Simulation::rmul_practice(
+    ///     Competition::RmulInfantry2027, true, Some(Default::default()), false,
+    /// ).unwrap();
+    /// assert!(simulation.field().rmul_2027().is_some());
+    /// assert!(simulation.field().rmuc_2027().is_none());
+    /// ```
+    pub fn rmul_practice(
+        competition: crate::host_args::Competition,
+        referee: bool,
+        chassis: Option<ChassisConfig>,
+        paused: bool,
+    ) -> anyhow::Result<Self> {
+        let format = competition
+            .rmul_format()
+            .ok_or_else(|| anyhow::anyhow!("RMUL practice requires an RMUL competition"))?;
+        let mut field = Field::new(&rm_simulator_world::FieldConfig {
+            rmul_2027: referee.then_some(format),
+            ..Default::default()
+        })?;
+        let [low, high] = competition.practice_bounds();
+        field.set_projectile_bounds([low, high])?;
+        let mut vertices = Vec::new();
+        let mut triangles = Vec::new();
+        for (a, b) in [
+            ([low[0], low[1]], [high[0], low[1]]),
+            ([high[0], low[1]], [high[0], high[1]]),
+            ([high[0], high[1]], [low[0], high[1]]),
+            ([low[0], high[1]], [low[0], low[1]]),
+        ] {
+            let i = vertices.len() as u32;
+            vertices.extend([
+                [a[0], a[1], 0.0],
+                [b[0], b[1], 0.0],
+                [b[0], b[1], 1.0],
+                [a[0], a[1], 1.0],
+            ]);
+            triangles.extend([[i, i + 1, i + 2], [i, i + 2, i + 3]]);
+        }
+        field.add_boundary_mesh(vertices, triangles)?;
+        let mut simulation = Self::new(field, paused);
+        simulation.competition = competition;
+        if let Some(config) = chassis {
+            simulation = simulation.with_spawner(ChassisSpawner {
+                config,
+                terrain: None,
+            });
+        }
+        Ok(simulation)
+    }
+    /// Competition selected by this host, independent of referee enablement.
+    pub fn competition(&self) -> crate::host_args::Competition {
+        self.competition
+    }
     /// Build the CAD field and optional chassis spawner without opening sockets
     /// or advancing time. The caller chooses whether to run this on a worker.
     /// No player is added until a spawn method is called.
@@ -287,6 +346,13 @@ impl Simulation {
             return Err("server simulation supports only the default 128 Hz field step");
         }
         Ok(Self {
+            competition: field.rmul_2027().map_or(Default::default(), |game| {
+                if game.format == rm_simulator_world::gameplay::rmul_2027::Format::Infantry {
+                    crate::host_args::Competition::RmulInfantry2027
+                } else {
+                    crate::host_args::Competition::Rmul2027
+                }
+            }),
             external_control: Default::default(),
             navigation: None,
             sentry_tracking: Default::default(),
@@ -629,6 +695,7 @@ impl Simulation {
         chassis: crate::protocol::Chassis,
     ) -> Result<u32, String> {
         self.validate_roster(robot)?;
+        self.validate_rmul_slot(team, robot)?;
         let config = self.robot_config(robot, chassis)?;
         self.spawn_in_slot(team, Some(config), robot.kind(), Some(robot))
     }
@@ -680,13 +747,35 @@ impl Simulation {
             },
         )
     }
+    /// Admit a manually piloted role. UL §3.1.3 requires automatic Sentries;
+    /// the host's optional optical controller does not implement autonomous firing.
+    pub fn validate_pilot_robot(&self, robot: Robot) -> Result<(), String> {
+        self.validate_roster(robot)?;
+        if self.competition.rmul_format().is_some() && robot == Robot::Sentry {
+            return Err(
+                "RMUL Sentry must be fully autonomous; manual Sentry pilots are unavailable".into(),
+            );
+        }
+        Ok(())
+    }
+    fn validate_rmul_slot(&self, team: Team, robot: Robot) -> Result<(), String> {
+        if self.competition.rmul_format().is_some()
+            && self.robots.iter().any(|(id, existing)| {
+                *existing == robot && self.field.chassis_team(*id) == Some(team)
+            })
+        {
+            return Err("the team's RMUL equipment slot is occupied".into());
+        }
+        Ok(())
+    }
     fn validate_roster(&self, robot: Robot) -> Result<(), String> {
-        if crate::roster::supports(robot) {
+        if crate::roster::supports_for(self.competition, robot) {
             Ok(())
         } else {
             Err(format!(
-                "{} is not available in the RMUC 2027 roster",
-                robot.name()
+                "{} is not available in the {} roster",
+                robot.name(),
+                self.competition.id()
             ))
         }
     }
@@ -703,15 +792,27 @@ impl Simulation {
             .ok_or("this field offers no chassis")?;
         let config = config.unwrap_or_else(|| spawner.config.clone());
         let clear = SPAWN_SLOT_SPACING_M / 2.0;
-        let placement = (0..)
-            .map(|slot| spawner.slot_with(config.clone(), kind, team, slot))
+        let limit = if self.competition.rmul_format().is_some() {
+            3
+        } else {
+            1024
+        };
+        let placement = (0..limit)
+            .map(|slot| {
+                if self.competition.rmul_format().is_some() {
+                    let (spawn, yaw) = self.competition.practice_spawn(team, slot);
+                    spawner.at_with(config.clone(), kind, team, spawn, yaw)
+                } else {
+                    spawner.slot_with(config.clone(), kind, team, slot)
+                }
+            })
             .find(|placement| {
                 let [x, y, _] = placement.spawn.translation_m;
                 self.field
                     .chassis_positions_m()
                     .all(|[px, py, _]| (px - x).hypot(py - y) > clear)
             })
-            .expect("spawn slots go on forever");
+            .ok_or("no unoccupied spawn position is available")?;
         self.place(placement, robot)
     }
     /// Place a local pilot at a requested FLU position and heading in the
@@ -758,6 +859,7 @@ impl Simulation {
         yaw_deg: f64,
     ) -> Result<u32, String> {
         self.validate_roster(robot)?;
+        self.validate_rmul_slot(team, robot)?;
         let config = self.robot_config(robot, chassis)?;
         let spawner = self
             .spawner
@@ -777,6 +879,7 @@ impl Simulation {
         position_m: [f64; 2],
     ) -> Result<u32, String> {
         self.validate_roster(robot)?;
+        self.validate_rmul_slot(team, robot)?;
         let config = self.robot_config(robot, chassis)?;
         if !position_m.into_iter().all(f64::is_finite) {
             return Err("spawn position must be finite".into());
@@ -788,7 +891,15 @@ impl Simulation {
             }
             (spawn, yaw)
         } else {
-            if !crate::deployment::contains(team, position_m) {
+            if !(if self.competition.rmul_format().is_some() {
+                let [low, high] = self.competition.practice_bounds();
+                position_m[0].abs() < high[0] - 0.4
+                    && position_m[1] > low[1] + 0.4
+                    && position_m[1] < high[1] - 0.4
+                    && crate::layout::side_team(position_m[0]) == team
+            } else {
+                crate::deployment::contains(team, position_m)
+            }) {
                 return Err("choose a position inside your base ring, outside the platform".into());
             }
             (
@@ -1033,6 +1144,15 @@ impl Simulation {
         if !reset && self.field.chassis_defeated(id) != Some(true) {
             return Err("robot is not defeated".into());
         }
+        if self.field.rmul_2027().is_some_and(|game| {
+            matches!(
+                game.phase,
+                rm_simulator_world::gameplay::rmul_2027::Phase::Countdown
+                    | rm_simulator_world::gameplay::rmul_2027::Phase::Running
+            )
+        }) {
+            return Err("pilot reset/recovery is unavailable during an RMUL round".into());
+        }
         if self.field.rmuc_2027().is_some_and(|s| {
             matches!(
                 s.game.phase,
@@ -1047,7 +1167,7 @@ impl Simulation {
         }
         self.revoke_external_control(id);
         // A no-referee practice robot can still be repositioned through debug.
-        if self.field.rmuc_2027().is_some() {
+        if self.field.rmuc_2027().is_some() || self.field.rmul_2027().is_some() {
             self.field
                 .referee_command(rm_simulator_world::RefereeCommand::ReviveRobot { robot: id })
                 .map_err(|e| e.to_string())?;
@@ -1646,6 +1766,36 @@ impl Simulation {
 mod tests {
     use super::*;
     use rm_simulator_world::{FieldConfig, RefereeCommand};
+
+    #[test]
+    fn rmul_practice_admits_only_its_roster_and_bounds_spawns() {
+        use crate::host_args::Competition;
+        for referee in [false, true] {
+            let mut sim = Simulation::rmul_practice(
+                Competition::RmulInfantry2027,
+                referee,
+                Some(ChassisConfig::default()),
+                false,
+            )
+            .unwrap();
+            assert!(sim.validate_pilot_robot(Robot::Sentry).is_err());
+            let id = sim.spawn_robot(Team::Red, Robot::Infantry3).unwrap();
+            let p = sim
+                .snapshot()
+                .chassis
+                .iter()
+                .find(|c| c.id == id)
+                .unwrap()
+                .pose
+                .translation_m;
+            assert!(p[0].abs() < 2.5 && p[1].abs() < 2.5);
+            assert!(sim.spawn_robot(Team::Red, Robot::Infantry3).is_err());
+            assert!(sim.spawn_robot(Team::Blue, Robot::Engineer).is_err());
+            assert!(sim.spawn_robot(Team::Blue, Robot::Infantry3).is_ok());
+            assert!(sim.snapshot().rmuc_2027.is_none());
+            assert_eq!(sim.snapshot().rmul_2027.is_some(), referee);
+        }
+    }
 
     fn cad_without_files() -> CadAssets {
         let asset = |placements| crate::cad_assets::CadAsset {

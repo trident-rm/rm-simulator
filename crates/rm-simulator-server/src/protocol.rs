@@ -117,8 +117,10 @@ use serde::{Deserialize, Serialize};
 /// Version 79 carries restorable direct wheel motor torque requests and the
 /// validated field step in checkpoint authority.
 /// Version 80 adds operator-authorized leased external motion modes.
+/// Version 81 carries the independent native RMUL 2027 match authority.
 /// Version 82 adds leased Sentry head sweep and chassis counter-rotation.
-pub const PROTOCOL_VERSION: u32 = 82;
+/// Version 83 identifies the host competition even without a match referee.
+pub const PROTOCOL_VERSION: u32 = 83;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///
@@ -1241,6 +1243,8 @@ pub struct ChassisAssignment {
 /// `Command::Deploy` and `ServerMessage::Deployed`; a second Welcome remains invalid.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Welcome {
+    /// Host competition and practice layout, independent of referee enablement.
+    pub competition: crate::host_args::Competition,
     /// How to build the shared prediction geometry, or `None` when this host
     /// offers no client-side prediction.
     pub prediction_scene: Option<crate::prediction::PredictionScene>,

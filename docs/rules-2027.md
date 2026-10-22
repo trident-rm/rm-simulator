@@ -172,6 +172,10 @@ by the 2027 manuals are cited to UC/UL §1.2.
 | Aerial robot | Manually driven, tethered 17 mm prototype | Autonomous miniature aerial robots, hangar, impact attack; no launcher | UC §3.2.1; ROB §2.4.4 |
 | Client equipment | Existing custom-client/referee-link integration | Custom controller and client combined as 自定义终端 | UC §3.3.1; ROB §2.1.7 |
 
+The native RMUL authorities and approximate selectable practice support are
+documented in [RMUL 2027](rmul-2027.md). They retain separate competition
+identities from RMUC even though all use the same calendar year.
+
 ## Separate competition profiles
 
 | Property | UC | UL 3v3 | UL Infantry 1v1 |
@@ -902,8 +906,10 @@ must not be lost when translating the table.
 UL §4.4 resolves a round by defeat, then at timeout higher remaining HP, then
 later first HP-loss time when nonzero HP is tied. When both finish full HP,
 compare total rounds fired (higher wins), then earlier first launch, then draw.
-With lifesteal, both robots can have been damaged and finish full: the priority
-between the first-damage clause and full-HP clauses needs an explicit decision.
+With lifesteal, both robots can have been damaged and finish full. The simulator
+applies the more specific full-HP clauses first in that case: shot count, then
+earlier first launch. This is an explicit simulator interpretation pending
+official clarification, rather than a claim that the manual resolves the overlap.
 Group format is BO2 and elimination BO3, with special incomplete/tied series
 resolution in §4.4.1; do not blindly reuse UC overtime behavior.
 
@@ -973,16 +979,16 @@ not interchangeable with the drivetrain's assumed shared power budget.
 | Healing and logistics | UC §§5.3.1, 5.6.1 | Adopted in the native lifecycle: apply logistics once to outpost healing, fixed-point 10 Hz healing, continuous respawn progress. Other buff stacking remains pending |
 | Time and event ordering | UC Table 2-1, countdown-based income tables | Specify tick boundary, settlement order, capture/death/purchase ties; keep 128 Hz world time |
 | Radar information-wave details | UC §5.7.4 explicitly defers signal parameters | Obtain later release and 2027 communication protocol; clarify difficulty ceiling/key failures |
-| UL full-HP tiebreak | UL §4.4 includes first damage and full-HP launch comparisons | Clarify precedence after both heal back to full |
+| UL full-HP tiebreak | UL §4.4 includes first damage and full-HP launch comparisons | Adopted simulator policy: the specific full-HP branch takes precedence after lifesteal; official clarification remains pending |
 | UL lifesteal rounding/cap | UL §4.3.1 gives 50% but not all settlement cases | Specify overkill basis, rounding, HP cap and simultaneous lethal hits |
 
 ## Implementation boundaries and migration order
 
 The following is engineering guidance, not additional competition rules:
 
-1. Preserve the complete 2026 implementation and its source baseline. Additive
-   build features should control inclusion; an explicit ruleset identifies the
-   behavior of a match. Unknown/unimplemented selections must fail clearly.
+1. Preserve the complete 2026 implementation at `rm2026-final`, without a 2026
+   execution path or season Cargo features on main. An explicit competition and
+   manual revision identifies each 2027 match. Unknown selections fail clearly.
 2. Identify a ruleset by season, competition mode and manual revision. Treat
    field package identity separately; a 2027 label on a 2026 field is insufficient.
 3. Add independent 2027 rule data and state machines in gameplay/world according
@@ -998,8 +1004,7 @@ The following is engineering guidance, not additional competition rules:
    presentation and field assets. Keep uncertain/pending requirements unavailable
    or explicitly marked assumptions; do not add unrelated enforcement.
 
-A future behavior test matrix should include 2026 regression traces, each
-competition's timeout order, contested capture and decay, outpost ownership
+The behavior test matrix covers each active 2027 competition's timeout order, contested capture and decay, outpost ownership
 transfer without rotor restart, adaptive-armor boundary/statistics cases,
 assembly prerequisites and recurring income, historical-deficit unlocks,
 independent launcher lock causes, logistics degradation, weak respawn benefits,

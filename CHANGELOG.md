@@ -4,6 +4,14 @@
 
 ## Unreleased
 
+- Add distinct RMUL 2027 V1.0.0 3v3 and Infantry 1v1 match authorities and
+  selectable practice sessions, with format-specific rosters, combat, control,
+  timing and victory rules. Keep RMUC CAD exclusive to RMUC; RMUL layouts are
+  explicitly approximate pending official assets. Carry RMUL authority through
+  protocol 83 checkpoints and deterministic world restore. Identify the host
+  competition even without a referee, and require ground-level practice
+  workbench presence for Heavy launcher installation.
+
 - Add temporary graphics-preset/bloom launch overrides and a configurable
   headless render limit. Keep saved graphics and physics timing independent;
   document rendering costs and the limits of measurements under CPU contention.

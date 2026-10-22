@@ -2,13 +2,15 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # rm-simulator-gameplay
 
-Deterministic RMUC 2027 V1.0.0 rules without physics, CAD, networking, rendering
-or host time. `rmuc_2027::match_rules::Match` owns the running authority; callers
+Deterministic RMUC and RMUL 2027 V1.0.0 rules without physics, CAD, networking, rendering
+or host time. `rmuc_2027::match_rules::Match` owns RMUC authority;
+`rmul_2027::Match` owns separate 3v3 and Infantry 1v1 authorities. Callers
 supply observations and explicit nanosecond durations.
 
 | Module | Responsibility |
 |---|---|
 | `rmuc_2027` | Territory control, combat, economy, field benefits, traversal, Rune, assembly and adaptive armor |
+| `rmul_2027` | RMUL format/revision identity, fixed rosters, combat, control, economy and round results |
 | `state`, `performance` | Shared identities, serialized records and physical model descriptors |
 | `season` | Source identities and current-runtime admission |
 | `coverage` | Shared mechanic identifiers |

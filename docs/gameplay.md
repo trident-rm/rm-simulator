@@ -1,10 +1,11 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
-# Native RMUC 2027 gameplay
+# Native 2027 competition gameplay
 
-`rm-simulator-gameplay` runs RMUC 2027 V1.0.0 rules without Bevy, Rapier, CAD,
-networking or host time. The only match authority is
-`rmuc_2027::match_rules::Match`; the 2026 engine is archived at `rm2026-final`.
+`rm-simulator-gameplay` runs 2027 V1.0.0 rules without Bevy, Rapier, CAD,
+networking or host time. `rmuc_2027::match_rules::Match` owns RMUC; the separate
+`rmul_2027::Match` owns RMUL 3v3 and Infantry 1v1. See
+[RMUL support and limitations](rmul-2027.md). The 2026 engine is archived at `rm2026-final`.
 See [manual interpretations](rules-2027.md) and [runtime admission](seasons.md).
 
 ```sh
@@ -21,7 +22,8 @@ a host clock in either crate. Snapshots preserve hidden rule state so restore an
 prediction follow the same command/step paths as the host.
 
 `FieldConfig::default()` is a bare physical world. Native source bindings are
-required for match construction; historical rule configurations are rejected.
+required for RMUC match construction. RMUL opts into separate authority on
+explicitly approximate practice geometry; historical rule configurations are rejected.
 Shared identity, command and presentation records remain data, not a second
 engine. Remaining unsupported rules are listed in the
 [field guide](rmuc2027-field.md) and [rules reference](rules-2027.md).

@@ -27,6 +27,12 @@ pub(super) struct SlotFill {
     team: Team,
     index: usize,
 }
+/// One roster card whose layout follows the selected competition.
+#[derive(Component)]
+pub(super) struct SlotCard {
+    team: Team,
+    index: usize,
+}
 #[derive(Clone)]
 struct RobotStatus {
     id: u32,
@@ -56,6 +62,7 @@ pub(super) fn spawn(commands: &mut Commands, parent: Entity, team: Team) {
 }
 fn spawn_slot(commands: &mut Commands, row: Entity, team: Team, index: usize) {
     let card = container(commands, row, "team-robot");
+    commands.entity(card).insert(SlotCard { team, index });
     commands.spawn((
         ChildOf(card),
         SlotText { team, index },
@@ -146,7 +153,7 @@ fn presentation(
                         "Hero" => "HERO",
                         "Engineer" => "ENG",
                         "Heavy" => "HEAVY",
-                        "Infantry 3" | "Infantry 4" | "Infantry 5" => "INF",
+                        "Infantry" | "Infantry 3" | "Infantry 4" | "Infantry 5" => "INF",
                         "Drone" => "DRONE",
                         "Aerial system" => "AIR",
                         "Sentry" => "SENTRY",
@@ -171,6 +178,8 @@ fn presentation(
 pub(super) fn update(
     mut commands: Commands,
     session: Option<Res<Session>>,
+    config: Option<Res<crate::staging::StagingConfig>>,
+    mut cards: Query<(&SlotCard, &mut Node), Without<SlotFill>>,
     mut rows: Query<(Entity, &mut TeamSlots)>,
     mut texts: Query<(&SlotText, &mut Text, &mut TextColor)>,
     mut fills: Query<(&SlotFill, &mut Node, &mut BackgroundColor)>,
@@ -178,8 +187,9 @@ pub(super) fn update(
     let Some(session) = session else {
         return;
     };
+    let competition = super::roster_competition(&session, config.as_deref());
+    let slots = rm_simulator_server::roster::slots_for(competition);
     for (entity, mut row) in &mut rows {
-        let slots = slots();
         // The chassis and HP come from the same authoritative snapshot. A roster
         // update can arrive separately; spectators never create health slots.
         let robots: Vec<_> = session
@@ -201,6 +211,24 @@ pub(super) fn update(
                         rm_simulator_world::rmuc_2027::match_rules::GroundRole::Sentry => {
                             RobotKind::Sentry
                         }
+                    })
+                    .or_else(|| {
+                        session
+                            .snapshot
+                            .rmul_2027
+                            .as_ref()
+                            .and_then(|g| g.robots.iter().find(|r| r.id == c.id))
+                            .map(|r| match r.role {
+                                rm_simulator_world::gameplay::rmul_2027::Role::Heavy => {
+                                    RobotKind::Engineer
+                                }
+                                rm_simulator_world::gameplay::rmul_2027::Role::Infantry => {
+                                    RobotKind::Infantry
+                                }
+                                rm_simulator_world::gameplay::rmul_2027::Role::Sentry => {
+                                    RobotKind::Sentry
+                                }
+                            })
                     });
                 RobotStatus {
                     id: c.id,
@@ -232,6 +260,18 @@ pub(super) fn update(
         reconcile(&mut row.occupants, &robots, slots);
         for index in old_len..row.occupants.len() {
             spawn_slot(&mut commands, entity, row.team, index);
+        }
+        for (card, mut node) in &mut cards {
+            if card.team == row.team {
+                let display = if card.index < slots.len() || row.occupants[card.index].is_some() {
+                    Display::Flex
+                } else {
+                    Display::None
+                };
+                if node.display != display {
+                    node.display = display;
+                }
+            }
         }
         for (slot, mut text, mut color) in &mut texts {
             if slot.team != row.team {
@@ -303,6 +343,69 @@ mod tests {
         session.roster.clear(); // Simulate a roster message that has not arrived yet.
         session
     }
+    #[test]
+    fn rmul_rows_show_only_the_selected_format_and_native_hp() {
+        use rm_simulator_world::gameplay::rmul_2027::{Format, Match, Role};
+        let mut session = crate::session::test_session(true);
+        let mut body = session.snapshot.chassis[0].clone();
+        body.id = 3;
+        body.team = Team::Red;
+        session.snapshot.chassis = vec![body];
+        session.snapshot.rmuc_2027 = None;
+        session.roster.clear();
+        let mut game = Match::new(Format::Infantry);
+        game.add_robot(3, rm_simulator_world::gameplay::Team::Red, Role::Infantry)
+            .unwrap();
+        session.snapshot.rmul_2027 = Some(game);
+        let mut app = App::new();
+        app.insert_resource(session)
+            .add_systems(Startup, |mut commands: Commands| {
+                let root = commands.spawn_empty().id();
+                spawn(&mut commands, root, Team::Red);
+                spawn(&mut commands, root, Team::Blue);
+            })
+            .add_systems(Update, update);
+        app.update();
+        app.update();
+        let visible = app
+            .world_mut()
+            .query::<(&SlotCard, &Node)>()
+            .iter(app.world())
+            .filter(|(_, n)| n.display != Display::None)
+            .count();
+        assert_eq!(visible, 2);
+        assert!(
+            app.world_mut()
+                .query::<&Text>()
+                .iter(app.world())
+                .any(|t| t.0 == "3 INF\nEMPTY")
+        );
+        assert!(
+            app.world_mut()
+                .query::<&Text>()
+                .iter(app.world())
+                .any(|t| t.0.contains("200/200"))
+        );
+        let mut game = Match::new(Format::ThreeVsThree);
+        game.add_robot(3, rm_simulator_world::gameplay::Team::Red, Role::Heavy)
+            .unwrap();
+        app.world_mut().resource_mut::<Session>().snapshot.rmul_2027 = Some(game);
+        app.update();
+        let visible = app
+            .world_mut()
+            .query::<(&SlotCard, &Node)>()
+            .iter(app.world())
+            .filter(|(_, n)| n.display != Display::None)
+            .count();
+        assert_eq!(visible, 6);
+        assert!(
+            app.world_mut()
+                .query::<&Text>()
+                .iter(app.world())
+                .any(|t| t.0.contains("100/100"))
+        );
+    }
+
     #[test]
     fn both_teams_update_without_roster_and_disconnect_clears_health() {
         let mut app = App::new();

@@ -176,6 +176,12 @@ impl Field {
             self.sync_defeats();
             return Ok(hit);
         }
+        if let (Some(game), ArmorTarget::Chassis { chassis, .. }) =
+            (&mut self.rmul_2027, contact.target)
+        {
+            hit.damage = game.damage(contact.shooter, chassis, contact.caliber == Caliber::Mm42);
+            self.sync_defeats();
+        }
         // Bare physical worlds report contacts without a season damage engine.
         Ok(hit)
     }

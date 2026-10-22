@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! Native RMUC 2027 gameplay and shared serialized records.
+//! Native RMUC and standalone RMUL 2027 gameplay and shared serialized records.
 //! Independent of physics, CAD and Bevy.
 //!
 //! Live rounds use [`rmuc_2027::match_rules::Match`] and explicit nanosecond
@@ -11,6 +11,8 @@ pub mod coverage;
 mod performance;
 /// RMUC 2027 control and the native control/structure match subset.
 pub mod rmuc_2027;
+/// Standalone RMUL 2027 V1.0.0 3v3 and Infantry authorities.
+pub mod rmul_2027;
 pub mod season;
 mod state;
 pub use performance::*;

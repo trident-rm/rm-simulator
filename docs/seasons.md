@@ -2,7 +2,8 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Active runtime and archived seasons
 
-The application and headless CAD host now target **RMUC 2027 V1.0.0**. There
+The application and headless host support **RMUC 2027 V1.0.0**,
+**RMUL 2027 V1.0.0 3v3**, and **RMUL 2027 V1.0.0 Infantry 1v1**. There
 are no season Cargo features, combined-season binaries, or season build matrix.
 Normal builds and `--no-default-features` builds include the same native rules;
 `steam` and `referee-link` remain independent optional app integrations.
@@ -39,19 +40,27 @@ Live matches require checksummed native structure/rule bindings. Unbound 2027
 rest-pose exports may be inspected in practice with `--no-referee`; they do not
 acquire a legacy referee. The [2027 field guide](rmuc2027-field.md) documents the
 bound package and supported mechanics. The [rules reference](rules-2027.md)
-records the manual revision and adopted policies. RMUL remains unsupported.
+records the manual revision and adopted policies.
+
+`--competition rmul-2027` and `--competition rmul-infantry-2027` select
+the separate RMUL authorities. They use approximate 12 × 8 m and 5 × 5 m
+practice layouts without CAD. The bound `field-2027/` remains RMUC-only;
+explicit CAD overrides are rejected for RMUL. These layouts are not official
+RMUL field packages. See [RMUL rules and limitations](rmul-2027.md).
 
 ## Shared types and physics
 
 Main no longer compiles the 2026 gameplay engine, referee scheduler, Rune state
 machines, Outpost HP controller, zone effects or base damage tables. Native
-`rmuc_2027::match_rules::Match` is the only match authority. `Field::new` defaults
+`rmuc_2027::match_rules::Match` owns RMUC rounds;
+`rmul_2027::Match` owns the two distinct RMUL formats. These authorities are
+mutually exclusive in layouts and checkpoints. `Field::new` defaults
 to a bare physical world and rejects historical rule configurations. Source
 identities, serialized presentation/command records, robot descriptors, armor
 geometry and reusable physics remain shared. Historical records do not execute
 rules and cannot restore an old match.
 
-The checkpoint schema is protocol **82**. Both peers must use the same version;
+The checkpoint schema is protocol **83**. Both peers must use the same version;
 old checkpoints containing removed rule state cannot be replayed on main.
 
 The historical `field/` package and its inventory have been removed from main;

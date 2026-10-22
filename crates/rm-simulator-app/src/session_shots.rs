@@ -369,6 +369,19 @@ impl Session {
     /// a referee record for the local chassis.
     pub fn predicted_heat(&self) -> Option<(u64, u32)> {
         use rm_simulator_world::referee::game_caliber;
+        if let Some(game) = &self.snapshot.rmul_2027 {
+            let robot = game.robots.iter().find(|r| Some(r.id) == self.chassis_id)?;
+            let pending = if game.phase == rm_simulator_world::gameplay::rmul_2027::Phase::Running {
+                u64::from(self.reserved_ammo(self.weapon.shot.caliber))
+                    * game_caliber(self.weapon.shot.caliber).launch_heat_tenths()
+            } else {
+                0
+            };
+            return Some((
+                u64::from(robot.heat_tenths) + pending,
+                robot.stats().heat_limit,
+            ));
+        }
         if let Some(s) = self.rmuc_2027() {
             let r = s
                 .game
@@ -395,6 +408,25 @@ impl Session {
     /// to the host is already past the limit. The snapshot's heat predates
     /// its cooling since, so under lag this errs toward holding a shot.
     pub fn barrel_blocked(&self) -> bool {
+        if let Some(game) = &self.snapshot.rmul_2027 {
+            let Some(id) = self.chassis_id else {
+                return true;
+            };
+            return game
+                .check_launch(
+                    id,
+                    self.weapon.shot.caliber == rm_simulator_world::Caliber::Mm42,
+                )
+                .is_err()
+                || game
+                    .robots
+                    .iter()
+                    .find(|r| r.id == id)
+                    .is_none_or(|r| r.allowance <= self.reserved_ammo(self.weapon.shot.caliber))
+                || self
+                    .predicted_heat()
+                    .is_some_and(|(heat, limit)| heat > u64::from(limit) * 10);
+        }
         if self.rmuc_2027().is_none()
             && self
                 .client
@@ -464,6 +496,27 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rmul_heat_and_launcher_admission_use_native_authority() {
+        use rm_simulator_world::gameplay::{
+            Team,
+            rmul_2027::{Format, Match, Role},
+        };
+        let mut session = crate::session::test_session(false);
+        let id = session.chassis_id.unwrap();
+        let mut game = Match::new(Format::Infantry);
+        game.add_robot(id, Team::Red, Role::Infantry).unwrap();
+        session.snapshot.rmul_2027 = Some(game);
+        assert!(session.barrel_blocked());
+        session.snapshot.rmul_2027.as_mut().unwrap().start();
+        assert!(!session.barrel_blocked());
+        let robot = &mut session.snapshot.rmul_2027.as_mut().unwrap().robots[0];
+        robot.heat_tenths = 270;
+        assert_eq!(session.predicted_heat(), Some((270, 80)));
+        session.snapshot.rmul_2027.as_mut().unwrap().robots[0].allowance = 0;
+        assert!(session.barrel_blocked());
+    }
 
     #[test]
     fn projectile_replay_is_idle_without_flights_and_shares_active_checkpoint() {

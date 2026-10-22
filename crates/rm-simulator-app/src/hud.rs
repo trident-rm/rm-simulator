@@ -567,6 +567,45 @@ pub fn spawn_hud(commands: &mut Commands) {
 }
 
 fn clock_text(session: &Session) -> String {
+    if let Some(game) = &session.snapshot.rmul_2027 {
+        let remaining = if game.phase == rm_simulator_world::gameplay::rmul_2027::Phase::Countdown {
+            game.countdown_remaining_ns
+        } else {
+            game.remaining_ns()
+        };
+        let seconds = remaining.div_ceil(1_000_000_000);
+        let competition =
+            if game.format == rm_simulator_world::gameplay::rmul_2027::Format::Infantry {
+                "RMUL Infantry 2027"
+            } else {
+                "RMUL 2027 3v3"
+            };
+        let phase = match game.phase {
+            rm_simulator_world::gameplay::rmul_2027::Phase::Idle => "READY",
+            rm_simulator_world::gameplay::rmul_2027::Phase::Countdown => "COUNTDOWN",
+            rm_simulator_world::gameplay::rmul_2027::Phase::Running => "RUNNING",
+            rm_simulator_world::gameplay::rmul_2027::Phase::Finished => "FINISHED",
+        };
+        let mut text = format!(
+            "{competition}\n{phase}  {:02}:{:02}",
+            seconds / 60,
+            seconds % 60
+        );
+        if session.paused {
+            text.push_str(" · PAUSED");
+        }
+        if let Some(result) = &game.result {
+            text.push_str(&format!(
+                "\n{}",
+                result.winner.map_or("DRAW", |t| if t.index() == 0 {
+                    "RED WINS"
+                } else {
+                    "BLUE WINS"
+                })
+            ));
+        }
+        return text;
+    }
     if let Some(state) = session.rmuc_2027() {
         use rm_simulator_world::gameplay::rmuc_2027::ROUND_NS;
         use rm_simulator_world::rmuc_2027::match_rules::Phase;
@@ -626,6 +665,16 @@ fn heat_ring_uniform(heat: Option<(u64, u32)>) -> heat_ring::HeatRingUniform {
 }
 
 fn control_2027_text(session: &Session) -> String {
+    if let Some(game) = &session.snapshot.rmul_2027 {
+        if game.format == rm_simulator_world::gameplay::rmul_2027::Format::Infantry {
+            return String::new();
+        }
+
+        return format!(
+            "RMUL 2027 · approximate practice regions\nControl: RED {} · BLUE {}\nGold: RED {} · BLUE {}",
+            game.teams[0].control, game.teams[1].control, game.teams[0].gold, game.teams[1].gold
+        );
+    }
     let Some(state) = session.rmuc_2027() else {
         return String::new();
     };
@@ -709,6 +758,9 @@ fn control_2027_text(session: &Session) -> String {
 
 /// Quiet overview; detailed RFID and Rune diagnostics remain in Team/F3 views.
 fn control_summary(session: &Session) -> String {
+    if session.snapshot.rmul_2027.is_some() {
+        return control_2027_text(session);
+    }
     let Some(state) = session.rmuc_2027() else {
         return String::new();
     };
@@ -730,8 +782,35 @@ fn control_summary(session: &Session) -> String {
     text
 }
 
+fn roster_competition(
+    session: &Session,
+    config: Option<&crate::staging::StagingConfig>,
+) -> rm_simulator_server::host_args::Competition {
+    use rm_simulator_server::host_args::Competition;
+    use rm_simulator_world::gameplay::rmul_2027::Format;
+    session
+        .snapshot
+        .rmul_2027
+        .as_ref()
+        .map(|game| match game.format {
+            Format::ThreeVsThree => Competition::Rmul2027,
+            Format::Infantry => Competition::RmulInfantry2027,
+        })
+        .unwrap_or_else(|| config.map_or(Competition::Rmuc2027, |c| c.0.host.competition))
+}
+
 fn team_text(session: &Session, team: Team) -> String {
     let text = team.name().to_uppercase();
+    if let Some(game) = &session.snapshot.rmul_2027 {
+        let robots = game
+            .robots
+            .iter()
+            .filter(|r| r.team.index() == team.index())
+            .map(|r| format!("{:?}: {} HP", r.role, r.hp))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return format!("{text}\n{robots}");
+    }
     if let Some(state) = session.rmuc_2027() {
         let g = &state.game;
         let i = team.index();
@@ -784,6 +863,7 @@ fn panel_text(
 pub fn update_panel_rows(
     mut commands: Commands,
     session: Res<Session>,
+    config: Option<Res<crate::staging::StagingConfig>>,
     ui: Res<HudState>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Option<Res<ButtonInput<MouseButton>>>,
@@ -842,7 +922,10 @@ pub fn update_panel_rows(
                 String::new(),
             ]);
             if team.is_some() {
-                for slot in rm_simulator_server::roster::slots() {
+                for slot in rm_simulator_server::roster::slots_for(roster_competition(
+                    &session,
+                    config.as_deref(),
+                )) {
                     rows.push([
                         format!("{} {}", slot.number, slot.name),
                         slot.equipment.into(),
@@ -912,6 +995,22 @@ pub fn update_panel_rows(
     }
 }
 
+fn heat_video_cut(session: &Session) -> bool {
+    if let Some(game) = &session.snapshot.rmul_2027 {
+        return game
+            .robots
+            .iter()
+            .any(|r| Some(r.id) == session.chassis_id && r.overheated);
+    }
+    session.rmuc_2027().is_some_and(|state| {
+        state
+            .game
+            .robots
+            .iter()
+            .any(|r| Some(r.id) == session.chassis_id && r.combat.video_cut())
+    })
+}
+
 /// Rewrite the overlay text, the health bar and the reticle from the latest snapshot.
 /// Runs after panel input so a panel opened this frame is already reflected.
 // Bevy system parameters keep disjoint UI queries explicit.
@@ -940,8 +1039,7 @@ pub fn update_hud(
             .iter()
             .find(|r| Some(r.id) == session.chassis_id)
     });
-    let video_cut = drive.as_ref().is_some_and(|d| !d.third_person)
-        && native_robot.is_some_and(|r| r.combat.video_cut());
+    let video_cut = drive.as_ref().is_some_and(|d| !d.third_person) && heat_video_cut(&session);
     for mut node in &mut blackout {
         node.display = if video_cut {
             Display::Flex
@@ -976,6 +1074,13 @@ pub fn update_hud(
                     .own_chassis()
                     .map_or(0., |c| c.velocity_m_s[0].hypot(c.velocity_m_s[1]));
                 let mut value = session.role.name().to_uppercase();
+                if let Some(r) = session.snapshot.rmul_2027.as_ref().and_then(|game| {
+                    game.robots
+                        .iter()
+                        .find(|r| Some(r.id) == session.chassis_id)
+                }) {
+                    value.push_str(&format!("\n{:?}  {} / {} HP", r.role, r.hp, r.max_hp));
+                }
                 if let Some(r) = session.rmuc_2027().and_then(|s| {
                     s.game
                         .robots
@@ -1092,8 +1197,28 @@ pub fn update_hud(
                             .saturating_sub(session.reserved_ammo(gun.shot.caliber))
                             .to_string()
                     })
+                    .or_else(|| {
+                        session
+                            .snapshot
+                            .rmul_2027
+                            .as_ref()
+                            .and_then(|game| {
+                                game.robots
+                                    .iter()
+                                    .find(|r| Some(r.id) == session.chassis_id)
+                            })
+                            .map(|r| {
+                                r.allowance
+                                    .saturating_sub(session.reserved_ammo(gun.shot.caliber))
+                                    .to_string()
+                            })
+                    })
                     .unwrap_or_else(|| "--".into());
-                let mode = if native.is_some() { "LEFT" } else { "TRACKED" };
+                let mode = if native.is_some() || session.snapshot.rmul_2027.is_some() {
+                    "LEFT"
+                } else {
+                    "TRACKED"
+                };
                 format!(
                     "{allowance}  {mode}   ·   {} mm\n{}",
                     if index == 0 { 17 } else { 42 },
@@ -1113,7 +1238,13 @@ pub fn update_hud(
                 .collect::<Vec<_>>()
                 .join("\n"),
             Hud::Hint => {
-                if native_robot.is_some_and(|r| r.hp == 0) {
+                if native_robot.is_some_and(|r| r.hp == 0)
+                    || session.snapshot.rmul_2027.as_ref().is_some_and(|game| {
+                        game.robots
+                            .iter()
+                            .any(|r| Some(r.id) == session.chassis_id && r.hp == 0)
+                    })
+                {
                     "ROBOT DEFEATED\nWaiting for native respawn".into()
                 } else if ui.modal_open() || window.as_ref().is_some_and(|w| w.height() <= 480.) {
                     String::new()
@@ -1180,7 +1311,20 @@ pub fn update_hud(
                     .iter()
                     .find(|r| Some(r.id) == session.chassis_id)
             })
-            .map_or_else(|| 0., |r| r.hp as f32 / r.max_hp as f32);
+            .map(|r| r.hp as f32 / r.max_hp as f32)
+            .or_else(|| {
+                session
+                    .snapshot
+                    .rmul_2027
+                    .as_ref()
+                    .and_then(|game| {
+                        game.robots
+                            .iter()
+                            .find(|r| Some(r.id) == session.chassis_id)
+                    })
+                    .map(|r| r.hp as f32 / r.max_hp.max(1) as f32)
+            })
+            .unwrap_or(0.);
         node.width = percent(100. * fraction);
         color.0 = if fraction < 0.2 {
             team_color(Team::Red)
@@ -1483,6 +1627,32 @@ fn key_letter(key: KeyCode) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rmul_clock_and_team_cards_show_native_result_and_hp() {
+        use rm_simulator_world::gameplay::{
+            Team as GameTeam,
+            rmul_2027::{Format, Match, Role},
+        };
+        let mut session = crate::session::test_session(false);
+        let mut game = Match::new(Format::Infantry);
+        game.add_robot(session.chassis_id.unwrap(), GameTeam::Red, Role::Infantry)
+            .unwrap();
+        game.begin_countdown().unwrap();
+        session.snapshot.rmul_2027 = Some(game);
+        assert!(clock_text(&session).contains("COUNTDOWN  00:05"));
+        assert!(team_text(&session, Team::Red).contains("200 HP"));
+        assert!(!heat_video_cut(&session));
+        session.snapshot.rmul_2027.as_mut().unwrap().robots[0].overheated = true;
+        assert!(heat_video_cut(&session));
+        session.snapshot.rmul_2027.as_mut().unwrap().robots[0].overheated = false;
+        assert!(!heat_video_cut(&session));
+        session.snapshot.rmul_2027.as_mut().unwrap().start();
+        assert!(clock_text(&session).contains("RUNNING"));
+        session.snapshot.rmul_2027.as_mut().unwrap().finish();
+        assert!(clock_text(&session).contains("FINISHED"));
+        assert!(clock_text(&session).contains("WINS") || clock_text(&session).contains("DRAW"));
+    }
+
     #[test]
     fn a_map_click_sends_a_marker_the_host_records_without_capturing_the_mouse() {
         let session = crate::session::test_session(true);

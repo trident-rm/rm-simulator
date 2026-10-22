@@ -12,6 +12,21 @@ as Livox Driver 2 messages and simulation time through rclrs, using Pixi/RoboSta
 Drive a chassis over the terrain with a mouse-aimed gun, or explore with `--fly`.
 The final 2026-capable source is preserved at Git tag `rm2026-final`.
 
+Select `--competition rmuc-2027` (the default), `rmul-2027` (3v3), or
+`rmul-infantry-2027` (Infantry confrontation) in either binary. The title menu
+also accepts these spellings in its Competition field. RMUL uses explicitly
+approximate flat practice floors: 12 × 8 m for 3v3 and 5 × 5 m for Infantry.
+It loads no UC CAD and rejects `--cad-assets` until dedicated UL assets exist.
+The UL pilot roster offers Heavy (`--robot engineer`) and Infantry 3 in 3v3,
+and only Infantry 3 in confrontation. Manual UL Sentry pilots are rejected;
+fully autonomous Sentry firing remains unimplemented. Use the referee match controls to start
+and finish a round; `--no-referee` keeps a physical practice session.
+
+```sh
+just run --competition rmul-infantry-2027
+just server --competition rmul-2027
+```
+
 Physics and motion, gameplay rules, Bevy rendering, the server and the
 interactive application are separate Rust crates. Rune rules, outpost geometry,
 the CAD scene handling, and the armor artwork masks were reused from the sibling
@@ -20,7 +35,7 @@ the CAD scene handling, and the armor artwork masks were reused from the sibling
 
 The [2027 rules reference](docs/rules-2027.md) interprets the supplied manuals;
 [gameplay coverage](docs/rmuc2027-field.md) distinguishes supported mechanics
-from remaining gaps. Builds target RMUC 2027 without season feature switches.
+from remaining gaps. Builds include RMUC 2027 and RMUL 2027 without season feature switches.
 See [the archived runtime guide](docs/seasons.md) for 2026 and shared internals.
 
 ## Contents
@@ -513,11 +528,12 @@ does not acknowledge its execution by the host.
 | 49 | Arms the Drone and carries the live prototype air-support policy. |
 | 50 | Adds the Drone's Aerial Safety Rope to the chassis configuration and the `MapMarker` command. |
 | 52 | Adds connected deployment and the reliable ownership receipt. |
+| 81 | Carries separate RMUL 2027 3v3 and Infantry match authorities in restorable checkpoints. |
 
 The console can spawn a host-owned navigation Sentry and send it map destinations.
 See [navigation commands and prototype limits](docs/app-options.md#console-spawned-navigation-sentry).
 
-The current protocol version is 82, defined by `PROTOCOL_VERSION` in
+The current protocol version is 83, defined by `PROTOCOL_VERSION` in
 `crates/rm-simulator-server/src/protocol.rs`. GNS sends redundant controls
 and retried shot intents unreliably; scheduling receipts and terminal shot results
 remain reliable. There is no shooter-view fire path or input-acknowledgement
@@ -588,7 +604,8 @@ Unit release and recovery. Successful virtual assembly can unlock the current
 Hero approximation for Heavy combat. These simulator approximations and remaining
 rules gaps are documented in the [field guide](docs/rmuc2027-field.md),
 [assembly workbench](docs/assembly-workbench.md) and
-[2027 interpretation](docs/rules-2027.md). RMUL formats are not implemented.
+[2027 interpretation](docs/rules-2027.md). RMUL 3v3 and Infantry confrontation
+run on approximate practice floors; see [UL coverage and gaps](docs/rmul-2027.md).
 
 Use `--start-paused`, referee controls and the [automation console](docs/console.md)
 to inspect a scenario. Unbound 2027 CAD exports support rest-pose practice with

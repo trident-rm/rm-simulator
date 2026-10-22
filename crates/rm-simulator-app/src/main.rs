@@ -137,7 +137,7 @@ fn main() -> AppExit {
             ..default()
         })
         .set(AssetPlugin {
-            file_path: args.host.cad_assets.to_string_lossy().into_owned(),
+            file_path: args.host.cad_assets_path().to_string_lossy().into_owned(),
             ..default()
         });
     if args.window_mode == args::WindowMode::Headless {

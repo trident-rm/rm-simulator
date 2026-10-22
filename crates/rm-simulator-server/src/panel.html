@@ -31,6 +31,7 @@
   select { padding: 5px; background: #2b313b; color: var(--fg); }
   .card table { font-size: 13px; }
   .card { overflow-x: auto; }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
@@ -55,7 +56,7 @@
       <button onclick="command({Step:{ticks:128}})">Step 1 s</button>
     </div>
   </div>
-  <div class="card">
+  <div class="card uc-only">
     <h2>Assembly (2027 prototype)</h2>
     <label>Team <select id="assemblyTeam"><option>Red</option><option>Blue</option></select></label>
     <label>Difficulty <select id="assemblyDifficulty"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
@@ -67,7 +68,7 @@
     <div id="assemblyState" class="muted">Native RMUC 2027 only. No manipulation required.</div>
     <p class="muted">45-second prototype deadline at every difficulty. Simulation pause also pauses this timer.</p>
   </div>
-  <div class="card">
+  <div class="card uc-only">
     <h2>Adaptive armor (2027)</h2>
     <label>Team <select id="armorTeam"><option>Red</option><option>Blue</option></select></label>
     <label>Center X (mm) <input id="armorX" type="number" min="0" max="4294967.295" step="0.001" value="45"></label>
@@ -76,7 +77,7 @@
     <div id="armorState" class="muted">Native RMUC 2027 only.</div>
     <p class="muted">Spends one opportunity after 10 enemy hits. Center and area stay fixed until selected again. Coordinates start at the detector's bottom-left; circles are clipped without resizing.</p>
   </div>
-  <div class="card">
+  <div class="card uc-only">
     <h2>Power Rune</h2>
     <div id="runes"></div>
     <div class="row">
@@ -96,7 +97,7 @@
     <table id="robots"></table>
     <div class="row muted">Damage <input type="number" id="dmg" value="10" min="1"></div>
   </div>
-  <div class="card">
+  <div class="card uc-only">
     <h2>Bases</h2>
     <table id="bases"></table>
     <label>Team <select id="baseTeam"><option>Red</option><option>Blue</option></select></label>
@@ -104,7 +105,7 @@
     <label>Shield <input id="baseShield" type="number" min="0" max="0" value="0" disabled></label>
     <button onclick="referee({SetBaseHp:{team:$('baseTeam').value,hp:Number($('baseHp').value),shield_hp:Number($('baseShield').value)}})">Set base HP</button>
   </div>
-  <div class="card">
+  <div class="card uc-only">
     <h2>Outposts</h2>
     <table id="outposts"></table>
   </div>
@@ -112,28 +113,28 @@
     <h2>Rules and economy</h2>
     <div id="policyStatus" class="muted"></div>
     <div id="resources"></div>
-    <form onsubmit="event.preventDefault(); submit(saveGold)">
+    <form data-ul-three onsubmit="event.preventDefault(); submit(saveGold)">
       <label>Team <select id="goldTeam"><option>Red</option><option>Blue</option></select></label>
       <label>Gold <input id="goldValue" type="number" min="0" max="4294967295" required value="400"></label>
       <button>Set gold</button>
     </form>
-    <p class="muted">Heat, levels, respawn timers and income always run in a match. Idle is free practice: nothing is counted.</p>
+    <p class="muted uc-only">Heat, levels, respawn timers and income always run in a match. Idle is free practice: nothing is counted.</p>
   </div>
   <div class="card">
     <h2>Selected robot</h2>
     <label>Robot <select id="resourceRobot" onchange="loadRobot()"></select></label>
     <button type="button" onclick="loadRobot()">Load current</button>
     <div id="robotDetail" class="muted"></div>
-    <form onsubmit="event.preventDefault(); submit(saveAllowance)">
+    <form class="uc-only" onsubmit="event.preventDefault(); submit(saveAllowance)">
       <label>17 mm left <input id="ammo17" type="number" min="0" max="4294967295" required value="0"></label>
       <button>Set allowance</button>
     </form>
-    <form onsubmit="event.preventDefault(); submit(buyAmmo)">
+    <form data-ul-three onsubmit="event.preventDefault(); submit(buyAmmo)">
       <label>Exchange <select id="purchaseCaliber"><option value="Mm17">17 mm</option><option value="Mm42">42 mm</option></select></label>
       <label>Rounds <input id="purchaseAmount" type="number" min="1" max="4294967295" required value="10"></label>
       <button>Buy with team gold</button>
     </form>
-    <form onsubmit="event.preventDefault(); submit(savePerformance)">
+    <form data-ul-three onsubmit="event.preventDefault(); submit(savePerformance)">
       <label>Performance <select id="performance">
         <option value='{"Infantry":{"chassis":"HpFocused","launcher":"CoolingFocused"}}'>Infantry, HP + cooling</option>
         <option value='{"Infantry":{"chassis":"HpFocused","launcher":"BurstFocused"}}'>Infantry, HP + burst</option>
@@ -142,12 +143,12 @@
       </select></label>
       <button>Set performance</button>
     </form>
-    <div class="row">
+    <div class="row uc-only">
       <button onclick="submit(()=>referee({InstantRespawn:{robot:selectedRobot()}}))">Instant respawn (gold)</button>
     </div>
-    <p class="muted">Native 2027 exchange: tens in a service zone, hundreds with a six-second delivery elsewhere. Running performance selections lock after confirmation or change.</p>
+    <p class="muted uc-only">Native 2027 exchange: tens in a service zone, hundreds with a six-second delivery elsewhere. Running performance selections lock after confirmation or change.</p>
   </div>
-  <div class="card">
+  <div class="card uc-only">
     <h2>Equipment overrides</h2>
     <form onsubmit="event.preventDefault(); submit(saveOutpost)">
       <label>Outpost <select id="editOutpost" onchange="loadOutpost()"></select></label>
@@ -180,11 +181,16 @@ function saveAllowance() { return referee({SetAllowance:{robot:selectedRobot(), 
 function buyAmmo() { return referee({BuyAmmo:{robot:selectedRobot(),caliber:$('purchaseCaliber').value,amount:number('purchaseAmount')}}); }
 function saveGold() { return referee({SetGold:{team:$('goldTeam').value,gold:number('goldValue')}}); }
 function savePerformance() { return referee({SetPerformance:{robot:selectedRobot(),performance:JSON.parse($('performance').value)}}); }
-function gameRobot(id) { return latest?.field.rmuc_2027?.game.robots.find(r => String(r.id) === String(id)); }
+function gameRobot(id) { return (latest?.field.rmul_2027?.robots || latest?.field.rmuc_2027?.game.robots || []).find(r => String(r.id) === String(id)); }
 function setMechanism(command,open) { return referee({[command]:{team:$('mechanismTeam').value,open}}); }
 function saveOutpost() { return referee({SetOutpostHp:{outpost:number('editOutpost'),hp:number('outpostHp')}}); }
 function loadRobot() {
   const r = gameRobot($('resourceRobot').value); if (!r) return;
+  if (latest?.field.rmul_2027) {
+    $('ammo17').value = r.allowance;
+    $('performance').value=JSON.stringify({Infantry:{chassis:r.power_chassis?'PowerFocused':'HpFocused',launcher:r.burst_launcher?'BurstFocused':'CoolingFocused'}});
+    return;
+  }
   $('ammo17').value = r.combat.allowance;
   const p = JSON.stringify({Infantry:{chassis:r.combat.chassis,launcher:r.combat.launcher}}), option = [...$('performance').options].find(o => JSON.stringify(JSON.parse(o.value)) === p);
   if (option) $('performance').value = option.value;
@@ -234,12 +240,33 @@ function render2027(state,g) {
     `<tr><td>${t}</td><td>${c.outposts[i].owner}</td><td>${g.outpost_hp[i]}</td><td>${g.rotor_stopped_ns[i]==null?'available':'stopped'}</td></tr>`).join('');
   $('events').textContent=c.territories.map((t,i)=>`${['Red outpost','Blue outpost','Red base','Blue base'][i]}: ${JSON.stringify(t.control)}, ${(t.progress_ns/1e9).toFixed(2)}/5 s`).join('\n');
 }
+function competitionControls(ul, infantry=false) {
+  document.querySelectorAll('.uc-only').forEach(node=>node.hidden=ul);
+  document.querySelectorAll('[data-ul-three]').forEach(node=>node.hidden=ul && infantry);
+}
+function renderUL(state,g) {
+  const infantry=g.format==='Infantry', teams=['Red','Blue'];
+  competitionControls(true,infantry);
+  $('phase').textContent=`${g.phase} · ${infantry?'RMUL Infantry':'RMUL 3v3'} 2027 V1.0.0`;
+  $('clock').textContent=fmt(g.phase==='Countdown'?g.countdown_remaining_ns:Math.max(0,(infantry?120e9:300e9)-g.elapsed_ns));
+  $('result').textContent=g.result?`${g.result.winner || 'Draw'} · ${g.result.reason}`:'';
+  $('resources').textContent=infantry?'':teams.map((team,i)=>`${team}: ${g.teams[i].control} control, ${g.teams[i].gold} gold`).join(' · ');
+  $('policyStatus').textContent=`Native UL rules on an approximate ${infantry?'5 × 5':'12 × 8'} m practice floor. No official UL CAD. Manual Sentry pilots and autonomous Sentry firing are unavailable.`;
+  if(options('resourceRobot',g.robots.map(r=>[r.id,`${r.team} ${r.role} #${r.id}`]))) loadRobot();
+  const selected=gameRobot($('resourceRobot').value);
+  $('robotDetail').textContent=selected?`${selected.role}: ${selected.hp}/${selected.max_hp} HP, heat ${selected.heat_tenths/10}, ammo ${selected.allowance}${selected.role==='Heavy'?(selected.heavy_installed?'; launcher installed (42 mm confirmation required for upgraded properties)':' (unarmed; install at supply through the app conversion command)'):''}`:'';
+  $('bots').textContent=(state.bots || []).map(id=>`Practice bot #${id}`).join(' · ');
+  $('robots').innerHTML='<tr><th>id</th><th>team</th><th>role</th><th>HP / launcher</th><th></th></tr>'+g.robots.map(r=>`<tr><td>${r.id}</td><td>${r.team}</td><td>${r.role}</td><td>${r.hp}/${r.max_hp}; heat ${r.heat_tenths/10}, ammo ${r.allowance}${r.weak?' WEAK':''}${r.online?'':' OFFLINE'}</td><td><button onclick="referee({DamageRobot:{robot:${r.id},amount:Number($('dmg').value)}})">hit</button><button onclick="referee({ReviveRobot:{robot:${r.id}}})">revive</button></td></tr>`).join('');
+  $('events').textContent=infantry?'Infantry confrontation: native lifesteal and round result.':g.zones.map((zone,i)=>`${['Red highland','Blue highland','Center'][i]} (approximate): ${zone.controller || 'neutral'}, progress ${zone.progress_ns.map(ns=>(ns/1e9).toFixed(1)).join('/')} s`).join('\n');
+}
 function render(state) {
   latest = state;
   const s = state.field;
   paused = state.paused;
   $('pause').textContent = paused ? 'Resume' : 'Pause';
   $('conn').textContent = `tick ${s.tick}${paused ? ' (paused)' : ''}`;
+  if (s.rmul_2027) { renderUL(state,s.rmul_2027); return; }
+  competitionControls(false);
   const native=s.rmuc_2027?.game;
   if (native) { render2027(state,native); return; }
   $('phase').textContent = 'Practice · no native match bindings';

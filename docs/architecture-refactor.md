@@ -20,6 +20,12 @@ workspace. The world referee runs the gameplay engine as the live
 rules authority; [Gameplay](gameplay.md) covers what it owns and what stays
 outside the live integration.
 
+Only one native competition authority is present in a `Field`: source-bound
+RMUC, RMUL 3v3, or RMUL Infantry 1v1. RMUL practice geometry does not reuse
+RMUC detector bindings. Configuration and restore reject mixed authorities;
+the public view must exactly match its hidden checkpoint authority. All formats
+use the same physics and explicit step clock. See [RMUL coverage](rmul-2027.md).
+
 ## Ownership
 
 | Data or decision | Owner |

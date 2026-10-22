@@ -316,6 +316,11 @@ fn toggle(
                 Some(r.id) == session.chassis_id
                     && r.role == rm_simulator_world::rmuc_2027::match_rules::GroundRole::Heavy
             })
+        }) || session.snapshot.rmul_2027.as_ref().is_some_and(|game| {
+            game.robots.iter().any(|r| {
+                Some(r.id) == session.chassis_id
+                    && r.role == rm_simulator_world::gameplay::rmul_2027::Role::Heavy
+            })
         }) || session.own_chassis().is_some_and(|c| {
             c.config
                 .articulation
@@ -491,6 +496,9 @@ fn update_panel(
         } else {
             "\nHero conversion locked: L3 or catch-up timer."
         });
+    }
+    if session.snapshot.rmul_2027.is_some() {
+        message = "RMUL virtual Heavy installation\nPark at your supply area and stop.\nUse Convert to Hero, then fire a 42 mm confirmation shot.\nL1–L3 source assembly is unavailable in UL.".into();
     }
     for mut t in &mut text {
         if t.0 != message {

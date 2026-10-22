@@ -58,6 +58,9 @@ pub struct Appearance(pub RenderingConfig);
 /// base gate, dart target and dart door mechanisms. Instance order is the
 /// renderer's spawn order and must stay stable across joins.
 pub fn cad_instances(cad: &CadAssets, rune_faces: bool, base_plates: bool) -> Vec<CadInstance> {
+    if cad.floor.file.is_empty() {
+        return Vec::new();
+    }
     if cad.rest_pose_only {
         let arena = transform_of(&cad.arena_pose());
         let mut instances = Vec::new();
@@ -377,6 +380,10 @@ pub fn setup_camera(
     lighting::spawn_lighting(&mut commands);
 }
 
+/// Practice floor and approximate RFID markings owned by one joined session.
+#[derive(Component)]
+pub(crate) struct PracticeFloor;
+
 /// Spawn the venue stadium around the arena footprint, once. The two
 /// `ArenaBounds` corners are world FLU metres and convert to Bevy's
 /// right/up/back frame here, at the renderer boundary. A later join finds the
@@ -402,6 +409,7 @@ pub fn setup_stadium(
 
 /// Spawn the rune and outpost overlays, the crosshair
 /// and the HUD text.
+#[allow(clippy::too_many_arguments)]
 pub fn setup(
     mut commands: Commands,
     atlas: Res<ArmorAtlas>,
@@ -409,10 +417,78 @@ pub fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     appearance: Res<Appearance>,
+    config: Option<Res<crate::staging::StagingConfig>>,
     session: Res<Session>,
 ) {
     let rendering = appearance.0;
     let snapshot = &session.snapshot;
+    let practice_competition = snapshot
+        .rmul_2027
+        .as_ref()
+        .map(|game| {
+            if game.format == rm_simulator_world::gameplay::rmul_2027::Format::Infantry {
+                rm_simulator_server::host_args::Competition::RmulInfantry2027
+            } else {
+                rm_simulator_server::host_args::Competition::Rmul2027
+            }
+        })
+        .or_else(|| {
+            config
+                .as_ref()
+                .map(|c| c.0.host.competition)
+                .filter(|c| c.rmul_format().is_some())
+        });
+    if let Some(competition) = practice_competition {
+        let [_, high] = competition.practice_bounds();
+        commands.spawn((
+            Mesh3d(meshes.add(Cuboid::new(
+                (2.0 * high[1]) as f32,
+                0.04,
+                (2.0 * high[0]) as f32,
+            ))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.24, 0.27, 0.28),
+                ..default()
+            })),
+            Transform::from_xyz(0.0, -0.02, 0.0),
+            PracticeFloor,
+        ));
+        for (x, y, hx, hy) in [
+            (high[0], 0.0, 0.025, high[1]),
+            (-high[0], 0.0, 0.025, high[1]),
+            (0.0, high[1], high[0], 0.025),
+            (0.0, -high[1], high[0], 0.025),
+        ] {
+            commands.spawn((
+                Mesh3d(meshes.add(Cuboid::new((2.0 * hy) as f32, 1.0, (2.0 * hx) as f32))),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.12, 0.14, 0.16),
+                    ..default()
+                })),
+                Transform::from_translation(rm_simulator_render::flu_position([x, y, 0.5])),
+                PracticeFloor,
+            ));
+        }
+        if competition == rm_simulator_server::host_args::Competition::Rmul2027 {
+            for (x, y, hx, hy, color) in [
+                (4.75, 2.75, 1.1, 1.0, Color::srgba(0.7, 0.12, 0.12, 0.8)),
+                (-4.75, -2.75, 1.1, 1.0, Color::srgba(0.12, 0.2, 0.7, 0.8)),
+                (2.3, 0.8, 0.65, 0.65, Color::srgba(0.7, 0.32, 0.12, 0.8)),
+                (-2.3, -0.8, 0.65, 0.65, Color::srgba(0.12, 0.5, 0.7, 0.8)),
+                (0.0, 0.0, 1.3, 1.3, Color::srgba(0.65, 0.55, 0.16, 0.8)),
+            ] {
+                commands.spawn((
+                    Mesh3d(meshes.add(Cuboid::new(2.0 * hy, 0.002, 2.0 * hx))),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: color,
+                        ..default()
+                    })),
+                    Transform::from_translation(rm_simulator_render::flu_position([x, y, 0.002])),
+                    PracticeFloor,
+                ));
+            }
+        }
+    }
     for (index, rune) in snapshot.runes.iter().enumerate() {
         let team = referee_team(snapshot, |r| &r.rune_teams, index)
             .unwrap_or_else(|| rune_team(&rune.hub_pose));

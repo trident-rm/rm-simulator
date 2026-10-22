@@ -25,6 +25,7 @@ Git history.
 | Standalone gameplay and its live integration | [Gameplay](gameplay.md) |
 | Rule sources and historical archive | [Referee rules](referee-rules.md) |
 | RM2027 manuals, changes and implementation decisions | [2027 rules reference](rules-2027.md) |
+| RMUL 2027 3v3/Infantry rules and practice limits | [RMUL 2027](rmul-2027.md) |
 | Current runtime, 2026 archive and admission | [Runtime and archive](seasons.md) |
 | Command-line options, controls and interface | [App options](app-options.md) |
 | App automation, headless rendering and screenshots | [Console](console.md) |

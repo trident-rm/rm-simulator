@@ -721,6 +721,9 @@ impl Owner {
         interaction: crate::map_interaction::Interaction,
     ) -> Result<(), String> {
         use crate::map_interaction::{Event, Recipient, Source, Target};
+        if self.simulation.competition().rmul_format().is_some() {
+            return Err("RMUL map communications are not implemented".into());
+        }
         interaction.validate()?;
         let peer = self
             .peers
@@ -1000,6 +1003,9 @@ impl Owner {
         if owner_spawn.is_some() && self.peers.iter().any(|peer| peer.owner) {
             return Err("an owner is already connected".into());
         }
+        if role == Role::Pilot {
+            self.simulation.validate_pilot_robot(robot)?;
+        }
         let id = self.next_id;
         self.next_id = self.next_id.checked_add(1).ok_or("client id overflow")?;
         let team = if role == Role::Referee {
@@ -1029,7 +1035,7 @@ impl Owner {
                     .simulation
                     .spawn_robot_with_chassis(team, robot, chassis),
             };
-            if owner_spawn.is_some()
+            if (owner_spawn.is_some() || self.simulation.competition().rmul_format().is_some())
                 && let Err(error) = &spawned
             {
                 return Err(error.clone());
@@ -1048,6 +1054,7 @@ impl Owner {
             None
         };
         let welcome = Welcome {
+            competition: self.simulation.competition(),
             prediction_scene: self.simulation.prediction_scene(),
             protocol: PROTOCOL_VERSION,
             client_id: id,
@@ -1136,6 +1143,7 @@ impl Owner {
         if peer.info.role != Role::Spectator || peer.info.chassis.is_some() {
             return Err("only an undeployed spectator can deploy".into());
         }
+        self.simulation.validate_pilot_robot(robot)?;
         let chassis_id = self
             .simulation
             .deploy_robot(team, robot, chassis, position_m)?;
@@ -1443,6 +1451,43 @@ mod tests {
     }
     fn next(messages: &crate::net::outbox::Receiver) -> Arc<Outbound> {
         messages.recv().unwrap()
+    }
+
+    #[test]
+    fn rmul_host_rejects_manual_sentry_and_duplicate_pilot_slots() {
+        for referee in [false, true] {
+            let sim = Simulation::rmul_practice(
+                crate::host_args::Competition::Rmul2027,
+                referee,
+                Some(Default::default()),
+                true,
+            )
+            .unwrap();
+            let host = Host::new(sim, true).unwrap();
+            let handle = host.handle();
+            let request = |robot| {
+                let (outbox, _messages) = crate::net::outbox::channel(64);
+                handle.join(PeerRegistration {
+                    password: String::new(),
+                    name: "UL pilot".into(),
+                    team: Some(Team::Red),
+                    role: Role::Pilot,
+                    robot,
+                    chassis: Default::default(),
+                    owner_spawn: None,
+                    outbox,
+                    stream: Stop::default(),
+                })
+            };
+            assert!(request(Robot::Sentry).unwrap_err().contains("autonomous"));
+            let infantry = robot_peer(&handle, Role::Pilot, Some(Team::Red), Robot::Infantry3);
+            assert_eq!(
+                infantry.0.competition,
+                crate::host_args::Competition::Rmul2027
+            );
+            assert!(request(Robot::Infantry3).unwrap_err().contains("occupied"));
+            assert!(request(Robot::Infantry4).is_err());
+        }
     }
 
     #[test]

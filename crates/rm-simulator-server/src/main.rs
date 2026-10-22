@@ -4,7 +4,6 @@
 //! clock, serves players over GameNetworkingSockets UDP and the referee over HTTP.
 use clap::Parser;
 use rm_simulator_server::host_args::HostArgs;
-use rm_simulator_server::layout;
 use rm_simulator_server::{
     cad_assets,
     http::HttpServer,
@@ -37,46 +36,54 @@ struct Args {
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    args.host
+        .validate_competition_assets()
+        .map_err(anyhow::Error::msg)?;
 
-    let cad = cad_assets::load(&args.host.cad_assets)?;
-    println!(
-        "CAD season: RM{}, mode: {}",
-        cad.season.year(),
-        if cad.rmuc_2027.is_some() && !args.host.no_referee {
-            "RMUC 2027 V1.0.0 control/structure match subset"
-        } else if cad.rest_pose_only {
-            "rest-pose physics sandbox (no match referee)"
-        } else {
-            "live field"
-        }
-    );
+    let cad = if args.host.competition.rmul_format().is_some() {
+        anyhow::ensure!(
+            args.host.assembly_assets.is_none(),
+            "UC assembly source assets are unavailable in RMUL practice"
+        );
+        println!(
+            "{}: approximate practice floor (no CAD)",
+            args.host.competition.id()
+        );
+        None
+    } else {
+        Some(cad_assets::load(&args.host.cad_assets_path())?)
+    };
     let options = args.host.layout_options();
-    let simulation = Simulation::from_cad(
-        &cad,
-        &options,
-        (!args.no_chassis).then(|| {
-            if args.host.stair_heavy {
-                ChassisConfig::stair_heavy()
-            } else if args.host.folding_hero {
-                ChassisConfig::folding_hero()
-            } else if args.host.team_cad {
-                ChassisConfig::team_cad()
-            } else {
-                ChassisConfig::default()
-            }
-        }),
-        args.host.start_paused,
-        |stage| {
+    let chassis = (!args.no_chassis).then(|| {
+        if args.host.stair_heavy {
+            ChassisConfig::stair_heavy()
+        } else if args.host.folding_hero {
+            ChassisConfig::folding_hero()
+        } else if args.host.team_cad {
+            ChassisConfig::team_cad()
+        } else {
+            ChassisConfig::default()
+        }
+    });
+    let simulation = if let Some(cad) = &cad {
+        Simulation::from_cad(cad, &options, chassis, args.host.start_paused, |stage| {
             if let BuildProgress::TerrainReady(description) = stage {
                 println!("{description}");
             }
-        },
-    )?
+        })?
+    } else {
+        Simulation::rmul_practice(
+            args.host.competition,
+            !args.host.no_referee,
+            chassis,
+            args.host.start_paused,
+        )?
+    }
     .with_assembly_assets(
         args.host.assembly_assets.as_deref(),
         args.host.assembly_area.as_deref(),
         args.host.assembly_hints.as_deref(),
-        cad.floor_top_cad_m,
+        cad.as_ref().map_or(0.0, |cad| cad.floor_top_cad_m),
     )
     .map_err(anyhow::Error::msg)?
     .with_weapon(args.host.weapon())
@@ -121,30 +128,6 @@ fn main() -> anyhow::Result<()> {
     } else {
         None
     };
-    println!(
-        "field: {} rune(s), {} outpost(s), chassis {}, referee {}, floor catch {} m",
-        if cad.rest_pose_only {
-            0
-        } else {
-            options.rune.map_or(0, |_| 2)
-        },
-        if cad.rest_pose_only {
-            0
-        } else {
-            cad.outpost.placements.len()
-        },
-        if args.no_chassis { "no" } else { "per player" },
-        if options.referee && !cad.rest_pose_only {
-            "yes"
-        } else {
-            "no"
-        },
-        if options.terrain {
-            layout::CATCH_FLOOR_M
-        } else {
-            0.0
-        }
-    );
     server.run_clock()
 }
 

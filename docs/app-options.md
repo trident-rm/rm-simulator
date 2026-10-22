@@ -33,6 +33,7 @@ joined with `--connect` takes those from the server.
 | `--stair-heavy` | Host selects the DreamChaser stair linkage; pilot with `--robot engineer` |
 | `--folding-hero` | Host selects the reference folding Hero preset; live 2027 deployment uses Heavy |
 | `--team-cad` | Host option selecting the fitted team Omni dimensions without requiring visual assets |
+| `--competition MODE` | `rmuc-2027` (default), `rmul-2027` (3v3), or `rmul-infantry-2027`; UL uses approximate flat practice floors without UC CAD |
 | `--cad-assets DIR` | Extracted RMUC CAD directory; relative paths start at the working directory for both manifests and meshes |
 | `--big-rune` / `--no-rune` | Big Rune motion and two-target groups for training (a match always starts with the Small Rune and converts at 3:00), or no rune rules |
 | `--outpost-speed-rad-s R` | Armor ring rotation rate |
@@ -646,6 +647,34 @@ external control; gimbal and folding state are preserved. The optional ROS bridg
 accepts stamped velocity commands for an unpiloted in-game Sentry. See the
 [setup, JSON examples and control modes](../integrations/ros2/README.md#control-a-robot-in-an-existing-game).
 This controls a live host; it does not yet export that host's LiDAR or odometry.
+
+## RMUL 2027 practice sessions
+
+Both binaries accept `--competition rmul-2027` or
+`--competition rmul-infantry-2027`. The title menu Competition field accepts the
+same spellings; hosting and Single Player preserve that selection.
+`rmuc-2027` remains the default.
+
+These are native UL rules on approximate practice geometry, not a UL CAD field:
+3v3 uses a bounded 12 × 8 m floor and Infantry confrontation a 5 × 5 m floor.
+No UC field package is loaded, and explicitly combining UL with `--cad-assets`
+is rejected. Supply, highland and centre markings are approximate training
+regions. They do not establish official antenna footprints or terrain.
+
+UL launches use inward-facing practice spawn positions and bypass the UC base
+ring deployment screen. Three-versus-three admits one Heavy (`engineer`) and one Infantry
+(`infantry-3`) pilot per team; confrontation admits one Infantry per team.
+UL §3.1.3 requires a fully automatic Sentry, so manual Sentry pilots are rejected.
+Referee-spawned Sentries are practice automation only; autonomous firing is not implemented. The host rejects unsupported roles and duplicate slots even
+with `--no-referee`. A spectator or referee owns no chassis.
+Use the ordinary referee Start/Finish/Reset match controls. The clock and pilot
+HP display the selected native match. `--no-referee` runs physical practice.
+UC-specific Rune, assembly source assets and territory controls are unavailable
+in UL; Heavy installation uses the virtual practice conversion command.
+
+When joining a remote UL host, pass the same `--competition` value alongside
+`--connect HOST:PORT`; this chooses the CAD-free presentation before connecting.
+A native match format mismatch is rejected with the required competition value.
 
 ## Lightweight visualization
 
