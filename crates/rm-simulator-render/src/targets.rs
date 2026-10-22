@@ -68,6 +68,7 @@ fn sync(
     meshes: Option<ResMut<Assets<Mesh>>>,
     materials: Option<ResMut<Assets<StandardMaterial>>>,
     mut cad_lights: Query<(&mut CadLight, &MeshMaterial3d<StandardMaterial>)>,
+    mut bound: Local<std::collections::HashSet<u64>>,
     mut panels: Query<(
         Entity,
         &mut Panel,
@@ -78,8 +79,8 @@ fn sync(
     let (Some(mut meshes), Some(mut materials)) = (meshes, materials) else {
         return;
     };
-    let bound: std::collections::HashSet<_> =
-        cad_lights.iter().map(|(light, _)| light.id).collect();
+    bound.clear();
+    bound.extend(cad_lights.iter().map(|(light, _)| light.id));
     for (mut light, material) in &mut cad_lights {
         let appearance = input.0.iter().find(|a| a.id == light.id);
         let wanted = appearance.map(|a| (a.team, a.disabled, a.flash));

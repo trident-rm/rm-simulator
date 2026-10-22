@@ -976,7 +976,9 @@ impl WorldPhysics {
         time_ns: u64,
     ) -> Result<crate::sensors::rolling::SceneCapture, &'static str> {
         use crate::sensors::rolling::{SceneCapture, SensorCollider};
-        let robot_state = self.chassis_snapshot(robot).ok_or("unknown LiDAR robot")?;
+        let robot_state = self
+            .chassis_control_state(robot)
+            .ok_or("unknown LiDAR robot")?;
         let mut fixed = Vec::new();
         let mut moving = Vec::new();
         for (handle, collider) in self.world.all_colliders().filter(|(_, c)| c.is_enabled()) {

@@ -400,6 +400,25 @@ mod tests {
         MountedLidar::new(Mid360Pattern::new(0.1, 40.).unwrap(), mount, 0, effects).unwrap()
     }
     #[test]
+    fn scene_capture_pose_and_placement_follow_live_chassis() {
+        let (mut world, robot) = rig();
+        for target in [Pose::yawed([1., 2., 0.3], 0.7), Pose::at([-1., 0., 0.4])] {
+            world.place_chassis(robot, target).unwrap();
+            let expected = world.chassis_snapshot(robot).unwrap();
+            let scene = world.lidar_scene_capture(robot, 123).unwrap();
+            assert_eq!(scene.robot_pose, pose(expected.pose));
+            assert_eq!(scene.placement_revision, expected.placement_revision);
+            assert_eq!(scene.time_ns(), 123);
+            assert_eq!(
+                scene.robot_revisions,
+                vec![(robot, expected.placement_revision)]
+            );
+            assert!(!scene.moving.is_empty());
+            assert!(!scene.fixed.is_empty());
+        }
+        assert!(world.lidar_scene_capture(u32::MAX, 0).is_err());
+    }
+    #[test]
     fn articulated_carrier_changes_rays_without_moving_chassis_geometry() {
         let (world, robot) = rig();
         let a = Pose::yawed([0., 0., 0.5], 0.2);

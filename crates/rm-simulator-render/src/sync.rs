@@ -234,7 +234,7 @@ fn sync_bases(
     for (light, mut material) in &mut lights {
         let light = &light.0;
         if let Some(base) = scene.bases.get(light.outpost as usize) {
-            ArmorState::resolve(base.disabled, base.hit_flash[light.face as usize]).apply(
+            ArmorState::resolve(base.disabled, base.hit_flash[light.face as usize]).apply_tracked(
                 &mut material,
                 &light.lit,
                 &light.struck,
@@ -263,12 +263,8 @@ fn sync_outposts(
     }
     for (light, mut material) in &mut lights {
         if let Some(outpost) = scene.outposts.get(light.outpost as usize) {
-            ArmorState::resolve(outpost.disabled, outpost.hit_flash[light.face as usize]).apply(
-                &mut material,
-                &light.lit,
-                &light.struck,
-                &light.disabled,
-            );
+            ArmorState::resolve(outpost.disabled, outpost.hit_flash[light.face as usize])
+                .apply_tracked(&mut material, &light.lit, &light.struck, &light.disabled);
         }
     }
 }
@@ -311,11 +307,34 @@ impl ArmorState {
         struck: &Handle<StandardMaterial>,
         disabled: &Handle<StandardMaterial>,
     ) {
-        let wanted = match self {
+        let wanted = self.handle(lit, struck, disabled);
+        if material.0 != *wanted {
+            material.0 = wanted.clone();
+        }
+    }
+
+    fn handle<'a>(
+        self,
+        lit: &'a Handle<StandardMaterial>,
+        struck: &'a Handle<StandardMaterial>,
+        disabled: &'a Handle<StandardMaterial>,
+    ) -> &'a Handle<StandardMaterial> {
+        match self {
             Self::Enabled => lit,
             Self::Struck => struck,
             Self::Disabled => disabled,
-        };
+        }
+    }
+
+    /// Preserve ECS change detection until a handle actually changes.
+    pub(crate) fn apply_tracked(
+        self,
+        material: &mut Mut<'_, MeshMaterial3d<StandardMaterial>>,
+        lit: &Handle<StandardMaterial>,
+        struck: &Handle<StandardMaterial>,
+        disabled: &Handle<StandardMaterial>,
+    ) {
+        let wanted = self.handle(lit, struck, disabled);
         if material.0 != *wanted {
             material.0 = wanted.clone();
         }
@@ -324,7 +343,7 @@ impl ArmorState {
 
 /// Point a mesh at the struck or lit material, touching it only on change.
 pub(crate) fn swap_material(
-    material: &mut MeshMaterial3d<StandardMaterial>,
+    material: &mut Mut<'_, MeshMaterial3d<StandardMaterial>>,
     struck: bool,
     lit_handle: &Handle<StandardMaterial>,
     struck_handle: &Handle<StandardMaterial>,
@@ -441,6 +460,106 @@ mod tests {
         for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
             assert!((actual * axis - expected * axis).length() < 1e-6);
         }
+    }
+
+    #[test]
+    fn unchanged_target_lights_do_not_dirty_materials_and_late_lights_initialize() {
+        #[derive(Resource, Default)]
+        struct Writes(usize);
+        fn count(
+            changed: Query<Entity, Changed<MeshMaterial3d<StandardMaterial>>>,
+            mut writes: ResMut<Writes>,
+        ) {
+            writes.0 = changed.iter().count();
+        }
+        let mut app = App::new();
+        app.add_plugins(SceneSyncPlugin)
+            .init_resource::<Writes>()
+            .add_systems(Update, count.after(SceneSyncSet));
+        let lit = Handle::<StandardMaterial>::Uuid(
+            bevy::asset::uuid::Uuid::from_u128(1),
+            std::marker::PhantomData,
+        );
+        let struck = Handle::<StandardMaterial>::Uuid(
+            bevy::asset::uuid::Uuid::from_u128(2),
+            std::marker::PhantomData,
+        );
+        let light = || OutpostArmorLight {
+            outpost: 0,
+            face: 0,
+            lit: lit.clone(),
+            struck: struck.clone(),
+            disabled: Handle::default(),
+        };
+        app.world_mut()
+            .spawn((light(), MeshMaterial3d(lit.clone())));
+        app.world_mut().spawn((
+            crate::outpost::BaseArmorLight(light()),
+            MeshMaterial3d(lit.clone()),
+        ));
+        app.world_mut().spawn((
+            RuneTargetLight {
+                rune: 0,
+                id: 0,
+                lit: lit.clone(),
+                struck: struck.clone(),
+            },
+            MeshMaterial3d(lit.clone()),
+        ));
+        app.world_mut().resource_mut::<SceneInput>().0 = Some(SceneState {
+            bases: vec![BaseAppearance {
+                disabled: false,
+                plates: [PoseFlu::default(); 7],
+                hit_flash: [false; 7],
+            }],
+            outposts: vec![OutpostAppearance {
+                disabled: false,
+                origin: PoseFlu::default(),
+                angle_rad: 0.,
+                armors: [PoseFlu::default(); 3],
+                hit_flash: [false; 3],
+            }],
+            runes: vec![RuneAppearance {
+                hub_pose: PoseFlu::default(),
+                angle_rad: 0.,
+                active_blades: [false; 5],
+                activated_blades: [false; 5],
+                progress_stages: [false; 5],
+                fully_activated: false,
+                hit_flash: [false; 5],
+            }],
+            ..Default::default()
+        });
+        app.update();
+        assert_eq!(app.world().resource::<Writes>().0, 3);
+        app.update();
+        assert_eq!(app.world().resource::<Writes>().0, 0);
+        {
+            let mut input = app.world_mut().resource_mut::<SceneInput>();
+            let scene = input.0.as_mut().unwrap();
+            scene.bases[0].hit_flash[0] = true;
+            scene.outposts[0].hit_flash[0] = true;
+            scene.runes[0].hit_flash[0] = true;
+        }
+        app.update();
+        assert_eq!(app.world().resource::<Writes>().0, 3);
+        app.update();
+        assert_eq!(app.world().resource::<Writes>().0, 0);
+        let late = app
+            .world_mut()
+            .spawn((light(), MeshMaterial3d(lit.clone())))
+            .id();
+        app.update();
+        assert_eq!(app.world().resource::<Writes>().0, 1);
+        assert_eq!(
+            app.world()
+                .get::<MeshMaterial3d<StandardMaterial>>(late)
+                .unwrap()
+                .0,
+            struck
+        );
+        app.update();
+        assert_eq!(app.world().resource::<Writes>().0, 0);
     }
 
     #[test]

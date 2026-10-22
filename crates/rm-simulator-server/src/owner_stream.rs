@@ -125,6 +125,26 @@ pub struct OwnerAnchor {
     /// is solver state that a restore rebuilds.
     pub owner: ChassisSnapshot,
 }
+/// Borrowed encoding view; the hot delivery path retains the publication's
+/// configuration, wheel storage and articulation buffers instead of cloning them.
+pub(crate) struct AnchorRef<'a> {
+    snapshot_id: u64,
+    input_epoch: u64,
+    time_ns: u64,
+    paused: bool,
+    pub(crate) owner: &'a ChassisSnapshot,
+}
+impl<'a> AnchorRef<'a> {
+    pub(crate) fn from_state(state: &'a SimulationState, chassis: u32) -> Option<Self> {
+        Some(Self {
+            snapshot_id: state.snapshot_id,
+            input_epoch: state.input_epoch,
+            time_ns: state.field.time_ns,
+            paused: state.paused,
+            owner: state.field.chassis.iter().find(|c| c.id == chassis)?,
+        })
+    }
+}
 impl OwnerAnchor {
     /// Cut an anchor for `chassis` from `state`, or `None` when the field holds
     /// no such chassis.
@@ -161,91 +181,14 @@ impl OwnerAnchor {
     /// size. Errors when a dynamic value is non-finite or outside its
     /// quantized range, or when the whole anchor exceeds [`MAX_BYTES`].
     pub fn encode(&self) -> io::Result<Vec<u8>> {
-        let max_fold = self.owner.config.transform_limit_rad();
-        if !self.owner.fold_angle_rad.is_finite()
-            || self.owner.fold_angle_rad < 0.
-            || self.owner.fold_angle_rad > max_fold
-            || !self.owner.command.is_finite()
-            || self
-                .owner
-                .wheels
-                .iter()
-                .any(|w| w.suspension_compression_m < 0.0)
-        {
-            return Err(invalid());
+        AnchorRef {
+            snapshot_id: self.snapshot_id,
+            input_epoch: self.input_epoch,
+            time_ns: self.time_ns,
+            paused: self.paused,
+            owner: &self.owner,
         }
-        self.owner
-            .drive_control
-            .validate(self.owner.config.wheel_hubs_m.len())
-            .map_err(|_| invalid())?;
-        let mut bytes = MAGIC.to_vec();
-        for n in [
-            self.snapshot_id,
-            self.input_epoch,
-            self.time_ns,
-            self.owner.placement_revision,
-        ] {
-            bytes.extend(n.to_le_bytes());
-        }
-        bytes.extend(self.owner.id.to_le_bytes());
-        bytes.push(u8::from(self.paused));
-        bytes.push(u8::from(self.owner.defeated));
-        bytes.push(u8::from(self.owner.team == rm_simulator_world::Team::Blue));
-        bytes.extend(self.config_revision().raw().to_le_bytes());
-        for v in self.owner.pose.translation_m {
-            bytes.extend(quantize_i32(v, POS_MM)?.to_le_bytes());
-        }
-        bytes.extend(rotation(self.owner.pose.rotation_wxyz)?);
-        for v in self.owner.turret.translation_m {
-            bytes.extend(quantize_i32(v, POS_MM)?.to_le_bytes());
-        }
-        bytes.extend(rotation(self.owner.turret.rotation_wxyz)?);
-        for v in self.owner.velocity_m_s {
-            bytes.extend(quantize_i16(v, VEL_SCALE)?.to_le_bytes());
-        }
-        for v in self.owner.angular_velocity_rad_s {
-            bytes.extend(quantize_i16(v, RATE_SCALE)?.to_le_bytes());
-        }
-        let c = self.owner.command;
-        bytes.extend(quantize_i16(c.forward_m_s, VEL_SCALE)?.to_le_bytes());
-        bytes.extend(quantize_i16(c.left_m_s, VEL_SCALE)?.to_le_bytes());
-        bytes.extend(quantize_i16(c.yaw_rate_rad_s, RATE_SCALE)?.to_le_bytes());
-        bytes.extend(quantize_i32(c.aim_yaw_rad, AIM_SCALE)?.to_le_bytes());
-        bytes.extend(quantize_i32(c.aim_pitch_rad, AIM_SCALE)?.to_le_bytes());
-        bytes.push(u8::from(c.jump));
-        bytes.push(u8::from(c.folded));
-        bytes.push(c.balance_control);
-        bytes.extend(quantize_i32(self.owner.fold_angle_rad, AIM_SCALE)?.to_le_bytes());
-        bytes.push(u8::from(self.owner.jump_held));
-        for v in self.owner.held_aim_rad {
-            bytes.extend(quantize_i32(v, AIM_SCALE)?.to_le_bytes());
-        }
-        for v in self.owner.gimbal_velocity_rad_s {
-            bytes.extend(quantize_i16(v, RATE_SCALE)?.to_le_bytes());
-        }
-        bytes.push(u8::try_from(self.owner.wheels.len()).map_err(|_| invalid())?);
-        for wheel in &self.owner.wheels {
-            for v in wheel.hub_m {
-                bytes.extend(quantize_i32(v, POS_MM)?.to_le_bytes());
-            }
-            bytes.extend(quantize_i32(wheel.spin_rad, AIM_SCALE)?.to_le_bytes());
-            bytes.extend(quantize_i16(wheel.target_m_s, VEL_SCALE)?.to_le_bytes());
-            bytes.extend(quantize_i32(wheel.angular_velocity_rad_s, RATE_SCALE)?.to_le_bytes());
-            bytes.extend(quantize_i16(wheel.suspension_compression_m, POS_MM)?.to_le_bytes());
-        }
-        match &self.owner.drive_control {
-            DriveControl::BodyVelocity => bytes.push(0),
-            DriveControl::WheelTorques(torques) => {
-                bytes.push(1);
-                for torque in torques.as_nm() {
-                    bytes.extend(torque.to_le_bytes());
-                }
-            }
-        }
-        if bytes.len() > MAX_BYTES {
-            return Err(io::Error::other("owner anchor exceeds datagram budget"));
-        }
-        Ok(bytes)
+        .encode(self.config_revision())
     }
     /// Read only the configuration reference an encoded anchor names.
     ///
@@ -510,6 +453,97 @@ impl Reader<'_> {
     }
 }
 
+impl AnchorRef<'_> {
+    /// Encode with the configuration identity already computed for the handshake.
+    pub(crate) fn encode(&self, revision: ConfigRevision) -> io::Result<Vec<u8>> {
+        let max_fold = self.owner.config.transform_limit_rad();
+        if !self.owner.fold_angle_rad.is_finite()
+            || self.owner.fold_angle_rad < 0.
+            || self.owner.fold_angle_rad > max_fold
+            || !self.owner.command.is_finite()
+            || self
+                .owner
+                .wheels
+                .iter()
+                .any(|w| w.suspension_compression_m < 0.0)
+        {
+            return Err(invalid());
+        }
+        self.owner
+            .drive_control
+            .validate(self.owner.config.wheel_hubs_m.len())
+            .map_err(|_| invalid())?;
+        let mut bytes = MAGIC.to_vec();
+        for n in [
+            self.snapshot_id,
+            self.input_epoch,
+            self.time_ns,
+            self.owner.placement_revision,
+        ] {
+            bytes.extend(n.to_le_bytes());
+        }
+        bytes.extend(self.owner.id.to_le_bytes());
+        bytes.push(u8::from(self.paused));
+        bytes.push(u8::from(self.owner.defeated));
+        bytes.push(u8::from(self.owner.team == rm_simulator_world::Team::Blue));
+        bytes.extend(revision.raw().to_le_bytes());
+        for v in self.owner.pose.translation_m {
+            bytes.extend(quantize_i32(v, POS_MM)?.to_le_bytes());
+        }
+        bytes.extend(rotation(self.owner.pose.rotation_wxyz)?);
+        for v in self.owner.turret.translation_m {
+            bytes.extend(quantize_i32(v, POS_MM)?.to_le_bytes());
+        }
+        bytes.extend(rotation(self.owner.turret.rotation_wxyz)?);
+        for v in self.owner.velocity_m_s {
+            bytes.extend(quantize_i16(v, VEL_SCALE)?.to_le_bytes());
+        }
+        for v in self.owner.angular_velocity_rad_s {
+            bytes.extend(quantize_i16(v, RATE_SCALE)?.to_le_bytes());
+        }
+        let c = self.owner.command;
+        bytes.extend(quantize_i16(c.forward_m_s, VEL_SCALE)?.to_le_bytes());
+        bytes.extend(quantize_i16(c.left_m_s, VEL_SCALE)?.to_le_bytes());
+        bytes.extend(quantize_i16(c.yaw_rate_rad_s, RATE_SCALE)?.to_le_bytes());
+        bytes.extend(quantize_i32(c.aim_yaw_rad, AIM_SCALE)?.to_le_bytes());
+        bytes.extend(quantize_i32(c.aim_pitch_rad, AIM_SCALE)?.to_le_bytes());
+        bytes.push(u8::from(c.jump));
+        bytes.push(u8::from(c.folded));
+        bytes.push(c.balance_control);
+        bytes.extend(quantize_i32(self.owner.fold_angle_rad, AIM_SCALE)?.to_le_bytes());
+        bytes.push(u8::from(self.owner.jump_held));
+        for v in self.owner.held_aim_rad {
+            bytes.extend(quantize_i32(v, AIM_SCALE)?.to_le_bytes());
+        }
+        for v in self.owner.gimbal_velocity_rad_s {
+            bytes.extend(quantize_i16(v, RATE_SCALE)?.to_le_bytes());
+        }
+        bytes.push(u8::try_from(self.owner.wheels.len()).map_err(|_| invalid())?);
+        for wheel in &self.owner.wheels {
+            for v in wheel.hub_m {
+                bytes.extend(quantize_i32(v, POS_MM)?.to_le_bytes());
+            }
+            bytes.extend(quantize_i32(wheel.spin_rad, AIM_SCALE)?.to_le_bytes());
+            bytes.extend(quantize_i16(wheel.target_m_s, VEL_SCALE)?.to_le_bytes());
+            bytes.extend(quantize_i32(wheel.angular_velocity_rad_s, RATE_SCALE)?.to_le_bytes());
+            bytes.extend(quantize_i16(wheel.suspension_compression_m, POS_MM)?.to_le_bytes());
+        }
+        match &self.owner.drive_control {
+            DriveControl::BodyVelocity => bytes.push(0),
+            DriveControl::WheelTorques(torques) => {
+                bytes.push(1);
+                for torque in torques.as_nm() {
+                    bytes.extend(torque.to_le_bytes());
+                }
+            }
+        }
+        if bytes.len() > MAX_BYTES {
+            return Err(io::Error::other("owner anchor exceeds datagram budget"));
+        }
+        Ok(bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -533,6 +567,81 @@ mod tests {
         state.snapshot_id = snapshot_id;
         state.input_epoch = epoch;
         (state, chassis)
+    }
+
+    #[test]
+    fn borrowed_anchor_preserves_wire_bytes_without_copying_owner_storage() {
+        let (mut state, chassis) = anchored(16, 73, 9);
+        state.paused = true;
+        let owner = &mut state.field.chassis[0];
+        owner.team = Team::Blue;
+        owner.drive_control = rm_simulator_world::DriveControl::WheelTorques(
+            rm_simulator_world::WheelTorques::new(vec![0.25; owner.wheels.len()]).unwrap(),
+        );
+        let borrowed = AnchorRef::from_state(&state, chassis).unwrap();
+        assert!(std::ptr::eq(borrowed.owner, &state.field.chassis[0]));
+        assert_eq!(
+            borrowed.owner.wheels.as_ptr(),
+            state.field.chassis[0].wheels.as_ptr()
+        );
+        let owned = OwnerAnchor::from_state(&state, chassis).unwrap();
+        let bytes = borrowed.encode(owned.config_revision()).unwrap();
+        assert_eq!(bytes, owned.encode().unwrap());
+        let decoded = OwnerAnchor::decode(&bytes, &borrowed.owner.config).unwrap();
+        assert_quantized(&owned, &decoded);
+        assert!(decoded.owner.wheels.iter().all(|w| w.contact.is_none()));
+        assert!(AnchorRef::from_state(&state, u32::MAX).is_none());
+
+        state.field.chassis[0].velocity_m_s[0] = f64::NAN;
+        let borrowed = AnchorRef::from_state(&state, chassis).unwrap();
+        let owned = OwnerAnchor::from_state(&state, chassis).unwrap();
+        assert!(borrowed.encode(owned.config_revision()).is_err());
+        assert!(owned.encode().is_err());
+    }
+
+    /// Run separately after building, with `--ignored --nocapture` and one test thread.
+    #[test]
+    #[ignore = "short manual owner allocation/copy cost probe"]
+    fn borrowed_owner_encoding_cost() {
+        use std::{hint::black_box, time::Instant};
+        let (state, chassis) = anchored(16, 73, 9);
+        let mut old_ns = 0;
+        let mut new_ns = 0;
+        let iterations = 2_000;
+        for round in 0..6 {
+            let mut measure = |old| {
+                let start = Instant::now();
+                for _ in 0..iterations {
+                    if old {
+                        let anchor = OwnerAnchor::from_state(black_box(&state), chassis).unwrap();
+                        black_box(anchor.config_revision()); // Delivery handshake.
+                        black_box(anchor.encode().unwrap()); // Previously hashed again here.
+                    } else {
+                        let anchor = AnchorRef::from_state(black_box(&state), chassis).unwrap();
+                        let revision = ConfigRevision::of(&anchor.owner.config);
+                        black_box(anchor.encode(revision).unwrap());
+                    }
+                }
+                let elapsed = start.elapsed().as_nanos();
+                if old {
+                    old_ns += elapsed;
+                } else {
+                    new_ns += elapsed;
+                }
+            };
+            // Alternate order to reduce systematic warmup/scheduling bias.
+            measure(round % 2 == 0);
+            measure(round % 2 != 0);
+        }
+        println!(
+            "owner encode: old {:.1} ns, borrowed {:.1} ns per anchor; {} anchors per path",
+            old_ns as f64 / (6 * iterations) as f64,
+            new_ns as f64 / (6 * iterations) as f64,
+            6 * iterations
+        );
+        println!(
+            "Default config: 2 fewer Vec clones per anchor (wheel hubs + wheel states), 1 fewer full config serialization/hash; source articulation and direct torques can save more."
+        );
     }
 
     /// The bytes the replaced layout spent on the configuration this anchor now

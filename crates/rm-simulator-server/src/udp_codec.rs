@@ -866,12 +866,12 @@ impl PeerCodec {
         if frame.periodic
             && let Some(chassis) = self.chassis
             && let ServerMessage::Snapshot(state) = frame.message()
-            && let Some(anchor) = crate::owner_stream::OwnerAnchor::from_state(state, chassis)
+            && let Some(anchor) = crate::owner_stream::AnchorRef::from_state(state, chassis)
         {
-            let revision = anchor.config_revision();
+            let revision = crate::owner_stream::ConfigRevision::of(&anchor.owner.config);
             if self.owner_config.acknowledged(revision) {
                 // Oversize anchors never fragment. Full checkpoints remain the recovery path.
-                if let Ok(bytes) = anchor.encode() {
+                if let Ok(bytes) = anchor.encode(revision) {
                     self.encoding.owner_updates += 1;
                     self.encoding.owner_bytes += bytes.len() as u64;
                     self.pacer.owner(self.elapsed(now), bytes);

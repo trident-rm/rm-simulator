@@ -9,6 +9,9 @@ explains how to compare builds.
 See [graphics and visualization measurements](performance-graphics-20261023.md)
 for the render-preset comparison, CPU-contention limits and launch controls.
 
+See [optimization priorities](performance-optimization-20261023.md) for the
+headless/PPO workload split, copy reduction and GPU candidate criteria.
+
 ## Engine microbenchmarks
 
 Run the dependency-free examples in release mode:

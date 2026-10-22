@@ -1407,74 +1407,87 @@ struct WheelState {
     contact: Option<WheelContact>,
 }
 
-/// Integrate motor torque and equal/opposite tyre reaction, with shared power.
-/// Eight internal slices per Rapier slice resolve the stiff slip law; time
-/// still advances only on the ordinary fixed 128 Hz world clock.
-fn integrate_wheel_drives(
-    config: &ChassisConfig,
-    wheels: &mut [WheelState],
-    contacts: &[(f64, f64)],
-    dt_s: f64,
-    budget_w: f64,
-    torques: Option<&WheelTorques>,
-) -> (Vec<f64>, f64, f64) {
-    let ratio = config.wheel_radius_m
-        / if config.mecanum {
-            std::f64::consts::SQRT_2
-        } else {
-            1.0
-        };
-    let slices = 8;
-    let dt = dt_s / f64::from(slices);
-    let mut forces = vec![0.0; wheels.len()];
-    let mut motors = vec![0.0; wheels.len()];
-    let mut average_scale = 0.0;
-    let mut power_w = 0.0;
-    for _ in 0..slices {
-        let mut mechanical_w = 0.0;
-        let mut copper_w = 0.0;
-        for (index, (wheel, motor)) in wheels.iter().zip(&mut motors).enumerate() {
-            let speed = wheel.angular_velocity_rad_s * ratio;
-            let requested_force = torques.map_or_else(
-                || 4.0 * config.slip_stiffness_n_s_m * (wheel.target_m_s - speed),
-                |torques| torques.as_nm()[index] / ratio,
-            );
-            let limit = config.wheel_stall_force_n
-                * if requested_force * speed > 0.0 {
-                    (1.0 - speed.abs() / config.wheel_no_load_speed_m_s).clamp(0.0, 1.0)
-                } else {
-                    1.0
-                };
-            *motor = requested_force.clamp(-limit, limit);
-            mechanical_w += (*motor * speed).max(0.0);
-            copper_w +=
-                config.dynamics.motor_stall_loss_w * (*motor / config.wheel_stall_force_n).powi(2);
+/// Reusable per-wheel solver storage; none of it is physical restore state.
+#[derive(Default)]
+struct WheelDriveScratch {
+    contacts: Vec<(f64, f64)>,
+    forces: Vec<f64>,
+    motors: Vec<f64>,
+}
+impl WheelDriveScratch {
+    /// Integrate motor torque and equal/opposite tyre reaction, with shared power.
+    /// Eight internal slices per Rapier slice resolve the stiff slip law without
+    /// changing the caller-selected integration duration.
+    fn integrate(
+        &mut self,
+        config: &ChassisConfig,
+        wheels: &mut [WheelState],
+        dt_s: f64,
+        budget_w: f64,
+        torques: Option<&WheelTorques>,
+    ) -> (f64, f64) {
+        let contacts = &self.contacts;
+        let ratio = config.wheel_radius_m
+            / if config.mecanum {
+                std::f64::consts::SQRT_2
+            } else {
+                1.0
+            };
+        let slices = 8;
+        let dt = dt_s / f64::from(slices);
+        self.forces.resize(wheels.len(), 0.0);
+        self.forces.fill(0.0);
+        self.motors.resize(wheels.len(), 0.0);
+        let forces = &mut self.forces;
+        let motors = &mut self.motors;
+        let mut average_scale = 0.0;
+        let mut power_w = 0.0;
+        for _ in 0..slices {
+            let mut mechanical_w = 0.0;
+            let mut copper_w = 0.0;
+            for (index, (wheel, motor)) in wheels.iter().zip(motors.iter_mut()).enumerate() {
+                let speed = wheel.angular_velocity_rad_s * ratio;
+                let requested_force = torques.map_or_else(
+                    || 4.0 * config.slip_stiffness_n_s_m * (wheel.target_m_s - speed),
+                    |torques| torques.as_nm()[index] / ratio,
+                );
+                let limit = config.wheel_stall_force_n
+                    * if requested_force * speed > 0.0 {
+                        (1.0 - speed.abs() / config.wheel_no_load_speed_m_s).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    };
+                *motor = requested_force.clamp(-limit, limit);
+                mechanical_w += (*motor * speed).max(0.0);
+                copper_w += config.dynamics.motor_stall_loss_w
+                    * (*motor / config.wheel_stall_force_n).powi(2);
+            }
+            let scale = drive_power_scale(mechanical_w, copper_w, budget_w);
+            average_scale += scale / f64::from(slices);
+            power_w += (mechanical_w * scale + copper_w * scale * scale) / f64::from(slices);
+            for (((wheel, &motor), &(ground_speed, grip)), force) in wheels
+                .iter_mut()
+                .zip(motors.iter())
+                .zip(contacts)
+                .zip(forces.iter_mut())
+            {
+                let speed = wheel.angular_velocity_rad_s * ratio;
+                let traction =
+                    (config.slip_stiffness_n_s_m * (speed - ground_speed)).clamp(-grip, grip);
+                // Tyre reaction resists the motor even when the body cannot move.
+                wheel.angular_velocity_rad_s +=
+                    (motor * scale - traction) * ratio / config.wheel_inertia_kg_m2 * dt;
+                wheel.spin_rad = wrap_angle(wheel.spin_rad + wheel.angular_velocity_rad_s * dt);
+                *force += traction / f64::from(slices);
+            }
         }
-        let scale = drive_power_scale(mechanical_w, copper_w, budget_w);
-        average_scale += scale / f64::from(slices);
-        power_w += (mechanical_w * scale + copper_w * scale * scale) / f64::from(slices);
-        for (((wheel, &motor), &(ground_speed, grip)), force) in wheels
-            .iter_mut()
-            .zip(&motors)
-            .zip(contacts)
-            .zip(&mut forces)
-        {
-            let speed = wheel.angular_velocity_rad_s * ratio;
-            let traction =
-                (config.slip_stiffness_n_s_m * (speed - ground_speed)).clamp(-grip, grip);
-            // Tyre reaction resists the motor even when the body cannot move.
-            wheel.angular_velocity_rad_s +=
-                (motor * scale - traction) * ratio / config.wheel_inertia_kg_m2 * dt;
-            wheel.spin_rad = wrap_angle(wheel.spin_rad + wheel.angular_velocity_rad_s * dt);
-            *force += traction / f64::from(slices);
+        for (wheel, &(ground_speed, _)) in wheels.iter_mut().zip(contacts) {
+            if let Some(contact) = &mut wheel.contact {
+                contact.slip_m_s = wheel.angular_velocity_rad_s * ratio - ground_speed;
+            }
         }
+        (average_scale, power_w)
     }
-    for (wheel, &(ground_speed, _)) in wheels.iter_mut().zip(contacts) {
-        if let Some(contact) = &mut wheel.contact {
-            contact.slip_m_s = wheel.angular_velocity_rad_s * ratio - ground_speed;
-        }
-    }
-    (forces, average_scale, power_w)
 }
 
 /// One chassis inside a physics world: its Rapier bodies and colliders, the
@@ -1495,6 +1508,8 @@ pub(crate) struct Chassis {
     /// Reused each tick; collect forces before mutably borrowing the body.
     forces: Vec<(Vector, Vector)>,
     drive_forces: Vec<(Vector, Vector)>,
+    /// Per-wheel contacts and motor integration buffers reused across solver slices.
+    wheel_drive: WheelDriveScratch,
     command: ChassisCommand,
     drive_control: DriveControl,
     jump_held: bool,
@@ -1816,6 +1831,7 @@ impl Chassis {
             armor,
             forces: Vec::with_capacity(geometry.len() * 2),
             drive_forces: Vec::with_capacity(geometry.len()),
+            wheel_drive: WheelDriveScratch::default(),
             geometry,
             wheels,
             jump_held: false,
@@ -2147,7 +2163,7 @@ impl Chassis {
                 ));
         self.forces.clear();
         self.drive_forces.clear();
-        let mut tyre_contacts = Vec::with_capacity(self.wheels.len());
+        self.wheel_drive.contacts.clear();
         for (wheel, geometry) in self.wheels.iter_mut().zip(&self.geometry) {
             let hub = pose.transform_point(geometry.hub_m);
             let axle = pose.rotation * geometry.axle;
@@ -2170,7 +2186,7 @@ impl Chassis {
             let Some((distance, normal)) = ground else {
                 wheel.contact = None;
                 wheel.suspension_compression_m = 0.0;
-                tyre_contacts.push((0.0, 0.0));
+                self.wheel_drive.contacts.push((0.0, 0.0));
                 self.drive_forces.push((Vector::ZERO, hub));
                 continue;
             };
@@ -2195,14 +2211,14 @@ impl Chassis {
             if !roll_dir.is_finite() || !roller_dir.is_finite() {
                 wheel.contact = None;
                 wheel.suspension_compression_m = 0.0;
-                tyre_contacts.push((0.0, 0.0));
+                self.wheel_drive.contacts.push((0.0, 0.0));
                 self.drive_forces.push((Vector::ZERO, hub));
                 continue;
             }
             let roll_speed = contact_velocity.dot(roll_dir);
             let roller_speed = contact_velocity.dot(roller_dir);
             let grip = cfg.drive_friction * load;
-            tyre_contacts.push((roll_speed, grip));
+            self.wheel_drive.contacts.push((roll_speed, grip));
             let roller_grip = cfg.roller_friction * load;
             let roller =
                 (-cfg.slip_stiffness_n_s_m * roller_speed).clamp(-roller_grip, roller_grip);
@@ -2232,14 +2248,15 @@ impl Chassis {
             }
             _ => None,
         };
-        let (traction, scale, power) =
-            integrate_wheel_drives(cfg, &mut self.wheels, &tyre_contacts, dt_s, budget, torques);
+        let (scale, power) =
+            self.wheel_drive
+                .integrate(cfg, &mut self.wheels, dt_s, budget, torques);
         self.drive_power_w = power;
         for ((wheel, (force, _)), traction) in self
             .wheels
             .iter_mut()
             .zip(&mut self.drive_forces)
-            .zip(traction)
+            .zip(self.wheel_drive.forces.iter().copied())
         {
             *force *= traction;
             if let Some(contact) = &mut wheel.contact {
@@ -2547,10 +2564,87 @@ mod tests {
         projectile::{Caliber, Shot, TargetFrames, WorldPhysics},
         tick_ns,
     };
+    fn integrate_wheel_drives(
+        config: &ChassisConfig,
+        wheels: &mut [WheelState],
+        contacts: &[(f64, f64)],
+        dt_s: f64,
+        budget_w: f64,
+        torques: Option<&WheelTorques>,
+    ) -> (Vec<f64>, f64, f64) {
+        let mut scratch = WheelDriveScratch {
+            contacts: contacts.to_vec(),
+            ..Default::default()
+        };
+        let (scale, power) = scratch.integrate(config, wheels, dt_s, budget_w, torques);
+        (scratch.forces, scale, power)
+    }
+
     fn chassis_world(config: ChassisConfig, spawn: Pose) -> WorldPhysics {
         let mut ballistics = WorldPhysics::new(&[], 0.0);
         ballistics.add_chassis(Team::Red, config, spawn).unwrap();
         ballistics
+    }
+
+    #[test]
+    fn reused_drive_buffers_match_fresh_storage_across_contact_and_power_changes() {
+        for config in [ChassisConfig::default(), ChassisConfig::folding_hero()] {
+            let count = config.wheel_hubs_m.len();
+            let initial = WheelState {
+                spin_rad: 0.,
+                angular_velocity_rad_s: 0.,
+                suspension_compression_m: 0.,
+                target_m_s: 2.,
+                contact: None,
+            };
+            let mut actual = vec![initial; count];
+            let mut expected = actual.clone();
+            let mut scratch = WheelDriveScratch::default();
+            let torques = WheelTorques::new(vec![0.3; count]).unwrap();
+            let mut storage = None;
+            for slice in 0..256 {
+                scratch.contacts.clear();
+                for corner in 0..count {
+                    scratch.contacts.push(if (slice + corner) % 3 == 0 {
+                        (0., 0.)
+                    } else {
+                        (slice as f64 * 0.001, 50.)
+                    });
+                }
+                let budget = if slice % 5 == 0 { 0. } else { 40. };
+                let direct = (slice % 2 == 0).then_some(&torques);
+                let fresh = integrate_wheel_drives(
+                    &config,
+                    &mut expected,
+                    &scratch.contacts,
+                    0.001,
+                    budget,
+                    direct,
+                );
+                let result = scratch.integrate(&config, &mut actual, 0.001, budget, direct);
+                assert_eq!(result, (fresh.1, fresh.2));
+                assert_eq!(scratch.forces, fresh.0);
+                for (actual, expected) in actual.iter().zip(&expected) {
+                    assert_eq!(actual.spin_rad, expected.spin_rad);
+                    assert_eq!(
+                        actual.angular_velocity_rad_s,
+                        expected.angular_velocity_rad_s
+                    );
+                }
+                let pointers = (
+                    scratch.contacts.as_ptr(),
+                    scratch.forces.as_ptr(),
+                    scratch.motors.as_ptr(),
+                );
+                if let Some(previous) = storage {
+                    assert_eq!(
+                        pointers, previous,
+                        "solver buffers reallocated after warmup"
+                    );
+                }
+                storage = Some(pointers);
+            }
+        }
     }
 
     #[test]

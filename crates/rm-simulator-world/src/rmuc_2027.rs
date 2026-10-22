@@ -327,16 +327,21 @@ impl crate::Field {
             return;
         };
         // Sequences consume physical entry edges, not delayed buff activations.
-        for r in state.game.robots.clone() {
+        let cards = &mut self.rmuc_terrain_cards;
+        // Observations may change robot state, but never roster membership.
+        for index in 0..state.game.robots.len() {
+            let id = state.game.robots[index].id;
             use crate::gameplay::rmuc_2027::terrain::{Card, Course};
-            let p = self.physics.chassis_position_m(r.id);
-            let mut cards = state
-                .config
-                .terrain_zones
-                .iter()
-                .filter(|z| p.is_some_and(|p| z.zone.contains(p)))
-                .map(|z| z.card)
-                .collect::<Vec<_>>();
+            let p = self.physics.chassis_position_m(id);
+            cards.clear();
+            cards.extend(
+                state
+                    .config
+                    .terrain_zones
+                    .iter()
+                    .filter(|z| p.is_some_and(|p| z.zone.contains(p)))
+                    .map(|z| z.card),
+            );
             for z in &state.config.zones {
                 // Higher Highland cards also provide connected Highland/Outpost
                 // detection. Coalesce those semantic roles into one physical card.
@@ -375,36 +380,34 @@ impl crate::Field {
                     }
                 }
             }
-            state.game.observe_terrain(r.id, &cards);
+            state.game.observe_terrain(id, cards);
         }
-        let observations = state
-            .game
-            .robots
-            .iter()
-            .flat_map(|r| {
-                let p = self.physics.chassis_position_m(r.id);
-                state
-                    .config
-                    .zones
-                    .iter()
-                    .map(move |z| (r.id, z.side, z.point, p.is_some_and(|p| z.contains(p))))
-            })
-            .collect::<Vec<_>>();
-        for (id, side, point, present) in observations {
-            state
-                .game
-                .observe(id, crate::referee::game_team(side), point, present);
+        for index in 0..state.game.robots.len() {
+            let id = state.game.robots[index].id;
+            let p = self.physics.chassis_position_m(id);
+            for z in &state.config.zones {
+                state.game.observe(
+                    id,
+                    crate::referee::game_team(z.side),
+                    z.point,
+                    p.is_some_and(|p| z.contains(p)),
+                );
+            }
         }
-        for r in &state.game.robots.clone() {
-            let p = self.physics.chassis_position_m(r.id);
+        for index in 0..state.game.robots.len() {
+            let (id, team) = {
+                let r = &state.game.robots[index];
+                (r.id, r.team)
+            };
+            let p = self.physics.chassis_position_m(id);
             for (supply, zones) in [
                 (true, &state.config.supply_zones),
                 (false, &state.config.vantage_zones),
             ] {
                 let present = zones.iter().any(|z| {
-                    crate::referee::game_team(z.side) == r.team && p.is_some_and(|p| z.contains(p))
+                    crate::referee::game_team(z.side) == team && p.is_some_and(|p| z.contains(p))
                 });
-                state.game.observe_service(r.id, supply, present);
+                state.game.observe_service(id, supply, present);
             }
         }
         state.game.advance_ns(duration_ns);
@@ -488,6 +491,39 @@ mod tests {
         })
         .unwrap()
     }
+    #[test]
+    fn terrain_scratch_reuse_is_not_checkpoint_state() {
+        let chassis = ChassisConfig::default();
+        let mut field = Field::new(&FieldConfig {
+            rmuc_2027: Some(config()),
+            chassis: vec![ChassisPlacement {
+                spawn: Pose::at([0., 0., chassis.rest_height_m()]),
+                config: chassis,
+                team: Team::Red,
+                kind: RobotKind::Infantry,
+                performance: None,
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        field.referee_command(RefereeCommand::StartMatch).unwrap();
+        field.step(641).unwrap();
+        assert!(!field.rmuc_terrain_cards.is_empty());
+        let storage = field.rmuc_terrain_cards.as_ptr();
+        let snapshot = field.snapshot();
+        let mut restored =
+            Field::restore(&snapshot, &field.static_geometry_snapshot(), 0.).unwrap();
+        assert!(restored.rmuc_terrain_cards.is_empty());
+        assert_eq!(restored.snapshot(), snapshot);
+        // Compare only the adapter here: solver warm starts are not restorable.
+        for _ in 0..128 {
+            field.advance_2027(tick_ns());
+            restored.advance_2027(tick_ns());
+            assert_eq!(field.rmuc_2027(), restored.rmuc_2027());
+            assert_eq!(field.rmuc_terrain_cards.as_ptr(), storage);
+        }
+    }
+
     #[test]
     fn thousand_hz_rules_clock_partitioning_and_restore() {
         let config = FieldConfig {

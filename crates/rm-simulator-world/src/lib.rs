@@ -304,6 +304,8 @@ pub struct FieldSnapshot {
 /// assert_eq!(field.time_ns(), tick_ns());
 /// ```
 pub struct Field {
+    // Reusable adapter scratch, deliberately excluded from checkpoints.
+    rmuc_terrain_cards: Vec<gameplay::rmuc_2027::terrain::Card>,
     energy_units: Vec<energy_unit::EnergyUnit>,
     arms: Vec<assembly::ArmState>,
     assemblies: Vec<assembly::Run>,
@@ -369,6 +371,7 @@ impl Field {
                     .map_err(FieldError::Shot)?;
                 physics
             },
+            rmuc_terrain_cards: Vec::new(),
             target_frames: TargetFrames::new(faces),
             hits: Vec::new(),
             hits_detected: 0,
@@ -1697,6 +1700,7 @@ impl Field {
             floor_height_m,
             tick: snapshot.tick,
             physics,
+            rmuc_terrain_cards: Vec::new(),
             target_frames: TargetFrames::new(faces),
             hits: snapshot.hits.clone(),
             hits_detected: snapshot.hits_detected,

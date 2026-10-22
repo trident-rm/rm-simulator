@@ -103,6 +103,41 @@ pub struct ChassisBuild {
     /// Leading lower-deck prism count used to select chassis finish.
     pub bumper_base_prisms: usize,
 }
+impl ChassisBuild {
+    fn from_appearance(chassis: &crate::sync::ChassisAppearance) -> Self {
+        Self {
+            model: chassis.model,
+            armor_pattern: chassis.armor_pattern,
+            mecanum: chassis.mecanum,
+            body_half_m: chassis.body_half_m,
+            body_shell_visible: chassis.body_shell_visible,
+            frame_beam_step_m: chassis.frame_beam_step_m,
+            body_outline_m: chassis.body_outline_m.clone(),
+            bumper_prisms_m: chassis.bumper_prisms_m.clone(),
+            bumper_base_prisms: chassis.bumper_base_prisms,
+        }
+    }
+    /// Compare borrowed geometry; only a newly spawned visual needs owned copies.
+    fn matches(&self, chassis: &crate::sync::ChassisAppearance) -> bool {
+        self.model == chassis.model
+            && self.armor_pattern == chassis.armor_pattern
+            && self.mecanum == chassis.mecanum
+            && self.body_half_m == chassis.body_half_m
+            && self.body_shell_visible == chassis.body_shell_visible
+            && self.frame_beam_step_m == chassis.frame_beam_step_m
+            && self.body_outline_m == chassis.body_outline_m
+            && self.bumper_prisms_m == chassis.bumper_prisms_m
+            && self.bumper_base_prisms == chassis.bumper_base_prisms
+    }
+}
+
+/// Retained scan storage; unchanged chassis do not allocate lookup sets each frame.
+#[derive(Default)]
+struct ChassisScan {
+    stale: std::collections::HashSet<u32>,
+    existing: std::collections::HashSet<u32>,
+}
+
 /// Index into `ChassisAppearance::wheels`.
 #[derive(Component)]
 #[require(PresentedPose)]
@@ -1428,6 +1463,7 @@ fn spawn_chassis(
         Res<SceneInput>,
         Res<ChassisIndex>,
         Option<Res<crate::team_robot::TeamRobotAssets>>,
+        Local<ChassisScan>,
     ),
     config: Res<Config>,
     optics: (Res<ArmorAtlas>, Res<DiffuserProfile>),
@@ -1436,39 +1472,29 @@ fn spawn_chassis(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let (input, index, team_assets) = scene;
+    let (input, index, team_assets, mut scan) = scene;
     let (atlas, diffuser) = optics;
     let Some(scene) = input.0.as_ref() else {
         return;
     };
-    let build = |chassis: &crate::sync::ChassisAppearance| ChassisBuild {
-        model: chassis.model,
-        armor_pattern: chassis.armor_pattern,
-        mecanum: chassis.mecanum,
-        body_half_m: chassis.body_half_m,
-        body_shell_visible: chassis.body_shell_visible,
-        frame_beam_step_m: chassis.frame_beam_step_m,
-        body_outline_m: chassis.body_outline_m.clone(),
-        bumper_prisms_m: chassis.bumper_prisms_m.clone(),
-        bumper_base_prisms: chassis.bumper_base_prisms,
-    };
-    let stale: std::collections::HashSet<u32> = existing
-        .iter()
-        .filter_map(|(_, id, built)| {
-            let wanted = build(&scene.chassis[*index.0.get(&id.0)?]);
-            (built.is_some_and(|built| *built != wanted)).then_some(id.0)
-        })
-        .collect();
+    let ChassisScan {
+        stale,
+        existing: existing_ids,
+    } = &mut *scan;
+    stale.clear();
+    existing_ids.clear();
+    stale.extend(existing.iter().filter_map(|(_, id, built)| {
+        let built = built?;
+        let wanted = &scene.chassis[*index.0.get(&id.0)?];
+        (!built.matches(wanted)).then_some(id.0)
+    }));
     for (entity, id, _) in &existing {
         if !index.0.contains_key(&id.0) || stale.contains(&id.0) {
             commands.entity(entity).despawn();
+        } else {
+            existing_ids.insert(id.0);
         }
     }
-    let existing_ids: std::collections::HashSet<_> = existing
-        .iter()
-        .map(|(_, id, _)| id.0)
-        .filter(|id| !stale.contains(id))
-        .collect();
     let rendering = config.rendering;
     for chassis in &scene.chassis {
         if team_assets
@@ -1525,7 +1551,7 @@ fn spawn_chassis(
             .spawn((
                 id,
                 ChassisBody,
-                build(chassis),
+                ChassisBuild::from_appearance(chassis),
                 Mesh3d(box_mesh(
                     &mut meshes,
                     if chassis.model == RobotModel::Drone {
@@ -2216,7 +2242,7 @@ fn sync_armor_lights(
 ) {
     for (light, state, mut material) in &mut lights {
         if let Some(state) = state.0 {
-            state.apply(&mut material, &light.lit, &light.struck, &light.dark);
+            state.apply_tracked(&mut material, &light.lit, &light.struck, &light.dark);
         }
     }
 }
@@ -2312,6 +2338,74 @@ mod tests {
             light_length_m: 0.056,
         }
     }
+    #[test]
+    fn borrowed_build_comparison_covers_every_rebuild_field() {
+        let mut chassis = appearance(1, 0.0);
+        chassis.body_outline_m = vec![[-0.2, -0.2], [0.2, -0.2], [0.2, 0.2], [-0.2, 0.2]];
+        chassis.bumper_prisms_m = vec![[[0.0; 3]; 8]; 12];
+        let built = ChassisBuild::from_appearance(&chassis);
+        let changes: [fn(&mut ChassisAppearance); 9] = [
+            |c| c.model = RobotModel::Hero,
+            |c| c.armor_pattern = crate::armor::ArmorPattern::One,
+            |c| c.mecanum = !c.mecanum,
+            |c| c.body_half_m[0] += 0.01,
+            |c| c.body_shell_visible = !c.body_shell_visible,
+            |c| c.frame_beam_step_m += 0.01,
+            |c| c.body_outline_m[0][0] += 0.01,
+            |c| c.bumper_prisms_m[0][0][0] += 0.01,
+            |c| c.bumper_base_prisms += 1,
+        ];
+        assert!(built.matches(&chassis));
+        for change in changes {
+            let mut changed = chassis.clone();
+            change(&mut changed);
+            assert!(!built.matches(&changed));
+            assert_ne!(built, ChassisBuild::from_appearance(&changed));
+        }
+        // Motion and light changes must not rebuild geometry.
+        chassis.pose.translation_m[0] += 1.;
+        chassis.hp_fraction = 0.2;
+        chassis.defeated = true;
+        assert!(built.matches(&chassis));
+    }
+
+    #[test]
+    #[ignore = "manual CPU-only comparison; build first and run alone with --nocapture"]
+    fn borrowed_build_scan_probe() {
+        use std::{hint::black_box, time::Instant};
+        let mut chassis = appearance(1, 0.0);
+        chassis.body_outline_m = vec![[-0.2, -0.2], [0.2, -0.2], [0.2, 0.2], [-0.2, 0.2]];
+        chassis.bumper_prisms_m = vec![[[0.0; 3]; 8]; 12];
+        let built = ChassisBuild::from_appearance(&chassis);
+        // A representative body, four wheels and two gimbal stages. Only the
+        // body stores a build; the old scan copied geometry for all seven.
+        let records = [Some(&built), None, None, None, None, None, None];
+        let frames = 100_000;
+        let started = Instant::now();
+        for _ in 0..frames {
+            for record in black_box(records) {
+                let wanted = ChassisBuild::from_appearance(black_box(&chassis));
+                black_box(record.is_some_and(|built| *built != wanted));
+            }
+        }
+        let old = started.elapsed();
+        let started = Instant::now();
+        for _ in 0..frames {
+            for record in black_box(records) {
+                black_box(record.is_some_and(|built| !built.matches(black_box(&chassis))));
+            }
+        }
+        let new = started.elapsed();
+        let bytes = std::mem::size_of_val(chassis.body_outline_m.as_slice())
+            + std::mem::size_of_val(chassis.bumper_prisms_m.as_slice());
+        eprintln!(
+            "{frames} frames, {} records/frame: old={old:?}, borrowed={new:?}; old={} nonempty Vec clones/frame and {} copied bytes/frame, borrowed=0/0",
+            records.len(),
+            records.len() * 2,
+            records.len() * bytes
+        );
+    }
+
     #[test]
     fn balance_linkage_stays_attached_to_the_wheel_during_suspension_travel() {
         let mut chassis = appearance(7, 3.0);
@@ -2479,6 +2573,31 @@ mod tests {
             .filter(|light| light.chassis == 1)
             .count();
         assert_eq!(lights, 4);
+        // Changing source geometry rebuilds once; repeated frames keep the same
+        // root entity and mesh assets instead of reconstructing the chassis.
+        let body = |app: &mut App| {
+            app.world_mut()
+                .query_filtered::<(Entity, &ChassisId), With<ChassisBody>>()
+                .iter(app.world())
+                .find(|(_, id)| id.0 == 2)
+                .unwrap()
+                .0
+        };
+        let original = body(&mut app);
+        app.world_mut()
+            .resource_mut::<SceneInput>()
+            .0
+            .as_mut()
+            .unwrap()
+            .chassis[1]
+            .body_outline_m = vec![[-0.2, -0.2], [0.2, -0.2], [0.2, 0.2], [-0.2, 0.2]];
+        app.update();
+        let rebuilt = body(&mut app);
+        assert_ne!(original, rebuilt);
+        let mesh = app.world().get::<Mesh3d>(rebuilt).unwrap().0.id();
+        app.update();
+        assert_eq!(body(&mut app), rebuilt);
+        assert_eq!(app.world().get::<Mesh3d>(rebuilt).unwrap().0.id(), mesh);
         app.world_mut().resource_mut::<SceneInput>().0 = Some(SceneState {
             chassis: vec![appearance(2, 3.0)],
             ..Default::default()

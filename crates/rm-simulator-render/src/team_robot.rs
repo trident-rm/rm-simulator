@@ -133,25 +133,20 @@ fn spawn(
 ) {
     let Some(assets) = assets else { return };
     let Some(server) = server else { return };
-    let wanted: Vec<_> = input
+    let wanted = input
         .0
-        .as_ref()
-        .map(|s| {
-            s.chassis
-                .iter()
-                .filter(|c| assets.supports(c.model))
-                .collect()
-        })
-        .unwrap_or_default();
-    status.requested = wanted.len();
+        .iter()
+        .flat_map(|s| &s.chassis)
+        .filter(|c| assets.supports(c.model));
+    status.requested = wanted.clone().count();
     status.ready = roots
         .iter()
         .filter(|(_, r, ready)| {
-            ready.is_some() && wanted.iter().any(|c| c.id == r.0 && c.model == r.1)
+            ready.is_some() && wanted.clone().any(|c| c.id == r.0 && c.model == r.1)
         })
         .count();
     for (e, r, _) in &roots {
-        if !wanted.iter().any(|c| c.id == r.0 && c.model == r.1) {
+        if !wanted.clone().any(|c| c.id == r.0 && c.model == r.1) {
             commands.entity(e).despawn();
         }
     }
@@ -344,19 +339,24 @@ fn link_transform(link: &Link, c: &crate::sync::ChassisAppearance) -> Transform 
         .with_rotation(Quat::from_xyzw(y as f32, z as f32, x as f32, w as f32));
     }
     let mut t = link.rest;
-    let relative = q(c.pose).inverse() * q(c.yaw_stage);
-    let forward = relative * Vec3::X;
-    let yaw = forward.y.atan2(forward.x);
-    let direction = (q(c.pose).inverse() * q(c.turret)) * Vec3::X;
-    let pitch = direction.z.clamp(-1., 1.).asin();
+    // Only gimbal links need these angles. Wheels, fixed groups and folding
+    // links already have their own poses and must not repeat this work.
+    let yaw = || {
+        let forward = (q(c.pose).inverse() * q(c.yaw_stage)) * Vec3::X;
+        forward.y.atan2(forward.x)
+    };
+    let pitch = || {
+        let direction = (q(c.pose).inverse() * q(c.turret)) * Vec3::X;
+        direction.z.clamp(-1., 1.).asin()
+    };
     match link.name.as_str() {
-        "yaw" => t.rotation = Quat::from_rotation_y(yaw),
+        "yaw" => t.rotation = Quat::from_rotation_y(yaw()),
         "fold" => t.rotation = Quat::from_rotation_x(c.fold_angle_rad),
         "pitch" if c.model == RobotModel::FoldingHero => {
-            t.rotation = Quat::from_rotation_x(-pitch - c.fold_angle_rad)
+            t.rotation = Quat::from_rotation_x(-pitch() - c.fold_angle_rad)
         }
-        "pitch" | "pitch-crank" => t.rotation = Quat::from_rotation_x(-pitch),
-        "pitch-rod" => t.rotation = Quat::from_rotation_x(pitch),
+        "pitch" | "pitch-crank" => t.rotation = Quat::from_rotation_x(-pitch()),
+        "pitch-rod" => t.rotation = Quat::from_rotation_x(pitch()),
         name if name.starts_with("wheel-") => {
             if let Some(w) = name
                 .strip_prefix("wheel-")

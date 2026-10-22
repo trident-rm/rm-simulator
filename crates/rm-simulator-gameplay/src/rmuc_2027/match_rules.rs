@@ -457,7 +457,7 @@ impl Match {
             return vec![[false; 8]; self.robots.len()];
         }
 
-        let active = self
+        let mut active = self
             .robots
             .iter()
             .map(|r| std::array::from_fn(|i| self.eligible(r, Team::BOTH[i / 4], points()[i % 4])))
@@ -493,27 +493,22 @@ impl Match {
                     .map(|(r, _)| r.id);
             }
         }
-        let resolved = self
-            .robots
-            .iter()
-            .zip(active)
-            .map(|(r, mut a)| {
-                for side in Team::BOTH {
-                    a[point_index(side, Point::CentralHighland)] &=
-                        self.highland_team[side.index()] == Some(r.team);
-                    a[point_index(side, Point::Fortress)] &=
-                        r.team != side || self.fortress_robot[side.index()] == Some(r.id);
-                }
-                a
-            })
-            .collect::<Vec<_>>();
+        // Arbitration only masks eligibility; keep the same allocation.
+        for (r, a) in self.robots.iter().zip(&mut active) {
+            for side in Team::BOTH {
+                a[point_index(side, Point::CentralHighland)] &=
+                    self.highland_team[side.index()] == Some(r.team);
+                a[point_index(side, Point::Fortress)] &=
+                    r.team != side || self.fortress_robot[side.index()] == Some(r.id);
+            }
+        }
         for side in Team::BOTH {
             for point in points() {
                 let i = point_index(side, point);
                 let teams = Team::BOTH.map(|team| {
                     self.robots
                         .iter()
-                        .zip(&resolved)
+                        .zip(&active)
                         .any(|(r, a)| r.team == team && a[i])
                 });
                 self.control
@@ -521,7 +516,7 @@ impl Match {
                     .expect("valid constituent point");
             }
         }
-        resolved
+        active
     }
     /// Advance only explicit simulation time. Expiry boundaries split intervals
     /// so one call and any partition of it have the same rule result.

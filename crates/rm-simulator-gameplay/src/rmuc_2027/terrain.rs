@@ -117,11 +117,13 @@ impl Terrain {
     /// ```
     pub fn observe(&mut self, now: u64, cards: &[Card]) -> Option<Benefit> {
         self.expire(now);
-        let mut cards = cards.to_vec();
-        cards.sort();
-        cards.dedup();
+        // Membership is independent of ordering/duplicates. Inspect the old
+        // contacts before reusing their storage for this observation.
         let new = cards.iter().any(|c| !self.contacts.contains(c));
-        self.contacts = cards;
+        self.contacts.clear();
+        self.contacts.extend_from_slice(cards);
+        self.contacts.sort();
+        self.contacts.dedup();
         if !new {
             return None;
         }
@@ -268,6 +270,71 @@ impl super::match_rules::Match {
                 r.terrain.experience_awarded[slot] = true;
                 self.grant_experience(id, 3000);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_contacts_reuse_storage_without_changing_entry_edges() {
+        let low = Card {
+            side: crate::Team::Red,
+            course: Some(Course::Road),
+            index: 0,
+            pad: 0,
+        };
+        let high = Card { pad: 1, ..low };
+        let mut terrain = Terrain::default();
+        assert_eq!(terrain.observe(0, &[low, low, low]), None);
+        let capacity = terrain.contacts.capacity();
+        let storage = terrain.contacts.as_ptr();
+        assert_eq!(terrain.contacts, [low]);
+        assert_eq!(terrain.observe(1_000_000_000, &[low]), None);
+        assert_eq!(
+            terrain.observe(3_000_000_000, &[high, high]),
+            Some(Benefit::Road)
+        );
+        let rewarded = terrain.clone();
+        assert_eq!(terrain.observe(3_000_000_001, &[high]), None);
+        assert_eq!(terrain.progress, rewarded.progress);
+        // Empty contacts clear the edge state while retaining the allocation.
+        assert_eq!(terrain.observe(3_000_000_002, &[]), None);
+        assert!(terrain.contacts.is_empty());
+        assert_eq!(terrain.contacts.capacity(), capacity);
+        assert_eq!(terrain.contacts.as_ptr(), storage);
+        assert!(terrain.validate(3_000_000_002));
+    }
+
+    #[test]
+    fn unordered_duplicate_contacts_match_canonical_observations() {
+        let low = Card {
+            side: crate::Team::Red,
+            course: Some(Course::Highland),
+            index: 0,
+            pad: 0,
+        };
+        let high = Card { pad: 1, ..low };
+        let mut canonical = Terrain::default();
+        let mut redundant = Terrain::default();
+        for (time_ns, cards) in [
+            (0, vec![low]),
+            (1, vec![high, low]),
+            (2, vec![]),
+            (3, vec![low]),
+            (4, vec![high]),
+            (60_000_000_000, vec![high]),
+        ] {
+            let mut duplicates = cards.clone();
+            duplicates.reverse();
+            duplicates.extend_from_slice(&cards);
+            assert_eq!(
+                canonical.observe(time_ns, &cards),
+                redundant.observe(time_ns, &duplicates)
+            );
+            assert_eq!(canonical, redundant);
         }
     }
 }

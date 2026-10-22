@@ -4,6 +4,15 @@
 
 ## Unreleased
 
+- Reuse wheel contact, traction and motor buffers across physics slices,
+  preserving drive integration while removing their steady-state allocation.
+- Reuse RMUC terrain/observation storage and remove per-tick roster clones.
+  Borrow owner-anchor chassis state and reuse its configuration hash; capture
+  mounted LiDAR poses without constructing complete wheel/configuration snapshots.
+- Avoid per-frame geometry clones in renderer rebuild checks, retain lookup
+  storage and keep unchanged target-light materials clean for ECS extraction.
+  Skip gimbal angle calculations for source CAD links that do not use them.
+
 - Add distinct RMUL 2027 V1.0.0 3v3 and Infantry 1v1 match authorities and
   selectable practice sessions, with format-specific rosters, combat, control,
   timing and victory rules. Keep RMUC CAD exclusive to RMUC; RMUL layouts are
