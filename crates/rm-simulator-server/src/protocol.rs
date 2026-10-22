@@ -117,7 +117,8 @@ use serde::{Deserialize, Serialize};
 /// Version 79 carries restorable direct wheel motor torque requests and the
 /// validated field step in checkpoint authority.
 /// Version 80 adds operator-authorized leased external motion modes.
-pub const PROTOCOL_VERSION: u32 = 80;
+/// Version 82 adds leased Sentry head sweep and chassis counter-rotation.
+pub const PROTOCOL_VERSION: u32 = 82;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///

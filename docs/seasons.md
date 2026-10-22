@@ -51,7 +51,7 @@ identities, serialized presentation/command records, robot descriptors, armor
 geometry and reusable physics remain shared. Historical records do not execute
 rules and cannot restore an old match.
 
-The checkpoint schema is protocol **75**. Both peers must use the same version;
+The checkpoint schema is protocol **82**. Both peers must use the same version;
 old checkpoints containing removed rule state cannot be replayed on main.
 
 The historical `field/` package and its inventory have been removed from main;

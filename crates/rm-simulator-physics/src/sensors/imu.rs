@@ -367,7 +367,20 @@ impl MountedImu {
         let period_s = self.config.period_ns as f64 * 1e-9;
         // Epoch-relative times keep sub-nanosecond precision over long runs.
         let epoch = self.config.epoch_ns as f64;
-        let (mut start, end_ns) = (start_ns - epoch, end_ns - epoch);
+        // Carrier timestamps are floored to integer ns, while physical substeps
+        // may end on half-nanoseconds. Close a nearly complete window before
+        // the next integer timestamp advances its index; otherwise every such
+        // boundary silently discards a whole output period.
+        let snap = |time: f64| {
+            let period = self.config.period_ns as f64;
+            let boundary = (time / period).round() * period;
+            if (time - boundary).abs() <= 1. {
+                boundary
+            } else {
+                time
+            }
+        };
+        let (mut start, end_ns) = (snap(start_ns - epoch), snap(end_ns - epoch));
         // Begin at the window containing the piece if the open one is stale.
         let first = self.window_of(start.max(0.) + 1e-3);
         if window.index < first {
@@ -523,6 +536,20 @@ mod tests {
         let mut out = Vec::new();
         sensor.ingest(samples, &mut out).unwrap();
         out
+    }
+    #[test]
+    fn fractional_nanosecond_substeps_keep_every_output_period() {
+        let trace = trace(7_812_500, 8, 512, |_| {
+            (Pose::at([0., 0., 0.3]), Pose::at([0., 0., 0.6]))
+        });
+        let mut sensor = imu(CarrierFrame::Gimbal, Pose::at([0.; 3]), Default::default());
+        sensor.config.epoch_ns = 17 * 7_812_500;
+        let out = run(&mut sensor, &trace);
+        assert!(out.len() > 700);
+        assert!(
+            out.windows(2)
+                .all(|w| w[1].time_ns - w[0].time_ns == 5_000_000)
+        );
     }
     const OMEGA: f64 = 15.;
     /// A chassis spinning at OMEGA about world z through its origin, at 0.3 m,

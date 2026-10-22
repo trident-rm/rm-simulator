@@ -29,6 +29,19 @@ pub enum Motion {
         /// Counterclockwise yaw rate in rad/s, bounded by [`MAX_YAW_RATE_RAD_S`].
         yaw_rate_rad_s: f64,
     },
+    /// Omni navigation with arena-frame translation and independently swept head.
+    /// The head target is sampled at the enclosing input timestamp and advances
+    /// only while that input's ordinary 250 ms lease remains valid.
+    Patrol {
+        /// Arena x/y velocity in m/s, magnitude at most [`MAX_SPEED_M_S`].
+        velocity_m_s: [f64; 2],
+        /// Chassis counterclockwise yaw rate in rad/s, bounded by 4 rad/s.
+        yaw_rate_rad_s: f64,
+        /// Sampled head world yaw in radians, finite and within ±π.
+        head_yaw_rad: f64,
+        /// Head world yaw rate in rad/s, bounded by 8 rad/s.
+        head_yaw_rate_rad_s: f64,
+    },
     /// Translate along a world vector while turning to face it. Zero speed turns in place.
     HeadingVector {
         /// Finite nonzero arena x/y direction; magnitude is ignored.
@@ -40,8 +53,25 @@ pub enum Motion {
 impl Motion {
     /// Validate finite values and adapter limits without modifying a robot.
     pub fn validate(self) -> Result<(), &'static str> {
+        if let Self::Patrol {
+            head_yaw_rad,
+            head_yaw_rate_rad_s,
+            ..
+        } = self
+            && (!head_yaw_rad.is_finite()
+                || head_yaw_rad.abs() > std::f64::consts::PI
+                || !head_yaw_rate_rad_s.is_finite()
+                || head_yaw_rate_rad_s.abs() > 8.)
+        {
+            return Err("invalid patrol head target or rate");
+        }
         match self {
-            Self::BodyVelocity {
+            Self::Patrol {
+                velocity_m_s,
+                yaw_rate_rad_s,
+                ..
+            }
+            | Self::BodyVelocity {
                 velocity_m_s,
                 yaw_rate_rad_s,
             }
@@ -112,6 +142,11 @@ impl Motion {
             Self::WorldVelocity {
                 velocity_m_s,
                 yaw_rate_rad_s,
+            }
+            | Self::Patrol {
+                velocity_m_s,
+                yaw_rate_rad_s,
+                ..
             } => (velocity_m_s, yaw_rate_rad_s, true),
             Self::HeadingVector {
                 direction_world: [dx, dy],
@@ -137,6 +172,14 @@ impl Motion {
         };
         held.yaw_rate_rad_s = rate;
         held.jump = false;
+        if let Self::Patrol { head_yaw_rad, .. } = self {
+            if held.folded {
+                held.yaw_rate_rad_s = 0.;
+            } else {
+                held.aim_yaw_rad = head_yaw_rad;
+                held.aim_pitch_rad = 0.;
+            }
+        }
         Ok(held)
     }
 }
@@ -247,11 +290,22 @@ impl Service {
                 entry.active = None;
                 let _ = crate::navigation::brake(field, id);
             } else if let Some(body) = body {
-                let command = active
+                let mut command = active
                     .input
                     .motion
                     .resolve(body.pose, body.command)
                     .expect("validated external motion");
+                if let Motion::Patrol {
+                    head_yaw_rad,
+                    head_yaw_rate_rad_s,
+                    ..
+                } = active.input.motion
+                {
+                    let elapsed = now.saturating_sub(active.input.sampled_time_ns) as f64 * 1e-9;
+                    if !command.folded {
+                        command.aim_yaw_rad = head_yaw_rad + head_yaw_rate_rad_s * elapsed;
+                    }
+                }
                 let _ = field.command_chassis(id, command);
             }
         }
@@ -363,6 +417,94 @@ mod tests {
         ] {
             assert!(motion.validate().is_err());
         }
+    }
+    #[test]
+    fn patrol_world_translation_head_clock_and_expiry() {
+        use rm_simulator_world::{
+            ChassisConfig, ChassisPlacement, Field, FieldConfig, RobotKind, Team,
+        };
+        let mut field = Field::new(&FieldConfig {
+            chassis: vec![ChassisPlacement {
+                config: ChassisConfig::default(),
+                spawn: Pose::yawed([0., 0., 0.3], std::f64::consts::FRAC_PI_2),
+                team: Team::Red,
+                kind: RobotKind::Sentry,
+                performance: None,
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        let patrol = Motion::Patrol {
+            velocity_m_s: [1., 0.],
+            yaw_rate_rad_s: -0.8,
+            head_yaw_rad: 0.2,
+            head_yaw_rate_rad_s: 5.,
+        };
+        let mut service = Service::default();
+        let mut request = input(1, 1, 0);
+        request.motion = patrol;
+        service.receive(0, request, 0).unwrap();
+        service.tick(&mut field);
+        let first = field.chassis_control_state(0).unwrap().command;
+        assert!(first.forward_m_s.abs() < 1e-12);
+        assert!((first.left_m_s + 1.).abs() < 1e-12);
+        assert_eq!(first.yaw_rate_rad_s, -0.8);
+        for _ in 0..16 {
+            field.step(1).unwrap();
+            service.tick(&mut field);
+        }
+        let active = field.chassis_control_state(0).unwrap();
+        assert!(
+            (active.command.aim_yaw_rad - (0.2 + 5. * field.time_ns() as f64 * 1e-9)).abs() < 1e-12
+        );
+        let yaw = rm_simulator_world::chassis::yaw_of(active.pose);
+        assert!(
+            (active.command.forward_m_s * yaw.cos() - active.command.left_m_s * yaw.sin() - 1.)
+                .abs()
+                < 1e-12
+        );
+        for _ in 0..16 {
+            field.step(1).unwrap();
+            service.tick(&mut field);
+        }
+        assert!(!service.active(0));
+        let stopped = field.chassis_control_state(0).unwrap().command;
+        assert_eq!(
+            (
+                stopped.forward_m_s,
+                stopped.left_m_s,
+                stopped.yaw_rate_rad_s
+            ),
+            (0., 0., 0.)
+        );
+        field.step(8).unwrap();
+        service.tick(&mut field);
+        assert_eq!(
+            field.chassis_control_state(0).unwrap().command.aim_yaw_rad,
+            stopped.aim_yaw_rad
+        );
+        let folded = patrol
+            .resolve(
+                Pose::at([0.; 3]),
+                ChassisCommand {
+                    folded: true,
+                    aim_pitch_rad: -0.4,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(folded.yaw_rate_rad_s, 0.);
+        assert_eq!(folded.aim_pitch_rad, -0.4);
+        assert!(
+            Motion::Patrol {
+                velocity_m_s: [0.; 2],
+                yaw_rate_rad_s: 0.,
+                head_yaw_rad: 0.,
+                head_yaw_rate_rad_s: f64::NAN
+            }
+            .validate()
+            .is_err()
+        );
     }
     #[test]
     fn sequence_and_lease_replays_do_not_refresh_and_stale_release_is_rejected() {

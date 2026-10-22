@@ -226,8 +226,7 @@ impl Service {
                 command.aim_yaw_rad = target[0];
                 command.aim_pitch_rad = target[1];
             } else {
-                let yaw = rm_simulator_world::chassis::yaw_of(body.pose);
-                command.aim_yaw_rad = yaw + time_s * 1.1;
+                command.aim_yaw_rad = angle(time_s * 5.);
                 command.aim_pitch_rad = -0.04 + 0.14 * (time_s * 0.7).sin();
             }
             let nav_stopped = nav.is_some_and(|n| {
@@ -246,7 +245,7 @@ impl Service {
                     (p[0] - q[0]).hypot(p[1] - q[1]) < 1.0 && (p[2] - q[2]).abs() < 0.7
                 });
             if !nav_stopped && turning_room {
-                command.yaw_rate_rad_s = 0.8;
+                command.yaw_rate_rad_s = -0.8;
             } else {
                 command.yaw_rate_rad_s = 0.;
                 view.heading_locked = true;
@@ -391,7 +390,7 @@ mod tests {
                 .unwrap()
                 .command
                 .yaw_rate_rad_s,
-            0.8
+            -0.8
         );
     }
     #[test]

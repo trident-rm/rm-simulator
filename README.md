@@ -512,7 +512,7 @@ does not acknowledge its execution by the host.
 The console can spawn a host-owned navigation Sentry and send it map destinations.
 See [navigation commands and prototype limits](docs/app-options.md#console-spawned-navigation-sentry).
 
-The current protocol version is 79, defined by `PROTOCOL_VERSION` in
+The current protocol version is 82, defined by `PROTOCOL_VERSION` in
 `crates/rm-simulator-server/src/protocol.rs`. GNS sends redundant controls
 and retried shot intents unreliably; scheduling receipts and terminal shot results
 remain reliable. There is no shooter-view fire path or input-acknowledgement

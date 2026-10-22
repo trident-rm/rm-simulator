@@ -44,14 +44,15 @@ Their MIT notice is retained in
 only generates those interfaces; it contains no Livox hardware driver or SDK.
 The optional adapter uses unmodified Apache-2.0 rclrs 0.8.0 from crates.io.
 
-The fitted coefficients in
-`crates/rm-simulator-physics/src/sensors/mid360_coefficients.rs` and reference
-angle excerpts in its tests derive from `scan_mode/mid360.csv` in
-[Livox-SDK/livox_laser_simulation](https://github.com/Livox-SDK/livox_laser_simulation/tree/1cce1073633a062b92e30243a4c2920e45551bb5),
-revision `1cce1073633a062b92e30243a4c2920e45551bb5`. The original CSV is not
-distributed here. `scripts/fit-mid360-pattern.py` reproduces the empirical fit.
-The repository author's copyright applies to the fitter and sensor implementation,
-not the original measurement data. The upstream MIT notice is retained below:
+The physics crate uses the dependency-free `mid360-sim` nominal profile from
+[hxyulin/mid360-sim](https://github.com/hxyulin/mid360-sim), pinned at
+`7396856da6c80b8ac13b26e9bf43a6a5aa85031f`, under MIT OR Apache-2.0.
+Its own notices retain hardware-fit and Livox provenance. ROS features are
+not enabled by this dependency. The previous copied coefficients are removed;
+`scripts/fit-mid360-pattern.py` remains a historical reproduction tool for the
+[Livox angle table](https://github.com/Livox-SDK/livox_laser_simulation/tree/1cce1073633a062b92e30243a4c2920e45551bb5),
+revision `1cce1073633a062b92e30243a4c2920e45551bb5`. The CSV is not distributed.
+The upstream MIT notice is retained below:
 
 ```text
 MIT License

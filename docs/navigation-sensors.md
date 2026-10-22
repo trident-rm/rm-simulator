@@ -77,13 +77,11 @@ The bare world's catch half-space is excluded from geometry captures by design.
 Use an explicit ground mesh/box for ground returns in bare tests. The loaded CAD
 field supplies its ground triangles normally.
 
-Next steps are a coherent scene capture combining fixed and moving parts with
-stable identities and self-exclusion, followed by a mounted sensor service and
-scan overlays. Keep perfect chassis pose, noisy wheel/IMU odometry and estimated
-map pose separate. The existing ground-truth Sentry planner should remain a
-baseline, not silently supply observations to a sensor-only navigation policy.
-The optional ROS output adapter is described below; SLAM and external planner
-adapters remain future work.
+Mounted rolling scans provide coherent fixed/moving captures for caller-owned
+acquisitions. Scan overlays, noisy odometry and estimated localization remain
+separate work. The built-in Sentry planner consumes ground-truth geometry.
+The experimental live-game ROS/PolarBear adapter has been removed; the existing
+optional standalone ROS publisher remains available.
 
 Run the CAD query/scan benchmark with:
 
@@ -96,7 +94,20 @@ three clear sensor origins with 1080 planar or 28,800 multi-elevation rays.
 Compare the nearest-hit output when budgeting a sensor. The earlier visibility
 proxy measurements in [the baseline](performance-20261021.md) are not equivalent.
 
-## MID-360 pattern investigation
+## Current MID-360 profile
+
+The runtime pattern now delegates to dependency-free
+[mid360-sim](https://github.com/hxyulin/mid360-sim) at pinned revision
+`7396856da6c80b8ac13b26e9bf43a6a5aa85031f`, using its hardware-derived nominal
+profile and representative 18.2-hour cycle. The copied 12-second fit described
+below is historical. Capture interpolation, mounted geometry and range effects
+remain native physics responsibilities; enabling this dependency does not add ROS.
+
+## Historical MID-360 pattern investigation
+
+The following records the original angle-table investigation and copied fit;
+it is retained as provenance, not the current runtime scan law.
+
 
 Investigated on 2026-10-21. The [manufacturer specifications](https://www.livoxtech.com/mid-360/specs)
 give 360-degree horizontal coverage, -7 to +52 degrees vertical coverage,
@@ -135,6 +146,25 @@ The file is useful as a reference sequence for checking a future procedural
 model, but finite looping playback must not be described as indefinitely
 non-repeating generation. The dataset was inspected in ignored development
 scratch; neither its data nor upstream code is embedded in the runtime.
+
+An additional source audit checked the upstream branches, history and MID-360
+proposal. The `main` revision remains the pinned commit above; `gazebo7` has no
+MID-360 table. In `InitializeRays`, the loop count affects only table indexing:
+there is no quarter-cycle reconstruction, mirroring or added optical phase.
+The sensor mounting rotation does not supply such a phase. The published
+[MID-360 xacro](https://github.com/Livox-SDK/livox_laser_simulation/blob/1cce1073633a062b92e30243a4c2920e45551bb5/urdf/livox_mid360.xacro)
+actually defaults to 24,000 samples at 10 Hz (240,000 points/s without
+downsampling), so its configured playback traverses the table in about 3.33
+seconds. Four seconds describes the table at the hardware's nominal point rate,
+not a duration enforced by the plugin.
+
+The closed, unmerged [CPU/GPU proposal #14](https://github.com/Livox-SDK/livox_laser_simulation/pull/14)
+also retains modulo CSV playback in its CPU path. Its GPU plugin consumes
+scan angles from Gazebo rather than defining an analytical optical generator
+in the plugin. The [SDK2 scan-pattern API](https://github.com/Livox-SDK/Livox-SDK2/blob/master/sdk_core/livox_lidar_sdk.cpp)
+forwards a device command, not a trajectory calculation. These inspected public
+sources do not supply the optical generator; this does not establish what
+unpublished firmware or internal tools contain.
 
 The similarly named `LivoxGenerator` in
 [MuJoCo-LiDAR](https://github.com/discoverse-dev/MuJoCo-LiDAR/blob/main/src/mujoco_lidar/scan_gen.py)
@@ -373,7 +403,17 @@ jitter appears in the accelerometer as deterministic numerical noise. It is not
 a vibration model, so check a stationary and a spinning robot before tuning an
 estimator's noise parameters.
 
-App overlays, app/server ROS wiring, noisy wheel odometry, estimated-pose
+App overlays, noisy wheel odometry, estimated-pose
 SLAM, incidence/material response and angular measurement noise remain future
 work. The existing Sentry planner still consumes ground-truth geometry; these
 sensor APIs do not silently replace it with a localization stack.
+
+## Standalone sensor project
+
+The sibling `mid360-sim` repository contains a standalone, simulator-independent
+pattern/acquisition core and rclrs publisher, with Pixi/RoboStack setup, copied
+Livox interface notices and a moving-sensor room demo. It adds optional angular
+ray perturbations and an explicitly uncalibrated diffuse dropout stress model.
+The existing physics implementation and ROS/control bridge remain compatible;
+the pattern core is now a pinned Git dependency. Its other simulator backends remain independent. Its `docs/realism.md` prioritizes optical geometry,
+IMU synchronization, material calibration and long real-sensor recordings.

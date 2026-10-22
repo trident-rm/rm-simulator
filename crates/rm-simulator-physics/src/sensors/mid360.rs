@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! Procedural two-clock approximation of Livox's published MID-360 angle table.
-//!
-//! This is an empirical angular fit, not a reverse-engineered optical design or
-//! calibrated hardware emulator. See `docs/navigation-sensors.md` for provenance,
-//! held-out errors and timing assumptions. Continuous phase replaces CSV wrapping;
-//! the inferred rational frequencies give this approximation a 12-second period.
-use super::{LidarConfig, LidarFrame, MAX_LIDAR_RAYS, mid360_coefficients::*};
+//! Representative hardware-derived MID-360 scan from the standalone mid360-sim.
+//! The dependency is pinned without ROS features; this adapter supplies ranges
+//! and physics captures. Its 18.2-hour nominal cycle is a simulation choice,
+//! not a calibrated device recurrence. See `docs/navigation-sensors.md`.
+use super::{LidarConfig, LidarFrame, MAX_LIDAR_RAYS};
 use crate::{
     Pose, StaticGeometry,
     projectile::{pose, pose_is_valid},
@@ -16,9 +14,9 @@ use rapier3d_f64::prelude::{Ray, Vector};
 /// Nominal first-return point interval, nanoseconds, from Livox MID-360 specs
 /// (200,000 points/s). Exact hardware firing times are not reconstructed.
 pub const POINT_INTERVAL_NS: u64 = 5_000;
-/// Period of this fitted rational-clock model, samples, not a verified hardware
+/// Period of the nominal rational-clock model, samples, not a verified hardware
 /// repeat period. Four interleaved lanes produce 200,000 points/s.
-pub const MODEL_PERIOD_SAMPLES: u64 = 2_400_000;
+pub const MODEL_PERIOD_SAMPLES: u64 = mid360_sim::hardware::NOMINAL_CYCLE_S * 200_000;
 
 /// A bounded window into the continuous sample sequence. No hidden cursor means
 /// chunking, checkpoints and deterministic decimation preserve scan phase.
@@ -33,7 +31,7 @@ pub struct PatternWindow {
     pub stride: u32,
 }
 
-/// Ideal range sensor using a compact Fourier approximation of the MID-360 table.
+/// Ideal range sensor using the standalone hardware-derived nominal scan.
 /// The nominal lane cadence is a simulation policy, not measured firing timing.
 pub struct Mid360Pattern {
     min_range_m: f64,
@@ -60,27 +58,11 @@ impl Mid360Pattern {
         })
     }
 
-    /// Local FLU unit direction of a global point index. Four fitted lanes share
+    /// Local FLU unit direction of a global point index. Four representative lanes share
     /// each 20-microsecond phase step. Phase is reduced before floating-point
     /// evaluation to avoid precision loss at large indices.
     pub fn direction(&self, sample_index: u64) -> [f64; 3] {
-        let lane = (sample_index % 4) as usize;
-        let group = (sample_index % MODEL_PERIOD_SAMPLES) / 4;
-        let time_s = group as f64 / 50_000.;
-        let spin = std::f64::consts::TAU * (2189. / 12.) * time_s;
-        let sweep = std::f64::consts::TAU * 10. * time_s;
-        let mut azimuth = COEFFICIENTS_RAD[0][lane] - spin;
-        let mut elevation = COEFFICIENTS_RAD[0][lane + 4];
-        for (i, &(j, k)) in TERMS.iter().enumerate() {
-            let (sin, cos) = (f64::from(j) * spin + f64::from(k) * sweep).sin_cos();
-            let c = &COEFFICIENTS_RAD[1 + i];
-            let s = &COEFFICIENTS_RAD[1 + TERMS.len() + i];
-            azimuth += c[lane] * cos + s[lane] * sin;
-            elevation += c[lane + 4] * cos + s[lane + 4] * sin;
-        }
-        let (sa, ca) = azimuth.sin_cos();
-        let (se, ce) = elevation.sin_cos();
-        [ce * ca, ce * sa, se]
+        mid360_sim::hardware::NominalPattern.direction(sample_index)
     }
 
     /// Nominal emission offset from sequence start, nanoseconds, or `None` on
@@ -134,36 +116,15 @@ impl Mid360Pattern {
 mod tests {
     use super::*;
     #[test]
-    fn fit_matches_reference_including_held_out_points() {
+    fn delegates_to_pinned_nominal_profile() {
         let sensor = Mid360Pattern::new(0.1, 40.).unwrap();
-        // Measurement excerpts from pinned upstream table; MIT terms in NOTICE.md.
-        for (index, azimuth, zenith) in [
-            (0, 268.99_f64, 37.838_f64),
-            (1, 269., 40.825),
-            (2, 269., 43.581),
-            (3, 269., 46.152),
-            (400000, 326.13, 40.04),
-            (400001, 328.07, 41.516),
-            (400002, 329.9, 42.926),
-            (400003, 331.64, 44.277),
-            (799996, 27.654, 44.261),
-            (799997, 29.366, 42.921),
-            (799998, 31.165, 41.523),
-            (799999, 33.069, 40.061),
-        ] {
-            let a = azimuth.to_radians();
-            let z = zenith.to_radians();
-            let actual = Vector::new(z.sin() * a.cos(), z.sin() * a.sin(), z.cos());
-            let predicted = Vector::from(sensor.direction(index));
-            assert!(
-                predicted
-                    .cross(actual)
-                    .length()
-                    .atan2(predicted.dot(actual))
-                    .to_degrees()
-                    < 0.16
+        for index in [0, 1, 2, 3, 800_000, 60_000_000, MODEL_PERIOD_SAMPLES - 1] {
+            assert_eq!(
+                sensor.direction(index),
+                mid360_sim::hardware::NominalPattern.direction(index)
             );
         }
+        const { assert!(MODEL_PERIOD_SAMPLES > 60_000_000) };
     }
     #[test]
     fn phase_continues_past_csv_and_is_bounded_at_large_indices() {

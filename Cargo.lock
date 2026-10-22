@@ -4609,6 +4609,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "mid360-sim"
+version = "0.1.0"
+source = "git+https://github.com/hxyulin/mid360-sim.git?rev=7396856da6c80b8ac13b26e9bf43a6a5aa85031f#7396856da6c80b8ac13b26e9bf43a6a5aa85031f"
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6109,6 +6114,7 @@ dependencies = [
 name = "rm-simulator-physics"
 version = "0.1.0"
 dependencies = [
+ "mid360-sim",
  "rapier3d-f64",
  "serde",
 ]

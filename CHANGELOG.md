@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- Add leased Sentry head sweep/chassis counter-rotation and articulated LiDAR
+  mounting. Preserve every IMU output period across fractional-nanosecond substeps.
+
 - Audit the supplied 2026-10-22 RM2027 Q&A against native UC/UL control,
   adaptive armor and logistics. Record the clarified aerial-impact event model,
   remaining implementation gaps and simulator policies the slides do not settle.
@@ -18,6 +21,10 @@
   Transfer readback buffers without a second frame copy, move channel conversion
   off the app thread, bound encoder threads and expose frame diagnostic averages
   through the console for recording-on/off comparisons.
+
+- Pin the standalone mid360-sim nominal profile, replacing copied table-fit
+  coefficients without adding ROS dependencies to physics.
+
 
 - Keep local pilot owner anchors at 4 ms while encoding world checkpoints at
   32 ms, preserving pending world updates and reliable queue barriers. Share
@@ -277,16 +284,13 @@
 - Close the source Engineer jaws onto the Energy Unit body before assembly;
   gate carrying on a fitted grasp and support opening, release and regripping.
 
-
 - Correct the assembly workbench's P hinge, lift order and Q tilt axis against
   the RMUC 2027 diagrams, and finish each demo waypoint before the next motion.
 - Generate reproducible equipment-local assembly pose candidates for all four
   difficulties; report source-head overhang and IK failures without resampling.
 
-
 - Record offline source-CAD assembly IK trajectories and render complete overview
   or gripper close-up animations with pinned source meshes and timing.
-
 
 - Bind the PIE Engineer's six-axis arm and gripper, RMUC2027 Tech Core arm,
   carriage/P/Q groups and complete Energy Unit into the Cartesian workbench.
@@ -1625,7 +1629,6 @@
   1.18 million visual and 0.94 million static collider triangles, retaining
   semantic joints and identified artwork. Installed binaries find the package
   beside their `bin` directory, independent of the build checkout.
-
 
 - Update the default local CAD package with reduced resource-zone and tech-core
   tessellation, preserving checksum-pinned semantic equipment. The deployed

@@ -63,6 +63,28 @@ impl SceneCapture {
             fixed_geometry,
         }
     }
+    /// Use an actual articulated carrier pose for this capture's sensor mount.
+    /// Geometry, robot identity and placement revisions remain unchanged. Supply
+    /// the physical carrier pose at each capture time (FLU metres, unit wxyz),
+    /// never an independently advanced animation or a discontinuous placement.
+    /// The ordinary acquisition interpolates this frame per emission.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{WorldPhysics, Pose, Team, chassis::ChassisConfig};
+    /// let mut world = WorldPhysics::new(&[], 0.);
+    /// let robot = world.add_chassis(Team::Red, ChassisConfig::default(), Pose::at([0.,0.,0.3]))?;
+    /// let head = Pose::yawed([0.,0.,0.5], 0.2);
+    /// let scene = world.lidar_scene_capture(robot, 0)?.with_mount_frame(head)?;
+    /// assert_eq!(scene.time_ns(), 0);
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn with_mount_frame(mut self, carrier: Pose) -> Result<Self, &'static str> {
+        if !pose_is_valid(carrier) {
+            return Err("invalid LiDAR carrier pose");
+        }
+        self.robot_pose = pose(carrier);
+        Ok(self)
+    }
     /// Caller-supplied capture time, nanoseconds. The world facade stamps this
     /// from its actual simulation clock.
     pub fn time_ns(&self) -> u64 {
@@ -371,18 +393,61 @@ mod tests {
         let robot = world
             .add_chassis(Team::Red, ChassisConfig::default(), Pose::at([0., 0., 0.3]))
             .unwrap();
-        world.add_static_box(Pose::at([0., -5., 3.]), [100., 1., 100.]);
+        world.add_static_box(Pose::at([-5., 0., 3.]), [1., 100., 100.]);
         (world, robot)
     }
     fn sensor(mount: Pose, effects: RangeEffects) -> MountedLidar {
         MountedLidar::new(Mid360Pattern::new(0.1, 40.).unwrap(), mount, 0, effects).unwrap()
     }
     #[test]
+    fn articulated_carrier_changes_rays_without_moving_chassis_geometry() {
+        let (world, robot) = rig();
+        let a = Pose::yawed([0., 0., 0.5], 0.2);
+        let b = Pose::yawed([0., 0., 0.5], 0.3);
+        let original = world.lidar_scene_capture(robot, 0).unwrap();
+        let before = original.clone().with_mount_frame(a).unwrap();
+        assert_eq!(before.moving[0].pose, original.moving[0].pose);
+        let after = world
+            .lidar_scene_capture(robot, 1_000_000)
+            .unwrap()
+            .with_mount_frame(b)
+            .unwrap();
+        let sensor = sensor(Pose::at([0., 0., 1.]), RangeEffects::default());
+        let mut frame = RollingFrame::default();
+        sensor
+            .sample_into(
+                &before,
+                &after,
+                sensor.window_between(0, 1_000_000, 1).unwrap().unwrap(),
+                &mut frame,
+            )
+            .unwrap();
+        let mut hits = 0;
+        for p in frame.points {
+            if let Some(local) = p.point_sensor_m {
+                let f = p.time_ns as f64 / 1_000_000.;
+                let world = (pose(a).lerp(&pose(b), f) * sensor.robot_from_sensor)
+                    .transform_point(Vector::from(local));
+                assert!((world.x + 4.5).abs() < 1e-8);
+                hits += 1;
+            }
+        }
+        assert!(hits > 20);
+        assert!(
+            original
+                .with_mount_frame(Pose {
+                    rotation_wxyz: [0.; 4],
+                    ..a
+                })
+                .is_err()
+        );
+    }
+    #[test]
     fn mounted_points_follow_translation_rotation_and_local_frame() {
         let (world, robot) = rig();
         let before = world.lidar_scene_capture(robot, 0).unwrap();
         let mut after = world.lidar_scene_capture(robot, 1_000_000).unwrap();
-        after.robot_pose = pose(Pose::yawed([0., -1., 0.3], 0.2));
+        after.robot_pose = pose(Pose::yawed([-1., 0., 0.3], 0.2));
         // Interpolate a prescribed rigid displacement of this robot's geometry.
         let delta = after.robot_pose * before.robot_pose.inverse();
         for c in &mut after.moving {
@@ -399,7 +464,7 @@ mod tests {
             let f = point.time_ns as f64 / 1_000_000.;
             let mounted = before.robot_pose.lerp(&after.robot_pose, f) * sensor.robot_from_sensor;
             let world_point = mounted.transform_point(Vector::from(point.point_sensor_m.unwrap()));
-            assert!((world_point.y + 4.5).abs() < 1e-8);
+            assert!((world_point.x + 4.5).abs() < 1e-8);
             let direction = Vector::from(sensor.pattern.direction(point.sample_index));
             assert!(
                 (Vector::from(point.point_sensor_m.unwrap()) - direction * point.range_m.unwrap())
@@ -410,7 +475,7 @@ mod tests {
         // At later emissions the result differs from a frozen start-pose scan.
         let p = frame.points.last().unwrap();
         let dir = sensor.pattern.direction(p.sample_index);
-        assert!((p.range_m.unwrap() - (-4.5 / dir[1])).abs() > 0.1);
+        assert!((p.range_m.unwrap() - (-4.5 / dir[0])).abs() > 0.1);
     }
     #[test]
     fn own_body_occludes_and_mounting_above_it_restores_returns() {

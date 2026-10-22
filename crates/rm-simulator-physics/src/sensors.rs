@@ -14,7 +14,6 @@ use rapier3d_f64::prelude::{Ray, Vector};
 
 pub mod imu;
 pub mod mid360;
-mod mid360_coefficients;
 pub mod rolling;
 
 /// Maximum rays per frame, a bounded allocation policy, not a rulebook constant.
