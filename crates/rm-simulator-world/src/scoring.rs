@@ -3,49 +3,27 @@
 //! Contact detection and gameplay consequences, applied in physical contact order.
 use super::*;
 
-/// A contact either passes every detection condition or has one rejection reason.
-enum DetectionOutcome {
-    Rejected(Rejection),
-    Detected { offset_m: [f64; 2] },
-}
-
 impl Field {
-    fn detect(&self, time_ns: u64, contact: &Contact) -> DetectionOutcome {
-        let is_rune = matches!(contact.target, ArmorTarget::Rune { .. });
-        let offset = if let Some(detector) = self
-            .rmuc_2027
-            .as_ref()
-            .and_then(|s| s.detector(contact.target))
-        {
-            let [x, y, z] = contact.local_m;
-            ((-0.004..=0.012).contains(&x)
-                && y.abs() <= detector.half_m[0]
-                && z.abs() <= detector.half_m[1])
-                .then_some([y, z])
-        } else {
-            projectile::scoring_offset(contact.target, contact.local_m)
-        };
-        let Some(offset) = offset else {
-            return DetectionOutcome::Rejected(Rejection::OutsideTarget);
-        };
-        if is_rune && contact.caliber != Caliber::Mm17 {
-            return DetectionOutcome::Rejected(Rejection::Caliber);
+    fn detect(&self, time_ns: u64, contact: &Contact) -> Result<[f64; 2], Rejection> {
+        crate::rule_adapters::DetectionContext {
+            detector: self
+                .rmuc_2027
+                .as_ref()
+                .and_then(|s| s.detector(contact.target)),
+            minimum_rune_ring: if let (ArmorTarget::Rune { rune, .. }, Some(native)) =
+                (contact.target, &self.rmuc_2027)
+            {
+                native
+                    .game
+                    .runes
+                    .get(rune as usize)
+                    .map(|r| r.minimum_ring())
+            } else {
+                None
+            },
+            last_detection_ns: self.last_detection_ns.get(&contact.target).copied(),
         }
-        if let (ArmorTarget::Rune { rune, .. }, Some(native)) = (contact.target, &self.rmuc_2027) {
-            let ring = gameplay::rmuc_2027::rune::Rune::ring(offset[0].hypot(offset[1]));
-            if ring.is_none_or(|r| r < native.game.runes[rune as usize].minimum_ring()) {
-                return DetectionOutcome::Rejected(Rejection::DisabledRing);
-            }
-        }
-        if contact.normal_speed_m_s <= contact.caliber.armor_detection_speed_m_s() {
-            return DetectionOutcome::Rejected(Rejection::NormalSpeed);
-        }
-        if let Some(last) = self.last_detection_ns.get(&contact.target)
-            && time_ns.saturating_sub(*last) < contact.caliber.detection_interval_ns()
-        {
-            return DetectionOutcome::Rejected(Rejection::DetectionInterval);
-        }
-        DetectionOutcome::Detected { offset_m: offset }
+        .detect(time_ns, contact)
     }
     /// Apply the rule manual's detection conditions to one raw contact.
     pub(super) fn score(&mut self, time_ns: u64, contact: Contact) -> Result<ArmorHit, FieldError> {
@@ -64,11 +42,11 @@ impl Field {
             damage: 0,
         };
         let offset = match self.detect(time_ns, &contact) {
-            DetectionOutcome::Rejected(reason) => {
+            Err(reason) => {
                 hit.rejection = Some(reason);
                 return Ok(hit);
             }
-            DetectionOutcome::Detected { offset_m } => offset_m,
+            Ok(offset_m) => offset_m,
         };
         hit.local_offset_m = offset;
         self.last_detection_ns.insert(contact.target, time_ns);
@@ -107,16 +85,7 @@ impl Field {
                     },
                 });
             }
-            let target = match contact.target {
-                ArmorTarget::Base { base, .. } => {
-                    Some(gameplay::Target::Base(gameplay::Team::BOTH[base as usize]))
-                }
-                ArmorTarget::Outpost { outpost, .. } => Some(gameplay::Target::Outpost(
-                    gameplay::Team::BOTH[outpost as usize],
-                )),
-                ArmorTarget::Chassis { chassis, .. } => Some(gameplay::Target::Robot(chassis)),
-                _ => None,
-            };
+            let target = crate::rule_adapters::combat_target(contact.target);
             if let Some(target) = target
                 && state.game.phase == rmuc_2027::match_rules::Phase::Running
             {

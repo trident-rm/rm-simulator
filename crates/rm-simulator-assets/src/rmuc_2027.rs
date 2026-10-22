@@ -7,24 +7,8 @@ use rm_simulator_gameplay::rmuc_2027::Point;
 use rm_simulator_physics::{Pose, Team};
 use serde::{Deserialize, Serialize};
 
-/// One fitted detector; dimensions are measured from the source CAD, not artwork.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Detector {
-    /// Face at rest, in world FLU metres, +x outward.
-    pub pose: Pose,
-    /// Effective rectangular half-width/half-height in metres.
-    pub half_m: [f64; 2],
-}
-/// Outpost source geometry, keyed by its original field side.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Tower {
-    /// World FLU rotor pivot in metres.
-    pub pivot_m: [f64; 3],
-    /// Unit rotor axis in world FLU, including the source tower tilt.
-    pub axis: [f64; 3],
-    /// Three source detector faces at rest.
-    pub detectors: Vec<Detector>,
-}
+/// Shared physical source geometry; runtime rules do not own these definitions.
+pub use rm_simulator_physics::arena::{Detector, OutpostModel as Tower};
 /// A reviewed functional RFID footprint. Polygon x/y and floor are in FLU metres.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Zone {

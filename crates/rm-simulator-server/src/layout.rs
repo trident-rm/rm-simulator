@@ -5,7 +5,7 @@
 //! (ground, rune frame and outpost towers, base and tech core), and the
 //! chassis set down on the terrain.
 use crate::cad_assets::CadAssets;
-use crate::collision_mesh::{self, CollisionMesh, CollisionPart, GroundMesh};
+use crate::collision_mesh::{self, CollisionMesh, GroundMesh};
 use crate::math::{gltf_child, quat_axis_angle, rotate};
 use anyhow::ensure;
 use rm_simulator_world::{
@@ -111,37 +111,9 @@ pub struct Terrain {
     /// visual meshes, kept as trimeshes.
     pub equipment: Vec<CollisionMesh>,
 }
-/// One placed mechanism: a prismatic joint's moving subtree at its exported
-/// rest pose, plus where the two travel limits put it.
-#[derive(Clone, Debug)]
-pub struct MechanismMesh {
-    /// Moving subtree geometry in world FLU metres, at the exported rest pose.
-    pub mesh: CollisionMesh,
-    /// Referee mechanism that drives the travel.
-    pub mechanism: rm_simulator_world::referee::Mechanism,
-    /// Team the placement belongs to, from its x side.
-    pub team: Team,
-    /// Translation endpoints in metres, or a source rotor pivot and unit axis.
-    /// Drawing and collision resolve the same typed motion frame.
-    pub motion: rm_simulator_world::referee::MotionFrame,
-}
-/// Prismatic mechanisms driven by referee controls or simulation time.
-pub fn mechanism_joint(
-    joint: &crate::semantics::Joint,
-) -> Option<rm_simulator_world::referee::Mechanism> {
-    use rm_simulator_world::referee::Mechanism;
-    if joint.kind != "prismatic" || joint.limits.is_none() {
-        return None;
-    }
-    match joint.id.as_str() {
-        "base.shield.0.slide" | "base.shield.1.slide" | "base.shield.2.slide" => {
-            Some(Mechanism::Base)
-        }
-        "dart-station.gate.slide" => Some(Mechanism::DartDoor),
-        "base.dart_target.slide" => Some(Mechanism::DartTarget),
-        _ => None,
-    }
-}
+/// Shared equipment composition records and semantic channel classification.
+pub use rm_simulator_assets::components::{MechanismMesh, mechanism_joint};
+
 impl Terrain {
     /// One line for the start-up log.
     pub fn describe(&self) -> String {
@@ -175,43 +147,43 @@ pub fn load_terrain(cad: &CadAssets) -> anyhow::Result<Terrain> {
     let boundary = arena_boundary(projectile_bounds_m);
     ground.append(scenery);
     for asset in &cad.static_assets {
-        let mesh = load_asset_collision(cad, asset)?;
-        load_mechanisms(cad, asset, &mut mechanisms)?;
+        let model = load_component(
+            cad,
+            asset,
+            rm_simulator_assets::components::ComponentRole::Equipment,
+        )?;
+        mechanisms.extend(model.mechanisms(&asset.placements));
         for placement in &asset.placements {
-            ground.append(mesh.placed(placement));
+            ground.append(model.fixed.placed(placement));
         }
     }
     let mut fixtures = CollisionMesh::default();
     for (name, asset) in [("rune", &cad.rune), ("outpost", &cad.outpost)] {
-        let fixed = if cad.rmuc_2027.is_some() {
-            crate::rmuc_2027::fixed_collision(cad, asset)?
-        } else if cad.rest_pose_only {
-            collision_mesh::load_glb(&asset.physics_file(&cad.root))?
-        } else if let Some(semantics) = asset.physics_semantics() {
-            collision_mesh::load_glb_selected(
-                &asset.physics_file(&cad.root),
-                &semantics.fixed_primitives,
-            )?
+        let role = if name == "rune" {
+            rm_simulator_assets::components::ComponentRole::Rune
         } else {
-            fixed_parts(collision_mesh::load_glb_parts(
-                &asset.physics_file(&cad.root),
-            )?)
+            rm_simulator_assets::components::ComponentRole::Outpost
         };
+        let model = load_component(cad, asset, role)?;
         ensure!(
-            !fixed.triangles.is_empty(),
+            !model.fixed.triangles.is_empty(),
             "{name} visual mesh has no `{FIXED_NODE}` node"
         );
-        load_mechanisms(cad, asset, &mut mechanisms)?;
+        mechanisms.extend(model.mechanisms(&asset.placements));
         for placement in &asset.placements {
-            fixtures.append(fixed.placed(placement));
+            fixtures.append(model.fixed.placed(placement));
         }
     }
     let mut equipment = Vec::new();
     for asset in [&cad.base, &cad.tech_core] {
-        let mesh = load_asset_collision(cad, asset)?;
-        load_mechanisms(cad, asset, &mut mechanisms)?;
+        let model = load_component(
+            cad,
+            asset,
+            rm_simulator_assets::components::ComponentRole::Equipment,
+        )?;
+        mechanisms.extend(model.mechanisms(&asset.placements));
         for placement in &asset.placements {
-            equipment.push(mesh.placed(placement));
+            equipment.push(model.fixed.placed(placement));
         }
     }
     Ok(Terrain {
@@ -317,104 +289,17 @@ fn arena_boundary([low, high]: [[f64; 3]; 2]) -> CollisionMesh {
     mesh
 }
 
-/// Collision triangles for one asset: the sidecar's collision primitives when
-/// the asset has semantics, otherwise the whole GLB as one soup. Mechanism
-/// subtrees are left out, because `load_mechanisms` adds them as moving meshes.
-fn load_asset_collision(
+fn load_component(
     cad: &CadAssets,
     asset: &crate::cad_assets::CadAsset,
-) -> anyhow::Result<CollisionMesh> {
-    if cad.rmuc_2027.is_some() {
-        return crate::rmuc_2027::fixed_collision(cad, asset);
-    }
-    if cad.rest_pose_only {
-        return collision_mesh::load_glb(&asset.physics_file(&cad.root));
-    }
-    if let Some(semantics) = asset.physics_semantics() {
-        let excluded: Vec<_> = semantics
-            .joints
-            .iter()
-            .filter(|j| mechanism_joint(j).is_some())
-            .map(|j| j.motion_node)
-            .collect();
-        collision_mesh::load_glb_filtered(
-            &asset.physics_file(&cad.root),
-            &semantics.collision_primitives,
-            &excluded,
-            None,
-        )
-    } else {
-        collision_mesh::load_glb(&asset.physics_file(&cad.root))
-    }
-}
-
-/// Append one `MechanismMesh` per placement for every joint the referee
-/// drives. Geometry comes from the joint's motion subtree, and the offsets
-/// from its limits and world slide axis. Joints that are not mechanisms, or
-/// whose subtree has no collision triangles, are skipped.
-fn load_mechanisms(
-    cad: &CadAssets,
-    asset: &crate::cad_assets::CadAsset,
-    output: &mut Vec<MechanismMesh>,
-) -> anyhow::Result<()> {
-    if cad.rmuc_2027.is_some() {
-        return crate::rmuc_2027::mechanisms(cad, asset, output);
-    }
-    if cad.rest_pose_only {
-        return Ok(());
-    }
-    let Some(semantics) = asset.physics_semantics() else {
-        return Ok(());
-    };
-    for joint in &semantics.joints {
-        let Some(mechanism) = mechanism_joint(joint) else {
-            continue;
-        };
-        let mesh = collision_mesh::load_glb_filtered(
-            &asset.physics_file(&cad.root),
-            &semantics.collision_primitives,
-            &[],
-            Some(joint.motion_node),
-        )?;
-        if mesh.triangles.is_empty() {
-            continue;
-        }
-        let axis = crate::math::rotate(
-            [
-                joint.rotation_xyzw[3],
-                joint.rotation_xyzw[0],
-                joint.rotation_xyzw[1],
-                joint.rotation_xyzw[2],
-            ],
-            joint.axis,
-        );
-        for placement in &asset.placements {
-            let axis = crate::math::rotate(crate::math::gltf_rotation(placement), axis);
-            output.push(MechanismMesh {
-                mesh: mesh.placed(placement),
-                mechanism,
-                team: side_team(placement.translation_m[0]),
-                motion: rm_simulator_world::referee::MotionFrame::Translation {
-                    offsets_m: joint
-                        .limits
-                        .expect("bounded mechanism")
-                        .map(|v| axis.map(|a| a * v)),
-                },
-            });
-        }
-    }
-    Ok(())
-}
-
-/// The parts of a rune or outpost visual that never move, as one soup.
-fn fixed_parts(parts: Vec<CollisionPart>) -> CollisionMesh {
-    let mut fixed = CollisionMesh::default();
-    for part in parts {
-        if part.name == FIXED_NODE {
-            fixed.append(part.mesh);
-        }
-    }
-    fixed
+    role: rm_simulator_assets::components::ComponentRole,
+) -> anyhow::Result<rm_simulator_assets::components::ComponentModel> {
+    rm_simulator_assets::components::load(
+        cad,
+        asset,
+        role,
+        cad.rmuc_2027.as_ref().map(|b| b.motions(cad, asset)),
+    )
 }
 
 /// Hand the terrain to the field: the ground, fixtures and equipment as
@@ -868,35 +753,6 @@ mod tests {
         ));
         let up = rotate(origin.rotation_wxyz, [0.0, 0.0, 1.0]);
         assert!(up[2] > 0.999, "{up:?}");
-    }
-    #[test]
-    fn only_the_static_node_of_a_rune_or_outpost_visual_is_fixed() {
-        let tri = |z: f64| CollisionMesh {
-            vertices_m: vec![[0.0, 0.0, z], [1.0, 0.0, z], [0.0, 1.0, z]],
-            triangles: vec![[0, 1, 2]],
-        };
-        let parts = vec![
-            CollisionPart {
-                name: "face_0/blade_0".into(),
-                mesh: tri(1.0),
-            },
-            CollisionPart {
-                name: "static".into(),
-                mesh: tri(2.0),
-            },
-            CollisionPart {
-                name: "rotor/carrier".into(),
-                mesh: tri(3.0),
-            },
-            CollisionPart {
-                name: "static".into(),
-                mesh: tri(4.0),
-            },
-        ];
-        let fixed = fixed_parts(parts);
-        assert_eq!(fixed.triangles, vec![[0, 1, 2], [3, 4, 5]]);
-        assert!(fixed.vertices_m.iter().all(|v| v[2] == 2.0 || v[2] == 4.0));
-        assert!(fixed_parts(Vec::new()).triangles.is_empty());
     }
     #[test]
     fn chassis_is_set_down_on_the_ground_below_the_spawn_point() {

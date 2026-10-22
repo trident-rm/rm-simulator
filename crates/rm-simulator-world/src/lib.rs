@@ -16,6 +16,7 @@ pub mod projectile;
 pub mod referee;
 pub mod rmuc_2027;
 mod rmul_2027;
+pub mod rule_adapters;
 pub mod rune;
 mod scoring;
 pub mod session;

@@ -61,9 +61,10 @@ Standalone gameplay experiments can drive existing pure rule modules separately;
 full matches continue to advance all effects through their ordinary clock.
 Source partitioning and articulated export already exist in rm-map-tools;
 verified package and collision-subtree readers already exist in the assets crate.
-Reuse those outputs and readers. The remaining step is reusable composition of
-fixed/moving models outside server layout, followed by per-feature rule-state
-extraction, without introducing a second `Field` or bypassing host admission.
+Reuse those outputs and readers. `assets::components` now composes fixed/moving models outside server layout,
+and the live terrain loader uses that builder. A source Outpost can be installed
+in `RobotSession` without a match. Per-feature rule-state extraction remains a
+later step, without introducing a second `Field` or bypassing host admission.
 
 ## Ownership
 

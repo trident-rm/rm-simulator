@@ -18,6 +18,8 @@ Git history.
 | Runtime/game split, two session layers and backend migration risks | [Runtime split](runtime-game-split.md) |
 | Standalone physics and optional rendering | [Physics reuse](physics-reuse.md) |
 | In-process sessions, clocks, controls and future adapters | [Simulation embedding](simulation-embedding.md) |
+| Source equipment presets, recipe resets and modular rule observations | [Standalone scenarios](standalone-scenarios.md) |
+| Optional RXUI equipment inspector and orthographic overlays | [Scenario inspector](scenario-inspector.md) |
 | Live-game navigation integration design, joint feedback and deferred MuJoCo | [Robotics next steps](robotics-next-steps.md) |
 | Graphics presets, render limits and CPU-contention measurements | [Graphics performance](performance-graphics-20261023.md) |
 | Nearest-hit geometry and ideal LiDAR acquisition | [Navigation sensors](navigation-sensors.md) |

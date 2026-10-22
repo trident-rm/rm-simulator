@@ -27,6 +27,17 @@ stable IDs and fixed geometry drive animation and collision selection. See
 [Semantic assets](semantic-assets.md) for package composition, running this
 version, geometry counts and remaining fitted detector data.
 
+## Independent equipment instances
+
+`rm_simulator_assets::components::load` composes one verified exported asset into
+an asset-local `ComponentModel`. Native body partitions and semantic joint
+subtrees reuse the existing package metadata; visual materials and geometry are
+not regenerated. Apply one exported root placement with `placed`, then consume
+the `PlacedComponent` into `WorldPhysics` or a `RobotScenario` setup recipe.
+The same builder supplies live server terrain, preserving source triangle and
+mechanism order. See [standalone components](physics-reuse.md#standalone-arena-components)
+for the source-Outpost example, coordinate convention and rule/geometry boundary.
+
 ## Deployment
 
 The approved native 2027 source adapter and reproduction steps are documented in

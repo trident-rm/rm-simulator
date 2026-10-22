@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright (c) 2026 hxyulin <hxyulin@proton.me>
+# Independent optional workspace policy; do not widen the root deny.toml.
+[graph]
+all-features = true
+
+[advisories]
+ignore = [
+    # Same maintenance-only exception as the root policy. RXUI's Linux winit
+    # decorations use unmaintained ttf-parser; no vulnerability or fixed version.
+    "RUSTSEC-2026-0192",
+]
+
+[licenses]
+confidence-threshold = 0.8
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "Unicode-3.0",
+    "Zlib",
+]
+# No MPL exceptions: the inspector does not use Flair's CSS dependencies.
+# Boost Software License 1.0 is permissive and compatible with this repository's
+# license policy. Limit the allowance to the audited Windows clipboard crates;
+# keep their upstream notices when redistributing source.
+[[licenses.exceptions]]
+name = "clipboard-win"
+version = "=5.4.1"
+allow = ["BSL-1.0"]
+
+[[licenses.exceptions]]
+name = "error-code"
+version = "=3.4.0"
+allow = ["BSL-1.0"]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+required-git-spec = "rev"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Exact repository allowlist, with rev required above and commits fixed by the
+# manifests and Cargo.lock. Updating a pin requires reviewing the locked graph.
+allow-git = [
+    # rxui: 656bf5ed460ed9604b65fa9538354fb6c746a7d4 (inspector manifest).
+    "https://github.com/hxyulin/rxui",
+    # astrelis/astrelis-winit: 604b9fedb62009dc9600963ab98a3cc00a31fe29 (RXUI).
+    "https://github.com/hxyulin/astrelis",
+    # mid360-sim: c832a45bbde4d6cc5ef1e09afb0102b699fdc8d6 (physics).
+    "https://github.com/hxyulin/mid360-sim.git",
+]

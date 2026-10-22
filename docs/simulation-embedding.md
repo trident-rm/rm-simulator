@@ -46,6 +46,16 @@ does not need to load CAD; a physical test does not need to create a referee.
 Asset loading preserves painted materials and source metadata; it does not
 replace the existing app's robot admission and source joint binding adapters.
 
+## Standalone equipment and rule adapters
+
+[Standalone scenarios](standalone-scenarios.md) combine source-backed Outpost,
+Rune and Base presets, or an explicit approximate tunnel fixture, with ordinary
+`RobotSession` setup/reset. Definitions share cooked geometry across sessions.
+`world::rule_adapters` supplies borrowed RFID layouts and contact detection gates;
+the live world uses these same observation bridges. Pure traversal/Rune state
+machines or an existing native Match remain the rule authority. No second clock,
+referee scheduler or new protocol state is introduced.
+
 ## Explicit timing
 
 `StepDuration` is immutable per physical world. The default remains exactly

@@ -4,6 +4,20 @@
 
 ## Unreleased
 
+- Add an optional isolated RXUI scenario inspector with orthographic collider
+  views, mechanism controls, physical preset stepping/reset and detector/RFID
+  overlays. Keep its native graphics dependencies outside the core workspace.
+
+- Add source-backed standalone Outpost/Base/Rune presets and an approximate
+  tunnel fixture, with explicit robot spawns, shared cooked geometry and physical
+  recipe resets. Extract shared RFID observation and contact-detection adapters
+  from the live world, preserving native authorities and checkpoint state.
+
+- Extract equipment composition into the assets crate: reuse verified source
+  partitions and semantic joints to place fixed/moving geometry independently.
+  Share the builder with server terrain and add a physics-only source Outpost
+  example, preserving collider order, placements and motion frames.
+
 - Stream synchronized mounted LiDAR/IMU from the actual live app/server world.
   Add bounded capture/acquisition queues, read-only HTTP attachments and rclrs
   `--host` publishing with shared simulation stamps and SI inertial units.

@@ -206,12 +206,35 @@ sibling repository; consume their versioned output packages.
 The assets crate already verifies package checksums and semantic bindings, and
 `collision_mesh::load_glb_selected` / `load_glb_filtered` can select primitives
 and joint subtrees while preserving ancestor transforms. Server layout already
-uses those readers for fixed/moving geometry. The remaining extraction is to
-make that model composition reusable outside server layout: select an existing
-exported asset, apply its placement once, install its fixed/moving collision and
-bind its detector/zone observations. Do not build another CAD splitter or package
-format. The current arena module shares detector geometry and occupancy; it does
-not yet expose that complete composition or independent per-feature authorities.
+uses those readers for fixed/moving geometry. `assets::components` now exposes that composition outside server layout:
+load one verified asset, retain its asset-local fixed/moving definition, and place
+or install selected instances without a complete arena. Server terrain loading
+uses the same builder. Native source-body loading parses the collision GLB once
+for both partitions; semantic loading retains its existing primitive/subtree
+filters. `ComponentModel::mechanisms` preserves binding-major, placement-minor
+insertion order, matching the previous arena composition.
+
+```sh
+cargo run -p rm-simulator-assets --example outpost_component --locked -- field-2027
+```
+
+This loads one complete approved source Outpost, including fixed shell, moving
+rotor geometry and three detector faces, into `RobotSession` at its existing
+placement. It sets a caller-prescribed 0.5 rad rotor angle, advances and resets.
+No server, complete field or native match is constructed. The visual file and
+its checked semantic metadata remain available through the selected `CadAsset`;
+the physics builder does not draw or reinterpret their materials.
+
+Pass exported `CadAsset::placements` roots to `ComponentModel::placed`. To author
+a new placement, use `assets::math::gltf_root_pose`, whose basis convention matches
+the GLB reader; plain `Pose::at` is not an interchangeable root placement.
+`PlacedComponent::install` consumes placed triangles into `WorldPhysics`;
+`RobotScenario` can retain a cloneable placed definition for episode reset.
+Caller target poses, detector masks and prescribed mechanism coordinates must
+remain consistent. No HP/buff authority, automatic rotor scheduler or calibrated
+inertial properties are created. Source geometry/verified imports remain in
+rm-map-tools and assets; future rule-state extraction should preserve the single
+native match clock.
 
 ## Restore and prediction
 

@@ -6,6 +6,8 @@
 #![deny(missing_docs)]
 pub mod cad_assets;
 pub mod collision_mesh;
+pub mod components;
 pub mod math;
 pub mod rmuc_2027;
+pub mod scenarios;
 pub mod semantics;

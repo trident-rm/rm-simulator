@@ -3,14 +3,9 @@
 //! Checksum-bound RMUC 2027 V1.0.0 source-body detector and motion bindings.
 use crate::{
     cad_assets::{CadAsset, CadAssets},
-    collision_mesh::{self, CollisionMesh},
-    math,
+    collision_mesh::CollisionMesh,
 };
-use anyhow::Context;
-use rm_simulator_world::{
-    referee::Mechanism,
-    rmuc_2027::{Config, Zone},
-};
+use rm_simulator_world::rmuc_2027::{Config, Zone};
 use serde::Deserialize;
 
 pub use rm_simulator_assets::rmuc_2027::{Motion, Part, SourceReport};
@@ -160,18 +155,10 @@ pub fn fit_zone_heights(config: &mut Config, ground: &crate::collision_mesh::Gro
 }
 /// Load only fixed source bodies, leaving driven bodies for their own colliders.
 pub fn fixed_collision(cad: &CadAssets, asset: &CadAsset) -> anyhow::Result<CollisionMesh> {
-    let motions = cad
-        .rmuc_2027
-        .as_ref()
-        .map(|b| b.motions(cad, asset))
-        .unwrap_or(&[]);
-    let mut result = CollisionMesh::default();
-    for part in collision_mesh::load_glb_parts(&asset.physics_file(&cad.root))? {
-        if !motions.iter().any(|m| m.bodies.contains(&part.name)) {
-            result.append(part.mesh);
-        }
+    if cad.rmuc_2027.is_none() {
+        return crate::collision_mesh::load_glb(&asset.physics_file(&cad.root));
     }
-    Ok(result)
+    Ok(component(cad, asset)?.fixed)
 }
 /// Place exact driven source-body triangles with the same pivots as drawing/scoring.
 pub fn mechanisms(
@@ -179,51 +166,31 @@ pub fn mechanisms(
     asset: &CadAsset,
     output: &mut Vec<crate::layout::MechanismMesh>,
 ) -> anyhow::Result<()> {
-    let Some(bindings) = &cad.rmuc_2027 else {
+    if cad.rmuc_2027.is_none() {
         return Ok(());
-    };
-    let parts = collision_mesh::load_glb_parts(&asset.physics_file(&cad.root))?;
-    for (mi, motion) in bindings.motions(cad, asset).iter().enumerate() {
-        let mut mesh = CollisionMesh::default();
-        for name in &motion.bodies {
-            let part = parts
-                .iter()
-                .find(|p| &p.name == name)
-                .with_context(|| format!("missing bound source body {name}"))?;
-            mesh.append(part.mesh.clone());
-        }
-        for placement in &asset.placements {
-            let mechanism = if asset.file == cad.rune.file {
-                Mechanism::Rune
-            } else if motion.limits.is_none() {
-                Mechanism::Outpost
-            } else {
-                Mechanism::Base
-            };
-            let frame = if let Some(limits) = motion.limits {
-                let axis = math::rotate(math::gltf_rotation(placement), motion.axis);
-                rm_simulator_world::referee::MotionFrame::Translation {
-                    offsets_m: limits.map(|limit| axis.map(|v| v * limit)),
-                }
-            } else {
-                rm_simulator_world::referee::MotionFrame::Rotation {
-                    pivot_m: math::gltf_point(placement, motion.pivot_m),
-                    axis: math::rotate(math::gltf_rotation(placement), motion.axis),
-                }
-            };
-            output.push(crate::layout::MechanismMesh {
-                mesh: mesh.placed(placement),
-                mechanism,
-                team: if asset.file == cad.rune.file {
-                    rm_simulator_world::Team::BOTH[mi]
-                } else {
-                    crate::layout::side_team(placement.translation_m[0])
-                },
-                motion: frame,
-            });
-        }
     }
+    let model = component(cad, asset)?;
+    output.extend(model.mechanisms(&asset.placements));
     Ok(())
+}
+fn component(
+    cad: &CadAssets,
+    asset: &CadAsset,
+) -> anyhow::Result<rm_simulator_assets::components::ComponentModel> {
+    use rm_simulator_assets::components::{self, ComponentRole};
+    let role = if asset.file == cad.rune.file {
+        ComponentRole::Rune
+    } else if asset.file == cad.outpost.file {
+        ComponentRole::Outpost
+    } else {
+        ComponentRole::Equipment
+    };
+    components::load(
+        cad,
+        asset,
+        role,
+        cad.rmuc_2027.as_ref().map(|b| b.motions(cad, asset)),
+    )
 }
 
 #[cfg(test)]

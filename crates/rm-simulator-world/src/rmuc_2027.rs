@@ -276,90 +276,11 @@ impl crate::Field {
         let Some(state) = &mut self.rmuc_2027 else {
             return;
         };
-        // Sequences consume physical entry edges, not delayed buff activations.
-        let cards = &mut self.rmuc_terrain_cards;
-        // Observations may change robot state, but never roster membership.
-        for index in 0..state.game.robots.len() {
-            let id = state.game.robots[index].id;
-            use crate::gameplay::rmuc_2027::terrain::{Card, Course};
-            let p = self.physics.chassis_position_m(id);
-            cards.clear();
-            cards.extend(
-                state
-                    .config
-                    .terrain_zones
-                    .iter()
-                    .filter(|z| p.is_some_and(|p| z.zone.contains(p)))
-                    .map(|z| z.card),
-            );
-            for z in &state.config.zones {
-                // Higher Highland cards also provide connected Highland/Outpost
-                // detection. Coalesce those semantic roles into one physical card.
-                let shared = matches!(z.point, Point::CentralHighland | Point::Outpost)
-                    && cards.iter().any(|c| {
-                        c.side == crate::referee::game_team(z.side)
-                            && c.course == Some(Course::Highland)
-                            && c.pad == 1
-                    });
-                if !shared && p.is_some_and(|p| z.contains(p)) {
-                    cards.push(Card {
-                        side: crate::referee::game_team(z.side),
-                        course: None,
-                        index: match z.point {
-                            Point::Base => 0,
-                            Point::Fortress => 1,
-                            Point::Outpost => 2,
-                            Point::CentralHighland => 3,
-                        },
-                        pad: 0,
-                    });
-                }
-            }
-            for (index, zones) in [
-                (4, &state.config.supply_zones),
-                (5, &state.config.vantage_zones),
-            ] {
-                for z in zones {
-                    if p.is_some_and(|p| z.contains(p)) {
-                        cards.push(Card {
-                            side: crate::referee::game_team(z.side),
-                            course: None,
-                            index,
-                            pad: 0,
-                        });
-                    }
-                }
-            }
-            state.game.observe_terrain(id, cards);
-        }
-        for index in 0..state.game.robots.len() {
-            let id = state.game.robots[index].id;
-            let p = self.physics.chassis_position_m(id);
-            for z in &state.config.zones {
-                state.game.observe(
-                    id,
-                    crate::referee::game_team(z.side),
-                    z.point,
-                    p.is_some_and(|p| z.contains(p)),
-                );
-            }
-        }
-        for index in 0..state.game.robots.len() {
-            let (id, team) = {
-                let r = &state.game.robots[index];
-                (r.id, r.team)
-            };
-            let p = self.physics.chassis_position_m(id);
-            for (supply, zones) in [
-                (true, &state.config.supply_zones),
-                (false, &state.config.vantage_zones),
-            ] {
-                let present = zones.iter().any(|z| {
-                    crate::referee::game_team(z.side) == team && p.is_some_and(|p| z.contains(p))
-                });
-                state.game.observe_service(id, supply, present);
-            }
-        }
+        crate::rule_adapters::RfidLayout::from(&state.config).observe(
+            &mut state.game,
+            |id| self.physics.chassis_position_m(id),
+            &mut self.rmuc_terrain_cards,
+        );
         state.game.advance_ns(duration_ns);
         for r in &state.game.robots {
             self.physics.set_chassis_defeated(r.id, r.hp == 0);
