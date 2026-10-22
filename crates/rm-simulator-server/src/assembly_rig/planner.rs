@@ -2532,6 +2532,7 @@ impl Rig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
     #[test]
     fn coarse_runtime_keyframes_preserve_duration_and_reject_invalid_ticks() {
         let mut rig = super::super::tests::mechanism_fixture();

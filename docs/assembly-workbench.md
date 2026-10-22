@@ -111,6 +111,21 @@ target/nix/debug/examples/engineer_assembly \
   --spin-deltas 0 0 0 90 0
 ```
 
+## Reusable source loading
+
+`rm_simulator_assets::semantics::assembly::SourcePackage` verifies the approved
+PIE package and supplies source calibration, a source-bound area frame and an
+immutable `physics::manipulator_collision::CollisionScene`. It requires no host,
+match authority or renderer. Calibration is deserialized into a caller-owned
+type after the existing source arm, bearing and jaw checks. The server's
+`assembly_rig::Rig` retains its existing loading and planning entry points.
+
+`physics::manipulator_plan::checked_ik_hint` validates recorded body/tool poses
+and joint coordinates against FK before returning a body-local warm start.
+This numerical check supplies no collision certificate. Parking search, staged
+planning, worker cancellation and live world playback remain in the server;
+this extraction does not change their budgets, target revelation or permissions.
+
 ## Mechanism authority
 
 `gameplay::rmuc_2027::manipulation::Attempt` consumes simultaneous, authoritative

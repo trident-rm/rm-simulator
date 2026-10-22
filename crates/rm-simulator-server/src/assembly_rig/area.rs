@@ -2,8 +2,9 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Verified terrain extraction in the rig's unchanged equipment frame.
 use super::*;
-use rm_simulator_physics::manipulator_collision::CollisionPart;
+use rm_simulator_physics::manipulator_collision::{CollisionAsset, CollisionPart};
 use rm_simulator_server::collision_mesh::{CollisionMesh, GroundMesh};
+use sha2::{Digest, Sha256};
 
 #[derive(Clone)]
 pub(super) struct Area {
@@ -194,6 +195,7 @@ impl Rig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
     #[test]
     fn moving_chassis_requires_support_between_clear_endpoints() {
         use rm_simulator_physics::manipulator_collision::{

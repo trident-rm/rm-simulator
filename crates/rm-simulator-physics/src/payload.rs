@@ -22,6 +22,9 @@
 use super::*;
 use crate::manipulator_collision::CollisionPart;
 
+#[path = "payload/attachment.rs"]
+mod attachment;
+
 // A circumscribed compact hull, admitted only when every original hull vertex
 // is enclosed and the maximum displacement of its selected source vertices is
 // at most 1 mm. Convexity bounds the entire outer surface by that displacement.

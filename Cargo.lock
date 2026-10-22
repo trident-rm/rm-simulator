@@ -6064,6 +6064,7 @@ dependencies = [
  "clap",
  "glam 0.33.12",
  "prost",
+ "rm-simulator-assets",
  "rm-simulator-physics",
  "rm-simulator-render",
  "rm-simulator-server",

@@ -285,25 +285,29 @@ Root re-exports preserve the existing public API and serialization field order.
 The original Field regressions live in `tests.rs`. These are ownership/file moves,
 not changes to rule scheduling, checkpoint guarantees or physics behavior.
 
-The next larger boundaries, in priority order, are:
+The current mechanical extraction pass covers the following boundaries:
 
-1. Physical payload attachments versus Energy Unit stock/spent/seating rules.
-   Extract reusable grip-relative pose and release-velocity calculations while
-   retaining match permission and lifecycle authority in world. Preserve the
-   prescribed/loose transition and restoration behavior before exposing a generic
-   attachment API; avoid a second Unit state store.
-2. Immutable robot model and source rig construction versus host admission and
-   assembly policy. Reuse checked assets in standalone sessions without requiring
-   server/GNS. Link frames, inertial provenance, collision proxies and actuator
-   limits need explicit descriptions; importing CAD caches is not validation.
-3. Chassis/model configuration versus Rapier body/query/force adaptation.
-   Wheel equations already have a reusable boundary. Group the remaining code by
-   body construction, prescribed mechanisms and dynamics before attempting a
-   general backend interface. Do not change integration ordering while moving it.
-4. Collision-aware kinematics/planning versus assembly task orchestration.
-   Keep immutable query scenes and trajectory generation reusable, while task
-   stages, target revelation, rewards and bounded worker ownership remain with
-   match/host. Full physical arm dynamics are a separately validated feature.
+1. `PayloadSnapshot` attachment operations now own reusable grip-relative pose,
+   endpoint velocity, carry/release and telemetry refresh. World Energy Units
+   retain stock, spent/seating permissions and lifecycle authority. The same
+   caller-owned physical record is used; no second Unit state store was added.
+2. Checked PIE source-package verification, calibration checks and immutable
+   collision-scene construction now live in `assets::semantics::assembly`.
+   The server keeps its compatibility loader and match setup. Broader robot
+   model construction, link inertial provenance and actuator descriptions remain
+   follow-up work; importing native CAD caches is not physical validation.
+3. Chassis configuration and fitted model geometry now live in private
+   `chassis::model`; the Rapier adapter is split into construction, prescribed
+   mechanisms and dynamics modules. Existing public `chassis::*` paths remain
+   compatible. Wheel equations retain their existing reusable boundary. Function
+   bodies and integration ordering are preserved; this is not a new backend.
+4. Physics now validates reusable IK warm starts against calibrated arm FK.
+   Existing generic joint-path search and collision queries remain reusable.
+   Parking search, staged workbench planning, cancellation/time budgets and world
+   playback types still belong to server; moving this larger task-specific
+   boundary is deferred. Stages, target revelation, rewards and bounded worker
+   ownership retain their existing match/host authority. Full physical arm
+   dynamics are a separately validated feature.
 
 Composed scenarios, borrowed telemetry and scoped CPU rollout workers already
 provide consumers for these boundaries. The GPU experiments do not establish a

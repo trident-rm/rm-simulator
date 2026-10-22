@@ -2,6 +2,8 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Checksum-bound rm-map-tools articulation data. Names are display labels;
 //! stable semantic IDs and node indices bind geometry and motion.
+/// Source-bound assembly calibration and immutable collision-scene loading.
+pub mod assembly;
 use crate::cad_assets::verify_sha256;
 use anyhow::{Context, ensure};
 use serde::Deserialize;

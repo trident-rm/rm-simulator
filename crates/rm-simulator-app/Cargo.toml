@@ -40,4 +40,5 @@ prost = { version = "0.14", optional = true }
 rumqttd = { version = "0.20", default-features = false, optional = true }
 
 [dev-dependencies]
+rm-simulator-assets = { version = "0.1.0", path = "../rm-simulator-assets" }
 rm-simulator-physics = { version = "0.1.0", path = "../rm-simulator-physics" }

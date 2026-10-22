@@ -13,13 +13,14 @@ pub use planner::{Failure as PlanningFailure, Plan as AssemblyPlan};
 use rm_simulator_physics::{
     Pose,
     manipulator::SerialArm,
-    manipulator_collision::{CollisionAsset, CollisionHit, CollisionScene},
+    manipulator_collision::{CollisionHit, CollisionScene},
 };
 use rm_simulator_world::gameplay::rmuc_2027::assembly_pose::TargetPose;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 // Fixed cylinder grasp clocking; the unit gets the inverse offset at rendering.
 const GRASP_ROLL_RAD: f64 = -std::f64::consts::FRAC_PI_2;
+#[cfg(test)]
+use rm_simulator_physics::manipulator_collision::CollisionAsset;
 use rm_simulator_world::assembly::Model as Config;
 #[cfg(test)]
 use rm_simulator_world::assembly::{Auxiliary, Jaw};
@@ -92,30 +93,7 @@ fn checked_ik_hint(
     tool: Pose,
     q: [f64; 6],
 ) -> Result<(Pose, [f64; 6]), &'static str> {
-    if !body
-        .translation_m
-        .into_iter()
-        .chain(body.rotation_wxyz)
-        .chain(tool.translation_m)
-        .chain(tool.rotation_wxyz)
-        .all(f64::is_finite)
-        || [body, tool]
-            .iter()
-            .any(|p| (p.rotation_wxyz.into_iter().map(|v| v * v).sum::<f64>() - 1.).abs() > 1e-8)
-        || q.iter()
-            .zip(arm.axes)
-            .any(|(q, a)| !q.is_finite() || !(a.range_rad[0]..=a.range_rad[1]).contains(q))
-    {
-        return Err("IK hint contains an invalid pose or joint coordinate");
-    }
-    let target = compose(inverse(body), tool);
-    let actual = arm.tool_pose(q);
-    if position(actual).distance(position(target)) > 1e-5
-        || quaternion(actual).angle_between(quaternion(target)) > 1e-4
-    {
-        return Err("IK hint does not match the source arm FK");
-    }
-    Ok((target, q))
+    rm_simulator_physics::manipulator_plan::checked_ik_hint(arm, body, tool, q)
 }
 pub(super) fn quaternion(p: Pose) -> DQuat {
     let [w, x, y, z] = p.rotation_wxyz;
@@ -233,81 +211,10 @@ impl Rig {
         requested_pose: Option<TargetPose>,
         area: Option<&Path>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let m: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(root.join("manifest.json"))?)?;
-        if m["schema"] != 1
-            || m["profile"] != "pie-rmuc2027-assembly-workbench-v5"
-            || m["source_step_sha256"]
-                != "bfb91b499f17488ed1deb523568869f2fcb29436a53cbc39ec5e64ac4a822c47"
-            || m["source_field_sha256"]
-                != "a5ad3ede3b7674fc98f2e73b71717216383cb2b4b5dcdbe900c2038918bea8e0"
-        {
-            return Err("unsupported assembly CAD profile or source release".into());
-        }
-        for (key, file) in [
-            ("config", "assembly.json"),
-            ("collision", "collision.json"),
-            ("engineer", "engineer.glb"),
-            ("core-base", "core-base.glb"),
-            ("core-arm", "core-arm.glb"),
-            ("core-head", "core-head.glb"),
-            ("unit", "unit.glb"),
-        ] {
-            let hash = format!("{:x}", Sha256::digest(std::fs::read(root.join(file))?));
-            if m["files"][key]["file"] != file || m["files"][key]["sha256"] != hash {
-                return Err(format!("assembly CAD checksum mismatch: {file}").into());
-            }
-        }
-        let mut config: Config =
-            serde_json::from_slice(&std::fs::read(root.join("assembly.json"))?)?;
-        config.engineer.validate()?;
-        config.core.validate()?;
-        if config.schema != 5 || config.engineer_jaws.len() != 2 {
-            return Err("invalid assembly calibration schema".into());
-        }
-        for (p, a) in [
-            (config.core_p_origin_m, config.core_p_axis),
-            (config.core_q_origin_m, config.core_q_axis),
-            ([0.; 3], config.core_lift_axis),
-        ]
-        .into_iter()
-        .chain(config.engineer_jaws.iter().map(|j| (j.origin_m, j.axis)))
-        {
-            if !p.into_iter().chain(a).all(f64::is_finite)
-                || (a.into_iter().map(|v| v * v).sum::<f64>() - 1.).abs() > 1e-8
-            {
-                return Err("invalid assembly bearing calibration".into());
-            }
-        }
-        if config.engineer_jaws.iter().any(|j| {
-            !j.open_rad.is_finite()
-                || !j.closed_rad.is_finite()
-                || j.closed_rad.abs() >= j.open_rad.abs()
-                || j.closed_rad * j.open_rad < 0.
-                || !matches!(j.name.as_str(), "jaw-left" | "jaw-right")
-        }) {
-            return Err("invalid gripper jaw calibration".into());
-        }
+        let source = rm_simulator_assets::semantics::assembly::SourcePackage::load(root)?;
+        let mut config: Config = source.calibration()?;
         if let Some(area) = area {
-            let evidence: serde_json::Value =
-                serde_json::from_slice(&std::fs::read(area.join("area.json"))?)?;
-            if evidence["schema"] != 2
-                || evidence["config_sha256"] != m["files"]["config"]["sha256"]
-                || evidence["source_field_sha256"] != m["source_field_sha256"]
-            {
-                return Err("assembly area frame/source mismatch".into());
-            }
-            config.assembly_frame = serde_json::from_value(evidence["assembly_frame"].clone())?;
-            let p = config.assembly_frame;
-            if !p
-                .translation_m
-                .into_iter()
-                .chain(p.rotation_wxyz)
-                .all(f64::is_finite)
-                || (p.rotation_wxyz.into_iter().map(|v| v * v).sum::<f64>() - 1.).abs() > 1e-8
-            {
-                return Err("invalid assembly area frame".into());
-            }
+            config.assembly_frame = source.area_frame(area)?;
         }
         let goal = if let Some(requested) = requested_pose {
             let r = requested.rotation_matrix();
@@ -361,7 +268,7 @@ impl Rig {
             last_collision: None,
             jaw_angles: config.engineer_jaws.iter().map(|j| j.open_rad).collect(),
             config,
-            source_config_sha256: m["files"]["config"]["sha256"].as_str().map(str::to_owned),
+            source_config_sha256: source.config_sha256().map(str::to_owned),
             area: None,
             camera_deployed: false,
             fixed_chassis: false,
@@ -399,19 +306,7 @@ impl Rig {
         rig.tool = compose(body, rig.config.engineer.tool_pose(rig.engineer_q));
         rig.initial_engineer_q = rig.engineer_q;
         rig.unit_pose = rig.tool_unit_pose();
-        let collision_value: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(root.join("collision.json"))?)?;
-        for key in ["engineer", "core-base", "core-arm", "core-head", "unit"] {
-            let file = m["files"][key]["file"]
-                .as_str()
-                .ok_or("missing collision source")?;
-            if collision_value["source_glbs"][file] != m["files"][key]["sha256"] {
-                return Err("collision/visual source mismatch".into());
-            }
-        }
-        rig.collision = Some(std::sync::Arc::new(CollisionScene::new(
-            serde_json::from_value::<CollisionAsset>(collision_value)?,
-        )?));
+        rig.collision = Some(std::sync::Arc::new(source.collision_scene()?));
         // Parking/Engineer IK cannot repair a collision between fixed Core
         // positioning links, its head and the floor. Do not repeat that query
         // for every robot placement or silently resample the equipment pose.

@@ -19,7 +19,9 @@ other simulator crate.
 | `src/sensors/imu.rs` | Mounted gyroscope/accelerometer on the chassis or actual gimbal frame, derived from opt-in solver-substep carrier traces, with restorable state and seeded noise, bias walk and saturation. |
 | `src/sensors/rolling.rs` | Mounted procedural MID-360 acquisitions with interpolated robot/obstacle motion, self-occlusion, timestamps and seeded range noise/dropout. |
 | `src/wheel_model.rs` | Backend-neutral scalar suspension/roller, wheel inertia, motor/slip and shared-power equations over explicit parameters, borrowed state/torques and reused buffers. No solver handles or queries. |
-| `src/chassis.rs` | Chassis configuration and the Rapier adapter: bodies, wheel rays/contact kinematics, ordered force application, gimbal/folding, balance/jump and snapshot compatibility. |
+| `src/chassis.rs` | Compatibility facade for chassis configuration, commands, snapshots and borrowed telemetry; existing public paths remain unchanged. |
+| `src/chassis/model.rs` | Physical descriptions, presets, validation and evaluated model geometry, including conversion to `WheelModel`; no solver handles or stepping. |
+| `src/chassis/backend/` | Rapier body/collider construction (`construction.rs`), ordered wheel queries and forces (`dynamics.rs`), prescribed folding/gimbal adaptation (`prescribed.rs`), controls and observations (`mod.rs`). |
 | `src/projectile.rs` | `WorldPhysics`, `Shot`, `Caliber`, `Contact`, `TargetFace`, `TargetFrames`, `StaticGeometry` and `ProjectilePolicy`: projectile flight, scoring faces and raw contacts in physical order. |
 | `src/geometry.rs` | Shared collision captures and read-only clearance queries consumed by the world facade. |
 | `src/motion.rs` | Prescribed rotor and rail motion (`RotorMotion`, `SinusoidalMotion`, `MechanismState`) and fitted armor geometry; rune pose helpers live under `motion::rune`. |
@@ -73,7 +75,7 @@ Reset caller sensor/controller state separately; do not interpolate across reset
 ## Testing
 
 `cargo test -p rm-simulator-physics --locked` runs the in-module tests in
-`chassis.rs` and `projectile.rs` and the integration tests
+`chassis/` and `projectile.rs` and the integration tests
 `tests/projectile_retirement.rs` and `tests/robot_session.rs`. Coverage spans
 chassis settling on the floor,
 holonomic drive, motor limits, gimbal rate limiting and aim freezing, the shared

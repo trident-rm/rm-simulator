@@ -4,6 +4,71 @@
 //! collision validation; these searches do not advance time or apply forces.
 use crate::{Pose, manipulator::SerialArm};
 
+/// Validate a recorded IK warm start and return its body-local tool pose.
+/// The arm calibration is validated before FK. Body/tool translations are in
+/// metres, orientations are unit wxyz, and joints
+/// are in radians within the supplied arm's inclusive calibrated guards.
+/// FK must match within 10 µm and 0.1 mrad, the source solver tolerances.
+/// This accepts numerical planning input only; it does not certify clearance.
+///
+/// ```
+/// use rm_simulator_physics::{Pose, manipulator::{RevoluteAxis, SerialArm},
+///     manipulator_plan::checked_ik_hint};
+/// let axis = RevoluteAxis { origin_m: [0.; 3], axis: [0., 0., 1.], range_rad: [-3., 3.] };
+/// let arm = SerialArm { axes: [axis; 6], tool: Pose::at([0.2, 0., 0.]) };
+/// let (target, joints) = checked_ik_hint(&arm, Pose::default(), arm.tool, [0.; 6]).unwrap();
+/// assert_eq!(target, arm.tool);
+/// assert_eq!(joints, [0.; 6]);
+/// let yaw = std::f64::consts::FRAC_PI_2;
+/// let body = Pose::yawed([1., 2., 3.], yaw);
+/// let tool = Pose::yawed([1., 2.2, 3.], yaw);
+/// let (local, _) = checked_ik_hint(&arm, body, tool, [0.; 6]).unwrap();
+/// assert!((local.translation_m[0] - 0.2).abs() < 1e-12);
+/// assert!(checked_ik_hint(&arm, Pose::default(), arm.tool, [100.; 6]).is_err());
+/// ```
+pub fn checked_ik_hint(
+    arm: &SerialArm,
+    body: Pose,
+    tool: Pose,
+    q: [f64; 6],
+) -> Result<(Pose, [f64; 6]), &'static str> {
+    arm.validate()?;
+    let quaternion = |p: Pose| {
+        let [w, x, y, z] = p.rotation_wxyz;
+        rapier3d_f64::math::Rotation::from_xyzw(x, y, z, w)
+    };
+    let position = |p: Pose| rapier3d_f64::math::Vector::from_array(p.translation_m);
+    if !body
+        .translation_m
+        .into_iter()
+        .chain(body.rotation_wxyz)
+        .chain(tool.translation_m)
+        .chain(tool.rotation_wxyz)
+        .all(f64::is_finite)
+        || [body, tool]
+            .iter()
+            .any(|p| (p.rotation_wxyz.into_iter().map(|v| v * v).sum::<f64>() - 1.).abs() > 1e-8)
+        || q.iter()
+            .zip(arm.axes)
+            .any(|(q, a)| !q.is_finite() || !(a.range_rad[0]..=a.range_rad[1]).contains(q))
+    {
+        return Err("IK hint contains an invalid pose or joint coordinate");
+    }
+    let body_inverse = quaternion(body).inverse();
+    let rotation = body_inverse * quaternion(tool);
+    let target = Pose {
+        translation_m: (-(body_inverse * position(body)) + body_inverse * position(tool))
+            .to_array(),
+        rotation_wxyz: [rotation.w, rotation.x, rotation.y, rotation.z],
+    };
+    let actual = arm.tool_pose(q);
+    if position(actual).distance(position(target)) > 1e-5
+        || quaternion(actual).angle_between(quaternion(target)) > 1e-4
+    {
+        return Err("IK hint does not match the source arm FK");
+    }
+    Ok((target, q))
+}
 /// Search limits and deterministic sampling identity.
 #[derive(Clone, Copy, Debug)]
 pub struct JointSearch {
@@ -211,6 +276,28 @@ pub fn joint_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recorded_hint_rejects_invalid_arm_before_fk() {
+        use crate::manipulator::RevoluteAxis;
+        let axis = RevoluteAxis {
+            origin_m: [0.; 3],
+            axis: [0., 0., 1.],
+            range_rad: [-3., 3.],
+        };
+        let arm = SerialArm {
+            axes: [axis; 6],
+            tool: Pose::at([0.2, 0., 0.]),
+        };
+        let mut invalid = arm.clone();
+        invalid.axes[0].axis = [f64::NAN, 0., 1.];
+        assert!(checked_ik_hint(&invalid, Pose::default(), arm.tool, [0.; 6]).is_err());
+        invalid = arm.clone();
+        invalid.axes[0].axis = [0.; 3];
+        assert!(checked_ik_hint(&invalid, Pose::default(), arm.tool, [0.; 6]).is_err());
+        invalid = arm.clone();
+        invalid.tool.translation_m[0] = f64::NAN;
+        assert!(checked_ik_hint(&invalid, Pose::default(), arm.tool, [0.; 6]).is_err());
+    }
     fn clear(a: [f64; 6], b: [f64; 6]) -> Result<bool, PlanError> {
         // A finite wall separates the endpoints, with space around either end.
         Ok((0..=100).all(|i| {

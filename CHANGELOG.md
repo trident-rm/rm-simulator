@@ -4,6 +4,16 @@
 
 ## Unreleased
 
+- Extract reusable physical payload attachment operations while keeping Energy
+  Unit permissions and lifecycle in world. Separate chassis model descriptions
+  from Rapier construction, prescribed mechanisms and dynamics.
+- Reuse checked assembly source-package loading outside the server and expose
+  validated IK warm starts in physics; retain assembly task policy and workers.
+
+- Add an optional openswx native SolidWorks metadata extractor with source hashes,
+  configuration/occurrence references, explicit resolution diagnostics and
+  unvalidated cached physical properties alongside the checked STEP pipeline.
+
 - Separate Field layout records and checkpoint capture/restore from live world
   coordination while preserving public paths, serialized records and scheduling.
 

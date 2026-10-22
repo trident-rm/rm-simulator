@@ -603,3 +603,66 @@ The pinned source, minimal CMake harness, bounded four-process corpus probe,
 per-file results and aggregate `summary.json` remain ignored scratch in
 `local-assets/openswx-eval/`. No EGA source files or external parser code are
 redistributed by this repository.
+
+### Offline native metadata extractor
+
+`scripts/extract-solidworks.py` turns `swx_dump` output into a versioned
+`rm-solidworks-metadata-v1` JSON catalogue. Use it alongside the checked STEP
+and mesh package, before assigning physical links. It preserves document hashes,
+configuration names/properties, cached physical properties, component names,
+child configuration references, suppression/visibility flags and source matrices.
+It follows resolved native references once per document, including cycles and
+suppressed instances, without expanding an exponential occurrence tree.
+
+Build the optional upstream CLI outside the simulator workspace. The tested
+revision is pinned explicitly below; the caller supplies third-party sources.
+The small CMake wrapper builds the upstream parser and CLI, excluding its HTTP
+server. Neither openswx nor its native dependencies enter the Rust dependency
+graph.
+
+```sh
+git clone https://github.com/schwitters/openswx local-assets/openswx-source
+git -C local-assets/openswx-source checkout a838a83e267fadbf8f01fd75a288b2ae517c9133
+nix shell nixpkgs#cmake nixpkgs#ninja nixpkgs#pugixml nixpkgs#nlohmann_json nixpkgs#zlib -c \
+  cmake -S scripts/openswx -B local-assets/openswx-build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DOPENSWX_SOURCE="$PWD/local-assets/openswx-source"
+nix shell nixpkgs#cmake -c cmake --build local-assets/openswx-build -j 4
+python3 scripts/extract-solidworks.py /path/to/source/robot.SLDASM \
+  --search-root /path/to/source \
+  --swx-dump local-assets/openswx-build/swx_dump \
+  --openswx-revision a838a83e267fadbf8f01fd75a288b2ae517c9133 \
+  --output local-assets/robot-native-metadata.json
+```
+
+A directory input inventories every native Part/Assembly beneath it. A file input
+starts at that document and follows references within `--search-root`. Windows
+references first resolve relative to their owning document when possible, then
+match local path suffixes, falling back to a unique basename. Ambiguous matches remain unresolved; the extractor does not
+choose an arbitrary similarly named part. Referenced configurations are resolved
+by name rather than defaulting to the child's first configuration. IDs are stable
+for a fixed relative source layout and upstream configuration/occurrence order;
+source hashes detect content changes. They are catalogue identities, not runtime
+body IDs or proven CAD persistent IDs.
+
+Every physical-property record is explicitly `cached_unvalidated`, with units,
+frame and freshness unverified. Matrix checks reject malformed/reflected bases
+but cannot distinguish a true identity placement from openswx's identity fallback.
+No global poses, tensor sign conventions, joint axes, link aggregation or dynamic
+parameters are inferred. Preview PNG payloads are omitted. The output retains
+original source references/properties, so inspect it before redistribution.
+
+The parser has a per-document timeout and retained JSON size limit; document
+count is bounded. Failures, unresolved references, ambiguous child configurations
+and document-limit truncation are explicit diagnostics. Original CAD bytes are
+hashed before and after parsing. Output is atomically written as a JSON sidecar;
+parser failures and document-limit truncation produce a nonzero exit after
+writing diagnostics. Unresolved references alone permit a partial catalogue.
+The subprocess can write temporary output up to its time limit before the size
+check; this is an offline tool, not an untrusted upload service.
+
+The EGA corpus run produced 340 document records, 1,418 configurations, 617 cached
+physical-property records and 916 occurrence records, with no parser failures.
+Native metadata preserves useful assembly context absent from a flattened STEP,
+but importing it does not establish a more accurate dynamic model. Validate a
+small assembly's placed meshes and a SolidWorks mass-property report before
+promoting any cache values into simulator configuration.

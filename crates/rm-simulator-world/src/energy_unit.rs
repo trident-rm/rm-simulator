@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Persistent Energy Unit ownership, proximity grips and physical release.
+//!
+//! Match stock, spent/seated eligibility and recovery timing live here. The
+//! caller-owned `PayloadSnapshot` attachment methods implement transforms,
+//! endpoint velocity and physical carry/release without duplicating this lifecycle.
 use crate::{Field, FieldError, Pose};
 use glam::{DQuat, DVec3};
 use rm_simulator_physics::projectile::{PayloadShape, PayloadSnapshot};
@@ -11,22 +15,6 @@ const MAX_ENERGY_UNITS: usize = 32;
 fn q(p: Pose) -> DQuat {
     let [w, x, y, z] = p.rotation_wxyz;
     DQuat::from_xyzw(x, y, z, w)
-}
-fn compose(a: Pose, b: Pose) -> Pose {
-    let r = q(a) * q(b);
-    Pose {
-        translation_m: (DVec3::from_array(a.translation_m)
-            + q(a) * DVec3::from_array(b.translation_m))
-        .to_array(),
-        rotation_wxyz: [r.w, r.x, r.y, r.z],
-    }
-}
-fn inverse(p: Pose) -> Pose {
-    let r = q(p).inverse();
-    Pose {
-        translation_m: (r * -DVec3::from_array(p.translation_m)).to_array(),
-        rotation_wxyz: [r.w, r.x, r.y, r.z],
-    }
 }
 /// A Unit's current mechanical attachment; gripping is distinct from Core seating.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,7 +68,7 @@ impl Field {
     }
     fn wrist(&self, owner: u32) -> Option<Pose> {
         let arm = self.arms.iter().find(|a| a.owner == owner)?;
-        Some(compose(
+        Some(PayloadSnapshot::attached_pose(
             self.chassis_control_state(owner)?.pose,
             arm.model.engineer.tool_pose(arm.joints_rad),
         ))
@@ -110,7 +98,7 @@ impl Field {
         let physical = PayloadSnapshot {
             id: owner,
             shape,
-            pose: compose(wrist, grasp),
+            pose: PayloadSnapshot::attached_pose(wrist, grasp),
             velocity_m_s: [0.; 3],
             angular_velocity_rad_s: [0.; 3],
             prescribed: true,
@@ -146,18 +134,11 @@ impl Field {
         {
             self.cancel_assembly(owner, "Cancelled by gripper control");
             let unit = &mut self.energy_units[index];
-            let p = unit.physical.clone();
-            self.physics
-                .set_payload_motion(
-                    p.id,
-                    false,
-                    p.pose,
-                    p.velocity_m_s,
-                    p.angular_velocity_rad_s,
-                )
+            unit.physical
+                .release_attachment(&mut self.physics)
                 .map_err(FieldError::Restore)?;
             unit.attachment = Attachment::Free;
-            unit.physical = self.physics.payload(p.id).unwrap();
+            unit.physical.refresh_motion(&self.physics).unwrap();
             if let Some(arm) = self.arms.iter_mut().find(|a| a.owner == owner) {
                 arm.jaw_target_rad = std::array::from_fn(|i| arm.model.engineer_jaws[i].open_rad);
             }
@@ -165,7 +146,7 @@ impl Field {
         }
         // The pads grip the cylinder at the calibrated 20 mm section. A seated
         // Unit remains ineligible after successful assembly (R60).
-        let expected = compose(
+        let expected = PayloadSnapshot::attached_pose(
             wrist,
             Pose {
                 translation_m: [0., 0., -0.02],
@@ -173,18 +154,19 @@ impl Field {
             },
         );
         let index = self
-            .energy_units()
+            .energy_units
             .iter()
             .enumerate()
             .filter(|(_, u)| !u.spent && !matches!(u.attachment, Attachment::Held(_)))
             .filter_map(|(i, u)| {
-                let distance = DVec3::from_array(u.physical.pose.translation_m)
+                let physical = self.physics.payload_telemetry(u.physical.id)?;
+                let distance = DVec3::from_array(physical.pose.translation_m)
                     .distance(DVec3::from_array(expected.translation_m));
                 let axis = q(wrist) * DVec3::Z;
-                let bore = q(u.physical.pose) * DVec3::Z;
+                let bore = q(physical.pose) * DVec3::Z;
                 (distance <= 0.008
                     && axis.dot(bore) >= 5f64.to_radians().cos()
-                    && DVec3::from_array(u.physical.velocity_m_s).length() <= 0.5)
+                    && DVec3::from_array(physical.velocity_m_s).length() <= 0.5)
                     .then_some((i, distance))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -193,14 +175,19 @@ impl Field {
                 "no aligned Unit within the gripper pads",
             ))?;
         self.cancel_assembly(owner, "Cancelled by gripper control");
-        let mut unit = self.energy_units()[index].clone();
-        unit.grasp = compose(inverse(wrist), unit.physical.pose);
-        unit.attachment = Attachment::Held(owner);
+        let unit = &mut self.energy_units[index];
+        let at = self
+            .physics
+            .payload_telemetry(unit.physical.id)
+            .unwrap()
+            .pose;
+        let grasp = PayloadSnapshot::attachment_offset(wrist, at);
         self.physics
-            .set_payload_motion(unit.physical.id, true, unit.physical.pose, [0.; 3], [0.; 3])
+            .set_payload_motion(unit.physical.id, true, at, [0.; 3], [0.; 3])
             .map_err(FieldError::Restore)?;
-        unit.physical = self.physics.payload(unit.physical.id).unwrap();
-        self.energy_units[index] = unit;
+        unit.grasp = grasp;
+        unit.attachment = Attachment::Held(owner);
+        unit.physical.refresh_motion(&self.physics).unwrap();
         if let Some(arm) = self.arms.iter_mut().find(|a| a.owner == owner) {
             arm.jaw_target_rad = std::array::from_fn(|i| arm.model.engineer_jaws[i].closed_rad);
         }
@@ -272,7 +259,7 @@ impl Field {
         Ok(())
     }
     pub(crate) fn sync_energy_units(&mut self) {
-        let dt = self.step_duration().as_secs_f64();
+        let step = self.step_duration();
         for index in 0..self.energy_units.len() {
             // Only attachment metadata is copied. Hull buffers are immutable and
             // never participate in prescribed motion synchronization.
@@ -298,28 +285,23 @@ impl Field {
                     }
                     let head = run.pose.frames(&run.model)["core/q"];
                     (
-                        compose(compose(run.world_from_rig, head), grasp),
+                        PayloadSnapshot::attached_pose(
+                            PayloadSnapshot::attached_pose(run.world_from_rig, head),
+                            grasp,
+                        ),
                         !recovery.released(),
                     )
                 }
                 Attachment::Held(owner) => {
                     let Some(wrist) = self.wrist(owner) else {
                         let unit = &mut self.energy_units[index];
-                        let p = &mut unit.physical;
-                        self.physics
-                            .set_payload_motion(
-                                p.id,
-                                false,
-                                p.pose,
-                                p.velocity_m_s,
-                                p.angular_velocity_rad_s,
-                            )
+                        unit.physical
+                            .release_attachment(&mut self.physics)
                             .expect("validated held Unit");
-                        p.prescribed = false;
                         unit.attachment = Attachment::Free;
                         continue;
                     };
-                    let at = compose(wrist, grasp);
+                    let at = PayloadSnapshot::attached_pose(wrist, grasp);
                     if let Some(run) = self.assemblies.iter().find(|r| {
                         r.owner == owner
                             && (r.active() || r.phase == crate::assembly::Phase::Completed)
@@ -333,9 +315,11 @@ impl Field {
                         let unit = &mut self.energy_units[index];
                         unit.attachment = Attachment::Seated(owner);
                         unit.spent = true;
-                        let head =
-                            compose(run.world_from_rig, run.pose.frames(&run.model)["core/q"]);
-                        unit.grasp = compose(inverse(head), at);
+                        let head = PayloadSnapshot::attached_pose(
+                            run.world_from_rig,
+                            run.pose.frames(&run.model)["core/q"],
+                        );
+                        unit.grasp = PayloadSnapshot::attachment_offset(head, at);
                         unit.seated_generation = run.generation;
                     }
                     (at, true)
@@ -345,18 +329,9 @@ impl Field {
             // Prescribed Units retain their last pose here; free Units are read
             // from physics on pickup, before switching back to prescribed motion.
             let previous = &mut unit.physical;
-            let velocity = ((DVec3::from_array(at.translation_m)
-                - DVec3::from_array(previous.pose.translation_m))
-                / dt)
-                .to_array();
-            let angular = ((q(at) * q(previous.pose).inverse()).to_scaled_axis() / dt).to_array();
-            self.physics
-                .set_payload_motion(previous.id, prescribed, at, velocity, angular)
+            previous
+                .sync_attached_pose(&mut self.physics, at, prescribed, step)
                 .expect("validated attached Unit");
-            previous.pose = at;
-            previous.prescribed = prescribed;
-            previous.velocity_m_s = velocity;
-            previous.angular_velocity_rad_s = angular;
             if !prescribed {
                 unit.attachment = Attachment::Free;
             }
@@ -365,14 +340,7 @@ impl Field {
     pub(crate) fn release_energy_units(&mut self, owner: u32) {
         for unit in &mut self.energy_units {
             if unit.attachment == Attachment::Held(owner) {
-                let p = &unit.physical;
-                let _ = self.physics.set_payload_motion(
-                    p.id,
-                    false,
-                    p.pose,
-                    p.velocity_m_s,
-                    p.angular_velocity_rad_s,
-                );
+                let _ = unit.physical.release_attachment(&mut self.physics);
                 unit.physical.prescribed = false;
                 unit.attachment = Attachment::Free;
             }
@@ -671,6 +639,54 @@ mod tests {
         );
         assert_eq!(free.physical.pose, held.physical.pose);
     }
+    #[test]
+    fn removing_a_holder_releases_cached_endpoint_motion_and_preserves_restore() {
+        let (mut field, owner) = fixture();
+        let mut target = field.arms()[0].joints_rad;
+        target[0] += 0.3;
+        field.command_energy_arm(owner, target).unwrap();
+        field.step(8).unwrap();
+        let held = &field.energy_units[0].physical;
+        let pose = held.pose;
+        let velocity = held.velocity_m_s;
+        let angular = held.angular_velocity_rad_s;
+        assert!(angular[2] > 0.9);
+        field.remove_chassis(owner).unwrap();
+        let unit = &field.energy_units[0];
+        assert_eq!(unit.attachment, Attachment::Free);
+        assert_eq!(unit.physical.pose, pose);
+        assert_eq!(unit.physical.velocity_m_s, velocity);
+        assert_eq!(unit.physical.angular_velocity_rad_s, angular);
+        assert!(!unit.physical.prescribed);
+        let restored =
+            Field::restore(&field.snapshot(), &field.fixed_geometry_snapshot(), 0.).unwrap();
+        assert_eq!(restored.energy_units(), field.energy_units());
+    }
+
+    #[test]
+    fn missing_wrist_frees_unit_with_last_endpoint_motion() {
+        let (mut field, owner) = fixture();
+        let mut target = field.arms()[0].joints_rad;
+        target[0] += 0.3;
+        field.command_energy_arm(owner, target).unwrap();
+        field.step(8).unwrap();
+        let before = field.energy_units[0].physical.clone();
+        field.arms.clear();
+        field.sync_energy_units();
+        let unit = &field.energy_units[0];
+        assert_eq!(unit.attachment, Attachment::Free);
+        assert_eq!(unit.physical.pose, before.pose);
+        assert_eq!(unit.physical.velocity_m_s, before.velocity_m_s);
+        assert_eq!(
+            unit.physical.angular_velocity_rad_s,
+            before.angular_velocity_rad_s
+        );
+        assert!(!unit.physical.prescribed);
+        let truth = field.physics.payload_telemetry(before.id).unwrap();
+        assert_eq!(truth.velocity_m_s, before.velocity_m_s);
+        assert_eq!(truth.angular_velocity_rad_s, before.angular_velocity_rad_s);
+    }
+
     #[test]
     fn dropped_unit_hits_the_robot_and_keeps_identity_through_restore_and_disconnect() {
         let (mut field, id) = fixture();
