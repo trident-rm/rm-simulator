@@ -334,7 +334,46 @@ An [optional rclrs adapter](../integrations/ros2/README.md) publishes measured
 rolling frames as Livox Driver 2 CustomMsg and simulation `/clock`. Its standalone
 probe and native DDS tests use Pixi/RoboStack; no ROS dependency enters this core.
 
-App overlays, app/server ROS wiring, noisy wheel/IMU odometry, estimated-pose
+## Mounted inertial measurements
+
+`physics::sensors::imu::MountedImu` measures angular rate and specific force at
+a point rigidly attached to the chassis body or to the actual gimbal frame. It
+consumes an opt-in trace (`Field::set_carrier_trace`, `drain_carrier_trace`) of
+every chassis' body and gimbal pose at the end of every solver substep (at most
+1 ms), so it resolves motion finer than the 128 Hz tick and does not depend on
+how ticks are partitioned.
+
+- **Gyroscope:** the relative rotation between consecutive mounted poses over
+  the substep. On a spinning chassis it reads the spin rate. A gimbal-mounted
+  sensor reads the actual motor-limited yaw/pitch motion; the world-stabilised
+  gimbal does not spin with the chassis.
+- **Accelerometer:** the second difference of the mounted point's world
+  position, plus the solver's gravity (`GRAVITY_M_S2`, 9.81 m/s², not
+  9.80665), rotated into the sensor frame. Centripetal ω²r and tangential α×r
+  terms of an off-centre mount are therefore inherent, not a separate model.
+  At 15 rad/s a 0.2 m offset reads about 45 m/s² radially.
+- **Output:** each sample is the time-overlap mean over the preceding period,
+  stamped at its end, in sensor FLU, rad/s and m/s². That boxcar lags the motion
+  by half a period: a modelling choice, not a measured filter delay. The
+  centred accelerometer difference delays completion by half a substep.
+- **Continuity:** placement revisions, trace gaps and invalid poses restart
+  differentiation and drop the affected periods; no motion is invented across a
+  teleport, revival or restore. `ImuState` restores an identical continuation;
+  the trace itself is observation, not checkpointed world state.
+- **Effects:** seeded white noise, constant bias, bias random walk and
+  saturation, indexed by output sample number, all off by default. They are not
+  calibrated to any device; take values from a datasheet or Allan-variance
+  measurement and record their source. Scale-factor, misalignment, temperature
+  and quantisation errors are not modelled.
+
+For an IMU inside a LiDAR, compose the LiDAR mount with the device's documented
+LiDAR-to-IMU extrinsic, and use one clock for both. Livox consumers commonly
+expect acceleration in g; convert exactly once at the bridge. Rapier contact
+jitter appears in the accelerometer as deterministic numerical noise. It is not
+a vibration model, so check a stationary and a spinning robot before tuning an
+estimator's noise parameters.
+
+App overlays, app/server ROS wiring, noisy wheel odometry, estimated-pose
 SLAM, incidence/material response and angular measurement noise remain future
 work. The existing Sentry planner still consumes ground-truth geometry; these
 sensor APIs do not silently replace it with a localization stack.

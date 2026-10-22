@@ -127,8 +127,9 @@ must use the server protocol. `Session::referee` is explicitly privileged.
 truth. They must not be confused with measured sensor outputs or team-visible
 Radar information. Future adapters should expose timestamped sensor observations
 and keep these truth APIs available separately for labels, evaluation and debug.
-The separate physics sensor module supplies ideal geometric LiDAR; camera, IMU
-and encoder measurement models remain separate future adapters.
+The separate physics sensor module supplies ideal geometric LiDAR and a mounted
+IMU over substep carrier traces; camera and encoder measurement models remain
+separate future adapters.
 
 ## Subsequent integrations
 

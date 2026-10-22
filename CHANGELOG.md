@@ -7,6 +7,11 @@
 - Audit the supplied 2026-10-22 RM2027 Q&A against native UC/UL control,
   adaptive armor and logistics. Record the clarified aerial-impact event model,
   remaining implementation gaps and simulator policies the slides do not settle.
+- Add a mounted IMU for the chassis body or actual gimbal frame, derived from
+  an opt-in per-substep pose trace (`Field::set_carrier_trace`). Off-centre
+  mounts see centripetal/tangential acceleration, output is independent of tick
+  partitioning, state restores identically, and seeded noise, bias walk and
+  saturation are opt-in and uncalibrated.
 
 - Add bounded continuous console MP4 capture with asynchronous GPU readbacks,
   off-thread encoding, wall-time resampling and actual unique/drop statistics.

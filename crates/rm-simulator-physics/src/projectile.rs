@@ -572,6 +572,10 @@ pub struct WorldPhysics {
     /// Incoming linear/angular velocity and centre of mass, in chassis order.
     /// Armor collision speed must be measured before the solver stops a robot.
     chassis_velocities_before: Vec<(Vector, Vector, Vector)>,
+    /// Opt-in substep carrier poses for inertial sensors; observation output,
+    /// never restored world state.
+    carrier_trace: Option<Vec<crate::sensors::imu::CarrierSample>>,
+    carrier_trace_dropped: u64,
     chassis: Vec<Chassis>,
     /// Armor collisions since the last [`WorldPhysics::take_armor_collisions`].
     armor_collisions: Vec<ArmorCollision>,
@@ -681,6 +685,8 @@ impl WorldPhysics {
             projectiles: Vec::new(),
             velocities_before: Vec::new(),
             chassis_velocities_before: Vec::new(),
+            carrier_trace: None,
+            carrier_trace_dropped: 0,
             chassis: Vec::new(),
             armor_collisions: Vec::new(),
             next_chassis_id: 0,
@@ -997,6 +1003,28 @@ impl WorldPhysics {
                 .map(|c| (c.id(), c.revision()))
                 .collect(),
         ))
+    }
+    /// Start or stop recording a [`CarrierSample`](crate::sensors::imu::CarrierSample)
+    /// for every chassis at the end of every solver substep, for
+    /// [`MountedImu`](crate::sensors::imu::MountedImu). Either call discards
+    /// undrained samples and resets the drop counter. Recording is an
+    /// observation, not world state: checkpoints neither carry nor restore it.
+    pub fn set_carrier_trace(&mut self, enabled: bool) {
+        self.carrier_trace = enabled.then(Vec::new);
+        self.carrier_trace_dropped = 0;
+    }
+    /// Move recorded substep samples, in time then chassis order, into `out`.
+    /// Drain at least every [`MAX_CARRIER_TRACE_SAMPLES`](crate::sensors::imu::MAX_CARRIER_TRACE_SAMPLES)
+    /// samples; later ones are dropped and counted, and a sensor restarts
+    /// after the gap rather than inventing motion.
+    pub fn drain_carrier_trace(&mut self, out: &mut Vec<crate::sensors::imu::CarrierSample>) {
+        if let Some(trace) = &mut self.carrier_trace {
+            out.append(trace);
+        }
+    }
+    /// Substep samples dropped because the trace was full since it was enabled.
+    pub fn carrier_trace_dropped(&self) -> u64 {
+        self.carrier_trace_dropped
     }
     /// Nothing moves on its own: no projectile in flight and no chassis.
     pub fn is_idle(&self) -> bool {
@@ -1668,6 +1696,7 @@ impl WorldPhysics {
             for chassis in &self.chassis {
                 chassis.sync_fold_colliders(&mut self.world);
             }
+            self.record_carriers(prev_ns, substep, substeps, substep_s);
             contacts
                 .extend(self.capture_contacts(frames, frac_prev, frac_next, substep_s, next_ns));
             self.capture_armor_collisions();
@@ -1705,6 +1734,37 @@ impl WorldPhysics {
         }
         self.synced_ns = Some(next_ns);
         Ok(contacts)
+    }
+    fn record_carriers(&mut self, prev_ns: u64, substep: usize, substeps: usize, substep_s: f64) {
+        let Some(trace) = &mut self.carrier_trace else {
+            return;
+        };
+        let duration = u128::from(self.step_duration.as_ns());
+        let offset = duration * (substep as u128 + 1) / substeps as u128;
+        let time_ns = prev_ns.saturating_add(offset as u64);
+        for chassis in &self.chassis {
+            if trace.len() >= crate::sensors::imu::MAX_CARRIER_TRACE_SAMPLES {
+                self.carrier_trace_dropped += 1;
+                continue;
+            }
+            let body = self.world.bodies[chassis.body()].position();
+            trace.push(crate::sensors::imu::CarrierSample {
+                robot: chassis.id(),
+                placement_revision: chassis.revision(),
+                time_ns,
+                interval_s: substep_s,
+                chassis: Pose {
+                    translation_m: body.translation.to_array(),
+                    rotation_wxyz: [
+                        body.rotation.w,
+                        body.rotation.x,
+                        body.rotation.y,
+                        body.rotation.z,
+                    ],
+                },
+                gimbal: chassis.turret_pose(&self.world),
+            });
+        }
     }
     /// Contacts first seen by the substep that just stepped, which carried the
     /// target motions between `frac_prev` and `frac_next` of the tick and

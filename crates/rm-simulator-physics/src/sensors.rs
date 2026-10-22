@@ -3,6 +3,7 @@
 //! Passive LiDAR over caller-owned geometry captures. [`Lidar`] is an ideal
 //! instantaneous grid scanner; [`mid360`] supplies a procedural approximation,
 //! and [`rolling`] adds mounted per-point motion and seeded range effects.
+//! [`imu`] derives mounted inertial measurements from solver substep poses.
 //! No scheduling, localization, host time or transport is hidden in acquisition.
 use crate::{
     Pose, StaticGeometry,
@@ -11,6 +12,7 @@ use crate::{
 };
 use rapier3d_f64::prelude::{Ray, Vector};
 
+pub mod imu;
 pub mod mid360;
 mod mid360_coefficients;
 pub mod rolling;

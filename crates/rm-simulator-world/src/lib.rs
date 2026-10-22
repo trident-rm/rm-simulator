@@ -492,6 +492,60 @@ impl Field {
         self.physics.lidar_scene_capture(robot, self.time_ns())
     }
 
+    /// Start or stop recording every chassis' body and actual gimbal pose at
+    /// the end of every solver substep, for mounted inertial sensors
+    /// ([`rm_simulator_physics::sensors::imu::MountedImu`]). Either call
+    /// discards undrained samples. This is trusted ground truth for sensor
+    /// generation; it is not carried by checkpoints, so re-enable it after
+    /// [`Self::restore`] and restore each sensor's own state.
+    ///
+    /// ```
+    /// use rm_simulator_world::{ChassisConfig, ChassisPlacement, Field, FieldConfig,
+    ///     Pose, RobotKind, Team};
+    /// let config = FieldConfig {
+    ///     chassis: vec![ChassisPlacement {
+    ///         config: ChassisConfig::default(),
+    ///         spawn: Pose::at([0., 0., 0.4]),
+    ///         team: Team::Red,
+    ///         kind: RobotKind::Infantry,
+    ///         performance: None,
+    ///     }],
+    ///     ..Default::default()
+    /// };
+    /// let (mut whole, mut split) = (Field::new(&config)?, Field::new(&config)?);
+    /// whole.set_carrier_trace(true);
+    /// split.set_carrier_trace(true);
+    /// whole.step(6)?;
+    /// let (mut a, mut b) = (Vec::new(), Vec::new());
+    /// whole.drain_carrier_trace(&mut a);
+    /// for _ in 0..3 {
+    ///     split.step(2)?;
+    ///     split.drain_carrier_trace(&mut b);
+    /// }
+    /// // Eight substeps per 128 Hz tick, independent of tick partitioning.
+    /// assert_eq!(a.len(), 48);
+    /// assert_eq!(a, b);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn set_carrier_trace(&mut self, enabled: bool) {
+        self.physics.set_carrier_trace(enabled);
+    }
+
+    /// Move recorded substep carrier samples, in time order, into `out`.
+    /// Drain at least once per few seconds of simulated time; see
+    /// [`rm_simulator_physics::sensors::imu::MAX_CARRIER_TRACE_SAMPLES`].
+    pub fn drain_carrier_trace(
+        &mut self,
+        out: &mut Vec<rm_simulator_physics::sensors::imu::CarrierSample>,
+    ) {
+        self.physics.drain_carrier_trace(out);
+    }
+
+    /// Carrier samples dropped because the trace was not drained in time.
+    pub fn carrier_trace_dropped(&self) -> u64 {
+        self.physics.carrier_trace_dropped()
+    }
+
     /// Launch a projectile in the shared physical world, with an optional shooter.
     /// Native matches enforce phase, HP, launcher locks, heat and allowance.
     /// Returns the projectile identity.

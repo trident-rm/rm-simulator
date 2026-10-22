@@ -186,7 +186,8 @@ Start with an explicitly labeled truth-localized mode to isolate controller and
 bridge failures. Publish truth on evaluation-only topics in sensor-localized
 mode; never also publish perfect `map -> odom` beside SLAM. A LiDAR-only planner
 can use the existing scan output, but FAST-LIO-style LiDAR-inertial localization
-requires the missing IMU adapter. Livox messages alone do not complete that stack.
+also needs IMU messages: `physics::sensors::imu` measures them, but no ROS
+publisher sends them yet. Livox messages alone do not complete that stack.
 
 ### Arena-specific planning
 

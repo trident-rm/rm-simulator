@@ -81,8 +81,8 @@ for the full probe reference. `--wait-for-subscriber-ms` bounds startup discover
 - Point topics are best-effort, volatile, depth 5. `/clock` is best-effort,
   volatile, depth 1. Subscribers must accept best-effort QoS. Configure ROS
   consumers with `use_sim_time=true`; wall time never replaces point timestamps.
-- No IMU, odometry or TF is fabricated. LiDAR/IMU pipelines still require an IMU
-  sensor adapter. The existing Sentry controller remains a ground-truth baseline.
+- No IMU, odometry or TF is published. `physics::sensors::imu` measures mounted
+  IMU samples, but this adapter does not yet publish them. The existing Sentry controller remains a ground-truth baseline.
 
 The upstream [message definitions](https://github.com/Livox-SDK/livox_ros_driver2/tree/21445540f0d100dc86a7e6df312dd70bbdb4afdf/msg)
 are copied into the interface-only package, with its MIT notice. Only trailing
