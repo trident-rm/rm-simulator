@@ -4611,7 +4611,7 @@ dependencies = [
 [[package]]
 name = "mid360-sim"
 version = "0.1.0"
-source = "git+https://github.com/hxyulin/mid360-sim.git?rev=7396856da6c80b8ac13b26e9bf43a6a5aa85031f#7396856da6c80b8ac13b26e9bf43a6a5aa85031f"
+source = "git+https://github.com/hxyulin/mid360-sim.git?rev=c832a45bbde4d6cc5ef1e09afb0102b699fdc8d6#c832a45bbde4d6cc5ef1e09afb0102b699fdc8d6"
 
 [[package]]
 name = "mime"

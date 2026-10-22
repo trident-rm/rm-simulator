@@ -44,9 +44,10 @@ Their MIT notice is retained in
 only generates those interfaces; it contains no Livox hardware driver or SDK.
 The optional adapter uses unmodified Apache-2.0 rclrs 0.8.0 from crates.io.
 
-The physics crate uses the dependency-free `mid360-sim` nominal profile from
+The physics crate uses the dependency-free `mid360-sim` nominal profile and
+optional angular-effects model from
 [hxyulin/mid360-sim](https://github.com/hxyulin/mid360-sim), pinned at
-`7396856da6c80b8ac13b26e9bf43a6a5aa85031f`, under MIT OR Apache-2.0.
+`c832a45bbde4d6cc5ef1e09afb0102b699fdc8d6`, under MIT OR Apache-2.0.
 Its own notices retain hardware-fit and Livox provenance. ROS features are
 not enabled by this dependency. The previous copied coefficients are removed;
 `scripts/fit-mid360-pattern.py` remains a historical reproduction tool for the

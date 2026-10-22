@@ -51,13 +51,18 @@ starting acquisition, so the first published timebase is 1,000,000,000 ns. Examp
 ```sh
 pixi run run --frames 20 --stride 3 --frame-id sentry_livox --lidar-id 1
 pixi run run --frames 20 --range-noise-m 0 --dropout 0 --fast
+pixi run run --frames 20 --angular-noise-deg 0.05 --seed 7
 pixi run run --topic /livox/lidar --ros-args -r __node:=sentry_lidar
 ```
 
 `--stride 3` retains every third nominal emission without changing phase/timing;
 odd strides preserve all four lanes. `--mount-z-m` and `--mount-pitch-deg` configure
 the mount; the library accepts a complete FLU pose. `--seed`, `--range-noise-m`
-and `--dropout` configure the generic sensor effects. Run `pixi run run --help`
+and `--dropout` configure the generic range effects. `--angular-noise-deg` opts
+into independent tangent-axis emitted-ray perturbations before intersection,
+using that same device seed. It defaults to zero; values must be finite and in
+`[0, 180]` degrees. It is an uncalibrated stress model and retains dynamic mounting
+and near-surface occlusion. Run `pixi run run --help`
 for the full probe reference. `--wait-for-subscriber-ms` bounds startup discovery;
 `--require-subscriber` turns a timeout into an error.
 
@@ -125,6 +130,7 @@ Native checks, from this directory:
 pixi run test
 pixi run smoke
 pixi run smoke --stride 3
+pixi run smoke --stride 3 --angular-noise-deg 0.05
 ```
 
 The smoke test uses a separate local ROS domain and a real rclpy subscriber with
@@ -133,6 +139,14 @@ header/timebase correspondence, nanosecond offsets, lane/tag/reserved values,
 finite coordinates, frame/device IDs and monotonic `/clock`. It requires process
 shutdown to complete. Tested initial full-rate run: six CustomMsg packets,
 14,589 measured returns and 78 clock samples.
+
+The 2026-10-23 angular-adoption check passed native conversion tests and Clippy,
+but live DDS smoke was not clean in the tested macOS environment. Runs either
+lost packets or timed out; a sampled publisher was waiting in Fast DDS 2.14.6
+`MessageReceiver::removeEndpoint` during publisher destruction after acquisition.
+This occurred with angular noise disabled as well. The angular model's native
+geometry tests pass independently; they do not establish reliable DDS delivery
+or shutdown. Keep this transport issue separate from Linux runtime validation.
 
 The optional package is outside `just verify` so that core checks remain ROS-free.
 Run its native tests/Clippy and dependency checks separately when editing it.

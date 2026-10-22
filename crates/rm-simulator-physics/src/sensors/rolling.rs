@@ -14,6 +14,7 @@ use crate::{
     geometry::RayHit,
     projectile::{pose, pose_is_valid},
 };
+use mid360_sim::effects::AngularNoise;
 use rapier3d_f64::prelude::{
     Aabb, ColliderHandle, Pose as Pose3, Ray, RayCast, SharedShape, Vector,
 };
@@ -162,7 +163,8 @@ pub struct RollingFrame {
     pub points: Vec<TimedReturn>,
 }
 /// Mounted MID-360 approximation with per-point rigid scene motion and optional
-/// seeded range noise/dropout. Configuration is immutable; there is no hidden
+/// seeded range noise/dropout and opt-in angular perturbations. Configuration
+/// is immutable; there is no hidden
 /// pattern cursor or RNG state to checkpoint.
 ///
 /// ```
@@ -189,6 +191,7 @@ pub struct MountedLidar {
     robot_from_sensor: Pose3,
     epoch_ns: u64,
     effects: RangeEffects,
+    angular_noise: Option<AngularNoise>,
 }
 impl MountedLidar {
     /// Select emissions in `[start_ns, end_ns)`, aligned to the sensor's epoch
@@ -247,7 +250,30 @@ impl MountedLidar {
             robot_from_sensor: pose(robot_from_sensor),
             epoch_ns,
             effects,
+            angular_noise: None,
         })
+    }
+    /// Enable independent emitted-ray tangent noise, radians per axis in
+    /// `[0, pi]`, using this sensor's existing device seed and global emission
+    /// index. Zero disables it without changing the original range RNG streams.
+    /// Perturbations occur before intersection and therefore affect occlusion.
+    /// This generic stress model is not calibrated MID-360 encoder uncertainty.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{Pose, sensors::{
+    ///     mid360::Mid360Pattern, rolling::{MountedLidar, RangeEffects},
+    /// }};
+    /// let sensor = MountedLidar::new(
+    ///     Mid360Pattern::new(0.1, 40.)?, Pose::at([0., 0., 0.4]), 0,
+    ///     RangeEffects { seed: 7, ..Default::default() },
+    /// )?.with_angular_noise(0.001)?;
+    /// # let _ = sensor;
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn with_angular_noise(mut self, standard_deviation_rad: f64) -> Result<Self, &'static str> {
+        let noise = AngularNoise::new(standard_deviation_rad, self.effects.seed)?;
+        self.angular_noise = (standard_deviation_rad > 0.).then_some(noise);
+        Ok(self)
     }
     /// Acquire points in the half-open bracket `[before.time_ns, after.time_ns)`.
     /// Both captures must belong to the same live robot/world, with identical
@@ -291,7 +317,13 @@ impl MountedLidar {
                 (time_ns - before.time_ns) as f64 / (after.time_ns - before.time_ns) as f64;
             let sensor =
                 before.robot_pose.lerp(&after.robot_pose, fraction) * self.robot_from_sensor;
-            let direction = Vector::from(self.pattern.direction(index));
+            let nominal = self.pattern.direction(index);
+            let direction = Vector::from(match self.angular_noise {
+                Some(noise) => noise
+                    .perturb(index, nominal)
+                    .expect("unit nominal direction"),
+                None => nominal,
+            });
             let ray = Ray::new(sensor.translation, sensor.rotation * direction);
             let range_m = scene
                 .cast(&ray, max, fraction)
@@ -398,6 +430,242 @@ mod tests {
     }
     fn sensor(mount: Pose, effects: RangeEffects) -> MountedLidar {
         MountedLidar::new(Mid360Pattern::new(0.1, 40.).unwrap(), mount, 0, effects).unwrap()
+    }
+
+    #[test]
+    fn angular_configuration_preserves_disabled_measurements_and_rejects_invalid_sigma() {
+        let (world, robot) = rig();
+        let (a, b) = (
+            world.lidar_scene_capture(robot, 0).unwrap(),
+            world.lidar_scene_capture(robot, 1_000_000).unwrap(),
+        );
+        let mount = Pose::at([0.2, 0., 1.]);
+        let effects = RangeEffects {
+            seed: 17,
+            standard_deviation_m: 0.02,
+            dropout_probability: 0.2,
+            ..Default::default()
+        };
+        let mut expected = RollingFrame::default();
+        let original = sensor(mount, effects);
+        let window = original.window_between(0, 1_000_000, 1).unwrap().unwrap();
+        original.sample_into(&a, &b, window, &mut expected).unwrap();
+        for sigma in [0., -0.] {
+            let mut actual = RollingFrame::default();
+            sensor(mount, effects)
+                .with_angular_noise(0.01)
+                .unwrap()
+                .with_angular_noise(sigma)
+                .unwrap()
+                .sample_into(&a, &b, window, &mut actual)
+                .unwrap();
+            assert_eq!(expected, actual);
+        }
+        for sigma in [
+            f64::NAN,
+            f64::INFINITY,
+            -0.001,
+            std::f64::consts::PI + 0.001,
+        ] {
+            assert!(sensor(mount, effects).with_angular_noise(sigma).is_err());
+        }
+    }
+
+    #[test]
+    fn angular_noise_changes_native_edge_occlusion_and_preserves_near_blocking() {
+        let nominal = Mid360Pattern::new(0.1, 40.).unwrap().direction(0);
+        assert!(nominal[0] < -0.1);
+        for front in [0.02, 2.] {
+            let (mut world, robot) = rig();
+            let edge_y = -front * nominal[1] / nominal[0] + 1e-5;
+            // A thin foreground panel starts just beyond the nominal ray's
+            // crossing. Angular perturbations can move it onto the panel.
+            world.add_static_box(
+                Pose::at([-front - 0.5e-6, edge_y + 10., 1.3]),
+                [1e-6, 20., 100.],
+            );
+            let a = world.lidar_scene_capture(robot, 0).unwrap();
+            let b = world.lidar_scene_capture(robot, 1_000_000).unwrap();
+            let window = PatternWindow {
+                first_sample: 0,
+                samples: 1,
+                stride: 1,
+            };
+            let mut scan = RollingFrame::default();
+            let mount = Pose::at([0., 0., 1.]);
+            sensor(mount, RangeEffects::default())
+                .sample_into(&a, &b, window, &mut scan)
+                .unwrap();
+            assert!((scan.points[0].point_sensor_m.unwrap()[0] + 4.5).abs() < 1e-9);
+            let (mut foreground, mut background) = (0, 0);
+            for seed in 0..32 {
+                sensor(
+                    mount,
+                    RangeEffects {
+                        seed,
+                        ..Default::default()
+                    },
+                )
+                .with_angular_noise(0.02)
+                .unwrap()
+                .sample_into(&a, &b, window, &mut scan)
+                .unwrap();
+                let p = scan.points[0];
+                if let Some(local) = p.point_sensor_m {
+                    let emitted = AngularNoise::new(0.02, seed)
+                        .unwrap()
+                        .perturb(0, nominal)
+                        .unwrap();
+                    assert_eq!(
+                        local,
+                        (Vector::from(emitted) * p.range_m.unwrap()).to_array()
+                    );
+                    if (local[0] + 4.5).abs() < 1e-9 {
+                        background += 1;
+                    } else {
+                        assert!(front > 0.1);
+                        assert!((local[0] + front).abs() < 2e-6);
+                        foreground += 1;
+                    }
+                } else {
+                    assert!(front < 0.1);
+                    foreground += 1;
+                }
+            }
+            assert!(foreground > 0 && background > 0);
+        }
+    }
+
+    #[test]
+    fn shared_angular_model_follows_articulated_carrier_at_each_emission() {
+        let (world, robot) = rig();
+        let start = Pose::yawed([0., 0., 0.5], 0.2);
+        let end = Pose::yawed([0.1, 0., 0.5], 0.3);
+        let a = world
+            .lidar_scene_capture(robot, 0)
+            .unwrap()
+            .with_mount_frame(start)
+            .unwrap();
+        let b = world
+            .lidar_scene_capture(robot, 1_000_000)
+            .unwrap()
+            .with_mount_frame(end)
+            .unwrap();
+        let sensor = sensor(
+            Pose::at([0.2, 0., 1.]),
+            RangeEffects {
+                seed: 17,
+                ..Default::default()
+            },
+        )
+        .with_angular_noise(0.001)
+        .unwrap();
+        let mut scan = RollingFrame::default();
+        sensor
+            .sample_into(
+                &a,
+                &b,
+                sensor.window_between(0, 1_000_000, 1).unwrap().unwrap(),
+                &mut scan,
+            )
+            .unwrap();
+        let mut hits = 0;
+        for p in scan.points {
+            if let Some(local) = p.point_sensor_m {
+                let fraction = p.time_ns as f64 / 1_000_000.;
+                let mounted = pose(start).lerp(&pose(end), fraction) * sensor.robot_from_sensor;
+                let world = mounted.transform_point(Vector::from(local));
+                assert!((world.x + 4.5).abs() < 1e-8);
+                let d = AngularNoise::new(0.001, 17)
+                    .unwrap()
+                    .perturb(p.sample_index, sensor.pattern.direction(p.sample_index))
+                    .unwrap();
+                assert_eq!(local, (Vector::from(d) * p.range_m.unwrap()).to_array());
+                hits += 1;
+            }
+        }
+        assert!(hits > 20);
+    }
+
+    #[test]
+    fn angular_effects_preserve_chunking_decimation_and_reconstruction() {
+        let (world, robot) = rig();
+        let mount = Pose::at([0., 0., 1.]);
+        let effects = RangeEffects {
+            seed: 17,
+            standard_deviation_m: 0.02,
+            bias_m: 0.003,
+            dropout_probability: 0.2,
+        };
+        let configured = || sensor(mount, effects).with_angular_noise(0.001).unwrap();
+        let a = world.lidar_scene_capture(robot, 0).unwrap();
+        let b = world.lidar_scene_capture(robot, 503_333).unwrap();
+        let c = world.lidar_scene_capture(robot, 1_000_000).unwrap();
+        let sensor = configured();
+        let mut all = RollingFrame::default();
+        sensor
+            .sample_into(
+                &a,
+                &c,
+                sensor.window_between(0, 1_000_000, 1).unwrap().unwrap(),
+                &mut all,
+            )
+            .unwrap();
+        for stride in [1, 2, 3, 4, 7, 31] {
+            let mut chunk = RollingFrame::default();
+            sensor
+                .sample_into(
+                    &a,
+                    &b,
+                    sensor.window_between(0, 503_333, stride).unwrap().unwrap(),
+                    &mut chunk,
+                )
+                .unwrap();
+            let mut joined = chunk.points.clone();
+            // Reconstruct from immutable configuration, as a caller does after
+            // checkpoint restore; no hidden noise state is needed.
+            configured()
+                .sample_into(
+                    &b,
+                    &c,
+                    sensor
+                        .window_between(503_333, 1_000_000, stride)
+                        .unwrap()
+                        .unwrap(),
+                    &mut chunk,
+                )
+                .unwrap();
+            joined.extend(chunk.points);
+            assert_eq!(
+                joined,
+                all.points
+                    .iter()
+                    .step_by(stride as usize)
+                    .copied()
+                    .collect::<Vec<_>>()
+            );
+        }
+        let mut another_device = RollingFrame::default();
+        super::MountedLidar::new(
+            Mid360Pattern::new(0.1, 40.).unwrap(),
+            mount,
+            0,
+            RangeEffects {
+                seed: 18,
+                ..effects
+            },
+        )
+        .unwrap()
+        .with_angular_noise(0.001)
+        .unwrap()
+        .sample_into(
+            &a,
+            &c,
+            sensor.window_between(0, 1_000_000, 1).unwrap().unwrap(),
+            &mut another_device,
+        )
+        .unwrap();
+        assert_ne!(all, another_device);
     }
     #[test]
     fn scene_capture_pose_and_placement_follow_live_chassis() {

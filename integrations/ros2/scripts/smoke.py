@@ -21,9 +21,12 @@ def main():
         default=Path("../../target/ros2/release/rm-simulator-ros2"),
     )
     parser.add_argument("--stride", type=int, default=1)
+    parser.add_argument("--angular-noise-deg", type=float, default=0.0)
     args = parser.parse_args()
     if args.stride < 1:
         parser.error("stride must be positive")
+    if not math.isfinite(args.angular_noise_deg) or not 0 <= args.angular_noise_deg <= 180:
+        parser.error("angular noise must be finite and in [0, 180] degrees")
     os.environ["RMW_IMPLEMENTATION"] = "rmw_fastrtps_cpp"
     os.environ["ROS_DOMAIN_ID"] = "73"
     os.environ.pop("ROS_LOCALHOST_ONLY", None)
@@ -83,6 +86,8 @@ def main():
             "/rm_simulator_test/livox",
             "--stride",
             str(args.stride),
+            "--angular-noise-deg",
+            str(args.angular_noise_deg),
             "--frame-id",
             "test_livox",
             "--lidar-id",

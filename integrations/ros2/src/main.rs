@@ -37,6 +37,8 @@ struct Args {
     mount_pitch_deg: f64,
     #[arg(long, default_value_t = 0.02)]
     range_noise_m: f64,
+    #[arg(long, default_value_t = 0.)]
+    angular_noise_deg: f64,
     #[arg(long, default_value_t = 0.01)]
     dropout: f64,
     #[arg(long, default_value_t = 7)]
@@ -96,6 +98,8 @@ fn main() -> Result<()> {
             bias_m: 0.,
         },
     )
+    .map_err(anyhow::Error::msg)?
+    .with_angular_noise(args.angular_noise_deg.to_radians())
     .map_err(anyhow::Error::msg)?;
     let config = LivoxConfig {
         frame_id: args.frame_id,

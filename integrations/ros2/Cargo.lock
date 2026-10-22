@@ -740,6 +740,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "mid360-sim"
+version = "0.1.0"
+source = "git+https://github.com/hxyulin/mid360-sim.git?rev=c832a45bbde4d6cc5ef1e09afb0102b699fdc8d6#c832a45bbde4d6cc5ef1e09afb0102b699fdc8d6"
+
+[[package]]
 name = "nalgebra"
 version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1024,6 +1029,7 @@ dependencies = [
 name = "rm-simulator-physics"
 version = "0.1.0"
 dependencies = [
+ "mid360-sim",
  "rapier3d-f64",
  "serde",
 ]
@@ -1268,9 +1274,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.54.0"
+version = "1.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0c168a474b95bfecfe908a65d4bdffc523144b649a74c09c286afb35d53e0bc"
+checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
 dependencies = [
  "pin-project-lite",
 ]

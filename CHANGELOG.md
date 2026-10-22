@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Adopt the shared `mid360-sim` angular-effects model for mounted rolling LiDAR.
+  Add opt-in `with_angular_noise(radians)` and ROS probe `--angular-noise-deg`;
+  preserve default measurements, indexed range/dropout streams and dynamic mounts.
+- Update the optional ROS lockfile to Tokio 1.54.1 for RUSTSEC-2026-0384.
+
 - Expose the existing chassis wheel model independently of a solver world:
   suspension, motor/inertia, slip/traction and shared power use explicit inputs
   and reusable buffers. Preserve Rapier integration, controls and snapshots.

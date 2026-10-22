@@ -98,10 +98,11 @@ proxy measurements in [the baseline](performance-20261021.md) are not equivalent
 
 The runtime pattern now delegates to dependency-free
 [mid360-sim](https://github.com/hxyulin/mid360-sim) at pinned revision
-`7396856da6c80b8ac13b26e9bf43a6a5aa85031f`, using its hardware-derived nominal
+`c832a45bbde4d6cc5ef1e09afb0102b699fdc8d6`, using its hardware-derived nominal
 profile and representative 18.2-hour cycle. The copied 12-second fit described
 below is historical. Capture interpolation, mounted geometry and range effects
-remain native physics responsibilities; enabling this dependency does not add ROS.
+remain native physics responsibilities. Optional emitted-ray angular noise uses
+the shared `effects::AngularNoise` model; enabling this dependency does not add ROS.
 
 ## Historical MID-360 pattern investigation
 
@@ -321,6 +322,25 @@ RNG or alter retained measurements. Nearby occluders are traced before effects;
 noise does not see through a below-minimum surface. Noisy out-of-range/non-finite
 measurements are suppressed, not clamped into artificial returns.
 
+`MountedLidar::with_angular_noise(standard_deviation_rad)` opts into independent
+tangent-axis perturbations before intersection, using the same device seed and
+global emission index. It reuses `mid360-sim::effects::AngularNoise`; the existing
+RM range/dropout random streams are unchanged. Zero is the default and restores
+the original unperturbed directions. Standard deviation must be finite and in
+`[0, pi]` radians. This is a generic stress model, not calibrated encoder noise.
+
+```rust
+let sensor = MountedLidar::new(pattern, mount, epoch_ns, range_effects)?
+    .with_angular_noise(0.001)?;
+```
+
+The emitted direction is transformed with the interpolated carrier pose and
+fixed mount at each emission time; the same direction is used for local XYZ.
+Noise can change which side of a foreground edge is hit. A nearest surface
+inside the minimum range still blocks the background, even if no point is
+reported. Reconstruct the sensor with the same angular setting and seed after
+restore; there is no additional RNG state to checkpoint.
+
 Window timing is half-open `[before, after)`. Global stride alignment prevents
 missing/duplicate emissions when a 128 Hz tick falls between nominal 5 µs firing
 times. At full rate, one simulated second emits exactly 200,000 points.
@@ -413,7 +433,8 @@ sensor APIs do not silently replace it with a localization stack.
 The sibling `mid360-sim` repository contains a standalone, simulator-independent
 pattern/acquisition core and rclrs publisher, with Pixi/RoboStack setup, copied
 Livox interface notices and a moving-sensor room demo. It adds optional angular
-ray perturbations and an explicitly uncalibrated diffuse dropout stress model.
+ray perturbations, now shared by this mounted scanner, and an explicitly
+uncalibrated diffuse dropout stress model that is not enabled in RM acquisition.
 The existing physics implementation and ROS/control bridge remain compatible;
 the pattern core is now a pinned Git dependency. Its other simulator backends remain independent. Its `docs/realism.md` prioritizes optical geometry,
 IMU synchronization, material calibration and long real-sensor recordings.
