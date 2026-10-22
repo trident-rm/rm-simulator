@@ -5,6 +5,9 @@
 //! This is a trusted embedding API, not a multiplayer authority boundary. External
 //! pilots must still use server commands and their ownership checks. Observations
 //! here are explicitly ground truth; simulated sensors belong in caller adapters.
+/// Bounded stepping over independent complete match sessions.
+pub mod batch;
+
 use crate::{Field, FieldError, FieldSnapshot, RefereeCommand, StaticGeometry};
 
 /// Shared physical commands, observations and timing primitives used by both session layers.

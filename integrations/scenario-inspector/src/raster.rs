@@ -144,6 +144,12 @@ pub fn render(model: &Inspector, options: &Options) -> Vec<u8> {
                 .map(|p| model.moved_point(i, *p)),
         );
     }
+    if let Some(robot) = model.robot_truth() {
+        points.extend(box_corners(robot.pose, robot.config.body_half_m));
+        points.push(robot.turret.translation_m);
+    }
+    points.extend(model.projectiles().iter().map(|p| p.position_m));
+    points.extend(model.contacts().iter().map(|p| p.position_m));
     if options.field {
         for zone in model.zones() {
             points.extend(zone.polygon_m.iter().map(|p| [p[0], p[1], zone.floor_m]));
@@ -255,11 +261,70 @@ pub fn render(model: &Inspector, options: &Options) -> Vec<u8> {
             );
         }
     }
+    // Cyan bounds use actual physical poses/configuration (not generated CAD).
+    if let Some(robot) = model.robot_truth() {
+        for (pose, half) in [
+            (robot.pose, robot.config.body_half_m),
+            (robot.turret, robot.config.turret_half_m),
+        ] {
+            let corners = box_corners(pose, half);
+            for i in 0..8 {
+                for axis in [1, 2, 4] {
+                    if i & axis == 0 {
+                        c.line(corners[i], corners[i | axis], [80, 225, 244, 255]);
+                    }
+                }
+            }
+        }
+        for wheel in robot.wheels {
+            cross(&mut c, wheel.hub_m, [80, 225, 244, 255], 3.);
+            if let Some(contact) = wheel.contact {
+                cross(&mut c, contact.point_m, [119, 239, 160, 255], 2.);
+            }
+        }
+        c.line(
+            robot.turret.translation_m,
+            math::add(
+                robot.turret.translation_m,
+                math::rotate(robot.turret.rotation_wxyz, [1., 0., 0.]),
+            ),
+            [80, 225, 244, 255],
+        );
+    }
+    for projectile in model.projectiles() {
+        cross(&mut c, projectile.position_m, [255, 230, 90, 255], 4.);
+    }
+    for contact in model.contacts() {
+        cross(&mut c, contact.position_m, [255, 80, 180, 255], 6.);
+    }
     // Always visible orientation glyph, same world axes as detector frames.
     let origin = [38., HEIGHT as f64 - 38.];
     c.pixel_line(origin, [origin[0] + 26., origin[1]], [255, 100, 108, 255]);
     c.pixel_line(origin, [origin[0], origin[1] - 26.], [119, 239, 160, 255]);
     c.pixels
+}
+
+fn box_corners(pose: rm_simulator_physics::Pose, half: [f64; 3]) -> [[f64; 3]; 8] {
+    std::array::from_fn(|i| {
+        math::add(
+            pose.translation_m,
+            math::rotate(
+                pose.rotation_wxyz,
+                std::array::from_fn(|axis| {
+                    if i & (1 << axis) == 0 {
+                        -half[axis]
+                    } else {
+                        half[axis]
+                    }
+                }),
+            ),
+        )
+    })
+}
+fn cross(c: &mut Canvas, p: [f64; 3], color: [u8; 4], radius: f64) {
+    let p = c.pixel(p);
+    c.pixel_line([p[0] - radius, p[1]], [p[0] + radius, p[1]], color);
+    c.pixel_line([p[0], p[1] - radius], [p[0], p[1] + radius], color);
 }
 
 pub fn write_png(path: &std::path::Path, pixels: &[u8]) -> anyhow::Result<()> {

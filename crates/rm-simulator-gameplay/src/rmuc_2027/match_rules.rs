@@ -643,13 +643,8 @@ impl Match {
                 }
             }
             duration -= dt;
-            for side in Team::BOTH {
-                let i = side.index();
-                let owner = self.control.snapshot().outposts[i].owner;
-                if self.elapsed_ns() >= THREE_MIN_NS || self.base_open[owner.other().index()] {
-                    self.rotor_stopped_ns[i].get_or_insert(self.elapsed_ns());
-                }
-            }
+            let base_open = self.base_open;
+            self.outposts().settle_rotors(base_open);
             if self.elapsed_ns() == ROUND_NS {
                 self.finish();
             }
@@ -658,12 +653,18 @@ impl Match {
             self.resolve();
         }
     }
+    fn outposts(&mut self) -> super::equipment::Outposts<'_> {
+        super::equipment::Outposts::new(
+            &mut self.control,
+            &mut self.outpost_hp,
+            &mut self.rotor_stopped_ns,
+        )
+    }
+    fn bases(&mut self) -> super::equipment::Bases<'_> {
+        super::equipment::Bases::new(&self.control, &mut self.base_hp, &mut self.base_lowest_hp)
+    }
     fn apply_events(&mut self, events: Vec<Event>) {
-        for event in events {
-            if let EventKind::OutpostRebuilt { side, hp, .. } = event.kind {
-                self.outpost_hp[side.index()] = hp;
-            }
-        }
+        self.outposts().apply_events(&events);
     }
     /// Spend a native team Rune opportunity in a running round (§5.6.3).
     pub fn activate_rune(&mut self, team: Team) -> std::result::Result<(), &'static str> {
@@ -769,25 +770,12 @@ impl Match {
                     return 0;
                 }
                 let damage = structure_damage(team);
-                let hp = &mut self.base_hp[team.index()];
-                let d = (*hp).min(damage);
-                *hp -= d;
-                self.base_lowest_hp[team.index()] = self.base_lowest_hp[team.index()].min(*hp);
-                (team, d)
+                (team, self.bases().damage(team, damage))
             }
             crate::Target::Outpost(side) => {
                 let team = self.control.snapshot().outposts[side.index()].owner;
                 let damage = structure_damage(team);
-                let hp = &mut self.outpost_hp[side.index()];
-                let d = (*hp).min(damage);
-                *hp -= d;
-                if *hp == 0 && d > 0 {
-                    self.rotor_stopped_ns[side.index()].get_or_insert(self.elapsed_ns());
-                    if let Ok(events) = self.control.outpost_destroyed(side) {
-                        self.apply_events(events);
-                    }
-                }
-                (team, d)
+                (team, self.outposts().damage(side, damage))
             }
             crate::Target::Robot(id) => {
                 let Some(r) = self.robots.iter().find(|r| r.id == id) else {
@@ -816,24 +804,11 @@ impl Match {
     /// Set an operator HP override without crediting attack damage. A lethal
     /// outpost override still applies the ownership/destruction transition.
     pub fn set_outpost_hp(&mut self, side: Team, hp: u32) {
-        let i = side.index();
-        // Only the control component may rebuild a destroyed physical outpost.
-        if self.outpost_hp[i] == 0 && hp > 0 {
-            return;
-        }
-        let destroyed = self.outpost_hp[i] > 0 && hp == 0;
-        self.outpost_hp[i] = hp.min(OUTPOST_HP);
-        if destroyed {
-            self.rotor_stopped_ns[i].get_or_insert(self.elapsed_ns());
-            if let Ok(events) = self.control.outpost_destroyed(side) {
-                self.apply_events(events);
-            }
-        }
+        self.outposts().set_hp(side, hp);
     }
     /// Set a base's HP directly; zero ends a running round, without attack credit.
     pub fn set_base_hp(&mut self, team: Team, hp: u32) {
-        self.base_hp[team.index()] = hp.min(BASE_HP);
-        self.base_lowest_hp[team.index()] = self.base_lowest_hp[team.index()].min(hp.min(BASE_HP));
+        self.bases().set_hp(team, hp);
         if self.phase == Phase::Running {
             self.observe_heavy_deficits();
         }

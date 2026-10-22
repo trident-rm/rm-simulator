@@ -24,6 +24,8 @@ runs on bounded workers outside ROS callbacks. Core libraries and multiplayer bu
 | Strategy evaluator | `rm-simulator-gameplay::rmuc_2027::match_rules::Match` | Native rules driven by caller observations and nanosecond durations; no physical travel/combat abstraction is invented. |
 | Robot physical/control test | `rm-simulator-physics::session::RobotSession` | Caller-paced physics, shared commands and sensor access; initial-scenario reset without match rules. |
 | Complete physical match or robotics scenario | `rm-simulator-world::session::MatchSession` | A `Field`, addressed controls, timestamps, checkpoints and explicit reset. |
+| Independent rollout collection | `physics::session::batch::RobotBatch` / `world::session::batch::MatchBatch` | Bounded sequential stepping, reusable observations and transactional selective reset; mixed per-slot durations. |
+| Standalone equipment rules | `gameplay::rmuc_2027::equipment` and `rune::Rune` | Borrowed native Outpost/Base transitions and existing pure Rune authority; caller-owned explicit scheduling. |
 | Verified map import | `rm-simulator-assets` | Manifests, checksums, collision GLBs, source bindings and articulation semantics, without server/network dependencies. |
 | Scene viewer / future camera adapter | `rm-simulator-render::sync::SceneState` | Caller-owned appearance and poses; rendering never steps the world. |
 | Multiplayer / external remote control | `rm-simulator-server` | Ownership, command admission, cadence, transport and real-time pacing. |
@@ -176,3 +178,12 @@ and real-time pacing remain optional. Backend abstraction should follow an actua
 second physics implementation; this refactor does not pretend that Rapier's
 contact state, ray-cast wheel model and a future articulated MuJoCo model are
 interchangeable.
+
+## Batched independent sessions
+
+The [batch facades](batched-rollouts.md) under `session::batch` retain per-slot
+command buffers and fill caller-owned compact truth outputs. Slots keep their own
+integration duration and timestamp. Selection/limits/overflow failures are
+rejected before mutation; runtime command or integration errors report retained
+partial progress. Selective reset prepares all replacements before swapping.
+There is no thread pool, task/reward policy or implicit sensor reset.

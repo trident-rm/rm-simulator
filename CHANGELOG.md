@@ -4,6 +4,19 @@
 
 ## Unreleased
 
+- Add physical omni spawn, drive/torque/aim/fire controls, scripted episodes and
+  bounded raw armor-contact inspection to the optional RXUI scenario inspector.
+  Keep robot/projectile overlays labelled as privileged physical truth.
+- Add bounded sequential RobotBatch/MatchBatch rollouts over independent worlds,
+  reusable command/observation/contact buffers, explicit partial-progress errors
+  and transactional selective resets. Support mixed integration rates; retain
+  ordinary solver behavior and caller-owned task, reward and sensor state.
+
+- Share native Outpost/Base HP, destruction, rebuild and permanent rotor-stop
+  transitions with standalone experiments through borrowed equipment views.
+  Retain match-owned rewards, permissions, victory and checkpoint state; reuse
+  the existing pure Rune authority.
+
 - Add an optional isolated RXUI scenario inspector with orthographic collider
   views, mechanism controls, physical preset stepping/reset and detector/RFID
   overlays. Keep its native graphics dependencies outside the core workspace.

@@ -2,8 +2,9 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Runtime and game separation design
 
-Status: initial session split and backend-neutral wheel model implemented,
-2026-10-23. Further model and solver extraction below remain proposed; the
+Status: sessions, the backend-neutral wheel model, standalone equipment presets,
+borrowed structure transitions and sequential rollout batches are implemented
+(2026-10-23). Further model and solver extraction below remain proposed; the
 Rapier dynamics backend is unchanged. This design extends the [current architecture](architecture-refactor.md)
 and [embedding interface](simulation-embedding.md) so a second physical backend
 can be evaluated without making the multiplayer app its integration layer.
@@ -63,8 +64,10 @@ Source partitioning and articulated export already exist in rm-map-tools;
 verified package and collision-subtree readers already exist in the assets crate.
 Reuse those outputs and readers. `assets::components` now composes fixed/moving models outside server layout,
 and the live terrain loader uses that builder. A source Outpost can be installed
-in `RobotSession` without a match. Per-feature rule-state extraction remains a
-later step, without introducing a second `Field` or bypassing host admission.
+in `RobotSession` without a match. Borrowed `gameplay::rmuc_2027::equipment::{Outposts, Bases}` now share structure
+transitions with the live match, and standalone Rune callers reuse its existing
+pure authority. These views keep state caller-owned and add no second scheduler
+or checkpoint format. See [equipment rule modules](equipment-rule-modules.md).
 
 ## Ownership
 

@@ -6,8 +6,9 @@
 verified equipment geometry. It does not change the interactive Bevy application,
 normal workspace dependencies, networking or match authority. It currently
 consumes `rm_simulator_assets::{components, scenarios}` and the shared
-physics motion/pose helpers. Outpost, Base and Rune selections create an empty
-`RobotSession` from the new reusable preset API. It requires the component composition changes in
+physics motion/pose helpers. Outpost, Base and Rune selections create a physical
+`RobotSession` with a configurable existing omni chassis through `Scenario::session` and
+`RobotSpawn`. It requires the component composition changes in
 the same checkout; it is not usable against the preceding assets API.
 
 RXUI is pinned to
@@ -46,7 +47,8 @@ The page scrolls vertically to mechanism controls and metadata.
   blue +z. Grid spacing is one metre. These are diagnostic colors, not CAD paint.
 - **Play preview** advances 16 inspection ticks per asynchronous pulse;
   **Pause** stops pulses. **Step 1 tick** pauses and adds 7.8125 ms.
-  **Reset** pauses, clears time and all mechanism offsets.
+  **Reset** pauses, clears time and all mechanism offsets, restores the configured
+  robot pose/profile, and clears projectiles, held commands and contact history.
 - Each channel slider restarts time at zero with its chosen offset and pauses.
   Source meshes on the same mechanism/team channel share that offset. Rotation
   offsets use radians; translation offsets are clamped fractions from 0 to 1.
@@ -58,10 +60,56 @@ Time is integer nanoseconds in a toolkit-independent model. A native timer merel
 requests a fixed number of inspection ticks; slow frames do not catch up to wall
 time. For Outpost, Base and Rune, the backend resolves `Scenario::targets_at` and
 `sync_mechanisms` together before every `RobotSession::step_with_targets` at
-128 Hz. Those sessions contain source geometry and targets, with no robots or
-projectiles. Other selections resolve prescribed geometry only. There are no
+128 Hz. Those sessions contain source geometry, targets, one optional physical robot and
+its projectiles. The isolated preset catch floor is flat z=0, not the complete arena terrain. Other selections resolve prescribed geometry only. There are no
 rewards, referee, HP, match clock or multiplayer input path. Reset and coordinate
-edits create a fresh empty session from the shared cooked scenario geometry.
+edits create a fresh session from shared cooked geometry and the configured robot recipe.
+
+## Physical robot controls
+
+Outpost, Base and Rune spawn one existing `ChassisConfig::default()` omni profile,
+identity 0, on the isolated flat catch floor. Initial placement is two metres before
+the selected component's minimum x envelope, centred in y. This is a physical
+practice profile, not generated robot CAD. Spawn x/y/z (metres), yaw (radians) and
+team label are editable in RXUI; each edit pauses and rebuilds at time zero. The
+headless `--robot X,Y,Z,YAW_RAD` overrides initial body-centre placement;
+`--no-robot` keeps a geometry/target-only session. Other component selections
+remain geometry-only and reject robot commands.
+
+Native sliders hold body forward/left velocities in m/s and yaw rate in rad/s,
+and world gimbal yaw/elevation targets in radians. Actual gimbal motion follows
+the physical motors; firing immediately after an aim change uses the actual
+current muzzle. Play or step to let it turn. Four wheel torque sliders request
+N m in the existing profile's wheel order, preserving motor, power and traction
+limits. Torque control replaces velocity tracking. Editing velocity or **Brake /
+velocity zero** restores velocity tracking; editing aim preserves torque mode.
+Zero torque allows free rolling. Buttons fire one 17 mm shot at 25 m/s or one
+42 mm shot at 12 m/s. The headless script can choose a speed in (0,40] m/s.
+There is no firing cadence, heat, ammunition allowance, HP or game authority.
+
+Cyan overlays show body/turret profile bounds, wheel hubs, physical wheel support
+points (green) and the actual gun direction; these boxes do not reproduce the
+full octagonal collision profile or CAD artwork. Yellow crosses are projectile
+centres. Pink crosses are raw armor events. Robot, projectile, wheel and contact
+positions are **privileged physics truth, not simulated sensors**. Camera fitting
+includes robots, projectiles and retained contacts.
+
+The report retains the latest 128 projectile/armor and chassis/armor events in
+integration order, with tick-end timestamps in ns, target identity, projectile ID
+when present, world/local contact position in metres and normal closing speed in
+m/s. RXUI lists the latest eight. `contact_count` counts all such events since
+reset. These are raw physics events, not scoring decisions or all rigid-body
+contacts; wheel support is separate telemetry. Projectile scenery contact time
+is also available in projectile truth. Event queues are drained each tick and
+retained contact history is bounded. No sensor noise or observation policy is
+implied by these overlays.
+
+The toolkit-independent library accepts an explicit `RobotSpawn`, including an
+existing validated `ChassisConfig`, via `Inspector::configure_robot`. A failed
+configuration leaves the live episode intact. Reset retains this configured
+recipe but clears runtime commands, projectiles and contacts. Selection changes
+start the new component's default robot recipe. Mechanism coordinate edits also
+restart the configured robot while keeping the chosen source coordinate offset.
 
 ## Headless previews and reports
 
@@ -84,7 +132,34 @@ and `report.json` with geometry counts, original paths, source STEP hash,
 placement/root frame, source-body motion membership, resolved coordinates,
 detector poses and RFID bands. `--ticks N` advances the explicit timeline before
 capture. `--coordinate CHANNEL=VALUE` can repeat. `--help` lists all options.
-The JSON is also printed to stdout. Capture directories are caller-selected;
+The JSON is also printed to stdout. `--script PATH` executes an ordered JSON
+action array before `--ticks N`. For example, save this array to caller scratch:
+
+```json
+[
+  {"drive": [0.5, 0.0, 0.0]},
+  {"step": 128},
+  {"drive": [0.0, 0.0, 0.0]},
+  {"aim_rad": [0.0, 0.15]},
+  {"step": 32},
+  {"fire": [17, 25.0]},
+  {"step": 4}
+]
+```
+
+```sh
+cargo run --locked --manifest-path integrations/scenario-inspector/Cargo.toml -- \
+  --asset outpost --script local-assets/robot-actions.json --plane xz \
+  --probe local-assets/scenario-inspector/captures/robot-outpost
+```
+
+`drive` is `[forward_m_s,left_m_s,yaw_rate_rad_s]`, `aim_rad` is world
+`[yaw,pitch]`, `torques_nm` is four wheel torques, `fire` is `[17|42,speed_m_s]`,
+`step` is unsigned ticks and `reset` is `true`. Drive and torque requests persist.
+Scripts validate operation names, shapes and finite numeric values before any
+action runs; physical admission errors stop execution and retain earlier actions.
+A script uses the same model methods as RXUI and reads no wall time. There is no
+implicit stepping after a shot: add `step` to observe flight or contacts. Capture directories are caller-selected;
 the examples use ignored scratch, never tracked assets.
 
 ## RFID boundary
@@ -112,7 +187,7 @@ responsibility.
 poses, optional RFID import, explicit time and the optional physical preset session. `src/raster.rs` maps
 that data to pixels. `src/native.rs` owns RXUI controls, image handles and task
 pacing; `src/main.rs` is the CLI/probe adapter. The library exposes `model` and
-`raster` for future robot or task adapters. The initial physical preset bridge already
+`raster` for robot/task adapters without RXUI. The initial physical preset bridge already
 uses `Scenario::load`, `Scenario::session` and `Scenario::targets_at`. No dependency on server, world,
 Bevy or a sibling repository was added. The assets crate retains its existing
 transitive gameplay dependency.
@@ -125,7 +200,7 @@ change original source metadata or checksums.
 
 This is an orthographic collider wire view, with every original selected triangle
 edge drawn. It does not display source visual materials/textures, hide back faces,
-provide depth occlusion, simplify meshes, add picking, or spawn/configure robots and projectiles. Camera fit follows the current pose. Rune faces can overlap
+provide depth occlusion, simplify meshes, add picking, or render robot CAD/materials. Camera fit follows the current pose. Rune faces can overlap
 in a top view; the side view is more useful. Dense geometry and software
 rasterization limit interactive speed on large scenery. The 960 × 640 image is
 cached between changes; component triangle data and the preset collision recipe
@@ -145,17 +220,29 @@ cargo clippy --locked --manifest-path integrations/scenario-inspector/Cargo.toml
   --all-targets --features native -- -D warnings
 ```
 
-The two ignored tests require the verified LFS package: one checks real source
+The three ignored tests require the verified LFS package: one checks real source
 motion, detector correspondence, end-stop clamping, atomic failed selection and
-pixel-identical reset; the other prepares the RXUI view without a display and
+pixel-identical reset; another exercises physical robot commands, torque-preserving aim, actual muzzle firing, raw source detector contacts and robot episode reset; the third prepares the RXUI view without a display and
 routes a pointer click through the actual Step button. Set
 `RM_INSPECTOR_TEST_ASSETS` for the model test's alternative package location.
-Ordinary tests cover pause/pulse/step partitioning, overflow, clipping and axis
-projection. Native builds and these checks were exercised on Linux/Talos and
+Ordinary tests cover pause/pulse/step partitioning, overflow, clipping, axis
+projection, script validation and a CAD-free physical drive/torque/fire/reset fixture. Native builds and these checks were exercised on Linux/Talos and
 macOS. The macOS native window launched; system window capture returned
 `could not create image from window`, so the saved PNGs are backend projections,
 not screenshots of native window chrome. Manual native pointer/keyboard smoke
 testing and full 3D/material verification remain outstanding.
+
+The robot-control expansion was checked with the default headless tests and all
+ignored real-package tests on macOS, and with native tests plus warnings-denied
+Clippy on an isolated Talos source/target. Native tests prepare spawn, drive, aim,
+torque and fire controls and route a real pointer click through Step. Scripted
+Outpost/Front, Rune/Side and Base/Top captures include the robot and a real fired
+projectile after 162 explicit ticks (1.265625 s). Task evidence is under ignored
+`local-assets/scenario-inspector/task1-evidence/`; source/check logs use the
+`task1-` prefix in its parent directory. The macOS window server confirmed the
+1120 × 949 native inspector window onscreen; its capture attempt returned
+`could not create image from window`. These PNG probes therefore verify the
+shared raster/model path, not native window chrome or manual robot-control input.
 
 ## Optional dependency audit
 

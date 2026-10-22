@@ -10,6 +10,9 @@ use rm_scenario_inspector::{model, raster};
 use std::path::PathBuf;
 
 fn main() -> anyhow::Result<()> {
+    let mut spawn = None;
+    let mut robot_enabled = true;
+    let mut script: Option<PathBuf> = None;
     let mut rfid: Option<PathBuf> = None;
     let mut root = rm_simulator_assets::cad_assets::default_cad_assets();
     let mut asset = "outpost".to_string();
@@ -22,6 +25,19 @@ fn main() -> anyhow::Result<()> {
     while let Some(arg) = args.next() {
         let mut value = || args.next().context(format!("{arg} needs a value"));
         match arg.as_str() {
+            "--no-robot" => robot_enabled = false,
+            "--robot" => {
+                let v = value()?
+                    .split(',')
+                    .map(str::parse::<f64>)
+                    .collect::<Result<Vec<_>, _>>()?;
+                anyhow::ensure!(
+                    v.len() == 4 && v.iter().all(|v| v.is_finite()),
+                    "robot needs finite X,Y,Z,YAW_RAD"
+                );
+                spawn = Some(v);
+            }
+            "--script" => script = Some(value()?.into()),
             "--rfid" => rfid = Some(value()?.into()),
             "--cad-assets" => root = value()?.into(),
             "--asset" => asset = value()?,
@@ -44,7 +60,7 @@ fn main() -> anyhow::Result<()> {
             "--field" => options.field = true,
             "--help" | "-h" => {
                 println!(
-                    "rm-scenario-inspector [--cad-assets PATH] [--asset outpost|rune|base|tech-core|floor|arena|scenery-N]\n  [--placement N] [--coordinate CHANNEL=VALUE] [--ticks N] [--plane xy|xz|yz] [--field]\n  [--rfid ZONES_JSON] [--probe OUTPUT_DIRECTORY]\n\nWithout --probe, opens RXUI (build with --features native). Probe writes view.png and report.json.\nCoordinates are rad for rotation, 0..1 fractions for translation. Preview law: +0.5 rad/s or +0.1 fraction/s.\nExplicit 128 Hz time; source presets step an empty physical session. No referee, robots or networking."
+                    "rm-scenario-inspector [--cad-assets PATH] [--asset outpost|rune|base|tech-core|floor|arena|scenery-N]\n  [--placement N] [--coordinate CHANNEL=VALUE] [--ticks N] [--plane xy|xz|yz] [--field]\n  [--rfid ZONES_JSON] [--probe OUTPUT_DIRECTORY]\n  [--robot X,Y,Z,YAW_RAD | --no-robot] [--script ACTIONS_JSON]\n\nWithout --probe, opens RXUI (build with --features native). Probe writes view.png and report.json.\nCoordinates are rad for rotation, 0..1 fractions for translation. Preview law: +0.5 rad/s or +0.1 fraction/s.\nExplicit 128 Hz time; Outpost/Base/Rune spawn a physical omni robot. Scripts drive/aim/fire/step/reset. Privileged truth, no referee or networking."
                 );
                 return Ok(());
             }
@@ -57,6 +73,22 @@ fn main() -> anyhow::Result<()> {
     }
     for (i, v) in coordinates {
         inspector.set_coordinate(i, v)?;
+    }
+    if !robot_enabled && inspector.robot_spawn().is_some() {
+        inspector.configure_robot(None)?;
+    } else if let Some(v) = spawn {
+        let config = rm_simulator_physics::chassis::ChassisConfig::default();
+        inspector.configure_robot(Some(rm_simulator_assets::scenarios::RobotSpawn {
+            team: rm_simulator_physics::Team::Red,
+            config,
+            pose: rm_simulator_physics::Pose {
+                translation_m: [v[0], v[1], v[2]],
+                rotation_wxyz: [(v[3] / 2.).cos(), 0., 0., (v[3] / 2.).sin()],
+            },
+        }))?;
+    }
+    if let Some(path) = script {
+        inspector.run_script(&serde_json::from_slice(&std::fs::read(path)?)?)?;
     }
     inspector.step(ticks)?;
     if let Some(path) = probe {

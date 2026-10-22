@@ -19,7 +19,9 @@ Git history.
 | Standalone physics and optional rendering | [Physics reuse](physics-reuse.md) |
 | In-process sessions, clocks, controls and future adapters | [Simulation embedding](simulation-embedding.md) |
 | Source equipment presets, recipe resets and modular rule observations | [Standalone scenarios](standalone-scenarios.md) |
-| Optional RXUI equipment inspector and orthographic overlays | [Scenario inspector](scenario-inspector.md) |
+| Standalone native Outpost/Base transitions and Rune authority | [Equipment rule modules](equipment-rule-modules.md) |
+| Independent CPU batches, selective reset and rollout measurements | [Batched rollouts](batched-rollouts.md) |
+| Optional RXUI equipment inspector, robot controls and orthographic overlays | [Scenario inspector](scenario-inspector.md) |
 | Live-game navigation integration design, joint feedback and deferred MuJoCo | [Robotics next steps](robotics-next-steps.md) |
 | Graphics presets, render limits and CPU-contention measurements | [Graphics performance](performance-graphics-20261023.md) |
 | Nearest-hit geometry and ideal LiDAR acquisition | [Navigation sensors](navigation-sensors.md) |

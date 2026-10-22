@@ -22,6 +22,8 @@ pub mod assembly;
 /// Seeded equipment-local assembly poses and spherical orientation (Table 5-10).
 pub mod assembly_pose;
 pub mod combat;
+/// Borrowed native Outpost and Base transitions, without a second match authority.
+pub mod equipment;
 /// Sensor-driven assembly manipulation workbench; separate from virtual match rewards.
 pub mod manipulation;
 pub mod match_rules;

@@ -103,10 +103,28 @@ its own explicit schedule. Adapters advance neither clock. Sensor output remains
 a measurement, while the true positions used for ideal referee occupancy are
 privileged simulation data.
 
+Native structure transitions are also available through borrowed
+[`Outposts` and `Bases` views](equipment-rule-modules.md), used by the live Match.
+These complement geometry/contact adapters; they do not replace match eligibility,
+rewards or victory settlement. The existing pure Rune authority remains reusable.
+
 ## Optional inspector
 
 The [RXUI inspector](scenario-inspector.md) is a separate optional workspace.
 It consumes the source preset API for Outpost, Base and Rune, with explicit
-pause/step/reset and mechanism coordinates. Its current orthographic collision
-views and detector/RFID overlays are inspection aids; they do not add gameplay
+pause/step/reset, mechanism coordinates, configurable omni spawns and physical
+drive/torque/aim/fire controls. Headless scripts use the same model API and
+record bounded raw armor contacts. Its orthographic collision views and
+robot/projectile/detector/RFID overlays show privileged physical truth; they do not add gameplay
 rules to the toolkit or replace source-material 3D rendering.
+
+## Independent rollout batches
+
+[`RobotBatch` and `MatchBatch`](batched-rollouts.md) group independent sessions
+with retained command/observation buffers, explicit progress reporting and
+selected-set transactional resets. They support mixed integration rates without
+a shared clock or extra scheduler. Cook scenario geometry once and capture shared
+immutable shapes in recipes; each slot retains its own bodies, contacts and rules.
+The implementation is sequential CPU execution, with measured stepping costs
+comparable to ordinary per-session loops. Task/reward state and simulated sensor
+sampling remain caller responsibilities.

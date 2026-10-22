@@ -10,6 +10,9 @@
 //! Sensor schedules, rolling brackets and IMU state remain caller-owned and must
 //! be reset separately after an episode reset or discontinuous placement.
 
+/// Bounded stepping over independent physical sessions.
+pub mod batch;
+
 use crate::{
     Shot, StepDuration, TargetFace, TargetFrames, WorldPhysics,
     chassis::{ChassisCommand, ChassisSnapshot},
@@ -261,12 +264,38 @@ impl RobotSession {
     /// Armor collisions and projectile removal events remain in the ordinary world's
     /// queues, drained through [`Self::physics_mut`]. On error, prior steps remain.
     pub fn step(&mut self, steps: u64) -> Result<Vec<Contact>, &'static str> {
-        self.check_advance(steps)?;
         let mut contacts = Vec::new();
+        self.step_into(steps, &mut contacts)?;
+        Ok(contacts)
+    }
+
+    /// Append ordered contacts while advancing physical steps, reusing caller storage.
+    /// Overflow is rejected before mutation. On an integration error, completed
+    /// steps and their appended contacts remain; existing output is never cleared.
+    /// Physics may still allocate internal contact storage during each step.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{StepDuration, session::{RobotScenario, RobotSession}};
+    /// let mut session = RobotSession::new(RobotScenario::new(vec![], 0.,
+    ///     StepDuration::HZ_1000, |_| Ok(()))?)?;
+    /// let mut contacts = Vec::new();
+    /// session.step_into(2, &mut contacts)?;
+    /// session.step_into(3, &mut contacts)?;
+    /// assert_eq!(session.stamp().time_ns, 5_000_000);
+    /// assert!(session.step_into(u64::MAX, &mut contacts).is_err());
+    /// assert_eq!(session.stamp().tick, 5);
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn step_into(
+        &mut self,
+        steps: u64,
+        contacts: &mut Vec<Contact>,
+    ) -> Result<(), &'static str> {
+        self.check_advance(steps)?;
         for _ in 0..steps {
             contacts.extend(self.integrate(None)?);
         }
-        Ok(contacts)
+        Ok(())
     }
 
     fn check_advance(&self, steps: u64) -> Result<(), &'static str> {

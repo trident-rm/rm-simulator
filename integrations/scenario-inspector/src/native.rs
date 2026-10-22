@@ -145,6 +145,168 @@ impl View for App {
                 }),
             ));
         }
+        let mut robot_controls = column().gap(6.).child(label(
+            "Physical robot • privileged truth, not simulated sensors",
+        ));
+        if let Some(spawn) = self.model.robot_spawn() {
+            robot_controls = robot_controls.child(label("Spawn edits restart the episode; flat isolated catch floor at z=0. Cyan boxes show profile bounds, not CAD."));
+            let q = spawn.pose.rotation_wxyz;
+            let yaw = 2. * q[3].atan2(q[0]);
+            for (axis, name, value, low, high) in [
+                (0, "Spawn x (m)", spawn.pose.translation_m[0], -30., 30.),
+                (1, "Spawn y (m)", spawn.pose.translation_m[1], -30., 30.),
+                (2, "Spawn z (m)", spawn.pose.translation_m[2], 0., 5.),
+                (
+                    3,
+                    "Spawn yaw (rad)",
+                    yaw,
+                    -std::f64::consts::PI,
+                    std::f64::consts::PI,
+                ),
+            ] {
+                robot_controls = robot_controls
+                    .child(label(format!("{name}: {value:.3}")))
+                    .child(
+                        slider(value as f32)
+                            .key(format!("spawn-{axis}"))
+                            .range(low as f32, high as f32)
+                            .width(380.)
+                            .accessibility_label(name)
+                            .on_change(cx.listener(move |s, e: &SliderEvent, _| {
+                                s.timer = None;
+                                s.apply(|m| {
+                                    let mut spawn = m
+                                        .robot_spawn()
+                                        .cloned()
+                                        .ok_or_else(|| anyhow::anyhow!("no robot"))?;
+                                    if axis < 3 {
+                                        spawn.pose.translation_m[axis] = e.value as f64;
+                                    } else {
+                                        let half = e.value as f64 / 2.;
+                                        spawn.pose.rotation_wxyz = [half.cos(), 0., 0., half.sin()];
+                                    }
+                                    m.configure_robot(Some(spawn))
+                                });
+                            })),
+                    );
+            }
+            robot_controls = robot_controls.child(
+                button(format!("Team {:?}: swap label", spawn.team))
+                    .key("robot-team")
+                    .on_click(cx.listener(|s, _, _| {
+                        s.apply(|m| {
+                            let mut spawn = m.robot_spawn().cloned().unwrap();
+                            spawn.team = if spawn.team == rm_simulator_physics::Team::Red {
+                                rm_simulator_physics::Team::Blue
+                            } else {
+                                rm_simulator_physics::Team::Red
+                            };
+                            m.configure_robot(Some(spawn))
+                        })
+                    })),
+            );
+        }
+        if let Some(robot) = self.model.robot_truth() {
+            for (axis, name, value, limit) in [
+                (0, "Forward (m/s)", robot.command.forward_m_s, 3.),
+                (1, "Left (m/s)", robot.command.left_m_s, 3.),
+                (2, "Yaw rate (rad/s)", robot.command.yaw_rate_rad_s, 3.),
+                (
+                    3,
+                    "Aim world yaw (rad)",
+                    robot.command.aim_yaw_rad,
+                    std::f64::consts::PI,
+                ),
+                (4, "Aim elevation (rad)", robot.command.aim_pitch_rad, 1.2),
+            ] {
+                robot_controls = robot_controls
+                    .child(label(format!("{name}: {value:.3}")))
+                    .child(
+                        slider(value as f32)
+                            .key(format!("robot-control-{axis}"))
+                            .range(-limit as f32, limit as f32)
+                            .width(380.)
+                            .accessibility_label(name)
+                            .on_change(cx.listener(move |s, e: &SliderEvent, _| {
+                                s.apply(|m| {
+                                    let mut command = m.robot_truth().unwrap().command;
+                                    match axis {
+                                        0 => command.forward_m_s = e.value as f64,
+                                        1 => command.left_m_s = e.value as f64,
+                                        2 => command.yaw_rate_rad_s = e.value as f64,
+                                        3 => return m.aim(e.value as f64, command.aim_pitch_rad),
+                                        _ => return m.aim(command.aim_yaw_rad, e.value as f64),
+                                    }
+                                    m.drive(command)
+                                })
+                            })),
+                    );
+            }
+            robot_controls=robot_controls.child(label("Direct torques replace body velocity control; aim preserves the drive mode. Zero torque free-rolls."));
+            let torques = match robot.drive_control {
+                rm_simulator_physics::control::DriveControl::WheelTorques(t) => t.as_nm().to_vec(),
+                _ => vec![0.; 4],
+            };
+            for (i, value) in torques.into_iter().enumerate() {
+                robot_controls=robot_controls.child(label(format!("Wheel {i} torque: {value:.3} N m"))).child(
+                    slider(value as f32).key(format!("torque-{i}")).range(-3.,3.).width(380.).accessibility_label(format!("Wheel {i} torque N m"))
+                    .on_change(cx.listener(move |s,e: &SliderEvent,_| s.apply(|m| {
+                        let robot=m.robot_truth().unwrap();
+                        let mut torques=match robot.drive_control {rm_simulator_physics::control::DriveControl::WheelTorques(t)=>t.as_nm().to_vec(),_=>vec![0.;4]};
+                        torques[i]=e.value as f64; m.wheel_torques(torques)
+                    }))));
+            }
+            robot_controls =
+                robot_controls.child(
+                    row()
+                        .gap(8.)
+                        .child(button("Brake / velocity zero").key("robot-stop").on_click(
+                            cx.listener(|s, _, _| {
+                                s.apply(|m| {
+                                    let command = m.robot_truth().unwrap().command;
+                                    m.drive(rm_simulator_physics::chassis::ChassisCommand {
+                                        forward_m_s: 0.,
+                                        left_m_s: 0.,
+                                        yaw_rate_rad_s: 0.,
+                                        ..command
+                                    })
+                                })
+                            }),
+                        ))
+                        .child(
+                            button("Fire 17 mm / 25 m/s")
+                                .key("fire-17")
+                                .on_click(cx.listener(|s, _, _| {
+                                    s.apply(|m| m.fire(rm_simulator_physics::Caliber::Mm17, 25.))
+                                })),
+                        )
+                        .child(
+                            button("Fire 42 mm / 12 m/s")
+                                .key("fire-42")
+                                .on_click(cx.listener(|s, _, _| {
+                                    s.apply(|m| m.fire(rm_simulator_physics::Caliber::Mm42, 12.))
+                                })),
+                        ),
+                );
+            robot_controls=robot_controls.child(label(format!("Truth pose {:?} m • velocity {:?} m/s • actual aim {:?} rad • {} projectiles • {} retained contacts",
+                robot.pose.translation_m,robot.velocity_m_s,robot.held_aim_rad,self.model.projectiles().len(),self.model.contacts().len())));
+        } else {
+            robot_controls = robot_controls.child(label(
+                "This selection has no robot. Outpost/Base/Rune support physical commands.",
+            ));
+        }
+        for contact in self.model.contacts().iter().rev().take(8) {
+            robot_controls = robot_controls.child(label(format!(
+                "{} ns: {} {} projectile {:?} at {:?} m; local {:?} m; normal {:.3} m/s",
+                contact.time_ns,
+                contact.kind,
+                contact.target,
+                contact.projectile,
+                contact.position_m,
+                contact.local_m,
+                contact.normal_speed_m_s
+            )));
+        }
         column().padding(20.).gap(10.).fill_width().fill_height().scroll_y()
             .child(label("Component / scenario inspector").font_size(26.))
             .child(label("Verified CAD collider projection • RXUI • world FLU metres").color(ThemeColor::TextMuted))
@@ -168,16 +330,17 @@ impl View for App {
                 .child(slider(self.options.zoom as f32).key("zoom").range(0.5,4.).width(300.).accessibility_label("Projection zoom")
                     .on_change(cx.listener(|s,e: &SliderEvent,_| {s.options.zoom=e.value as f64; s.refresh();}))))
             .child(image(self.image.clone()).key("projection").width(960.).height(640.).fit(ImageFit::Contain)
-                .accessibility_label("Orthographic collider wire projection, fixed teal, moving amber, RFID purple; detector axes red green blue"))
+                .accessibility_label("Orthographic collider wire projection, fixed teal, moving amber, RFID purple, robot cyan, projectile yellow, contact pink; detector axes red green blue"))
             .child(label(format!("{} • teal fixed {} triangles • amber moving {} triangles / {} channels • {} detector frames • {} RFID footprints",
                 self.options.plane.label(),self.model.placed.fixed.triangles.len(),self.model.placed.moving.iter().map(|p|p.mesh.triangles.len()).sum::<usize>(),self.model.placed.moving.len(),self.model.detectors().len(),self.model.zones().len())))
             .child(label(if self.model.zones().is_empty() {"RFID unavailable in this source package: import caller geometry with --rfid ZONES_JSON."} else {"Purple: RFID footprint and vertical band; caller overlays are unverified inspection geometry."}))
+            .child(robot_controls)
             .child(channels)
             .child(label("Sliders restart at t=0 with the chosen channel offset and pause. Reset clears time and all offsets. Fit follows each pose; there is no perspective or occlusion."))
             .child(label(format!("Visual source: {}\nCollider source: {}\nPlacement root (basis included): {:?}",self.model.cad.root.join(&self.model.asset().file).display(),self.model.asset().physics_file(&self.model.cad.root).display(),self.model.root())))
             .child(label(format!("Source STEP SHA-256: {}",self.model.cad.rmuc_2027.as_ref().map(|b|b.source_sha256.as_str()).unwrap_or("no native binding"))))
             .child(label(if self.loading.is_some() {"Loading verified geometry…".into()} else {self.error.clone().unwrap_or_default()}))
-            .child(label("Wireframe only: source materials/textures are not rendered. Source presets step an empty RobotSession. No robot properties, RF simulation or match authority.").color(ThemeColor::TextMuted))
+            .child(label("Wireframe only: source materials/textures are not rendered. Source presets use RobotSession with the existing omni profile. Cyan robot, yellow projectile, pink raw armor contact. No RF simulation or match authority.").color(ThemeColor::TextMuted))
     }
 }
 pub fn run(model: Inspector, options: Options) -> anyhow::Result<()> {
@@ -261,7 +424,20 @@ mod tests {
         let mut ui = rxui::Ui::new(&mut runtime, entity.clone()).unwrap();
         ui.prepare(&mut runtime, [1120., 1000.], &mut Measure)
             .unwrap();
-        assert!(ui.elements().any(|e| e.key == Some(&"step".into())));
+        for key in [
+            "step",
+            "spawn-0",
+            "robot-control-3",
+            "torque-0",
+            "fire-17",
+            "fire-42",
+            "robot-stop",
+        ] {
+            assert!(
+                ui.elements().any(|e| e.key == Some(&key.into())),
+                "missing {key}"
+            );
+        }
         let bounds = ui
             .elements()
             .find(|e| e.key == Some(&"step".into()))
