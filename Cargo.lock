@@ -6115,6 +6115,7 @@ dependencies = [
 name = "rm-simulator-physics"
 version = "0.1.0"
 dependencies = [
+ "glam 0.33.12",
  "mid360-sim",
  "rapier3d-f64",
  "serde",

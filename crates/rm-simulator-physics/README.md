@@ -19,10 +19,12 @@ other simulator crate.
 | `src/sensors/imu.rs` | Mounted gyroscope/accelerometer on the chassis or actual gimbal frame, derived from opt-in solver-substep carrier traces, with restorable state and seeded noise, bias walk and saturation. |
 | `src/sensors/rolling.rs` | Mounted procedural MID-360 acquisitions with interpolated robot/obstacle motion, self-occlusion, timestamps and seeded range noise/dropout. |
 | `src/wheel_model.rs` | Backend-neutral scalar suspension/roller, wheel inertia, motor/slip and shared-power equations over explicit parameters, borrowed state/torques and reused buffers. No solver handles or queries. |
+| `src/assembly_model.rs` | Source arm/gripper/Core mechanical descriptions and forward kinematics, without attempts, rewards or playback. |
 | `src/chassis.rs` | Compatibility facade for chassis configuration, commands, snapshots and borrowed telemetry; existing public paths remain unchanged. |
 | `src/chassis/model.rs` | Physical descriptions, presets, validation and evaluated model geometry, including conversion to `WheelModel`; no solver handles or stepping. |
 | `src/chassis/backend/` | Rapier body/collider construction (`construction.rs`), ordered wheel queries and forces (`dynamics.rs`), prescribed folding/gimbal adaptation (`prescribed.rs`), controls and observations (`mod.rs`). |
 | `src/projectile.rs` | `WorldPhysics`, `Shot`, `Caliber`, `Contact`, `TargetFace`, `TargetFrames`, `StaticGeometry` and `ProjectilePolicy`: projectile flight, scoring faces and raw contacts in physical order. |
+| `src/queries.rs` | Immutable validated ray batches and capture-local hits, with no public solver handles; callers retain output storage. |
 | `src/geometry.rs` | Shared collision captures and read-only clearance queries consumed by the world facade. |
 | `src/motion.rs` | Prescribed rotor and rail motion (`RotorMotion`, `SinusoidalMotion`, `MechanismState`) and fitted armor geometry; rune pose helpers live under `motion::rune`. |
 
@@ -35,7 +37,8 @@ detection intervals; the world crate owns those decisions.
 
 ## Dependencies
 
-`rapier3d-f64`, `serde` and the standalone `mid360-sim` pattern generator. The
+`rapier3d-f64`, `serde`, `glam` for source rig FK (the same locked version as
+world), and the standalone `mid360-sim` pattern generator. The
 crate never depends on `rm-simulator-world`,
 `rm-simulator-gameplay`, `rm-simulator-server`, `rm-simulator-render` or Bevy,
 and it never reads host time. Standalone callers can use `session::RobotSession`

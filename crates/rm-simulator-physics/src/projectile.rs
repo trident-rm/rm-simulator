@@ -572,6 +572,9 @@ pub struct WorldPhysics {
     /// Incoming linear/angular velocity and centre of mass, in chassis order.
     /// Armor collision speed must be measured before the solver stops a robot.
     chassis_velocities_before: Vec<(Vector, Vector, Vector)>,
+    /// Next touching list while the preceding list still gates contact starts.
+    /// Swapped with projectile/chassis latches, preserving their encounter order.
+    contact_touching: Vec<ColliderHandle>,
     /// Opt-in substep carrier poses for inertial sensors; observation output,
     /// never restored world state.
     carrier_trace: Option<Vec<crate::sensors::imu::CarrierSample>>,
@@ -684,6 +687,7 @@ impl WorldPhysics {
             projectiles: Vec::new(),
             velocities_before: Vec::new(),
             chassis_velocities_before: Vec::new(),
+            contact_touching: Vec::new(),
             carrier_trace: None,
             carrier_trace_dropped: 0,
             chassis: Vec::new(),
@@ -1834,8 +1838,14 @@ impl WorldPhysics {
                 chassis.sync_fold_colliders(&mut self.world);
             }
             self.record_carriers(prev_ns, substep, substeps, substep_s);
-            contacts
-                .extend(self.capture_contacts(frames, frac_prev, frac_next, substep_s, next_ns));
+            self.capture_contacts(
+                frames,
+                frac_prev,
+                frac_next,
+                substep_s,
+                next_ns,
+                &mut contacts,
+            );
             self.capture_armor_collisions();
             // Absorb perimeter shots the slice they cross the wall, so a fast
             // shot cannot reach past the perimeter and bounce back inside. The
@@ -1906,7 +1916,8 @@ impl WorldPhysics {
     /// Contacts first seen by the substep that just stepped, which carried the
     /// target motions between `frac_prev` and `frac_next` of the tick and
     /// integrated for `dt_s` seconds. Latches and dwell windows stamp
-    /// `now_ns`, the end of the containing tick.
+    /// `now_ns`, the end of the containing tick. Appends directly to the tick's
+    /// ordered output, retaining its storage across slices.
     fn capture_contacts(
         &mut self,
         frames: &TargetFrames,
@@ -1914,15 +1925,15 @@ impl WorldPhysics {
         frac_next: f64,
         dt_s: f64,
         now_ns: u64,
-    ) -> Vec<Contact> {
+        contacts: &mut Vec<Contact>,
+    ) {
         let policy = self.policy;
-        let mut contacts = Vec::new();
         for (projectile, velocity) in self
             .projectiles
             .iter_mut()
             .zip(self.velocities_before.iter().copied())
         {
-            let mut touching = Vec::new();
+            self.contact_touching.clear();
             // Any touch at all starts the ball's post-contact history; only a
             // fixed body counts as the stationary scenery retirement needs.
             let mut touched_anything = false;
@@ -1946,7 +1957,7 @@ impl WorldPhysics {
                 let Some(&scorer) = self.target_of.get(&other) else {
                     continue;
                 };
-                touching.push(other);
+                self.contact_touching.push(other);
                 if projectile.touching.contains(&other) {
                     continue;
                 }
@@ -2020,7 +2031,7 @@ impl WorldPhysics {
                     normal_speed_m_s,
                 });
             }
-            projectile.touching = touching;
+            std::mem::swap(&mut projectile.touching, &mut self.contact_touching);
             if touched_anything && projectile.first_contact_ns.is_none() {
                 projectile.first_contact_ns = Some(now_ns);
             }
@@ -2037,7 +2048,6 @@ impl WorldPhysics {
                 projectile.dwell_since_ns = None;
             }
         }
-        contacts
     }
     /// Record armor modules that began touching anything but a projectile this
     /// substep fast enough to register ([`ARMOR_COLLISION_SPEED_M_S`]). A
@@ -2045,7 +2055,7 @@ impl WorldPhysics {
     fn capture_armor_collisions(&mut self) {
         for index in 0..self.chassis.len() {
             let chassis = &self.chassis[index];
-            let mut touching = Vec::new();
+            self.contact_touching.clear();
             for (plate, &armor) in chassis.armor_colliders().iter().enumerate() {
                 for pair in self.world.contact_pairs_with(armor) {
                     if !pair.has_any_active_contact() {
@@ -2059,7 +2069,7 @@ impl WorldPhysics {
                     if self.projectiles.iter().any(|p| p.collider == other) {
                         continue;
                     }
-                    touching.push(other);
+                    self.contact_touching.push(other);
                     if chassis.armor_touching.contains(&other) {
                         continue;
                     }
@@ -2107,7 +2117,10 @@ impl WorldPhysics {
                     });
                 }
             }
-            self.chassis[index].armor_touching = touching;
+            std::mem::swap(
+                &mut self.chassis[index].armor_touching,
+                &mut self.contact_touching,
+            );
         }
     }
     /// Borrow pending raw armor collisions in substep order, without draining them.
@@ -2939,3 +2952,6 @@ mod tests {
 
 #[cfg(test)]
 mod motion_tests;
+
+#[cfg(test)]
+mod contact_tests;

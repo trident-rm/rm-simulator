@@ -4,6 +4,7 @@
 //! No networking, rendering, match runtime or host-clock dependency is required.
 //! Physics supplies FLU poses; gameplay supplies serialized season and rule identities.
 #![deny(missing_docs)]
+pub mod arena;
 pub mod cad_assets;
 pub mod collision_mesh;
 pub mod components;

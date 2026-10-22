@@ -6,6 +6,7 @@ Verified field-package import without a server, match runtime or renderer.
 Physics supplies FLU poses and gameplay supplies season/rule identities; this
 crate never depends on world, Bevy, GNS or the server.
 
+- `arena`: complete terrain loading, containment boundaries and shared cooked arena recipes.
 - `cad_assets`: manifest discovery, placements, SHA-256 verification and loading.
 - `collision_mesh`: indexed GLB triangles, node transforms and ground lookup.
 - `math`: quaternion/matrix helpers for source frames.
@@ -14,7 +15,7 @@ crate never depends on world, Bevy, GNS or the server.
 
 `cad_assets::load` validates the standalone source schema. The server keeps its
 existing import paths and supplies native runtime validation through
-`load_with_bindings`; antenna calibration and mechanism creation remain there.
+`load_with_bindings`; antenna calibration and match-resolved mechanism authority remain there.
 The package format and original ownership notices are unchanged.
 
 Run `cargo test -p rm-simulator-assets --locked`. See
@@ -69,3 +70,18 @@ The free `source_chassis`, `replacement_armor` and `is_stair_heavy` functions
 preserve narrow legacy helper contracts; they do not certify a complete package.
 Use and retain `RobotDescriptor` for complete source/profile/checksum/mount
 validation. All physical fitting assumptions remain those of the existing models.
+
+## Standalone complete arena
+
+`arena::PreparedArena::load` prepares collision geometry from a verified field.
+Its `scenario` recipe shares cooked shapes across standalone sessions and resets;
+caller setup adds robots and resolves initial mechanism coordinates. It does not
+create match targets, team ownership, legal spawn slots or competition rules.
+Source ground remains available through `terrain()` for placement queries.
+
+```sh
+cargo run --locked -p rm-simulator-assets --example arena_session -- field-2027
+```
+
+`semantics::assembly::SourcePackage::model()` returns the shared
+`physics::assembly_model::Model` after source-profile and mechanical validation.

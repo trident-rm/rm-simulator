@@ -72,19 +72,8 @@ pub struct AddressedMovingGeometry {
     pub geometry: StaticGeometry,
 }
 
-/// Closest surface returned by a metric ray query over one geometry capture.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct RayHit {
-    /// Distance along the normalized ray, in metres, including zero if inside a solid.
-    pub distance_m: f64,
-    /// World FLU intersection point, metres.
-    pub position_m: [f64; 3],
-    /// World FLU surface normal; may be zero/unreliable for an origin inside a solid.
-    pub normal: [f64; 3],
-    /// Shape ordinal in this capture, stable only while that capture is unchanged.
-    /// This is not a robot identity or persistent semantic part ID.
-    pub shape_index: usize,
-}
+/// Compatibility path for backend-independent query records.
+pub use crate::queries::{RayHit, RayQuery};
 
 impl StaticGeometry {
     /// Return the nearest hit up to an inclusive metric range, or a valid miss.
@@ -111,20 +100,41 @@ impl StaticGeometry {
         direction: [f64; 3],
         max_distance_m: f64,
     ) -> Result<Option<RayHit>, &'static str> {
-        if !origin_m.into_iter().chain(direction).all(f64::is_finite)
-            || !max_distance_m.is_finite()
-            || max_distance_m <= 0.
-        {
-            return Err("ray requires finite origin/direction and a positive finite range");
+        let query = RayQuery::new(origin_m, direction, max_distance_m)?;
+        Ok(self.cast_metric_ray(&query.metric_ray(), query.max_distance_m()))
+    }
+
+    /// Query a prepared batch into exact-size caller-owned output storage.
+    /// Requests and results have matching order, including explicit `None` misses.
+    /// Length mismatch leaves every prior output unchanged; empty batches are valid.
+    /// Validated requests can be reused across captures without normalizing again.
+    /// No output allocation or world snapshot is performed. The capture may lazily
+    /// allocate its shared bounds cache on first use. Geometry stays immutable;
+    /// result shape ordinals refer only to this capture, not durable entity IDs.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{Pose, WorldPhysics, queries::RayQuery};
+    /// let mut world = WorldPhysics::new(&[], 0.);
+    /// world.add_static_box(Pose::at([2., 0., 1.]), [1.; 3]);
+    /// let scene = world.static_geometry_snapshot(true);
+    /// let rays = [RayQuery::new([0., 0., 1.], [1., 0., 0.], 10.)?];
+    /// let mut hits = [None];
+    /// scene.cast_rays_into(&rays, &mut hits)?;
+    /// assert_eq!(hits[0].unwrap().distance_m, 1.5);
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn cast_rays_into(
+        &self,
+        rays: &[RayQuery],
+        hits: &mut [Option<RayHit>],
+    ) -> Result<(), &'static str> {
+        if rays.len() != hits.len() {
+            return Err("ray batch output length must match request length");
         }
-        let direction = vector(direction);
-        let scale = direction.abs().max_element();
-        if scale == 0. {
-            return Err("ray direction must be nonzero");
+        for (query, hit) in rays.iter().zip(hits) {
+            *hit = self.cast_metric_ray(&query.metric_ray(), query.max_distance_m());
         }
-        // Scaling first avoids overflow/underflow for valid extreme directions.
-        let ray = Ray::new(vector(origin_m), (direction / scale).normalize());
-        Ok(self.cast_metric_ray(&ray, max_distance_m))
+        Ok(())
     }
 
     /// Internal scan path for already validated metric rays.

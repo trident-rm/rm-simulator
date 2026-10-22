@@ -322,25 +322,19 @@ The previous pass separated useful operations and files; it did not complete the
 runtime/game split. The next extractions below are ranked by value for standalone
 robotics consumers, not by file length. They are proposals, not new runtime APIs.
 
-1. **Mechanical model data and source-package loading.** `world::assembly`
-   still owns `Model`, `Jaw`, `Auxiliary`, `RigPose` and source-frame FK alongside
-   attempt playback and recovery. The new assets loader reads a private subset
-   of that calibration to avoid depending on world. Verified robot-package
-   preparation now lives in `assets::robots`; the app
-   retains one descriptor per resolved package and applies its explicit 500 ms
-   simulator tuning outside the raw source configuration. Shared assembly model
-   descriptions/FK still need extraction into physics. Keep world aliases and
-   serialized field order. Preserve stricter
-   source-profile guards separately from general mechanical validity. This gives
-   the openswx sidecar a clear future consumer without trusting its caches.
-2. **Complete arena preparation and match construction.** Individual equipment
-   already has standalone assets/scenario APIs, but `server::layout` still owns
-   full-arena terrain assembly, boundaries, spawns and `FieldConfig` construction.
-   `PredictionScene::geometry` also constructs a temporary Field to capture its
-   geometry. Separate prepared physical geometry from match binding/roster policy;
-   let non-host callers use the same preparation. Preserve the assets-to-world
-   dependency prohibition and use explicit data between those layers. Acceptance:
-   a complete arena can be built and stepped without server/GNS/HTTP or Bevy.
+1. **Mechanical model data and source-package loading.** Verified robot loading
+   lives in `assets::robots`, and source arm/gripper/Core calibration and FK now
+   live in `physics::assembly_model`, with compatible world exports. The next
+   boundary is a more general mechanical descriptor with independently verified
+   inertial/actuator provenance. Native SolidWorks cache values remain unsuitable
+   as automatic physical truth. Prescribed arm state and task playback remain
+   distinct from a dynamically articulated arm plant.
+2. **Complete arena preparation and match construction.** Physical terrain loading,
+   boundaries and shared cooking now live in `assets::arena`; the complete arena
+   can run in RobotSession without server/GNS/HTTP or Bevy. Native bindings,
+   ownership, spawn policy and `FieldConfig` remain match/server composition.
+   `PredictionScene::geometry` still constructs a temporary Field; migrating it
+   requires preserving its initial rule-resolved mechanism poses.
 3. **Assembly solver state versus task and worker ownership.** Source loading and
    IK-hint validation are now extracted, but `server::assembly_rig::Rig` still
    combines mechanical state, source collision queries, parking assumptions and
@@ -381,3 +375,57 @@ rewrite, independent rule plugin schedules or GPU port follows automatically
 from this audit. Start with the mechanical descriptions/package boundary, then
 arena preparation; each has a concrete standalone consumer and a bounded first
 implementation. Navigation can proceed independently once its inputs are explicit.
+
+## Arena and mechanical rig extraction (2026-10-23)
+
+`assets::arena` now owns complete terrain loading, source motion partitioning,
+boundary fitting and physical installation. `PreparedArena` cooks geometry once;
+its `scenario` recipe inserts shared shapes into a fresh `RobotSession` at
+construction and reset. Source ground remains available for placement queries.
+The standalone `arena_session` example loads the approved complete package,
+places a robot and advances it without world, server, GNS, HTTP or Bevy.
+
+The server retains compatibility `Terrain`/loader paths and its Field installer.
+Its loader supplies native checked binding partitions through
+`load_terrain_with_motions`; it does not convert or weaken native runtime
+validation. Team ownership, detector-bank construction, legal spawn policy and
+`FieldConfig` stay in match/server composition. Standalone arenas contain scenery
+and physical motion channels, not an inferred match or detector authority.
+Prediction's temporary Field construction remains a later migration: its initial
+rule-resolved mechanism poses must be compared before switching construction.
+
+`physics::assembly_model` now owns the existing source `Model`, `Jaw`,
+`Auxiliary`, `RigPose` and frame evaluation. `world::assembly` re-exports those
+types, preserving field order, serde representations and caller paths. Existing
+schema-five validation is retained; it is source-profile calibration, not a
+claim of trustworthy CAD inertias or a universal robot format. The extraction
+uses the same already-locked glam version as world to preserve FK arithmetic.
+`SourcePackage::model` decodes the shared type from retained verified bytes;
+source-specific bearing/jaw guards remain in assets. Attempts, permissions,
+rewards, rates, trajectory playback and recovery remain world-owned.
+
+## First performance-conscious query contract
+
+See the [engine performance contract](engine-performance-contract.md) for the
+data ownership, lifetime, phase ordering and acceptance design.
+
+The next incremental boundary is `physics::queries`: immutable validated
+`RayQuery` requests and capture-local `RayHit` values without public solver
+handles. `StaticGeometry::cast_rays_into` accepts a prepared request slice and
+exact-size mutable result slice, preserving order and explicit misses. It can
+reuse normalization and output storage without capturing a world per call.
+Scalar `cast_ray` shares validation, and `geometry::RayHit` remains compatible.
+The standalone arena example exercises the batch boundary. No universal backend
+trait, GPU buffer interchange or physics acceleration follows from this API.
+
+Keep subsequent boundaries similarly coarse: shared source model preparation,
+backend cooking, buffered actuation, explicit stepping, compact observations and
+ordered contact drains. Backend resource IDs must stay behind stable runtime
+identities; capture-local query ordinals must never be promoted to entity IDs.
+A future device path needs its own ownership, completion and layout contract,
+not a CPU slice disguised as device memory. Task/controller and match adapters
+continue to own cadence and permissions. Performance acceptance must include
+setup/reset, cache invalidation, allocation/copy volume and complete observation
+cost alongside solver time. The background suspension investigation and engine
+contract review inform the next step; this query API does not preselect a new
+solver or alter the current exact physical/contact schedule.

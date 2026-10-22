@@ -10,14 +10,16 @@ use super::{
     mid360::{Mid360Pattern, PatternWindow},
 };
 use crate::{
-    Pose, StaticGeometry,
+    Pose,
     geometry::RayHit,
     projectile::{pose, pose_is_valid},
 };
 use mid360_sim::effects::AngularNoise;
+use rapier3d_f64::parry::partitioning::{Bvh, BvhBuildStrategy, TraversalAction};
 use rapier3d_f64::prelude::{
     Aabb, ColliderHandle, Pose as Pose3, Ray, RayCast, SharedShape, Vector,
 };
+use std::sync::{Arc, OnceLock};
 
 #[derive(Clone)]
 pub(crate) struct SensorCollider {
@@ -38,7 +40,7 @@ pub struct SceneCapture {
     robot_pose: Pose3,
     fixed: Vec<SensorCollider>,
     moving: Vec<SensorCollider>,
-    fixed_geometry: StaticGeometry,
+    fixed_queries: OnceLock<Arc<FixedQueries>>,
 }
 impl SceneCapture {
     pub(crate) fn new(
@@ -50,10 +52,6 @@ impl SceneCapture {
         moving: Vec<SensorCollider>,
         robot_revisions: Vec<(u32, u64)>,
     ) -> Self {
-        let fixed_geometry = StaticGeometry {
-            shapes: fixed.iter().map(|c| (c.pose, c.shape.clone())).collect(),
-            ..Default::default()
-        };
         Self {
             robot,
             placement_revision,
@@ -62,7 +60,7 @@ impl SceneCapture {
             robot_pose: pose(robot_pose),
             fixed,
             moving,
-            fixed_geometry,
+            fixed_queries: OnceLock::new(),
         }
     }
     /// Use an actual articulated carrier pose for this capture's sensor mount.
@@ -341,8 +339,83 @@ impl MountedLidar {
         Ok(())
     }
 }
+// Broad phase over collider bounds only; mesh/shape ray tests remain Rapier's
+// exact queries. Captures propagate this immutable cache across valid brackets.
+struct FixedQueries {
+    tree: Bvh,
+    bounded: Vec<usize>,
+    unbounded: Vec<usize>,
+}
+impl FixedQueries {
+    fn new(colliders: &[SensorCollider]) -> Self {
+        let mut unbounded = Vec::new();
+        let mut bounded = Vec::new();
+        let leaves: Vec<_> = colliders
+            .iter()
+            .enumerate()
+            .filter_map(|(index, c)| {
+                // Half-space bounds are effectively infinite and are unsuitable for
+                // BVH construction arithmetic. Keep their original exact query.
+                if c.shape.as_halfspace().is_some() {
+                    unbounded.push(index);
+                    None
+                } else {
+                    bounded.push(index);
+                    Some(c.shape.compute_aabb(&c.pose))
+                }
+            })
+            .collect();
+        let tree = Bvh::from_leaves(BvhBuildStrategy::Binned, &leaves);
+        Self {
+            tree,
+            bounded,
+            unbounded,
+        }
+    }
+    fn cast(&self, colliders: &[SensorCollider], ray: &Ray, max: f64) -> Option<RayHit> {
+        let mut best: Option<RayHit> = None;
+        let mut test = |index: usize| {
+            let collider = &colliders[index];
+            let limit = best.map_or(max, |h| h.distance_m);
+            if let Some(hit) =
+                collider
+                    .shape
+                    .cast_ray_and_get_normal(&collider.pose, ray, limit, true)
+                && best.is_none_or(|old| {
+                    hit.time_of_impact < old.distance_m
+                        || (hit.time_of_impact == old.distance_m && index < old.shape_index)
+                })
+            {
+                best = Some(RayHit {
+                    distance_m: hit.time_of_impact,
+                    position_m: ray.point_at(hit.time_of_impact).to_array(),
+                    normal: hit.normal.to_array(),
+                    shape_index: index,
+                });
+            }
+        };
+        // Keep pruning inclusive so equal-distance hits can retain the first
+        // capture-local shape even when the BVH visits leaves out of order.
+        // Bounds use the configured range, avoiding traversal-order tie loss.
+        self.tree.traverse(|node| {
+            if node.cast_ray(ray, max) > max {
+                return TraversalAction::Prune;
+            }
+            if let Some(index) = node.leaf_data() {
+                test(self.bounded[index as usize]);
+            }
+            TraversalAction::Continue
+        });
+        for &index in &self.unbounded {
+            test(index);
+        }
+        best
+    }
+}
+
 struct SceneBracket<'a> {
     before: &'a SceneCapture,
+    fixed_queries: &'a FixedQueries,
     moving: Vec<(&'a SensorCollider, &'a SensorCollider, Aabb)>,
 }
 impl<'a> SceneBracket<'a> {
@@ -370,6 +443,19 @@ impl<'a> SceneBracket<'a> {
         {
             return Err("LiDAR fixed geometry or topology changed; recapture at the boundary");
         }
+        // Captures normally retain collider order. Only share acceleration when
+        // that order (and hence every capture-local shape index) also matches.
+        if before
+            .fixed
+            .iter()
+            .zip(&after.fixed)
+            .all(|(a, b)| matching(a, b) && a.pose == b.pose)
+        {
+            let queries = before
+                .fixed_queries
+                .get_or_init(|| Arc::new(FixedQueries::new(&before.fixed)));
+            let _ = after.fixed_queries.set(Arc::clone(queries));
+        }
         let mut moving = Vec::with_capacity(before.moving.len());
         for a in &before.moving {
             let b = after
@@ -392,10 +478,17 @@ impl<'a> SceneBracket<'a> {
             );
             moving.push((a, b, bounds));
         }
-        Ok(Self { before, moving })
+        let fixed_queries = before
+            .fixed_queries
+            .get_or_init(|| Arc::new(FixedQueries::new(&before.fixed)));
+        Ok(Self {
+            before,
+            fixed_queries,
+            moving,
+        })
     }
     fn cast(&self, ray: &Ray, max: f64, fraction: f64) -> Option<RayHit> {
-        let mut best = self.before.fixed_geometry.cast_metric_ray(ray, max);
+        let mut best = self.fixed_queries.cast(&self.before.fixed, ray, max);
         for (i, (a, b, bounds)) in self.moving.iter().enumerate() {
             let limit = best.map_or(max, |h| h.distance_m);
             if bounds.cast_local_ray(ray, limit, true).is_none() {
@@ -433,6 +526,212 @@ mod tests {
     }
     fn sensor(mount: Pose, effects: RangeEffects) -> MountedLidar {
         MountedLidar::new(Mid360Pattern::new(0.1, 40.).unwrap(), mount, 0, effects).unwrap()
+    }
+
+    fn linear_cast(
+        before: &SceneCapture,
+        after: &SceneCapture,
+        ray: &Ray,
+        max: f64,
+        fraction: f64,
+    ) -> Option<RayHit> {
+        let fixed = crate::StaticGeometry {
+            shapes: before
+                .fixed
+                .iter()
+                .map(|c| (c.pose, c.shape.clone()))
+                .collect(),
+            ..Default::default()
+        };
+        let mut best = fixed.cast_metric_ray(ray, max);
+        for (i, a) in before.moving.iter().enumerate() {
+            let b = after.moving.iter().find(|b| a.handle == b.handle).unwrap();
+            let limit = best.map_or(max, |h| h.distance_m);
+            if let Some(hit) =
+                a.shape
+                    .cast_ray_and_get_normal(&a.pose.lerp(&b.pose, fraction), ray, limit, true)
+                && best.is_none_or(|old| hit.time_of_impact < old.distance_m)
+            {
+                best = Some(RayHit {
+                    distance_m: hit.time_of_impact,
+                    position_m: ray.point_at(hit.time_of_impact).to_array(),
+                    normal: hit.normal.to_array(),
+                    shape_index: before.fixed.len() + i,
+                });
+            }
+        }
+        best
+    }
+
+    #[test]
+    fn accelerated_brackets_match_linear_queries_and_complete_acquisitions() {
+        let (mut world, robot) = rig();
+        for i in 0..48 {
+            let angle = f64::from(i) * 0.7;
+            world.add_static_box(
+                Pose::yawed([angle.cos() * 8., angle.sin() * 8., 1.], angle),
+                [0.7, 1.2, 2.],
+            );
+        }
+        // Include exact mesh surfaces, not only primitive collider bounds.
+        world
+            .add_static_mesh(
+                vec![[-3., -4., 0.], [-3., 4., 0.], [-3., 0., 4.]],
+                vec![[0, 1, 2]],
+            )
+            .unwrap();
+        let before = world.lidar_scene_capture(robot, 0).unwrap();
+        for moving in [false, true] {
+            let mut after = world.lidar_scene_capture(robot, 100_000_000).unwrap();
+            if moving {
+                after.robot_pose = pose(Pose::yawed([0.4, -0.1, 0.3], 0.4));
+                let delta = after.robot_pose * before.robot_pose.inverse();
+                for c in &mut after.moving {
+                    c.pose = delta * c.pose;
+                }
+            }
+            let scene = SceneBracket::new(&before, &after).unwrap();
+            for mount in [Pose::default(), Pose::at([0., 0., 1.])] {
+                let sensor = sensor(
+                    mount,
+                    RangeEffects {
+                        seed: 17,
+                        standard_deviation_m: 0.02,
+                        dropout_probability: 0.1,
+                        ..Default::default()
+                    },
+                )
+                .with_angular_noise(0.001)
+                .unwrap();
+                for stride in [1, 3, 19, 257] {
+                    let window = sensor
+                        .window_between(0, after.time_ns, stride)
+                        .unwrap()
+                        .unwrap();
+                    let mut actual = RollingFrame::default();
+                    sensor
+                        .sample_into(&before, &after, window, &mut actual)
+                        .unwrap();
+                    for point in actual.points {
+                        let fraction = point.time_ns as f64 / after.time_ns as f64;
+                        let transform = before.robot_pose.lerp(&after.robot_pose, fraction)
+                            * sensor.robot_from_sensor;
+                        let nominal = sensor.pattern.direction(point.sample_index);
+                        let direction = Vector::from(
+                            sensor
+                                .angular_noise
+                                .unwrap()
+                                .perturb(point.sample_index, nominal)
+                                .unwrap(),
+                        );
+                        let ray = Ray::new(transform.translation, transform.rotation * direction);
+                        let expected = linear_cast(&before, &after, &ray, 40., fraction);
+                        assert_eq!(scene.cast(&ray, 40., fraction), expected);
+                        let range = expected
+                            .filter(|h| h.distance_m >= 0.1)
+                            .and_then(|h| sensor.effects.range(point.sample_index, h.distance_m))
+                            .filter(|v| v.is_finite() && *v >= 0.1 && *v <= 40.);
+                        assert_eq!(point.range_m, range);
+                        assert_eq!(
+                            point.point_sensor_m,
+                            range.map(|r| (direction * r).to_array())
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn source_fitted_robot_self_occlusion_matches_linear_across_motion() {
+        let mut world = WorldPhysics::new(&[], 0.);
+        let robot = world
+            .add_chassis(
+                Team::Red,
+                ChassisConfig::team_cad(),
+                Pose::at([0., 0., 0.3]),
+            )
+            .unwrap();
+        world.add_static_box(Pose::at([-5., 0., 3.]), [1., 100., 100.]);
+        let before = world.lidar_scene_capture(robot, 0).unwrap();
+        let mut after = world.lidar_scene_capture(robot, 10_000_000).unwrap();
+        after.robot_pose = pose(Pose::yawed([0.2, 0., 0.3], 0.3));
+        let delta = after.robot_pose * before.robot_pose.inverse();
+        for c in &mut after.moving {
+            c.pose = delta * c.pose;
+        }
+        let scene = SceneBracket::new(&before, &after).unwrap();
+        let mut occluded = 0;
+        let mut distant = 0;
+        for height in [0., 0.15, 1.] {
+            let mount = pose(Pose::at([0., 0., height]));
+            for index in 0..2000 {
+                let fraction = f64::from(index) / 2000.;
+                let sensor = before.robot_pose.lerp(&after.robot_pose, fraction) * mount;
+                let direction = Vector::from(
+                    Mid360Pattern::new(0.1, 40.)
+                        .unwrap()
+                        .direction(index as u64),
+                );
+                let ray = Ray::new(sensor.translation, sensor.rotation * direction);
+                let hit = scene.cast(&ray, 40., fraction);
+                assert_eq!(hit, linear_cast(&before, &after, &ray, 40., fraction));
+                if let Some(hit) = hit {
+                    occluded += usize::from(hit.shape_index >= before.fixed.len());
+                    distant += usize::from(hit.distance_m > 1.);
+                }
+            }
+        }
+        assert!(occluded > 100 && distant > 100);
+    }
+
+    #[test]
+    fn fixed_cache_reuses_only_matching_order_and_preserves_ties_and_range_edges() {
+        let (mut world, robot) = rig();
+        world.add_static_box(Pose::at([2., 0., 1.]), [1.; 3]);
+        world.add_static_box(Pose::at([2., 0., 1.]), [1.; 3]);
+        let before = world.lidar_scene_capture(robot, 0).unwrap();
+        let mut after = world.lidar_scene_capture(robot, 1000).unwrap();
+        let scene = SceneBracket::new(&before, &after).unwrap();
+        assert!(Arc::ptr_eq(
+            before.fixed_queries.get().unwrap(),
+            after.fixed_queries.get().unwrap()
+        ));
+        for ray in [
+            Ray::new(Vector::new(0., 0., 1.), Vector::X),
+            Ray::new(Vector::new(2., 0., 1.), Vector::X),
+            Ray::new(Vector::new(0., 0., 1.), -Vector::Z),
+        ] {
+            for limit in [0., 1.49, 1.5, 1.51, 40.] {
+                assert_eq!(
+                    scene.cast(&ray, limit, 0.5),
+                    linear_cast(&before, &after, &ray, limit, 0.5)
+                );
+            }
+        }
+        after.fixed.reverse();
+        after.fixed_queries = OnceLock::new();
+        let reordered = SceneBracket::new(&before, &after).unwrap();
+        assert!(after.fixed_queries.get().is_none());
+        let ray = Ray::new(Vector::new(0., 0., 1.), Vector::X);
+        assert_eq!(
+            reordered.cast(&ray, 40., 0.5),
+            linear_cast(&before, &after, &ray, 40., 0.5)
+        );
+        let next = SceneCapture {
+            time_ns: 2000,
+            fixed_queries: OnceLock::new(),
+            ..after.clone()
+        };
+        let _ = SceneBracket::new(&after, &next).unwrap();
+        assert!(!Arc::ptr_eq(
+            before.fixed_queries.get().unwrap(),
+            after.fixed_queries.get().unwrap()
+        ));
+        assert!(Arc::ptr_eq(
+            after.fixed_queries.get().unwrap(),
+            next.fixed_queries.get().unwrap()
+        ));
     }
 
     #[test]

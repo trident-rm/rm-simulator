@@ -219,9 +219,18 @@ pub(crate) fn drive_power_scale(mechanical_w: f64, copper_w: f64, budget_w: f64)
     .min(1.0)
 }
 
+/// Wrap radians with the original remainder rounding, skipping identity remainders.
 fn wrap_angle(angle: f64) -> f64 {
     use std::f64::consts::{PI, TAU};
-    (angle + PI).rem_euclid(TAU) - PI
+    let shifted = angle + PI;
+    // Most integration slices remain within one turn. Keep the original
+    // add/subtract rounding, but skip the remainder when it is the identity.
+    let wrapped = if (0.0..TAU).contains(&shifted) {
+        shifted
+    } else {
+        shifted.rem_euclid(TAU)
+    };
+    wrapped - PI
 }
 
 #[cfg(test)]
@@ -244,6 +253,47 @@ mod tests {
             drive_friction: 0.5,
             roller_friction: 0.1,
             mecanum: false,
+        }
+    }
+
+    #[test]
+    fn angle_fast_path_matches_remainder_bits_at_boundaries_and_large_inputs() {
+        use std::f64::consts::{PI, TAU};
+        let check = |angle: f64| {
+            let expected = (angle + PI).rem_euclid(TAU) - PI;
+            let actual = wrap_angle(angle);
+            if expected.is_nan() {
+                assert!(actual.is_nan());
+            } else {
+                assert_eq!(actual.to_bits(), expected.to_bits(), "angle={angle:?}");
+            }
+        };
+        for turns in -32..=32 {
+            for boundary in [-PI, -0.0, 0.0, PI] {
+                let angle = f64::from(turns) * TAU + boundary;
+                check(angle.next_down());
+                check(angle);
+                check(angle.next_up());
+            }
+        }
+        // Exercise normal slice increments as well as arbitrary finite values,
+        // infinities, subnormals and NaNs without depending on a random library.
+        let mut bits = 0x1234_5678_9abc_def0_u64;
+        for i in 0..65_536 {
+            bits ^= bits << 13;
+            bits ^= bits >> 7;
+            bits ^= bits << 17;
+            check(f64::from_bits(bits));
+            check((f64::from(i) - 32_768.) * PI / 32_768.);
+        }
+        for angle in [
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            f64::MAX,
+            f64::MIN,
+        ] {
+            check(angle);
         }
     }
 

@@ -29,6 +29,7 @@
 //! ```
 #![deny(missing_docs)]
 pub mod arena;
+pub mod assembly_model;
 pub mod chassis;
 pub mod control;
 pub mod geometry;
@@ -38,6 +39,7 @@ pub mod manipulator_plan;
 pub mod mechanism;
 pub mod motion;
 pub mod projectile;
+pub mod queries;
 pub mod sensors;
 pub mod session;
 pub mod wheel_model;

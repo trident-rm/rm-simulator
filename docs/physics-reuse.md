@@ -316,3 +316,43 @@ Run the crate's own tests with `cargo test -p rm-simulator-physics --locked`;
 [development](development.md) lists the workspace targets. The architecture
 boundaries that keep this crate reusable are stated in
 [simulation architecture](architecture-refactor.md).
+
+## Complete arena without a match
+
+The assets crate provides `arena::PreparedArena::load(&cad)` and
+`PreparedArena::scenario(targets, step_duration, setup)`. The recipe installs
+shared cooked source geometry, removes the catch plane, preserves projectile
+bounds and runs caller setup on every construction/reset. Supply physical target
+frames and mechanism coordinates explicitly; scenery does not create scoring
+rules. This remains a repeatable initial reset, not a bare-world continuation
+checkpoint. Example:
+
+```sh
+cargo run --locked -p rm-simulator-assets --example arena_session -- field-2027
+```
+
+Source mechanical arm calibration and FK are available directly as
+`physics::assembly_model::{Model, Jaw, Auxiliary, RigPose}`. Their existing world
+paths remain aliases. They require neither an assembly attempt nor a match.
+
+## Reusable batch query boundary
+
+`queries::RayQuery::new(origin_m, direction, max_distance_m)` validates and
+normalizes a metric ray once. Its public contract contains only immutable FLU
+arrays and metric scalars, with no solver handles. Reuse the request slice across
+captures and call `StaticGeometry::cast_rays_into(&rays, &mut hits)` with equally
+sized output. Every input has one output slot, including `None` misses; mismatched
+lengths fail before modifying output. Empty batches are valid. Caller-owned
+slices make capacity explicit and avoid output allocation; first use can still
+initialize the capture's existing shared bounds cache. This adds no acceleration
+algorithm or claimed speedup. It creates a coarse operation that future query
+implementations can implement without a per-ray external call.
+
+`queries::RayHit` retains the existing `geometry::RayHit` compatibility path.
+Its shape index is an ordinal within the supplied capture, not an entity or
+persistent shape identity. Requests contain no cached hits or geometry handles,
+so the same batch can query another scene without stale results. They contain no
+scheduler or timestamp; callers retain the capture's time/generation context.
+CPU request/output slices are not device buffers or a stable FFI ABI. Rolling
+LiDAR remains on its validated per-return motion path; instantaneous ray batches
+do not replace motion-aware sensor acquisition.

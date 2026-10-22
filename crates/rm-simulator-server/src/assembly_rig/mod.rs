@@ -19,11 +19,11 @@ use rm_simulator_world::gameplay::rmuc_2027::assembly_pose::TargetPose;
 use serde::Deserialize;
 // Fixed cylinder grasp clocking; the unit gets the inverse offset at rendering.
 const GRASP_ROLL_RAD: f64 = -std::f64::consts::FRAC_PI_2;
+use rm_simulator_physics::assembly_model::Model as Config;
+#[cfg(test)]
+use rm_simulator_physics::assembly_model::{Auxiliary, Jaw};
 #[cfg(test)]
 use rm_simulator_physics::manipulator_collision::CollisionAsset;
-use rm_simulator_world::assembly::Model as Config;
-#[cfg(test)]
-use rm_simulator_world::assembly::{Auxiliary, Jaw};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -212,7 +212,7 @@ impl Rig {
         area: Option<&Path>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let source = rm_simulator_assets::semantics::assembly::SourcePackage::load(root)?;
-        let mut config: Config = source.calibration()?;
+        let mut config: Config = source.model()?;
         if let Some(area) = area {
             config.assembly_frame = source.area_frame(area)?;
         }
@@ -775,8 +775,8 @@ impl Rig {
     }
 }
 impl Rig {
-    pub(crate) fn runtime_pose(&self) -> rm_simulator_world::assembly::RigPose {
-        rm_simulator_world::assembly::RigPose {
+    pub(crate) fn runtime_pose(&self) -> rm_simulator_physics::assembly_model::RigPose {
+        rm_simulator_physics::assembly_model::RigPose {
             engineer_body: self.engineer_body,
             engineer_q: self.engineer_q,
             core_q: self.core_q,

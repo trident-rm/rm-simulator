@@ -16,6 +16,7 @@ Git history.
 | CI checks, validation reuse and releases | [CI and releases](releases.md) |
 | Crate ownership, ticks, restore and ECS | [Simulation architecture](architecture-refactor.md) |
 | Runtime/game split, two session layers and backend migration risks | [Runtime split](runtime-game-split.md) |
+| Batch boundaries, resource lifetimes, identities and performance acceptance | [Engine performance contract](engine-performance-contract.md) |
 | Standalone physics and optional rendering | [Physics reuse](physics-reuse.md) |
 | In-process sessions, clocks, controls and future adapters | [Simulation embedding](simulation-embedding.md) |
 | Source equipment presets, recipe resets and modular rule observations | [Standalone scenarios](standalone-scenarios.md) |

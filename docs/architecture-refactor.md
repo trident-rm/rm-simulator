@@ -46,7 +46,8 @@ there distinguishes further proposals from the unchanged Rapier backend.
 | Snapshot-to-appearance adaptation and presentation clock | App |
 | Roster, command authority and transport delivery | Server host |
 
-The physics library depends only on Rapier and serde. Its RM-specific caliber
+The physics library has no dependency on other simulator crates; numerical
+helpers, serialization and the MID360 pattern remain ordinary library dependencies. Its RM-specific caliber
 lookup helpers remain available for source compatibility; physical stepping does
 not apply their damage or detection policy. The renderer depends on neither
 physics nor world. `scripts/check-module-dependencies.py` enforces these boundaries.

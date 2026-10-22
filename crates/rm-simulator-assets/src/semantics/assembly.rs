@@ -64,6 +64,16 @@ impl SourcePackage {
             manifest: m,
         })
     }
+    /// Decode the shared mechanical model and validate both source and mechanical guards.
+    /// No match attempt, playback state or runtime authority is constructed.
+    pub fn model(
+        &self,
+    ) -> Result<rm_simulator_physics::assembly_model::Model, Box<dyn std::error::Error>> {
+        let model: rm_simulator_physics::assembly_model::Model = self.calibration()?;
+        model.validate()?;
+        Ok(model)
+    }
+
     /// Construct caller-owned calibration from verified bytes, checking arm/bearing/jaw guards.
     /// Runtime admission and task permissions remain the caller's responsibility.
     pub fn calibration<T: DeserializeOwned>(&self) -> Result<T, Box<dyn std::error::Error>> {

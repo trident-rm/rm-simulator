@@ -5,9 +5,9 @@
 //! (ground, rune frame and outpost towers, base and tech core), and the
 //! chassis set down on the terrain.
 use crate::cad_assets::CadAssets;
-use crate::collision_mesh::{self, CollisionMesh, GroundMesh};
+#[cfg(test)]
+use crate::collision_mesh::CollisionMesh;
 use crate::math::{gltf_child, quat_axis_angle, rotate};
-use anyhow::ensure;
 use rm_simulator_world::{
     ChassisConfig, ChassisPlacement, Field, FieldConfig, Pose, RobotKind, RuneKind, Team,
     chassis::Tether,
@@ -49,12 +49,8 @@ pub fn rune_team(hub_pose: &Pose) -> Team {
 pub fn outpost_team(origin: &Pose) -> Team {
     side_team(origin.translation_m[0])
 }
-/// Catch plane under the CAD ground (the crowned floor slab bottoms out about
-/// 0.41 m below the playing floor at the side walls), so a body that slips
-/// through a mesh seam does not fall forever.
-pub const CATCH_FLOOR_M: f64 = -0.45;
-/// Node containing the stationary equipment geometry.
-const FIXED_NODE: &str = "static";
+/// Compatibility alias for the physical arena catch-floor setting.
+pub use rm_simulator_assets::arena::CATCH_FLOOR_M;
 
 /// Rune hub pose for one face of the placed CAD rune. The rear face (index 0)
 /// is turned about the asset's up axis so its front normal faces its own
@@ -88,218 +84,18 @@ pub fn cad_outpost_origin(outpost_root: &Pose) -> Pose {
     )
 }
 
-/// Everything rigid the chassis and projectiles collide with, in FLU metres.
-pub struct Terrain {
-    /// The perimeter walls that keep chassis inside the arena, in FLU metres.
-    /// Projectile collision ignores them.
-    pub boundary: CollisionMesh,
-    /// Projectile bounds in FLU metres as `[low, high]`; a shot touching or
-    /// crossing this XY perimeter is absorbed. `None` leaves the field without
-    /// projectile bounds.
-    pub projectile_bounds_m: Option<[[f64; 3]; 2]>,
-    /// Moving mechanisms, one entry per placed translation or rotor joint.
-    pub mechanisms: Vec<MechanismMesh>,
-    /// The floor and arena visual meshes and the
-    /// placed static scenery, as one triangle soup; also the ground the
-    /// chassis is set down on.
-    pub ground: GroundMesh,
-    /// The rune frame and the outpost towers at their placements: the
-    /// `static` node of each visual mesh. The faces, hubs and rotors are
-    /// rule-driven bodies the field owns, so their nodes are left out.
-    pub fixtures: CollisionMesh,
-    /// The bases and tech cores at their placements, from their
-    /// visual meshes, kept as trimeshes.
-    pub equipment: Vec<CollisionMesh>,
-}
-/// Shared equipment composition records and semantic channel classification.
+#[cfg(test)]
+use rm_simulator_assets::arena::arena_boundary;
+/// Compatibility exports of backend-independent arena preparation.
+pub use rm_simulator_assets::arena::{Terrain, arena_boundary_bounds};
 pub use rm_simulator_assets::components::{MechanismMesh, mechanism_joint};
-
-impl Terrain {
-    /// One line for the start-up log.
-    pub fn describe(&self) -> String {
-        format!(
-            "field collision: {} ground triangles, {} fixture triangles, {} equipment triangles (source tessellations or CAD visual meshes)",
-            self.ground.triangles.len(),
-            self.fixtures.triangles.len() + self.boundary.triangles.len(),
-            self.equipment
-                .iter()
-                .map(|m| m.triangles.len())
-                .sum::<usize>()
-        )
-    }
-}
-
-/// Build the collision terrain for a verified package.
-///
-/// The floor and arena scenery become the ground soup, with the placed static
-/// scenery appended. The rune and outpost contribute only their `static` node;
-/// the bases, tech cores and static scenery contribute their collision
-/// primitives, and the prismatic joints the referee drives are pulled out into
-/// `mechanisms` instead of staying in those static meshes. Everything is
-/// placed in world FLU metres with the playing floor top at height zero.
+/// Build terrain through shared assets while retaining native checked bindings.
 pub fn load_terrain(cad: &CadAssets) -> anyhow::Result<Terrain> {
-    let mut mechanisms = Vec::new();
-    let mut ground =
-        collision_mesh::load_glb(&cad.floor.physics_file(&cad.root))?.into_flu(cad.floor_top_cad_m);
-    let scenery = collision_mesh::load_glb(&cad.arena_static.physics_file(&cad.root))?
-        .into_flu(cad.floor_top_cad_m);
-    let projectile_bounds_m = arena_boundary_bounds(&ground, &scenery)?;
-    let boundary = arena_boundary(projectile_bounds_m);
-    ground.append(scenery);
-    for asset in &cad.static_assets {
-        let model = load_component(
-            cad,
-            asset,
-            rm_simulator_assets::components::ComponentRole::Equipment,
-        )?;
-        mechanisms.extend(model.mechanisms(&asset.placements));
-        for placement in &asset.placements {
-            ground.append(model.fixed.placed(placement));
-        }
-    }
-    let mut fixtures = CollisionMesh::default();
-    for (name, asset) in [("rune", &cad.rune), ("outpost", &cad.outpost)] {
-        let role = if name == "rune" {
-            rm_simulator_assets::components::ComponentRole::Rune
-        } else {
-            rm_simulator_assets::components::ComponentRole::Outpost
-        };
-        let model = load_component(cad, asset, role)?;
-        ensure!(
-            !model.fixed.triangles.is_empty(),
-            "{name} visual mesh has no `{FIXED_NODE}` node"
-        );
-        mechanisms.extend(model.mechanisms(&asset.placements));
-        for placement in &asset.placements {
-            fixtures.append(model.fixed.placed(placement));
-        }
-    }
-    let mut equipment = Vec::new();
-    for asset in [&cad.base, &cad.tech_core] {
-        let model = load_component(
-            cad,
-            asset,
-            rm_simulator_assets::components::ComponentRole::Equipment,
-        )?;
-        mechanisms.extend(model.mechanisms(&asset.placements));
-        for placement in &asset.placements {
-            equipment.push(model.fixed.placed(placement));
-        }
-    }
-    Ok(Terrain {
-        boundary,
-        projectile_bounds_m: Some(projectile_bounds_m),
-        mechanisms,
-        ground: ground.into(),
-        fixtures,
-        equipment,
+    rm_simulator_assets::arena::load_terrain_with_motions(cad, |cad, asset| {
+        cad.rmuc_2027
+            .as_ref()
+            .map(|bindings| bindings.motions(cad, asset))
     })
-}
-
-/// Playing boundary in FLU metres, shared by the fence and its colliders.
-/// The slab includes an exterior apron. Fit XY to scenery vertices at slab
-/// elevation, excluding elevated equipment overhangs. The 10 mm tolerance is
-/// an asset-fitting setting, not a rulebook dimension. Empty scenery falls
-/// back to the slab bounds for synthetic fields.
-pub fn arena_boundary_bounds(
-    floor: &CollisionMesh,
-    scenery: &CollisionMesh,
-) -> anyhow::Result<[[f64; 3]; 2]> {
-    let mut low = [f64::INFINITY; 3];
-    let mut high = [f64::NEG_INFINITY; 3];
-    for point in &floor.vertices_m {
-        for i in 0..3 {
-            low[i] = low[i].min(point[i]);
-            high[i] = high[i].max(point[i]);
-        }
-    }
-    ensure!(
-        low.iter().chain(&high).all(|x| x.is_finite()) && high[0] > low[0] && high[1] > low[1],
-        "floor has no finite arena boundary"
-    );
-    let mut edge_low = [f64::INFINITY; 2];
-    let mut edge_high = [f64::NEG_INFINITY; 2];
-    for point in &scenery.vertices_m {
-        if point[2] >= low[2] - 0.01 && point[2] <= high[2] + 0.01 {
-            for axis in 0..2 {
-                edge_low[axis] = edge_low[axis].min(point[axis]);
-                edge_high[axis] = edge_high[axis].max(point[axis]);
-            }
-        }
-    }
-    // Only use a footprint spanning the arena, not an isolated fixture.
-    if (0..2).all(|axis| edge_high[axis] - edge_low[axis] > (high[axis] - low[axis]) * 0.5) {
-        for axis in 0..2 {
-            low[axis] = low[axis].max(edge_low[axis]);
-            high[axis] = high[axis].min(edge_high[axis]);
-        }
-    }
-    Ok([low, high])
-}
-
-/// Two metres high and 100 mm thick are simulator settings, not CAD dimensions.
-fn arena_boundary([low, high]: [[f64; 3]; 2]) -> CollisionMesh {
-    let mut mesh = CollisionMesh::default();
-    for (a, b) in [
-        (
-            [low[0] - 0.1, low[1] - 0.1, low[2]],
-            [low[0], high[1] + 0.1, high[2] + 2.0],
-        ),
-        (
-            [high[0], low[1] - 0.1, low[2]],
-            [high[0] + 0.1, high[1] + 0.1, high[2] + 2.0],
-        ),
-        (
-            [low[0], low[1] - 0.1, low[2]],
-            [high[0], low[1], high[2] + 2.0],
-        ),
-        (
-            [low[0], high[1], low[2]],
-            [high[0], high[1] + 0.1, high[2] + 2.0],
-        ),
-    ] {
-        let base = mesh.vertices_m.len() as u32;
-        for bits in 0..8 {
-            mesh.vertices_m.push(std::array::from_fn(|axis| {
-                if bits & (1 << axis) == 0 {
-                    a[axis]
-                } else {
-                    b[axis]
-                }
-            }));
-        }
-        mesh.triangles.extend(
-            [
-                [0, 2, 1],
-                [1, 2, 3],
-                [4, 5, 6],
-                [5, 7, 6],
-                [0, 1, 4],
-                [1, 5, 4],
-                [2, 6, 3],
-                [3, 6, 7],
-                [0, 4, 2],
-                [2, 4, 6],
-                [1, 3, 5],
-                [3, 7, 5],
-            ]
-            .map(|t| t.map(|i| i + base)),
-        );
-    }
-    mesh
-}
-
-fn load_component(
-    cad: &CadAssets,
-    asset: &crate::cad_assets::CadAsset,
-    role: rm_simulator_assets::components::ComponentRole,
-) -> anyhow::Result<rm_simulator_assets::components::ComponentModel> {
-    rm_simulator_assets::components::load(
-        cad,
-        asset,
-        role,
-        cad.rmuc_2027.as_ref().map(|b| b.motions(cad, asset)),
-    )
 }
 
 /// Hand the terrain to the field: the ground, fixtures and equipment as
@@ -575,6 +371,36 @@ pub fn field_config(cad: &CadAssets, options: &LayoutOptions) -> FieldConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires the verified field-2027 CAD package"]
+    fn standalone_arena_matches_native_terrain_installation() {
+        let path = std::env::var_os("RM_ARENA_PACKAGE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("../../field-2027"));
+        let native = crate::cad_assets::load(&path).unwrap();
+        let shared = rm_simulator_assets::cad_assets::load(&path).unwrap();
+        let terrain = load_terrain(&native).unwrap();
+        let mut field = Field::new(&Default::default()).unwrap();
+        add_terrain(&mut field, &terrain).unwrap();
+        let arena = rm_simulator_assets::arena::PreparedArena::load(&shared).unwrap();
+        assert_eq!(terrain.describe(), arena.terrain().describe());
+        assert_eq!(
+            field.static_geometry_snapshot().into_triangles(),
+            arena
+                .geometry()
+                .at_mechanisms(&rm_simulator_world::referee::mechanism_view(None, 0))
+                .into_triangles()
+        );
+        let recipe = arena
+            .scenario(vec![], rm_simulator_world::StepDuration::HZ_128, |_| Ok(()))
+            .unwrap();
+        let mut session = rm_simulator_physics::session::RobotSession::new(recipe).unwrap();
+        session.step(128).unwrap();
+        session.reset().unwrap();
+        assert_eq!(session.stamp().tick, 0);
+    }
+
     #[test]
     fn arena_boundary_follows_grounded_scenery_instead_of_the_slab_apron() {
         let floor = CollisionMesh {

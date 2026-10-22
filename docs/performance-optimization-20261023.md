@@ -218,3 +218,30 @@ reports, binaries, commands and `summary.json` remain ignored scratch under
 `local-assets/headless-profile-20261023/` and the corresponding remote probe
 directory. No integration-rate, rule, collision-fidelity or solver change was
 made by this profiling pass.
+
+## Follow-up collision and sensor passes
+
+The [collision pass](performance-collision-pass-20261023.md) retains the next
+contact-touching list across slices and appends projectile contacts directly to
+the tick output. Scoped counters changed from 147,754 modeled fresh-list growth
+allocations to 315 retained-buffer growth events. Five paired loaded matches
+showed no established throughput improvement (median 8.886 versus 8.875 seconds).
+All 256 loaded-field checkpoint hashes and three flat-rollout hashes matched.
+The point-cloud AABB hotspot was attributed primarily to Rapier's final-position
+collider bounds updates; no safe world-level geometry cache/filter was found.
+
+The [rolling sensor pass](performance-sensors-pass-20261023.md) shares an immutable
+fixed-collider broad phase across compatible captures while keeping exact shape
+queries and moving interpolation. Three paired ten-second acquisitions had
+matching complete output hashes. Median acquisition time changed from 3,142.684
+to 3,062.911 ms (2.54% less). External compiler activity limits causal precision;
+this is a modest sensor result, not a whole-game or physics throughput claim.
+Neither pass changes meshes, integration slices, solver settings or rule timing.
+
+The [wheel pass](performance-chassis-pass-20261023.md) skips remainder operations
+when they would return their input, retaining the original add/subtract rounding.
+Five pinned pairs measured 7.5–17.1% faster wheel integration and 0.26–0.90% faster
+one-robot flat rollouts, with six bit-identical baseline trajectories and unchanged
+rollout hashes. No loaded-match speedup was established. Suspension queries were
+about 89% of measured chassis adapter time in that attribution probe; accelerating
+the scalar wheel equations alone does not eliminate that query cost.

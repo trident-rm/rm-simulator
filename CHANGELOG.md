@@ -4,6 +4,19 @@
 
 ## Unreleased
 
+- Add reusable validated metric ray requests and ordered batch queries into
+  caller-owned output slices; retain scalar query and RayHit compatibility paths.
+
+- Reuse contact collection buffers across physical slices without changing
+  contact ordering; cache the fixed-collider broad phase for rolling LiDAR.
+- Skip identity wheel-angle remainder operations while preserving original
+  floating-point rounding and integration behavior.
+
+- Extract complete arena preparation and shared cooked standalone arena recipes
+  into assets; keep server loading paths and native bindings compatible.
+- Extract source arm/gripper/Tech Core mechanical models and FK into physics,
+  retaining world assembly type paths and serialized fields.
+
 - Add verified robot-package descriptors with typed profile/provenance, immutable
   source bytes and path-independent raw-model identities. Resolve app packages
   once and keep simulator actuator tuning separate from source configuration.
