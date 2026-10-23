@@ -220,3 +220,67 @@ configuration mappings and four without supported display tessellation. These
 are not missing references and remain blocking. The scene is useful for
 inspection, not yet a complete physical robot export. Native cache accuracy and
 full solver-trajectory parity are not established by geometry equivalence.
+
+### Comparison with the installed STEP-derived Sentry (2026-10-23)
+
+The partial native scene was compared with the actual
+`bound-tunnel-sentry/neutral.glb` (222,900 triangles), not a separately fitted
+replacement. The runtime manifest's neutral/hierarchy hashes and original STEP
+hash were verified. A single source-to-runtime rigid frame was recovered using
+its declared body rotation and source envelopes; no individual Part was aligned
+or repaired to improve the result.
+
+Of 538 native occurrences, 500 have name/configuration matches in the STEP
+hierarchy: 490 match placement and ten differ. Another 37 have unique exact-pose
+candidates under changed connector names; these remain a separately identified
+correspondence class. One light-bar connector has no verified counterpart.
+Across the 527 same-pose named/candidate matches, native display-mesh envelopes
+agree with the original STEP bounds to a median 0.0044 mm and maximum 0.129 mm.
+Envelope agreement does not certify every internal surface or feature.
+
+The saved-pose discrepancies affect eight components in two KJ85T33
+subassemblies (about 20.6–23.5 mm and 22.0–41.8 degrees), the MHF9025 rotor
+(135.06 degrees) and a brake clamp (22.84 degrees). Their cause remains
+unestablished; no source transforms were changed. A relative-motion follow-up
+found that the first three Parts in each KJ85T33 unit share the same rigid pose
+change to within 1.8e-15 in matrix entries. The fourth changes by 20.017 degrees
+about the first Part's longitudinal axis, with axial-origin separation unchanged
+to about 1.2e-8 mm. These are coherent subassembly-state differences, not evidence
+of eight independent bad placements. The geometry suggests damper-like wheel
+units, but the two saved states do not establish compression travel, mounting
+constraints or spring/damping parameters.
+
+The rotor and brake pose deltas are pure rotations about the same source-frame
+axis through approximately `[0, 0.1322, 0]` metres. The author's supplied
+`说明文档.md`, under `关于模型的使用`, explicitly describes special-angle mates
+in assembly favorites and switching their suppression state to inspect different
+poses. This supports preserving native mechanism states while reviewing joints;
+it does not establish which state is authoritative. That document also identifies
+the hidden `灯条连接件-0517` as an Infantry-only variant, explaining why the native
+inventory can contain it without a verified counterpart in the Sentry STEP.
+Detailed relative transforms are recorded in
+`local-assets/native-runtime-comparison-20261023/mechanisms/motion-report.json`.
+
+Four imported wheel-clearance
+volumes are deliberately absent from the runtime and must not become physical
+collision bodies. Runtime AM02 surface replacements and the removed firing-axis
+reference tube account for another five deliberately modified occurrences.
+
+For the remaining 518 same-pose retained occurrences, each direction used 96
+seeded area-weighted surface samples plus six vertex extrema, with exhaustive
+point-to-triangle distances. The median of per-occurrence sampled p95 distances
+is 0.778 mm; 495 of 518 have p95 at or below 2 mm. This is a sampled comparison,
+not a certified maximum deviation. The largest unmodified outliers are tiny
+washers reduced to two triangles in the old runtime export: examples have
+4–6 mm errors against runtime geometry while the native envelopes agree with
+STEP within 0.007 mm. The runtime low-detail mesh is therefore unsuitable as
+submillimetre ground truth for those Parts.
+
+Read-only probes, input hashes, per-occurrence measurements and an orthographic
+visibility overlay are retained in ignored
+`local-assets/native-runtime-comparison-20261023/`. The overlay compares visible
+sampled surfaces, not a distance field. It includes a full-model view to expose
+remaining coverage gaps and a shared-subset view to compare placement. No CAD,
+runtime package or review project was modified. This neutral-geometry check
+establishes neither folding/joint correctness nor mass/COM/inertia accuracy;
+the runtime's assumed 20 kg mass is not an independent physical reference.
