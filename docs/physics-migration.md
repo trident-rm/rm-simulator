@@ -58,11 +58,11 @@ adding generic joints does not automatically make those robots dynamic arms.
    shares physical resources, and transactional installation/removal returns
    explicit source-to-live bindings. The turret exercises this path. Visual and
    sensor references, importers and complete robot package integration remain.
-   Before migrating an existing chassis, extend source/cooked shape coverage to
-   its actual convex deck and collision proxies, with explicit validation and
-   cooking policy. The initial sphere/box descriptions cannot preserve an
-   octagonal hull by themselves. Preserve compound collider frames and filtering;
-   do not substitute a box or import a nonconvex dynamic CAD surface silently.
+   Explicit convex point sources and body cooking now cover the existing deck
+   and bumper shapes, with [native shape parity tests](convex-colliders.md).
+   Preserve compound collider frames and filtering; do not substitute a box or
+   import a nonconvex dynamic CAD surface silently. Whole-chassis construction,
+   mass distribution and participant ownership remain separate migration gates.
 
 3. **Participant registration and physical events.** Extract runtime-owned body,
    collider, joint and query bookkeeping from projectile-specific ownership.
@@ -84,6 +84,10 @@ adding generic joints does not automatically make those robots dynamic arms.
    Only after this succeeds should the Engineer arm or folding linkage migrate.
    Decide explicit per-body CCD/damping and unsupported feature admission before
    migrating participants which depend on them; retain existing projectile CCD.
+   Also preserve gravity scaling, axis locks, sleep policy, material coefficient
+   combination and the current chassis mass/COM distribution. Convex shape parity
+   alone does not establish those policies. Generic body wrenches must not erase
+   a migrated chassis plant's per-slice forces when ownership is unified.
 
 5. **Sensor and presentation bindings.** Mount sensors to explicit body/part
    frames rather than only a chassis ID. Retain per-emission motion, self-occlusion,
@@ -110,7 +114,7 @@ adding generic joints does not automatically make those robots dynamic arms.
    did not establish a throughput win, so a GPU port is not a migration prerequisite.
 
 Each increment can be divided into independently reviewable changes. The immediate
-follow-up after the physical tree is convex shape coverage and participant
+follow-up after the physical tree and convex shape coverage is participant
 ownership. Building a broad plugin scheduler first would leave the
 actual participant and checkpoint coupling unresolved.
 

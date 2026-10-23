@@ -140,6 +140,34 @@ other worlds/removal/reset; reacquire a key after recipe reconstruction. See
 [source-described bodies](../../docs/physics-reuse.md#source-described-bodies-and-bindings)
 and `examples/body_runtime.rs` for usage and current unsupported capabilities.
 
+## Explicit convex bodies
+
+`engine::model::ConvexHull` retains immutable source points in local FLU metres;
+`ShapeDescription::ConvexHull` requests their convex envelope explicitly.
+`CookedRigidBody` uses the native Rapier convex-hull path on those exact points,
+rejecting geometry without a finite three-dimensional hull rather than substituting
+a box or triangle surface. Collider-local placement and contact parameters remain
+explicit. Cooking supplies no density, mass, COM or inertia policy.
+
+`examples/convex_body.rs` cooks a one-link generic assembly once, installs it in a
+`RobotScenario`, settles it on the floor and resets with fresh runtime bindings.
+Its cube has chosen 0.2 m sides and explicit uniform-solid 2 kg mass and principal
+inertia; these fixture values are not inferred from CAD:
+
+```sh
+nix develop --command mbx run -p rm-simulator-physics --example convex_body --locked
+nix develop --command mbx test -p rm-simulator-physics --test convex_bodies --locked
+```
+
+`tests/convex_bodies.rs` compares the existing default omni chassis deck extrusion
+and every bumper prism with direct Rapier hulls using exactly the same points.
+Coverage includes per-face ray distances/normals, exported triangles, bounds and
+volume, plus rotated/translated collider-local mounts and body placements. The
+generic fixture also checks dynamic settling, projectile momentum transfer,
+independent worlds and reuse through reset. This establishes shape parity; it
+does not establish chassis force or mass-policy parity. Chassis construction,
+wheel dynamics, game mechanisms and native snapshots keep their existing paths.
+
 ## Physical joint fixture
 
 Generic source-described bodies can be connected by fixed, revolute and prismatic

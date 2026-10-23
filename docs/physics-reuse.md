@@ -91,7 +91,7 @@ contact filtering, balance/jump and restore.
 
 `engine::model` now supplies immutable `RigidBodyDescription` and
 `ColliderDescription` records. `ShapeDescription` supports local FLU spheres,
-boxes (half extents) and indexed surfaces. Descriptions retain explicit mounting
+boxes (half extents), explicit convex point hulls and indexed surfaces. Descriptions retain explicit mounting
 poses and `ContactMaterial` coefficients plus symmetric membership/filter bits;
 no team/projectile semantics are inferred from the bits. The current Rapier
 adapter uses its default average coefficient combination. Descriptions are
@@ -104,7 +104,7 @@ realizable principal moments and finite unit poses are validated. Collider
 volumes/densities never add hidden mass; CAD-native cached inertia is not imported.
 Dynamic nonconvex triangle surfaces are rejected explicitly. Basic joint and
 motor contracts and physical assembly trees extend these bodies (see below). Complete robot packages, actuator
-electronics, convex descriptions, damping/CCD options and body checkpoint
+electronics, damping/CCD options and body checkpoint
 continuation remain future work; existing robot chassis retain their model.
 
 `physics::cooking::CookedRigidBody` retains the immutable source and shared
@@ -171,6 +171,11 @@ world mutation. `AssemblyBinding` maps source parts to live body/joint tokens,
 and `remove_assembly` preflights the whole record. The turret guide demonstrates
 independent instances and recipe reuse. These physical descriptions do not yet
 include robot visual/sensor references or a CAD/URDF importer.
+
+The [convex collider guide](convex-colliders.md) describes explicit hull-envelope
+semantics, backend rejection, shared resources and parity against the existing
+chassis deck/bumper shapes. Dynamic hulls retain caller-supplied inertia, and
+captures/debug triangle expansion include their native boundary geometry.
 
 ## Concrete physical runtime
 

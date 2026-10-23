@@ -4,6 +4,7 @@
 use std::sync::Arc;
 mod assembly;
 mod body;
+mod convex;
 mod joint;
 pub use assembly::{
     AssemblyDescription, AssemblyJoint, AssemblyJointId, AssemblyLink, AssemblyLinkId,
@@ -12,6 +13,7 @@ pub use body::{
     BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, RigidBodyDescription,
     ShapeDescription,
 };
+pub use convex::ConvexHull;
 pub use joint::{JointDescription, JointKind, JointLimits, JointMotor, JointState};
 
 #[derive(Clone, Debug, PartialEq)]

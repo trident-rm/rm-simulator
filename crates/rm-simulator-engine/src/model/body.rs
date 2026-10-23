@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Validated source collider and rigid-body descriptions; no runtime handles.
-use super::TriangleMesh;
+use super::{ConvexHull, TriangleMesh};
 use crate::Pose;
 use std::sync::Arc;
 
@@ -21,6 +21,10 @@ pub enum ShapeDescription {
     },
     /// Indexed surface, retaining its source vertices and winding.
     TriangleMesh(TriangleMesh),
+    /// Explicit convex envelope of source points, filling concavities. Backend
+    /// cooking may reject degenerate or unrepresentable point clouds; no
+    /// tessellation inference, point perturbation or fallback shape is implied.
+    ConvexHull(ConvexHull),
 }
 
 /// Contact coefficients and symmetric membership/filter bits for a collider.
@@ -48,7 +52,8 @@ pub struct ColliderDescription {
 }
 impl ColliderDescription {
     /// Validate geometry, a finite unit-quaternion mounting pose and contact data.
-    /// Empty triangle meshes remain descriptions; a backend may reject cooking.
+    /// Empty triangle meshes and degenerate convex point clouds remain source
+    /// descriptions; a backend may reject cooking.
     pub fn new(
         shape: ShapeDescription,
         pose: Pose,
@@ -164,8 +169,9 @@ struct BodyData {
 
 /// Immutable physical body source. Clones share the complete description.
 /// Initial world pose/velocity and runtime identity are supplied at installation.
-/// This first contract supports primitive dynamic bodies and fixed/kinematic
-/// surfaces; dynamic nonconvex triangle meshes are explicitly rejected.
+/// Dynamic bodies support primitives and explicit convex hulls with mandatory
+/// caller-supplied inertial data; dynamic triangle meshes are explicitly rejected.
+/// Geometry never synthesizes mass or inertia.
 ///
 /// ```
 /// use rm_simulator_engine::model::{BodyKind, RigidBodyDescription};
@@ -177,7 +183,8 @@ struct BodyData {
 pub struct RigidBodyDescription(Arc<BodyData>);
 impl RigidBodyDescription {
     /// Bind validated local colliders to a body kind. Collider-free anchors are
-    /// permitted. Dynamic surfaces require a future explicit convex representation.
+    /// permitted. Dynamic convex hulls require explicit inertial data through
+    /// [`BodyKind::Dynamic`]; dynamic triangle surfaces remain unsupported.
     pub fn new(kind: BodyKind, colliders: Vec<ColliderDescription>) -> Result<Self, &'static str> {
         if matches!(kind, BodyKind::Dynamic(_))
             && colliders
@@ -332,5 +339,26 @@ mod tests {
         let shared = fixed.clone();
         assert_eq!(fixed.colliders().as_ptr(), shared.colliders().as_ptr());
         assert_eq!(fixed.colliders(), &[collider]);
+    }
+
+    #[test]
+    fn dynamic_convex_hulls_retain_explicit_inertia_and_source_points() {
+        let hull =
+            ConvexHull::new(vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]).unwrap();
+        let collider = ColliderDescription::new(
+            ShapeDescription::ConvexHull(hull.clone()),
+            Pose::at([1., 2., 3.]),
+            material(),
+        )
+        .unwrap();
+        let inertial = Inertial::new(7., [2., 3., 4.], Pose::at([0.1, 0.2, 0.3])).unwrap();
+        let body =
+            RigidBodyDescription::new(BodyKind::Dynamic(inertial), vec![collider.clone()]).unwrap();
+        assert_eq!(body.kind(), BodyKind::Dynamic(inertial));
+        assert_eq!(body.colliders(), &[collider]);
+        let ShapeDescription::ConvexHull(retained) = body.colliders()[0].shape() else {
+            panic!("convex source must remain explicit");
+        };
+        assert_eq!(retained.points_m().as_ptr(), hull.points_m().as_ptr());
     }
 }

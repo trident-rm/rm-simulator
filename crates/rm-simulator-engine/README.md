@@ -9,6 +9,14 @@ Solver-free core for the incrementally separated robotics simulation engine.
 - `model`: validated immutable triangle surfaces with shared source buffers,
   independent of backend cooking; validated primitive/collider/body descriptions
   retain mounting frames, explicit contact data and dynamic mass/COM/inertia.
+  `ConvexHull` explicitly requests a convex envelope from at least four finite
+  local FLU points in metres. It shares immutable source buffers across clones
+  and preserves point order, duplicates and interior points exactly. The hull
+  operation fills concavities; backend cooking owns dimensionality and numerical
+  tolerances and may reject degenerate or unrepresentable clouds. No tessellation
+  inference, point perturbation or fallback shape is performed. Dynamic convex
+  bodies require explicit inertia; no mass or inertia is synthesized, and dynamic
+  triangle meshes remain rejected.
   Joint descriptions support fixed, revolute and prismatic constraints with
   body-local parent/child frames, explicit connected-body contacts and optional
   limits. Frame +X defines the free axis; frames coincide at zero displacement.

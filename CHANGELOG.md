@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Add explicit shared convex-hull sources and body cooking with degeneracy/range
+  rejection, preserving caller-supplied mass and inertia. Include convex shapes
+  in static captures and triangle/debug export; verify shape parity against all
+  57 default omni deck/bumper hulls without changing chassis construction.
+
 - Add shared immutable physical assembly trees with distinct source link/joint
   IDs, backend preparation and transactional placed installation/removal. Validate
   the complete mapping, native state and generation capacity before changing the

@@ -842,7 +842,10 @@ impl WorldPhysics {
                     && (include_mechanisms || !self.mechanisms.iter().any(|(h, ..)| h == handle))
                     && matches!(
                         collider.shape().as_typed_shape(),
-                        TypedShape::TriMesh(_) | TypedShape::Cuboid(_) | TypedShape::Ball(_)
+                        TypedShape::TriMesh(_)
+                            | TypedShape::Cuboid(_)
+                            | TypedShape::Ball(_)
+                            | TypedShape::ConvexPolyhedron(_)
                     )
             })
             .collect();

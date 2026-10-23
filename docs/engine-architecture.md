@@ -69,8 +69,8 @@ channels, filters and insertion order. `PreparedArena` remains a Rapier-cooked
 arena that shares shapes across construction/reset, not a neutral scene format.
 
 This surface boundary is complemented by primitive, collider, rigid-body and
-explicit inertial, joint and rooted assembly descriptions (see below). Convex
-geometry, actuator electronics, visual/sensor mounts and import formats remain subsequent
+explicit inertial, joint, convex-hull and rooted assembly descriptions (see below).
+Actuator electronics, visual/sensor mounts and import formats remain subsequent
 work. Source package hashes/provenance remain with the verified assets; mesh
 buffer sharing is not a persistent content hash or topology identity. There is no
 global cache, persisted cooked format or backend interchangeability guarantee.
@@ -112,7 +112,8 @@ parameters from live pose/velocity. `BodyKind::Dynamic` requires a validated
 `Inertial` with total mass, COM frame and principal moments, with no inferred
 CAD mass. `BodyState` carries copied world motion. `CookedRigidBody` prepares and
 shares backend shapes while retaining source descriptions. The initial shapes
-are spheres, boxes and fixed/kinematic surfaces; dynamic surfaces are rejected.
+are spheres, boxes, explicit convex hulls and fixed/kinematic triangle surfaces;
+dynamic nonconvex surfaces are rejected.
 
 `runtime::install_body` accepts a caller `BodyKey` and returns an opaque
 `BodyBinding`. Bindings contain a process-local runtime brand and non-reused
@@ -125,8 +126,8 @@ APIs, match checkpoints and wire formats remain unchanged. Rolling scene bracket
 also reject different runtime brands, preserving capture lifetime boundaries.
 
 This implements standalone rigid bodies, not a complete robot asset file format,
-solver trait or robot migration. Convex geometry and explicit solver
-capability negotiation follow after these foundations. The
+solver trait or robot migration. Explicit solver capability negotiation follows
+after these foundations. The
 [physics reuse guide](physics-reuse.md#source-described-bodies-and-bindings)
 contains units, reset/error contracts, current limitations and a runnable example.
 
@@ -177,9 +178,16 @@ removal validates all tokens before removing anything; ordinary body removal als
 cascades to externally attached joints. Recipe reconstruction reuses prepared
 shapes and requires fresh bindings. This adds no per-tick assembly scheduler or
 serialized continuation state. The standalone turret now uses this path; game
-robot descriptors remain fitted chassis packages. Visual/sensor mounts, convex
-shape coverage and importer contracts are still needed before general CAD robots
+robot descriptors remain fitted chassis packages. Visual/sensor mounts and
+importer contracts are still needed before general CAD robots
 can migrate.
+
+`ShapeDescription::ConvexHull` extends physical link collision coverage without
+importing tessellation or implicit inertia. Its source points remain unchanged;
+backend cooking computes their envelope and rejects degenerate/unrepresentable
+results. Captures and triangle expansion retain these shapes. The
+[convex guide](convex-colliders.md) records parity against the current chassis
+deck/bumper hulls; whole-chassis construction and mass policy are not yet migrated.
 
 ## Target ownership
 
