@@ -146,6 +146,23 @@ impl PhysicalRuntime {
         }
     }
 
+    // Domain adapters retain their historical validation and query-priming
+    // boundaries. This factory only constructs the parentless native collider;
+    // it does not normalize poses, replace filtering or enroll a dynamic body.
+    pub(crate) fn insert_scenery(
+        &mut self,
+        shape: SharedShape,
+        placement: Pose3,
+        friction: f64,
+        restitution: f64,
+        groups: InteractionGroups,
+    ) -> ColliderHandle {
+        self.world.insert_collider(
+            scenery_builder(shape, friction, restitution, groups).position(placement),
+            None,
+        )
+    }
+
     /// Install shared cooked fixed scenery at a validated world FLU pose.
     /// Explicit friction, restitution and filtering introduce no participant roles.
     pub fn install_fixed_mesh(
@@ -158,9 +175,12 @@ impl PhysicalRuntime {
             return Err("invalid fixed scenery pose");
         }
         validate_material(material)?;
-        let handle = self.world.insert_collider(
-            scenery_builder(mesh.shape.clone(), material).position(pose(placement)),
-            None,
+        let handle = self.insert_scenery(
+            mesh.shape.clone(),
+            pose(placement),
+            material.friction,
+            material.restitution,
+            material_groups(material),
         );
         self.primed = false;
         Ok(ColliderBinding {
@@ -198,12 +218,13 @@ impl PhysicalRuntime {
             return Err("floor height must be finite");
         }
         validate_material(material)?;
-        let handle =
-            self.world.insert_collider(
-                scenery_builder(SharedShape::halfspace(Vector::Z), material)
-                    .translation(Vector::new(0., 0., floor_height_m)),
-                None,
-            );
+        let handle = self.insert_scenery(
+            SharedShape::halfspace(Vector::Z),
+            Pose3::translation(0., 0., floor_height_m),
+            material.friction,
+            material.restitution,
+            material_groups(material),
+        );
         self.primed = false;
         Ok(ColliderBinding {
             runtime: self.runtime_identity(),
@@ -234,13 +255,63 @@ fn validate_material(material: ContactMaterial) -> Result<(), &'static str> {
     }
     Ok(())
 }
-fn scenery_builder(shape: SharedShape, material: ContactMaterial) -> ColliderBuilder {
+fn material_groups(material: ContactMaterial) -> InteractionGroups {
+    InteractionGroups::new(
+        Group::from_bits_retain(material.memberships),
+        Group::from_bits_retain(material.filter),
+        InteractionTestMode::And,
+    )
+}
+fn scenery_builder(
+    shape: SharedShape,
+    friction: f64,
+    restitution: f64,
+    groups: InteractionGroups,
+) -> ColliderBuilder {
     ColliderBuilder::new(shape)
-        .friction(material.friction)
-        .restitution(material.restitution)
-        .collision_groups(InteractionGroups::new(
-            Group::from_bits_retain(material.memberships),
-            Group::from_bits_retain(material.filter),
-            InteractionTestMode::And,
-        ))
+        .friction(friction)
+        .restitution(restitution)
+        .collision_groups(groups)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_scenery_factory_preserves_native_defaults_and_filter_modes() {
+        let placement = Pose3::translation(1., -2., 3.);
+        let shapes = [
+            SharedShape::halfspace(Vector::Z),
+            SharedShape::cuboid(0.2, 0.3, 0.4),
+            SharedShape::trimesh(vec![Vector::ZERO, Vector::X, Vector::Y], vec![[0, 1, 2]])
+                .unwrap(),
+        ];
+        let mut expected = PhysicalRuntime::new(crate::StepDuration::HZ_128);
+        let mut actual = PhysicalRuntime::new(crate::StepDuration::HZ_128);
+        // Capture reinsertion must retain the native test mode, not rebuild an
+        // And filter from membership bits. Zero density is intentionally absent.
+        for (index, shape) in shapes.into_iter().enumerate() {
+            let groups = if index == 0 {
+                InteractionGroups::default()
+            } else {
+                InteractionGroups::new(Group::GROUP_3, Group::ALL, InteractionTestMode::Or)
+            };
+            let old = expected.world.insert_collider(
+                ColliderBuilder::new(shape.clone())
+                    .position(placement)
+                    .friction(0.6)
+                    .restitution(0.2)
+                    .collision_groups(groups),
+                None,
+            );
+            let new = actual.insert_scenery(shape, placement, 0.6, 0.2, groups);
+            assert_eq!(
+                format!("{:?}", expected.world.colliders[old]),
+                format!("{:?}", actual.world.colliders[new])
+            );
+            assert_eq!(old, new);
+        }
+        assert_eq!(expected.primed, actual.primed);
+    }
 }

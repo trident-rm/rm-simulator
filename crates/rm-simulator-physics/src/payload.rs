@@ -21,6 +21,16 @@
 //! ```
 use super::*;
 use crate::manipulator_collision::CollisionPart;
+use rm_simulator_engine::model::BodyState;
+use std::sync::Arc;
+
+#[path = "payload/preparation.rs"]
+mod preparation;
+pub use preparation::PreparedPayload;
+
+#[cfg(test)]
+#[path = "payload/preparation_tests.rs"]
+mod preparation_tests;
 
 #[path = "payload/attachment.rs"]
 mod attachment;
@@ -161,34 +171,7 @@ impl PayloadShape {
         Ok(shape)
     }
     fn shared(&self) -> Result<SharedShape, &'static str> {
-        if !self.max_expansion_m.is_finite()
-            || !(0.0..=0.001000001).contains(&self.max_expansion_m)
-            || !self.mass_kg.is_finite()
-            || self.mass_kg <= 0.
-            || self.hulls_m.is_empty()
-            || self.hulls_m.len() > 32
-            || self.hulls_m.iter().map(Vec::len).sum::<usize>() > 8192
-        {
-            return Err("invalid payload shape");
-        }
-        let hulls = self
-            .hulls_m
-            .iter()
-            .map(|h| {
-                if h.iter().flatten().any(|v| !v.is_finite()) {
-                    return Err("nonfinite payload hull");
-                }
-                SharedShape::convex_hull(
-                    &h.iter()
-                        .copied()
-                        .map(Vector::from_array)
-                        .collect::<Vec<_>>(),
-                )
-                .map(|s| (Pose3::IDENTITY, s))
-                .ok_or("degenerate payload hull")
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(SharedShape::compound(hulls))
+        Ok(preparation::cook(self)?.shapes()[0].clone())
     }
 }
 /// Restorable object identity, geometry, pose and physical motion.
@@ -228,7 +211,7 @@ pub(super) struct Body {
     id: u32,
     body: RigidBodyHandle,
     collider: ColliderHandle,
-    shape: PayloadShape,
+    shape: Arc<PayloadShape>,
 }
 impl WorldPhysics {
     pub(super) fn damp_payload_contacts(&mut self) {
@@ -263,30 +246,67 @@ impl WorldPhysics {
         {
             return Err("invalid or duplicate payload");
         }
-        let shape = state.shape.shared()?;
-        let body = self.physical.world.insert_body(
-            RigidBodyBuilder::dynamic()
-                .pose(pose(state.pose))
-                .linvel(Vector::from_array(state.velocity_m_s))
-                .angvel(Vector::from_array(state.angular_velocity_rad_s))
-                .ccd_enabled(true),
-        );
-        let collider = self.physical.world.insert_collider(
-            ColliderBuilder::new(shape)
-                .mass(state.shape.mass_kg)
-                .friction(0.6)
-                .restitution(0.05),
-            Some(body),
-        );
+        let prepared = PreparedPayload::new(state.shape.clone())?;
+        self.add_prepared_payload(
+            state.id,
+            &prepared,
+            BodyState {
+                pose: state.pose,
+                velocity_m_s: state.velocity_m_s,
+                angular_velocity_rad_s: state.angular_velocity_rad_s,
+            },
+            state.prescribed,
+        )
+    }
+    /// Install shared immutable payload resources at a caller-owned identity and
+    /// FLU state. Reject duplicate identities or invalid placement before mutation.
+    /// Prescribed payloads retain their native compound with collision disabled;
+    /// release and contact damping follow the ordinary payload paths.
+    pub fn add_prepared_payload(
+        &mut self,
+        id: u32,
+        prepared: &PreparedPayload,
+        state: BodyState,
+        prescribed: bool,
+    ) -> Result<(), &'static str> {
+        if self.payloads.iter().any(|b| b.id == id) {
+            return Err("invalid or duplicate payload");
+        }
+        state.validate()?;
+        if !pose_is_valid(state.pose) {
+            return Err("invalid payload motion");
+        }
+        let model = prepared.cooked();
+        // Preflight native placement before touching live handles. Keep collider
+        // mass refresh deferred to native insertion/stepping, as before.
+        let body = model
+            .body_builder()
+            .pose(pose(state.pose))
+            .linvel(Vector::from_array(state.velocity_m_s))
+            .angvel(Vector::from_array(state.angular_velocity_rad_s))
+            .build();
+        if model
+            .aggregate_mass_properties()
+            .is_some_and(|mass| !body.position().transform_point(mass.local_com).is_finite())
+        {
+            return Err("nonfinite placed payload mass frame");
+        }
+        let collider = model
+            .collider_builders()
+            .next()
+            .expect("one payload compound")
+            .build();
+        let body = self.physical.world.insert_body(body);
+        let collider = self.physical.world.insert_collider(collider, Some(body));
         self.payloads.push(Body {
-            id: state.id,
+            id,
             body,
             collider,
-            shape: state.shape.clone(),
+            shape: prepared.shared_shape(),
         });
         self.set_payload_motion(
-            state.id,
-            state.prescribed,
+            id,
+            prescribed,
             state.pose,
             state.velocity_m_s,
             state.angular_velocity_rad_s,
@@ -317,7 +337,7 @@ impl WorldPhysics {
         let q = body.rotation();
         Some(PayloadSnapshot {
             id,
-            shape: p.shape.clone(),
+            shape: (*p.shape).clone(),
             pose: Pose {
                 translation_m: body.translation().to_array(),
                 rotation_wxyz: [q.w, q.x, q.y, q.z],
@@ -426,7 +446,7 @@ mod tests {
         assert_eq!(view.velocity_m_s, state.velocity_m_s);
         assert_eq!(view.angular_velocity_rad_s, state.angular_velocity_rad_s);
         assert_eq!(view.prescribed, state.prescribed);
-        assert!(std::ptr::eq(view.shape, &world.payloads[0].shape));
+        assert!(std::ptr::eq(view.shape, world.payloads[0].shape.as_ref()));
         assert!(world.payload_telemetry(999).is_none());
         assert!(
             (state.pose.translation_m[2] - 0.28).abs() < 0.004,

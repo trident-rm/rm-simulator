@@ -19,6 +19,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 mod contacts;
+mod preparation;
+#[cfg(test)]
+mod preparation_tests;
 use crate::cooking::{CookedAssembly, CookedRigidBody};
 use contacts::Scorer;
 use rm_simulator_engine::model::{JointDescription, JointMotor, JointState, RigidBodyDescription};
@@ -32,7 +35,7 @@ pub use crate::geometry::{MovingGeometry, StaticGeometry};
 pub use crate::runtime;
 #[path = "payload.rs"]
 mod payload;
-pub use payload::{PayloadShape, PayloadSnapshot, PayloadTelemetry};
+pub use payload::{PayloadShape, PayloadSnapshot, PayloadTelemetry, PreparedPayload};
 
 fn outside_projectile_bounds(bounds: Option<[[f64; 3]; 2]>, point: Vector, radius_m: f64) -> bool {
     bounds.is_some_and(|[low, high]| {
@@ -549,6 +552,7 @@ pub struct WorldPhysics {
     /// projectiles created from now on. Changing it does not alter balls
     /// already in flight.
     policy: ProjectilePolicy,
+    prepared_projectiles: preparation::ProjectileCache,
     /// Recent removals, oldest first, bounded to [`REMOVAL_MEMORY`].
     removals: std::collections::VecDeque<Removal>,
     payloads: Vec<payload::Body>,
@@ -618,18 +622,19 @@ impl WorldPhysics {
         step_duration: crate::StepDuration,
     ) -> Self {
         let mut physical = runtime::PhysicalRuntime::new(step_duration);
-        physical.world.insert_collider(
-            ColliderBuilder::new(SharedShape::halfspace(Vector::Z))
-                .translation(Vector::new(0., 0., floor_height_m))
-                .friction(FRICTION)
-                .restitution(RESTITUTION),
-            None,
+        physical.insert_scenery(
+            SharedShape::halfspace(Vector::Z),
+            Pose3::translation(0., 0., floor_height_m),
+            FRICTION,
+            RESTITUTION,
+            InteractionGroups::default(),
         );
         let mut ballistics = Self {
             physical,
             payloads: Vec::new(),
             projectile_bounds_m: None,
             policy: ProjectilePolicy::default(),
+            prepared_projectiles: preparation::ProjectileCache::default(),
             removals: std::collections::VecDeque::new(),
             projectiles: Vec::new(),
             rm_contacts: Default::default(),
@@ -1157,17 +1162,16 @@ impl WorldPhysics {
             ArmorTarget::Rune { .. } => RUNE_HOUSING_HALF_M,
             ArmorTarget::Chassis { .. } => SMALL_ARMOR_HOUSING_HALF_M,
         };
-        let body = self.physical.world.insert_body(
-            RigidBodyBuilder::kinematic_position_based()
-                .pose(pose(face.pose))
-                .can_sleep(false),
-        );
-        let [x, y, z] = housing_half_m;
+        let prepared = preparation::target(housing_half_m);
+        let body = self
+            .physical
+            .world
+            .insert_body(prepared.body_builder().pose(pose(face.pose)));
         let collider = self.physical.world.insert_collider(
-            ColliderBuilder::cuboid(x, y, z)
-                .translation(Vector::new(-x, 0., 0.))
-                .friction(FRICTION)
-                .restitution(RESTITUTION),
+            prepared
+                .collider_builders()
+                .next()
+                .expect("one target collider"),
             Some(body),
         );
         self.rm_contacts
@@ -1180,12 +1184,12 @@ impl WorldPhysics {
     }
     /// A fixed box; used for tower bodies that projectiles must not pass through.
     pub fn add_static_box(&mut self, center: Pose, size_m: [f64; 3]) {
-        self.physical.world.insert_collider(
-            ColliderBuilder::cuboid(size_m[0] / 2., size_m[1] / 2., size_m[2] / 2.)
-                .position(pose(center))
-                .friction(FRICTION)
-                .restitution(RESTITUTION),
-            None,
+        self.physical.insert_scenery(
+            SharedShape::cuboid(size_m[0] / 2., size_m[1] / 2., size_m[2] / 2.),
+            pose(center),
+            FRICTION,
+            RESTITUTION,
+            InteractionGroups::default(),
         );
     }
     /// Add a fixed triangle mesh that stops chassis but not projectiles. The
@@ -1227,11 +1231,12 @@ impl WorldPhysics {
         self.insert_static_mesh_shape(mesh.shape.clone())
     }
     fn insert_static_mesh_shape(&mut self, shape: SharedShape) -> ColliderHandle {
-        self.physical.world.insert_collider(
-            ColliderBuilder::new(shape)
-                .friction(FRICTION)
-                .restitution(RESTITUTION),
-            None,
+        self.physical.insert_scenery(
+            shape,
+            Pose3::IDENTITY,
+            FRICTION,
+            RESTITUTION,
+            InteractionGroups::default(),
         )
     }
     /// Add one articulated part as a fixed mesh that
@@ -1921,25 +1926,20 @@ impl WorldPhysics {
         }
         let muzzle = pose(muzzle);
         let velocity = muzzle.transform_vector(Vector::new(shot.speed_m_s, 0., 0.));
-        let radius = shot.caliber.diameter_m() / 2.;
+        let prepared = self
+            .prepared_projectiles
+            .get(shot.caliber, self.policy.restitution);
         let body = self.physical.world.insert_body(
-            RigidBodyBuilder::dynamic()
+            prepared
+                .body_builder()
                 .translation(muzzle.translation)
-                .linvel(velocity)
-                .ccd_enabled(true)
-                .can_sleep(false),
+                .linvel(velocity),
         );
         let collider = self.physical.world.insert_collider(
-            ColliderBuilder::ball(radius)
-                .collision_groups(InteractionGroups::new(
-                    Group::GROUP_2,
-                    Group::ALL,
-                    InteractionTestMode::And,
-                ))
-                .mass(shot.caliber.mass_kg())
-                .friction(FRICTION)
-                .restitution(self.policy.restitution)
-                .restitution_combine_rule(CoefficientCombineRule::Min),
+            prepared
+                .collider_builders()
+                .next()
+                .expect("one projectile collider"),
             Some(body),
         );
         let id = self.next_id;
@@ -2037,26 +2037,21 @@ impl WorldPhysics {
         if self.projectiles.len() >= MAX_PROJECTILES {
             return Err("too many restored projectiles");
         }
-        let radius = state.caliber.diameter_m() / 2.;
+        let prepared = self
+            .prepared_projectiles
+            .get(state.caliber, self.policy.restitution);
         let body = self.physical.world.insert_body(
-            RigidBodyBuilder::dynamic()
+            prepared
+                .body_builder()
                 .translation(vector(state.position_m))
                 .linvel(vector(state.velocity_m_s))
-                .angvel(vector(state.angular_velocity_rad_s))
-                .ccd_enabled(true)
-                .can_sleep(false),
+                .angvel(vector(state.angular_velocity_rad_s)),
         );
         let collider = self.physical.world.insert_collider(
-            ColliderBuilder::ball(radius)
-                .collision_groups(InteractionGroups::new(
-                    Group::GROUP_2,
-                    Group::ALL,
-                    InteractionTestMode::And,
-                ))
-                .mass(state.caliber.mass_kg())
-                .friction(FRICTION)
-                .restitution(self.policy.restitution)
-                .restitution_combine_rule(CoefficientCombineRule::Min),
+            prepared
+                .collider_builders()
+                .next()
+                .expect("one projectile collider"),
             Some(body),
         );
         self.projectiles.push(Projectile {
@@ -2163,19 +2158,16 @@ impl WorldPhysics {
         let mut handles = Vec::with_capacity(geometry.shapes.len());
         for (index, (position, shape)) in geometry.shapes.iter().enumerate() {
             handles.push(
-                self.physical.world.insert_collider(
-                    ColliderBuilder::new(shape.clone())
-                        .collision_groups(
-                            geometry
-                                .collision_groups
-                                .get(index)
-                                .copied()
-                                .unwrap_or_default(),
-                        )
-                        .position(*position)
-                        .friction(FRICTION)
-                        .restitution(RESTITUTION),
-                    None,
+                self.physical.insert_scenery(
+                    shape.clone(),
+                    *position,
+                    FRICTION,
+                    RESTITUTION,
+                    geometry
+                        .collision_groups
+                        .get(index)
+                        .copied()
+                        .unwrap_or_default(),
                 ),
             );
         }

@@ -180,9 +180,10 @@ captures/debug triangle expansion include their native boundary geometry.
 `BodyPolicy` describes gravity scale, world-axis constraints, damping, sleeping
 and CCD. Existing defaults remain unchanged. `ColliderPolicy` adds explicit
 coefficient combination and optional mass/density contributions. These are
-accepted only with `BodyKind::DynamicFromColliders`, which requests backend
-shape aggregation; explicit `BodyKind::Dynamic(Inertial)` keeps zero-mass
-colliders. Neither mode imports CAD density or silently estimates real mass.
+accepted with `BodyKind::DynamicFromColliders`, which requests backend
+shape aggregation, and with fixed/kinematic bodies that retain native mass
+metadata. Explicit `BodyKind::Dynamic(Inertial)` keeps zero-mass colliders to
+prevent double counting. Neither mode imports CAD density or silently estimates real mass.
 The chassis adapter now uses these same source/cooked policies while preserving
 its native insertion order and deferred mass refresh.
 
@@ -398,8 +399,8 @@ A correct running-world continuation must also account for per-projectile
 restitution/policy history, retirement timers and touched-armor memory, payload
 geometry/motion, prescribed target endpoints and mechanism state, floor and
 perimeter, power/defeat/control state, time/identity counters and pending contact,
-removal and trace output. Solver warm starts/manifolds are rebuilt by existing
-restore paths. In particular, restoring projectile snapshots with only the current
+removal and trace output. Solver warm starts/manifolds, projectile touching
+sets and chassis armor contact-start latches are rebuilt by existing restore paths. In particular, restoring projectile snapshots with only the current
 policy can change restitution for previously launched balls. Do not infer complete
 or bitwise-equivalent continuation from these individual body restore methods.
 The existing match checkpoint remains the match composition's responsibility.

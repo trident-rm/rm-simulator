@@ -127,8 +127,9 @@ its existing behavior and does not retain duplicate source data. See the
 [architecture guide](../../docs/engine-architecture.md#implemented-sourcecooked-surface-boundary)
 for scope and remaining model-description work.
 
-`runtime::WorldPhysics` owns the existing scene, construction and integration
-loop; root and `projectile` paths re-export the same type. `step_into` appends
+`PhysicalRuntime` owns the native scene and generic construction/integration.
+`WorldPhysics` composes RoboMaster participants over that same runtime; the
+`runtime::WorldPhysics` compatibility alias and root/projectile paths remain. `step_into` appends
 raw contacts into retained caller storage. `RobotSession::step_into` and
 `step_with_targets_into` use it directly. Sessions/match adapters retain clock,
 reset and rule scheduling ownership; no extra world or scheduler is created.
@@ -228,3 +229,13 @@ This does not promise a fresh coherent narrow-phase projection or incoming impac
 velocity. `engine::contacts::ContactGeometry` carries world points, normal from
 side 1 to side 2 and signed separation, without backend or gameplay identities.
 See `tests/physical_contacts.rs` and the runnable observation doctest.
+
+## Prepared domain participants
+
+`chassis::PreparedChassis` and `projectile::PreparedPayload` share immutable source
+and cooked resources across installations and recipe resets. Native handles,
+controls, wheel/attachment state and contact histories remain per instance.
+Projectiles and scoring targets use the same cooked body builders; the game facade
+retains its bounded projectile preparation cache and domain scheduling. Parentless
+scenery shares the runtime factory without losing filtering or motion metadata.
+See [the physical runtime guide](../../docs/physical-runtime.md).

@@ -69,6 +69,22 @@ The [body runtime example](../crates/rm-simulator-physics/examples/body_runtime.
 constructs, steps, observes and reconstructs a bare scene without robot or match
 types. Run it with `mbx run -p rm-simulator-physics --example body_runtime --locked`.
 
+## Prepared carried objects and domain construction
+
+`projectile::PreparedPayload` retains the original `PayloadShape` and cooked
+single-compound body behind shared ownership. `add_prepared_payload` installs it
+with independent live state; `add_payload` remains the convenience snapshot
+adapter. Hull point order, mass distribution, attachment transitions and loose
+object damping retain the existing behavior. Source and native shapes can be
+reused across recipe reconstruction without recooking.
+
+Projectiles and scoring targets also use cooked body descriptions. Each
+`WorldPhysics` keeps at most one prepared projectile per caliber, keyed by its
+restitution. A policy edit affects newly fired balls; existing bodies retain
+their own material. Parentless scenery installation shares the runtime factory
+while each adapter retains its filtering, motion metadata and query-priming
+boundary. No generic held-wrench registration is added for domain participants.
+
 ## Reconstruction limits
 
 The generic runtime does not promise arbitrary checkpoint continuation. A recipe

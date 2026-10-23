@@ -225,8 +225,9 @@ pub struct RigidBodyDescription(Arc<BodyData>);
 impl RigidBodyDescription {
     /// Bind validated local colliders to a body kind. Collider-free anchors are
     /// permitted. Dynamic triangle surfaces remain unsupported. Explicit inertia
-    /// and collider-derived mass are exclusive: only [`BodyKind::DynamicFromColliders`]
-    /// accepts positive collider mass and requires at least one contribution.
+    /// and collider-derived mass are exclusive for dynamic bodies. Fixed and kinematic
+    /// bodies may retain explicit collider masses; [`BodyKind::DynamicFromColliders`]
+    /// requires at least one positive contribution.
     pub fn new(kind: BodyKind, colliders: Vec<ColliderDescription>) -> Result<Self, &'static str> {
         if matches!(kind, BodyKind::Dynamic(_) | BodyKind::DynamicFromColliders)
             && colliders
@@ -239,7 +240,7 @@ impl RigidBodyDescription {
         if matches!(kind, BodyKind::DynamicFromColliders) && !contributes {
             return Err("collider-derived dynamic body requires a positive mass contribution");
         }
-        if !matches!(kind, BodyKind::DynamicFromColliders) && contributes {
+        if matches!(kind, BodyKind::Dynamic(_)) && contributes {
             return Err("collider mass requires explicit collider-derived dynamic body mode");
         }
         Ok(Self(Arc::new(BodyData {

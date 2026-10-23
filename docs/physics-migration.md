@@ -9,7 +9,7 @@ with the [performance contract](engine-performance-contract.md) governing hot
 paths. It does not require a new repository, crate for every responsibility or
 an immediate second solver.
 
-## Current boundary and remaining coupling
+## Current boundary
 
 The solver-free engine owns poses, step durations, query records, scalar wheel
 laws and immutable surface/body/joint/assembly descriptions. Physics cooks and installs shared
@@ -44,14 +44,22 @@ caliber or match concepts. Compatibility facades may retain those names while
 composing explicit domain adapters over the generic runtime. Moving files or
 adding an alias alone does not satisfy this boundary.
 
-The remaining acceptance work covers existing robot construction and physical
-policies, generic runtime ownership and slice scheduling, physical frame bindings
-for sensors/presentation, and the persistent state/admission needed by existing
-match continuation. Current prescribed gimbals, folding and arm playback remain
-supported modeling choices; replacing them with newly tuned dynamic mechanisms
-is a separate fidelity change. A second solver, GPU integration, URDF importer,
-full actuator electronics and exact native solver checkpoints are not required
-to complete this behavior-preserving port.
+The behavior-preserving construction and ownership port is implemented: chassis,
+projectiles, targets and carried objects use shared source/cooked builders;
+parentless scenery uses the runtime factory. Generic mounts and sensor carriers
+operate without chassis IDs, and the game retains its original participant slice
+sequence. Existing match continuation remains the `Field` adapter's responsibility;
+its private physics ownership admits no arbitrary generic models into hosted
+checkpoints. Recipe reconstruction remains distinct from continuation.
+
+Current prescribed gimbals, folding and arm playback remain supported modeling
+choices. Dynamic mechanisms, another solver, GPU integration, URDF importers,
+complete robot link-graph packages and exact native solver checkpoints are
+follow-on fidelity or interoperability work, not unfinished ownership extraction.
+
+The ordered increments below record the migration sequence and future extension
+points. Historical suggestions to replace prescribed game mechanisms are optional;
+they do not block the reusable physical runtime boundary.
 
 ## Ordered increments
 
@@ -76,12 +84,14 @@ to complete this behavior-preserving port.
    `AssemblyDescription` now validates a connected rooted tree; `CookedAssembly`
    shares physical resources, and transactional installation/removal returns
    explicit source-to-live bindings. The turret exercises this path. Visual and
-   sensor references, importers and complete robot package integration remain.
+   source mount tables are now available; importers and complete robot package
+   integration remain optional extensions.
    Explicit convex point sources and body cooking now cover the existing deck
    and bumper shapes, with [native shape parity tests](convex-colliders.md).
    Preserve compound collider frames and filtering; do not substitute a box or
    import a nonconvex dynamic CAD surface silently. Whole-chassis construction,
-   mass distribution and participant ownership remain separate migration gates.
+   mass distribution and participant ownership were subsequently covered by the
+   prepared chassis and runtime extraction increments.
 
 3. **Participant registration and physical events — first separation implemented.** Extract runtime-owned body,
    collider, joint and query bookkeeping from projectile-specific ownership.
@@ -97,8 +107,9 @@ to complete this behavior-preserving port.
    without a second registration map; optional bounded per-slice observations
    remain off by default. RoboMaster scoring maps and contact scratch/capture
    live in a domain adapter with unchanged authoritative outputs. See
-   [Physical contacts](physical-contacts.md). Participant-specific force/motion
-   scheduling, persistent part mappings and complete checkpoint support remain.
+   [Physical contacts](physical-contacts.md). The runtime extraction retains
+   participant-specific force/motion scheduling in `WorldPhysics`; existing match
+   continuation remains supported, while generic models have recipe reset only.
 
 4. **Migrate one existing robot adapter — chassis construction implemented.** First construct an existing chassis
    through shared body resources while keeping the ray-wheel model and force
@@ -149,10 +160,9 @@ to complete this behavior-preserving port.
    workload. Keep CPU and device buffer contracts distinct. Existing PhysX trials
    did not establish a throughput win, so a GPU port is not a migration prerequisite.
 
-Each increment can be divided into independently reviewable changes. The immediate
-follow-up after the first participant/contact separation is migrating an
-existing robot adapter while preserving physical policies. Building a broad plugin scheduler first would leave the
-actual participant and checkpoint coupling unresolved.
+Each increment remains independently reviewable. Future model/backend extensions
+should build on the concrete lifecycle and preserve the same admission, identity
+and scheduling contracts; a broad plugin scheduler is not required.
 
 ## Acceptance gates
 
@@ -181,3 +191,37 @@ justifies it.
 This plan preserves the current session model: callers own explicit time and
 consumer cadence, one runtime owns each interacting world, and controllers,
 match rules and sensors do not independently advance the solver.
+
+## Port verification record (2026-10-23)
+
+The completed extraction retains all six pre-port chassis trajectory hashes and
+all three native match checkpoint hashes (0/1/8 robots). Frozen native-constructor
+oracles cover chassis presets, projectile fire/restore, moving scoring targets,
+and carried-object collision/release/reattachment. They compare native body and
+collider settings as well as ordered physical outputs. The verified field package
+also passes standalone-versus-game terrain installation and recipe reset.
+
+The full isolated Talos `just verify` gate passes, including existing match
+restore/prediction and protocol tests; no checkpoint schema or protocol revision
+changes are introduced by this port. Generic models remain excluded from hosted
+match continuation. Legacy rolling scan, IMU and serialized IMU history parity
+is checked at both 128 Hz and 1000 Hz against a same-platform baseline. Exact
+floating-point stream hashes are not promised across operating systems.
+
+A bounded Apple M5 Max development-profile probe (1024 steps; existing
+`rollout_cost` fixture) recorded the following non-paired samples. Background
+load and timing order were not controlled, so these are regression observations,
+not established speedups. Reconstruction includes fresh source validation/cooking;
+callers needing repeated installation should retain prepared resources.
+
+| Robots | Pre-port step, µs | Final step, µs | Pre-port reset, µs | Final reset, µs |
+|---|---:|---:|---:|---:|
+| 0 | 0.158 | 0.171 | 9.549 | 11.401 |
+| 1 | 82.602 | 81.149 | 205.824 | 239.240 |
+| 8 | 621.334 | 604.546 | 1511.078 | 1846.622 |
+
+The samples show no steady-step regression for loaded fixtures, but ordinary
+convenience reconstruction is slower. This port establishes reusable ownership
+and preparation; it does not claim a throughput improvement or solve every reset
+cost. Native solver warm starts/manifolds, projectile touching sets and chassis
+armor contact-start latches still rebuild on match restore.

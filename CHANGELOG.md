@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Complete prepared construction for projectiles, scoring targets and carried
+  objects over the shared physical runtime. Reuse bounded per-world projectile
+  shapes and immutable `PreparedPayload` resources across instances/resets;
+  retain native dynamics, attachment behavior and existing checkpoint formats.
+  Consolidate parentless scenery construction without changing filtering or order.
+
 - Separate a standalone `PhysicalRuntime` from the RoboMaster `WorldPhysics`
   composition, preserving one solver scene and existing slice order. Add neutral
   geometry capture/query and carrier observation paths, reusable prepared chassis,

@@ -126,7 +126,14 @@ impl CookedRigidBody {
     }
 
     fn validate_mass_properties(&self) -> Result<Option<MassProperties>, &'static str> {
-        if !matches!(self.source.kind(), BodyKind::DynamicFromColliders) {
+        if matches!(self.source.kind(), BodyKind::Dynamic(_))
+            || !self.source.colliders().iter().any(|collider| {
+                matches!(
+                    collider.policy().mass,
+                    ColliderMass::MassKg(x) | ColliderMass::DensityKgM3(x) if x > 0.
+                )
+            })
+        {
             return Ok(None);
         }
         // Match native insertion's ordered shape mass accumulation, without
