@@ -4,8 +4,8 @@
 
 `rm-simulator-physics` depends on Rapier, serde and the standalone MID360 pattern
 generator. It contains chassis
-suspension and drive, gimbal dynamics, projectile flight, raw armor contacts,
-shared collision geometry and analytic armor motion. It does not depend on
+suspension and drive, prescribed gimbals, physical generic joints, projectile
+flight, raw armor contacts, shared collision geometry and analytic armor motion. It does not depend on
 world, gameplay, server, rendering, a CAD loader or host time. Its
 [crate README](../crates/rm-simulator-physics/README.md) lists its modules and
 permitted dependencies.
@@ -102,9 +102,10 @@ Dynamic bodies require `Inertial`: total mass in kg, principal moments in kg m²
 about the COM, and a body-local COM/principal-axis frame. Positive finite mass,
 realizable principal moments and finite unit poses are validated. Collider
 volumes/densities never add hidden mass; CAD-native cached inertia is not imported.
-Dynamic nonconvex triangle surfaces are rejected explicitly. Joint/actuator
-models, convex descriptions, damping/CCD options and body checkpoint continuation
-remain future work; this does not convert existing robot chassis to a new model.
+Dynamic nonconvex triangle surfaces are rejected explicitly. Basic joint and
+motor contracts extend these bodies (see below). Complete robot graphs, actuator
+electronics, convex descriptions, damping/CCD options and body checkpoint
+continuation remain future work; existing robot chassis retain their model.
 
 `physics::cooking::CookedRigidBody` retains the immutable source and shared
 backend shapes. `install_body(BodyKey, &cooked, BodyState)` creates world-local
@@ -151,6 +152,17 @@ mbx run -p rm-simulator-physics --locked --example body_runtime
 It cooks an explicitly described cube once, drops it onto the catch floor through
 the ordinary runtime, then reconstructs the recipe and reacquires its binding.
 No setup worker, CAD file, match or renderer is involved.
+
+`engine::model::{JointDescription, JointLimits, JointMotor, JointState}` describe
+fixed/revolute/prismatic constraints and bounded spring/damper commands without
+backend handles. `install_joint` connects live body bindings and returns a
+world-scoped `JointBinding`, reacquired after reset using its `JointKey`.
+Removing a body also invalidates its attached joint bindings. The
+[jointed mechanism guide](jointed-mechanisms.md) defines attachment frames,
+coordinate units, held motor/effort replacement and the physical two-axis turret
+fixture. Current game gimbals and arms remain prescribed; the
+[migration plan](physics-migration.md) separates those later modeling changes
+from behavior-preserving runtime extraction.
 
 ## Concrete physical runtime
 

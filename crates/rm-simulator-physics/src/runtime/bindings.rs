@@ -34,12 +34,15 @@ struct Entry {
     generation: u64,
     handle: RigidBodyHandle,
     model: CookedRigidBody,
+    force_n: Vector,
+    torque_nm: Vector,
 }
 
 pub(super) struct Bodies {
     runtime: u64,
     next_generation: u64,
     entries: HashMap<BodyKey, Entry>,
+    dynamic_keys: Vec<BodyKey>,
 }
 impl Default for Bodies {
     fn default() -> Self {
@@ -53,6 +56,7 @@ impl Default for Bodies {
             runtime,
             next_generation: 0,
             entries: HashMap::new(),
+            dynamic_keys: Vec::new(),
         }
     }
 }
@@ -68,6 +72,21 @@ impl Bodies {
             .get(&binding.key)
             .filter(|e| e.generation == binding.generation)
             .ok_or("stale body binding")
+    }
+    pub(super) fn handle(&self, binding: BodyBinding) -> Result<RigidBodyHandle, &'static str> {
+        Ok(self.entry(binding)?.handle)
+    }
+    pub(super) fn apply_wrenches(&self, world: &mut PhysicsWorld) {
+        for key in &self.dynamic_keys {
+            let entry = &self.entries[key];
+            let body = &mut world.bodies[entry.handle];
+            if body.is_dynamic() {
+                body.reset_forces(false);
+                body.reset_torques(false);
+                body.add_force(entry.force_n, false);
+                body.add_torque(entry.torque_nm, false);
+            }
+        }
     }
     fn binding(&self, key: BodyKey, entry: &Entry) -> BodyBinding {
         BodyBinding {
@@ -160,13 +179,21 @@ impl WorldPhysics {
                 Some(handle),
             );
         }
+        // Rapier otherwise defers this to the next integration. Joint admission
+        // and first-slice anchor forces require the installed source COM now.
+        self.world.bodies[handle].recompute_mass_properties_from_colliders(&self.world.colliders);
         let entry = Entry {
             handle,
             generation: self.bound_bodies.next_generation,
             model: model.clone(),
+            force_n: Vector::ZERO,
+            torque_nm: Vector::ZERO,
         };
         let binding = self.bound_bodies.binding(key, &entry);
         self.bound_bodies.entries.insert(key, entry);
+        if self.world.bodies[handle].is_dynamic() {
+            self.bound_bodies.dynamic_keys.push(key);
+        }
         self.bound_bodies.next_generation = next_generation;
         self.primed = false;
         Ok(binding)
@@ -248,6 +275,13 @@ impl WorldPhysics {
         body.reset_torques(false);
         body.add_force(vector(force_n), true);
         body.add_torque(vector(torque_nm), true);
+        let entry = self
+            .bound_bodies
+            .entries
+            .get_mut(&binding.key)
+            .expect("validated binding");
+        entry.force_n = vector(force_n);
+        entry.torque_nm = vector(torque_nm);
         Ok(())
     }
 
@@ -281,11 +315,16 @@ impl WorldPhysics {
         Ok(())
     }
 
-    /// Remove one generic body and its colliders, invalidating only its binding.
+    /// Remove one generic body, its colliders and attached described joints.
+    /// Invalidates the body binding and every attached joint binding.
     /// Reinstalling the same logical key produces a different generation.
     pub fn remove_bound_body(&mut self, binding: BodyBinding) -> Result<(), &'static str> {
         let handle = self.bound_bodies.entry(binding)?.handle;
+        self.bound_joints.remove_attached(handle, &mut self.world);
         self.bound_bodies.entries.remove(&binding.key);
+        self.bound_bodies
+            .dynamic_keys
+            .retain(|key| *key != binding.key);
         self.bound_body_endpoints.retain(|(h, _, _)| *h != handle);
         self.world.remove_body(handle);
         self.primed = false;

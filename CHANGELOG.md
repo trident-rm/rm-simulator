@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Add solver-free fixed, revolute and prismatic joint descriptions and world-scoped
+  joint bindings with compact state, explicit limits and held motor/effort control.
+  A standalone two-axis turret exercises physical articulation and recipe reset;
+  existing game mechanisms remain prescribed. Document the remaining physical
+  runtime migration and its behavior/performance acceptance gates.
+
 - Prefer mbx for `just` compilation, tests and runtime validation when installed,
   retaining Cargo fallback and the existing per-checkout Nix target layout.
 

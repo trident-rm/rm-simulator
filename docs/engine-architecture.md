@@ -14,6 +14,8 @@ See [MuJoCo simulation](https://mujoco.readthedocs.io/en/stable/programming/simu
 and [Gazebo system interfaces](https://gazebosim.org/api/sim/10/createsystemplugins.html).
 The detailed [performance contract](engine-performance-contract.md) governs
 buffer ownership, exact ordering, device boundaries and acceptance workloads.
+The [physics migration plan](physics-migration.md) expands the remaining body,
+joint, robot assembly, participant and sensor work into ordered acceptance gates.
 
 ## Current migration: solver-free core
 
@@ -67,8 +69,9 @@ channels, filters and insertion order. `PreparedArena` remains a Rapier-cooked
 arena that shares shapes across construction/reset, not a neutral scene format.
 
 This surface boundary is complemented by primitive, collider, rigid-body and
-explicit inertial descriptions (see below). Link/joint, convex, actuator and
-sensor descriptions remain subsequent work. Source package hashes/provenance remain with the verified assets; mesh
+explicit inertial and joint descriptions (see below). Complete link graphs,
+convex geometry, actuator electronics and sensor descriptions remain subsequent
+work. Source package hashes/provenance remain with the verified assets; mesh
 buffer sharing is not a persistent content hash or topology identity. There is no
 global cache, persisted cooked format or backend interchangeability guarantee.
 A future cache must include source content, backend/version/precision and cooking
@@ -98,8 +101,8 @@ can use `step_with_targets_into` with identical endpoint validation and complete
 stamps to `step_with_targets`. This retains buffer capacity, not every internal
 solver allocation. Reset still reconstructs an initial recipe; callers reset
 sensor/controller histories separately. World-scoped body bindings and basic rigid-body descriptions now extend this
-runtime (see below). Joint bindings, broader topology revisions and capability
-negotiation remain subsequent work.
+runtime (see below). Broader topology revisions and capability negotiation remain
+subsequent work.
 
 ## Implemented body descriptions and runtime bindings
 
@@ -121,11 +124,33 @@ commands use world axes and documented units/lifetimes. Existing participant
 APIs, match checkpoints and wire formats remain unchanged. Rolling scene brackets
 also reject different runtime brands, preserving capture lifetime boundaries.
 
-This implements basic standalone rigid bodies, not a new articulation format,
-solver trait or robot migration. Joint bindings, convex geometry and explicit
-solver capability negotiation follow after these foundations. The
+This implements basic standalone rigid bodies, not a complete robot assembly
+format, solver trait or robot migration. Convex geometry and explicit solver
+capability negotiation follow after these foundations. The
 [physics reuse guide](physics-reuse.md#source-described-bodies-and-bindings)
 contains units, reset/error contracts, current limitations and a runnable example.
+
+## Joint descriptions and runtime bindings
+
+`engine::model::JointDescription` declares fixed, revolute or prismatic relative
+motion, parent/child local attachment frames, optional limits and connected-pair
+contact policy. Joint-local +X is the free axis. `JointMotor` carries explicit
+spring/damper targets, gains and effort saturation; `JointState` is compact scalar
+physical truth. Revolute coordinates are principal angles, without a multi-turn
+continuity guarantee. These records contain no native handle or match identity.
+
+The concrete runtime connects live `BodyBinding`s through opaque `JointBinding`s.
+Removal of a connected body removes its joints; stale/foreign tokens fail, and
+recipe reconstruction requires rebinding by `JointKey`. Held effort and motor
+commands are mutually exclusive and operate in the ordinary solver slices, with
+reaction forces/torques on the connected bodies. Source body wrenches remain
+independent held commands. Joint state is an observation, not continuation state.
+
+The [standalone turret](jointed-mechanisms.md) validates a physical yaw/pitch
+assembly, limits, reaction and reset. Existing game gimbals/folding/manipulation
+remain prescribed. Complete robot graph installation, CAD joint import,
+checkpoint integration and migration of existing participants remain separate
+increments in the [physics migration plan](physics-migration.md).
 
 ## Target ownership
 
@@ -213,8 +238,9 @@ the current timestamp or by a `RayHit::shape_index`.
    by backend/version/options and share immutable resources across resets. Do not
    infer trustworthy link inertia or motors from native CAD caches. Indexed surface
    sources, shared Rapier cooking, primitive/body descriptions and explicit
-   inertial data are implemented; joint/actuator descriptions and cache
-   identities remain subsequent work.
+   inertial data, joint descriptions and bounded spring/damper motor commands are
+   implemented; complete robot graphs, actuator electronics and cache identities
+   remain subsequent work.
 3. **Runtime composition and identities — concrete runtime extracted.** Introduce the minimal stable binding
    and epoch/revision contracts required by a second standalone consumer. Adapt
    existing RobotSession/MatchSession paths; preserve one world and exact clocks.

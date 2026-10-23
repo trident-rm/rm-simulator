@@ -25,6 +25,7 @@ simulator crate except the solver-free `rm-simulator-engine` core.
 | `src/chassis/backend/` | Rapier body/collider construction (`construction.rs`), ordered wheel queries and forces (`dynamics.rs`), prescribed folding/gimbal adaptation (`prescribed.rs`), controls and observations (`mod.rs`). |
 | `src/cooking.rs` / `src/cooking/body.rs` | Shared cooked mesh/body shapes retaining solver-free source descriptions. |
 | `src/runtime/bindings.rs` | Explicit body keys, world-scoped bindings, source/state reads and generic physical control. |
+| `src/runtime/joints.rs` | Generic physical joint installation, world-scoped bindings, scalar state, motors and held effort. |
 | `src/runtime.rs` | `runtime::WorldPhysics`: interacting scene ownership, construction, integration slices, carrier traces and ordered raw contact capture; legacy world paths remain compatible. |
 | `src/projectile.rs` | `Shot`, `Caliber`, `Contact`, `TargetFace`, `TargetFrames`, `StaticGeometry` and `ProjectilePolicy`; participant adapters and compatibility world exports. |
 | `src/queries.rs` | Immutable validated ray batches and capture-local hits, with no public solver handles; callers retain output storage. |
@@ -137,3 +138,20 @@ velocity and interpolated kinematic endpoints are supported. Bindings reject
 other worlds/removal/reset; reacquire a key after recipe reconstruction. See
 [source-described bodies](../../docs/physics-reuse.md#source-described-bodies-and-bindings)
 and `examples/body_runtime.rs` for usage and current unsupported capabilities.
+
+## Physical joint fixture
+
+Generic source-described bodies can be connected by fixed, revolute and prismatic
+joints, with local +X anchor-frame axes, limits, motors and held effort. Runtime
+joint bindings are reacquired by logical key after recipe reset, like body
+bindings. The standalone yaw/pitch turret uses explicit mass, COM and inertia and
+physical revolute joints:
+
+```sh
+nix develop --command mbx run -p rm-simulator-physics --example jointed_turret --locked
+nix develop --command mbx test -p rm-simulator-physics --test jointed_turret --locked
+```
+
+See [jointed mechanisms](../../docs/jointed-mechanisms.md) for frames, units,
+reset behavior, tests and limitations. Current game mechanisms remain prescribed;
+this fixture introduces no joint CAD import or checkpoint integration.

@@ -9,6 +9,13 @@ Solver-free core for the incrementally separated robotics simulation engine.
 - `model`: validated immutable triangle surfaces with shared source buffers,
   independent of backend cooking; validated primitive/collider/body descriptions
   retain mounting frames, explicit contact data and dynamic mass/COM/inertia.
+  Joint descriptions support fixed, revolute and prismatic constraints with
+  body-local parent/child frames, explicit connected-body contacts and optional
+  limits. Frame +X defines the free axis; frames coincide at zero displacement.
+  Revolute limits lie within [-π, π], without a multi-turn guarantee. Copied
+  joint state and validated motor targets/gains remain separate from descriptions;
+  runtime bindings supply body identities and reject targets outside limits
+  without clamping. These contracts add no serialization or checkpoint format.
 - `queries`: immutable validated metric rays and capture-local hit records.
 - `control`: held drive modes and validated wheel-axis torque requests.
 - `wheel_model`: scalar suspension, slip, motor/inertia and shared-power laws

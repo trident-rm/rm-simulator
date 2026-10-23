@@ -15,7 +15,10 @@
 use super::*;
 #[path = "runtime/bindings.rs"]
 mod bindings;
+#[path = "runtime/joints.rs"]
+mod joints;
 pub use bindings::{BodyBinding, BodyKey, BodyState};
+pub use joints::{JointBinding, JointKey};
 
 /// Longest integration slice of a world tick, in nanoseconds. A 17 mm shot at
 /// the 25 m/s limit crosses further in one 128 Hz tick than the thin armour
@@ -40,6 +43,7 @@ fn substep_count(step_duration: crate::StepDuration) -> usize {
 /// deterministic for a fixed tick schedule.
 pub struct WorldPhysics {
     bound_bodies: bindings::Bodies,
+    bound_joints: joints::Joints,
     bound_body_endpoints: Vec<(RigidBodyHandle, Pose3, Pose3)>,
     pub(super) step_duration: crate::StepDuration,
     /// Convex XY slab outside which projectiles are absorbed, in world FLU
@@ -149,6 +153,7 @@ impl WorldPhysics {
         );
         let mut ballistics = Self {
             bound_bodies: Default::default(),
+            bound_joints: Default::default(),
             bound_body_endpoints: Vec::new(),
             step_duration,
             payloads: Vec::new(),
@@ -384,6 +389,8 @@ impl WorldPhysics {
                     body.center_of_mass(),
                 ));
             }
+            self.bound_bodies.apply_wrenches(&mut self.world);
+            self.bound_joints.apply_actuation(&mut self.world);
             self.damp_payload_contacts();
             self.world.step();
             for chassis in &self.chassis {
