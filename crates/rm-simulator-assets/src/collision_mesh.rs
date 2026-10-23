@@ -37,6 +37,27 @@ pub struct CollisionMesh {
     pub triangles: Vec<[u32; 3]>,
 }
 impl CollisionMesh {
+    /// Consume already converted FLU geometry into a solver-free source surface.
+    /// Validation retains source buffers/order without copying or cooking them.
+    /// Call after `into_flu`/placement when loading glTF or CAD-axis data. Existing
+    /// package verification and provenance remain owned by the asset descriptor.
+    ///
+    /// ```
+    /// use rm_simulator_assets::collision_mesh::CollisionMesh;
+    /// let mesh = CollisionMesh {
+    ///     vertices_m: vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]],
+    ///     triangles: vec![[0, 1, 2]],
+    /// };
+    /// let source = mesh.into_description()?;
+    /// assert_eq!(source.triangles(), &[[0, 1, 2]]);
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn into_description(
+        self,
+    ) -> Result<rm_simulator_physics::cooking::TriangleMesh, &'static str> {
+        rm_simulator_physics::cooking::TriangleMesh::new(self.vertices_m, self.triangles)
+    }
+
     /// Move CAD arena-frame points into world FLU metres, with the floor top
     /// (`floor_top_cad_m` in the arena frame) at height zero.
     pub fn into_flu(mut self, floor_top_cad_m: f64) -> Self {

@@ -40,6 +40,40 @@ identities still present in physics are compatibility debt, not engine contracts
 The separately published `rm-sim` 0.0.0-dev package is a development placeholder;
 it does not ship these runtime crates or expose a simulator API yet.
 
+## Implemented source/cooked surface boundary
+
+`engine::model::TriangleMesh` is an immutable indexed surface in local FLU
+metres. Construction takes owned buffers and validates finite vertices and index
+bounds without changing winding, ordering, duplicate vertices or degenerate faces.
+Clones share the original buffers. Empty surfaces remain valid source descriptions;
+backend cooking decides whether they can become collision shapes.
+
+`physics::cooking::CookedTriangleMesh` retains that description and a shared Rapier
+shape/BVH. It uses the existing two-sided surface policy with duplicate-vertex
+merging and degenerate-face removal. Cooking copies into backend storage once;
+cloning or installing the cooked resource does not copy triangles or cook again.
+`WorldPhysics::add_cooked_static_mesh` creates a world-local collider at identity
+placement using the existing friction/restitution settings. Dropping the resource
+wrapper does not invalidate installed colliders or retained geometry captures.
+The source coordinates become world coordinates at this identity installation;
+placement remains outside the surface description.
+
+`assets::CollisionMesh::into_description` consumes converted/placed FLU buffers
+without copying them. Existing `add_static_mesh` remains the owned-buffer path:
+it uses the same validation and cooking implementation, consumes unique buffers
+without cloning, and does not retain a second source mesh in every live world.
+Moving-mesh and boundary adapters continue through that path with their existing
+channels, filters and insertion order. `PreparedArena` remains a Rapier-cooked
+arena that shares shapes across construction/reset, not a neutral scene format.
+
+This is the first geometry boundary, not a complete robot/model schema. Primitive,
+body, link, joint, mass/inertia, material and sensor descriptions remain to be
+extracted. Source package hashes/provenance remain with the verified assets; mesh
+buffer sharing is not a persistent content hash or topology identity. There is no
+global cache, persisted cooked format or backend interchangeability guarantee.
+A future cache must include source content, backend/version/precision and cooking
+options; `Arc` identity alone is insufficient. No numerical speedup is claimed.
+
 ## Target ownership
 
 | Layer | Owns | Interaction boundary |
@@ -120,11 +154,13 @@ the current timestamp or by a `RayHit::shape_index`.
    definitions once; preserve facade paths and serialized layouts. Prove engine
    dependency isolation, scalar/batch query behavior, wheel trajectories, native
    rule tests, full-match restore and baseline rollout hashes.
-2. **Uncooked model/resource boundary — next.** Move physical source descriptions
+2. **Uncooked model/resource boundary — started with triangle surfaces.** Move physical source descriptions
    out of backend-owned shape representations. Keep content identity/provenance
    and separate visual, sensor and collision choices. Keep cooked caches keyed
    by backend/version/options and share immutable resources across resets. Do not
-   infer trustworthy link inertia or motors from native CAD caches.
+   infer trustworthy link inertia or motors from native CAD caches. Indexed surface
+   sources and shared Rapier cooking are implemented; body/joint/primitive
+   descriptions and cache identities remain subsequent work.
 3. **Runtime composition and identities.** Introduce the minimal stable binding
    and epoch/revision contracts required by a second standalone consumer. Adapt
    existing RobotSession/MatchSession paths; preserve one world and exact clocks.

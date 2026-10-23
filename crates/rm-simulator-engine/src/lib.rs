@@ -8,6 +8,7 @@
 //! There is no implicit world, wall clock, plugin scheduler or device context.
 #![deny(missing_docs)]
 pub mod control;
+pub mod model;
 pub mod pose;
 pub mod queries;
 pub mod time;

@@ -99,6 +99,11 @@ world-local bodies, contacts and warm starts cannot. Device allocations addition
 belong to a device/context. A cached cooked resource must keep its source identity
 available for diagnostics and checkpoint admission.
 
+`engine::model::TriangleMesh` now provides immutable validated source buffers;
+`physics::cooking::CookedTriangleMesh` retains the source and its shared Rapier
+shape. Cooking is explicit and installations do not recook. No persistent cache
+or cache-key scheme is implemented. See the [implemented boundary](engine-architecture.md#implemented-sourcecooked-surface-boundary).
+
 Today `CollisionMesh`/`GroundMesh` supply source-like triangle data, while
 `StaticGeometry` embeds cooked `SharedShape` objects. Parent `PreparedArena`
 reuses those shapes during scenario construction/reset. Preserve that working

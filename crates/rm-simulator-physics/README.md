@@ -110,3 +110,12 @@ this is not a motor-torque or source leg-linkage simulation.
 Shared poses/time, query records, drive controls and wheel laws now have one
 definition in engine core. Existing physics paths re-export them. The chassis
 conversion remains here, and engine core contains no solver/game dependency.
+
+Triangle surface preparation separates `engine::model::TriangleMesh` (available
+through `cooking::TriangleMesh`) from `cooking::CookedTriangleMesh`. The latter
+retains source geometry and shared Rapier shape storage. Cook once and install
+into multiple worlds with `WorldPhysics::add_cooked_static_mesh`; world collider
+handles and state stay independent. The owned-buffer `add_static_mesh` path keeps
+its existing behavior and does not retain duplicate source data. See the
+[architecture guide](../../docs/engine-architecture.md#implemented-sourcecooked-surface-boundary)
+for scope and remaining model-description work.

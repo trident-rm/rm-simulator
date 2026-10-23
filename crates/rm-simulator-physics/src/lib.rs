@@ -32,6 +32,7 @@ pub mod arena;
 pub mod assembly_model;
 pub mod chassis;
 pub mod control;
+pub mod cooking;
 pub mod geometry;
 pub mod manipulator;
 pub mod manipulator_collision;

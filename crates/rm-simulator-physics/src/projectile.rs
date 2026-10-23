@@ -769,26 +769,28 @@ impl WorldPhysics {
         vertices_m: Vec<[f64; 3]>,
         triangles: Vec<[u32; 3]>,
     ) -> Result<ColliderHandle, &'static str> {
-        if !vertices_m.iter().all(|v| finite(*v)) {
-            return Err("mesh vertices must be finite");
-        }
-        let count = vertices_m.len() as u32;
-        if triangles.iter().flatten().any(|index| *index >= count) {
-            return Err("mesh triangle index out of range");
-        }
-        let vertices = vertices_m.into_iter().map(vector).collect();
-        // Contacts stay two-sided (no internal-edge fixing, which drops
-        // back-face contacts), so a CAD part with reversed winding still
-        // carries wheels and stops bodies.
-        let collider = ColliderBuilder::trimesh_with_flags(
-            vertices,
-            triangles,
-            TriMeshFlags::MERGE_DUPLICATE_VERTICES | TriMeshFlags::DELETE_DEGENERATE_TRIANGLES,
+        let source = crate::cooking::TriangleMesh::new(vertices_m, triangles)?;
+        let (vertices_m, triangles) = source.into_buffers();
+        let shape = crate::cooking::cook_buffers(vertices_m, triangles)?;
+        Ok(self.insert_static_mesh_shape(shape))
+    }
+    /// Install a previously cooked mesh at the world origin without recooking or
+    /// copying triangles. Uses the same friction/restitution as `add_static_mesh`.
+    /// The returned collider handle belongs only to this world; immutable shape
+    /// storage remains alive through the collider and any retained captures.
+    pub fn add_cooked_static_mesh(
+        &mut self,
+        mesh: &crate::cooking::CookedTriangleMesh,
+    ) -> ColliderHandle {
+        self.insert_static_mesh_shape(mesh.shape.clone())
+    }
+    fn insert_static_mesh_shape(&mut self, shape: SharedShape) -> ColliderHandle {
+        self.world.insert_collider(
+            ColliderBuilder::new(shape)
+                .friction(FRICTION)
+                .restitution(RESTITUTION),
+            None,
         )
-        .map_err(|_| "mesh must hold at least one triangle")?
-        .friction(FRICTION)
-        .restitution(RESTITUTION);
-        Ok(self.world.insert_collider(collider, None))
     }
     /// Add one articulated part as a fixed mesh that
     /// [`Self::sync_mechanisms`] translates. `offsets_m` are the part's world

@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Separate immutable source triangle surfaces from shared Rapier-cooked meshes;
+  allow cooking once and installing into multiple independent worlds while
+  preserving the existing owned-buffer mesh APIs and collision policy.
+
 - Extract solver-free engine core with poses, exact timing, query/drive contracts
   and wheel laws. Preserve physical facade paths and serialized records, and
   enforce the new dependency boundary. Document the incremental component design.
