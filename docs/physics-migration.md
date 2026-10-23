@@ -34,6 +34,24 @@ properties remain independently unverified and must not silently become inertia
 defaults. Current gimbals, folding and manipulation playback are prescribed;
 adding generic joints does not automatically make those robots dynamic arms.
 
+## Completion criteria for the physics port
+
+The migration is complete when ordinary game physics consumes the same reusable
+physical descriptions, cooked resources and runtime operations as standalone
+scenarios, and the generic runtime can operate without RoboMaster team, armor,
+caliber or match concepts. Compatibility facades may retain those names while
+composing explicit domain adapters over the generic runtime. Moving files or
+adding an alias alone does not satisfy this boundary.
+
+The remaining acceptance work covers existing robot construction and physical
+policies, generic runtime ownership and slice scheduling, physical frame bindings
+for sensors/presentation, and the persistent state/admission needed by existing
+match continuation. Current prescribed gimbals, folding and arm playback remain
+supported modeling choices; replacing them with newly tuned dynamic mechanisms
+is a separate fidelity change. A second solver, GPU integration, URDF importer,
+full actuator electronics and exact native solver checkpoints are not required
+to complete this behavior-preserving port.
+
 ## Ordered increments
 
 1. **Joint foundation and standalone fixture.** Add validated fixed, revolute and
@@ -81,7 +99,7 @@ adding generic joints does not automatically make those robots dynamic arms.
    [Physical contacts](physical-contacts.md). Participant-specific force/motion
    scheduling, persistent part mappings and complete checkpoint support remain.
 
-4. **Migrate one existing robot adapter.** First construct an existing chassis
+4. **Migrate one existing robot adapter — chassis construction implemented.** First construct an existing chassis
    through shared body resources while keeping the ray-wheel model and force
    sequencing unchanged. Preserve fixed/prescribed gimbals as a supported model
    choice. Separately offer the validated dynamic turret as an opt-in robot model:
@@ -95,6 +113,15 @@ adding generic joints does not automatically make those robots dynamic arms.
    combination and the current chassis mass/COM distribution. Convex shape parity
    alone does not establish those policies. Generic body wrenches must not erase
    a migrated chassis plant's per-slice forces when ownership is unified.
+
+   Existing chassis presets now prepare source body/collider descriptions and
+   consume the same cooked builders as generic bodies. Explicit collider-derived
+   mass preserves the historical deck/turret aggregation, including zero-mass
+   auxiliaries and native material combination. The adapter retains insertion
+   order and deferred COM timing; it does not enter the generic held-wrench
+   registry or replace wheel forces. Independent native construction parity and
+   exact trajectory hashes gate this change. Public prepared-model reuse and
+   generic runtime ownership remain subsequent increments.
 
 5. **Sensor and presentation bindings.** Mount sensors to explicit body/part
    frames rather than only a chassis ID. Retain per-emission motion, self-occlusion,

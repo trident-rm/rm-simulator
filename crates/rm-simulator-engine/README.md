@@ -16,7 +16,10 @@ Solver-free core for the incrementally separated robotics simulation engine.
   tolerances and may reject degenerate or unrepresentable clouds. No tessellation
   inference, point perturbation or fallback shape is performed. Dynamic convex
   bodies require explicit inertia; no mass or inertia is synthesized, and dynamic
-  triangle meshes remain rejected.
+  triangle meshes remain rejected. `BodyPolicy` preserves explicit gravity,
+  axis locks, damping, sleep and CCD choices. `ColliderPolicy` declares mass and
+  contact combination; `DynamicFromColliders` opts into native shape aggregation
+  using caller-selected mass/density, independently of explicit `Inertial`.
   Joint descriptions support fixed, revolute and prismatic constraints with
   body-local parent/child frames, explicit connected-body contacts and optional
   limits. Frame +X defines the free axis; frames coincide at zero displacement.

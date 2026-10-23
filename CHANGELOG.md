@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Construct existing chassis through immutable physical descriptions and shared
+  cooking code, preserving collider order, mass aggregation and prescribed
+  part mappings. Add explicit integration, collider mass and material-combination
+  policies without changing existing default body descriptions.
+
 - Separate RoboMaster contact policy/scratch from physical participant identity.
   Add read-only world-scoped body/collider references and opt-in bounded per-slice
   contact observations, with explicit overflow and retained-buffer drains.

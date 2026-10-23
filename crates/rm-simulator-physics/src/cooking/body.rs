@@ -2,16 +2,23 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Shared backend shapes for an explicitly described rigid body.
 use super::*;
-use rm_simulator_engine::model::{ConvexHull, RigidBodyDescription, ShapeDescription};
+use rapier3d_f64::prelude::{
+    CoefficientCombineRule, ColliderBuilder, Group, InteractionGroups, InteractionTestMode,
+    MassProperties, Pose as Pose3, RigidBodyBuilder, Rotation,
+};
+use rm_simulator_engine::model::{
+    BodyKind, ColliderMass, ConvexHull, RigidBodyDescription, ShapeDescription,
+};
 use std::sync::Arc;
 
 /// Source body plus shared cooked collider shapes, with no world handles/state.
 /// Cooking preserves local frames, source collider order and contact parameters.
-/// No density-based mass estimation or inertia synthesis is performed.
+/// Explicit inertial data remains the default; collider aggregation is opt-in.
 #[derive(Clone)]
 pub struct CookedRigidBody {
     source: RigidBodyDescription,
     shapes: Arc<[SharedShape]>,
+    aggregate_mass: Option<MassProperties>,
 }
 impl CookedRigidBody {
     /// Cook collider shapes once. Empty surfaces or backend geometry failures
@@ -40,17 +47,145 @@ impl CookedRigidBody {
                 })
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
-        Ok(Self {
+        let mut cooked = Self {
             source,
             shapes: shapes.into(),
-        })
+            aggregate_mass: None,
+        };
+        cooked.aggregate_mass = cooked.validate_mass_properties()?;
+        Ok(cooked)
     }
     /// Original immutable physical description, including explicit inertia.
     pub fn source(&self) -> &RigidBodyDescription {
         &self.source
     }
+    /// Native construction without installing/registering or refreshing COM.
+    /// The caller chooses initial state and preserves participant insertion timing.
+    pub(crate) fn body_builder(&self) -> RigidBodyBuilder {
+        let body = match self.source.kind() {
+            BodyKind::Fixed => RigidBodyBuilder::fixed(),
+            BodyKind::Kinematic => RigidBodyBuilder::kinematic_position_based(),
+            BodyKind::DynamicFromColliders => RigidBodyBuilder::dynamic(),
+            BodyKind::Dynamic(inertia) => {
+                let frame = inertia.frame();
+                RigidBodyBuilder::dynamic().additional_mass_properties(
+                    MassProperties::with_principal_inertia_frame(
+                        Vector::from_array(frame.translation_m),
+                        inertia.mass_kg(),
+                        Vector::from_array(inertia.principal_inertia_kg_m2()),
+                        crate::projectile::pose(frame).rotation,
+                    ),
+                )
+            }
+        };
+        let p = self.source.policy();
+        let [tx, ty, tz] = p.enabled_translations;
+        let [rx, ry, rz] = p.enabled_rotations;
+        body.gravity_scale(p.gravity_scale)
+            .enabled_translations(tx, ty, tz)
+            .enabled_rotations(rx, ry, rz)
+            .can_sleep(p.can_sleep)
+            .linear_damping(p.linear_damping)
+            .angular_damping(p.angular_damping)
+            .ccd_enabled(p.ccd_enabled)
+    }
+
+    /// Native colliders in source order; retain stored quaternion bits exactly.
+    /// No handles or mass refresh are performed. Explicit mass(0) remains distinct
+    /// from density(0), including on massless moving auxiliaries.
+    pub(crate) fn collider_builders(&self) -> impl Iterator<Item = ColliderBuilder> + '_ {
+        self.source
+            .colliders()
+            .iter()
+            .zip(self.shapes())
+            .map(|(c, shape)| {
+                let material = c.material();
+                let policy = c.policy();
+                let [w, x, y, z] = c.pose().rotation_wxyz;
+                let builder = ColliderBuilder::new(shape.clone())
+                    .position(Pose3::from_parts(
+                        Vector::from_array(c.pose().translation_m),
+                        Rotation::from_xyzw(x, y, z, w),
+                    ))
+                    .friction(material.friction)
+                    .restitution(material.restitution)
+                    .friction_combine_rule(native_combine(policy.friction_combine_rule))
+                    .restitution_combine_rule(native_combine(policy.restitution_combine_rule))
+                    .collision_groups(InteractionGroups::new(
+                        Group::from_bits_retain(material.memberships),
+                        Group::from_bits_retain(material.filter),
+                        InteractionTestMode::And,
+                    ));
+                match policy.mass {
+                    ColliderMass::Zero => builder.density(0.),
+                    ColliderMass::MassKg(mass) => builder.mass(mass),
+                    ColliderMass::DensityKgM3(density) => builder.density(density),
+                }
+            })
+    }
+
+    pub(crate) fn aggregate_mass_properties(&self) -> Option<&MassProperties> {
+        self.aggregate_mass.as_ref()
+    }
+
+    fn validate_mass_properties(&self) -> Result<Option<MassProperties>, &'static str> {
+        if !matches!(self.source.kind(), BodyKind::DynamicFromColliders) {
+            return Ok(None);
+        }
+        // Match native insertion's ordered shape mass accumulation, without
+        // touching a live world. Source frames and shape laws remain unchanged.
+        let mut total = MassProperties::default();
+        let mut accumulated_mass_kg = 0.;
+        for (description, builder) in self.source.colliders().iter().zip(self.collider_builders()) {
+            let collider = builder.build();
+            let mass = collider.mass_properties().transform_by(collider.position());
+            let positive = matches!(description.policy().mass,
+                ColliderMass::MassKg(x) | ColliderMass::DensityKgM3(x) if x > 0.);
+            if (positive && (mass.mass() <= 0. || mass.inv_principal_inertia.min_element() <= 0.))
+                || !mass.mass().is_finite()
+                || !mass.local_com.is_finite()
+                || !mass.inv_mass.is_finite()
+                || !mass.inv_principal_inertia.is_finite()
+                || !mass.principal_inertia_local_frame.is_finite()
+            {
+                return Err("unrepresentable cooked collider mass properties");
+            }
+            // Native accumulation stores inverse mass: an overflowing sum may
+            // become zero mass, which a later collider can replace with a finite
+            // value. Check the independent nonnegative sum before that information
+            // is lost. Initial and auxiliary zero masses remain valid.
+            accumulated_mass_kg += mass.mass();
+            if !accumulated_mass_kg.is_finite() {
+                return Err("unrepresentable aggregate body mass properties");
+            }
+            total += mass;
+        }
+        if !total.mass().is_finite()
+            || total.mass() <= 0.
+            || !total.local_com.is_finite()
+            || !total.inv_principal_inertia.is_finite()
+            || total.inv_principal_inertia.min_element() <= 0.
+            || !total.principal_inertia_local_frame.is_finite()
+        {
+            return Err("unrepresentable aggregate body mass properties");
+        }
+        Ok(Some(total))
+    }
+
     pub(crate) fn shapes(&self) -> &[SharedShape] {
         &self.shapes
+    }
+}
+
+fn native_combine(
+    rule: rm_simulator_engine::model::CoefficientCombineRule,
+) -> CoefficientCombineRule {
+    use rm_simulator_engine::model::CoefficientCombineRule as Source;
+    match rule {
+        Source::Average => CoefficientCombineRule::Average,
+        Source::Min => CoefficientCombineRule::Min,
+        Source::Multiply => CoefficientCombineRule::Multiply,
+        Source::Max => CoefficientCombineRule::Max,
     }
 }
 
@@ -131,6 +266,153 @@ mod tests {
         Pose,
         model::{BodyKind, ColliderDescription, ContactMaterial, Inertial},
     };
+
+    fn aggregate(
+        half: [f64; 3],
+        mass: rm_simulator_engine::model::ColliderMass,
+    ) -> RigidBodyDescription {
+        use rm_simulator_engine::model::ColliderPolicy;
+        RigidBodyDescription::new(
+            BodyKind::DynamicFromColliders,
+            vec![
+                ColliderDescription::new(
+                    ShapeDescription::Cuboid {
+                        half_extents_m: half,
+                    },
+                    Pose::default(),
+                    ContactMaterial {
+                        friction: 0.4,
+                        restitution: 0.,
+                        memberships: u32::MAX,
+                        filter: u32::MAX,
+                    },
+                )
+                .unwrap()
+                .with_policy(ColliderPolicy {
+                    mass,
+                    ..Default::default()
+                })
+                .unwrap(),
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn cooked_mass_rejects_overflow_and_underflow_without_silent_mass_loss() {
+        use rm_simulator_engine::model::ColliderMass;
+        for (half, mass) in [
+            ([1.; 3], ColliderMass::DensityKgM3(f64::MAX)),
+            ([1e-150; 3], ColliderMass::DensityKgM3(1.)),
+            ([1e150; 3], ColliderMass::MassKg(1.)),
+            ([1.; 3], ColliderMass::MassKg(f64::from_bits(1))),
+        ] {
+            assert!(
+                CookedRigidBody::new(aggregate(half, mass)).is_err(),
+                "{half:?}, {mass:?}"
+            );
+        }
+        assert!(CookedRigidBody::new(aggregate([1.; 3], ColliderMass::DensityKgM3(3.))).is_ok());
+    }
+
+    #[test]
+    fn aggregate_mass_overflow_cannot_be_hidden_by_later_contributions() {
+        use rm_simulator_engine::model::{ColliderMass, ColliderPolicy};
+        let source = aggregate([0.5; 3], ColliderMass::MassKg(1e308));
+        // Each contribution is representable on its own. Native inverse-mass
+        // accumulation can turn the first overflowing pair into zero mass and
+        // then report a finite final mass after adding the third collider.
+        assert!(CookedRigidBody::new(source.clone()).is_ok());
+        let collider = source.colliders()[0].clone();
+        let overflowing = RigidBodyDescription::new(
+            BodyKind::DynamicFromColliders,
+            vec![collider.clone(), collider.clone(), collider.clone()],
+        )
+        .unwrap();
+        assert!(CookedRigidBody::new(overflowing).is_err());
+
+        let zero = collider
+            .clone()
+            .with_policy(ColliderPolicy {
+                mass: ColliderMass::Zero,
+                ..Default::default()
+            })
+            .unwrap();
+        let explicit_zero = collider
+            .clone()
+            .with_policy(ColliderPolicy {
+                mass: ColliderMass::MassKg(0.),
+                ..Default::default()
+            })
+            .unwrap();
+        let valid = RigidBodyDescription::new(
+            BodyKind::DynamicFromColliders,
+            vec![
+                zero.clone(),
+                explicit_zero.clone(),
+                collider,
+                zero,
+                explicit_zero,
+            ],
+        )
+        .unwrap();
+        let cooked = CookedRigidBody::new(valid).unwrap();
+        assert_eq!(
+            cooked.aggregate_mass_properties().unwrap().mass(),
+            CookedRigidBody::new(source)
+                .unwrap()
+                .aggregate_mass_properties()
+                .unwrap()
+                .mass()
+        );
+    }
+
+    #[test]
+    fn native_helpers_preserve_source_rotation_bits_and_mass_mode() {
+        use rm_simulator_engine::model::{ColliderMass, ColliderPolicy};
+        let p = Pose {
+            translation_m: [0.1, 0.2, 0.3],
+            rotation_wxyz: [1. + f64::EPSILON, 0., 0., 0.],
+        };
+        let mut source = aggregate([1.; 3], ColliderMass::MassKg(2.));
+        let zero = ColliderDescription::new(
+            ShapeDescription::Ball { radius_m: 0.1 },
+            p,
+            ContactMaterial {
+                friction: 0.,
+                restitution: 0.,
+                memberships: 1,
+                filter: 2,
+            },
+        )
+        .unwrap()
+        .with_policy(ColliderPolicy {
+            mass: ColliderMass::MassKg(0.),
+            ..Default::default()
+        })
+        .unwrap();
+        source = RigidBodyDescription::new(
+            BodyKind::DynamicFromColliders,
+            vec![source.colliders()[0].clone(), zero],
+        )
+        .unwrap();
+        let cooked = CookedRigidBody::new(source).unwrap();
+        let builders: Vec<_> = cooked.collider_builders().collect();
+        assert_eq!(
+            builders[1].position.rotation.w.to_bits(),
+            p.rotation_wxyz[0].to_bits()
+        );
+        assert!(matches!(
+            builders[0].mass_properties,
+            rapier3d_f64::prelude::ColliderMassProps::Mass(2.)
+        ));
+        assert!(matches!(
+            builders[1].mass_properties,
+            rapier3d_f64::prelude::ColliderMassProps::Mass(0.)
+        ));
+        // The builder alone deliberately retains native deferred COM timing.
+        assert_eq!(cooked.body_builder().build().mass(), 0.);
+    }
 
     fn body(points: Vec<[f64; 3]>) -> RigidBodyDescription {
         RigidBodyDescription::new(

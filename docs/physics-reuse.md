@@ -177,6 +177,15 @@ semantics, backend rejection, shared resources and parity against the existing
 chassis deck/bumper shapes. Dynamic hulls retain caller-supplied inertia, and
 captures/debug triangle expansion include their native boundary geometry.
 
+`BodyPolicy` describes gravity scale, world-axis constraints, damping, sleeping
+and CCD. Existing defaults remain unchanged. `ColliderPolicy` adds explicit
+coefficient combination and optional mass/density contributions. These are
+accepted only with `BodyKind::DynamicFromColliders`, which requests backend
+shape aggregation; explicit `BodyKind::Dynamic(Inertial)` keeps zero-mass
+colliders. Neither mode imports CAD density or silently estimates real mass.
+The chassis adapter now uses these same source/cooked policies while preserving
+its native insertion order and deferred mass refresh.
+
 ## Concrete physical runtime
 
 `physics::runtime::WorldPhysics` owns one interacting Rapier scene. Root and

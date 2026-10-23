@@ -13,6 +13,7 @@ use rapier3d_f64::prelude::*;
 
 mod construction;
 mod dynamics;
+mod preparation;
 mod prescribed;
 
 /// Low robot contact rebound. Assumed, not a measured material property.
@@ -371,3 +372,6 @@ fn balance_lqr_gains(config: &ChassisConfig) -> [f64; 2] {
     let kd = (2.0 * inertia * kp + 60.0 / 0.01).sqrt();
     [kp, kd]
 }
+
+#[cfg(test)]
+mod preparation_tests;

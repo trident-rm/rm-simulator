@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Validated source collider and rigid-body descriptions; no runtime handles.
-use super::{ConvexHull, TriangleMesh};
+use super::{BodyPolicy, ColliderPolicy, ConvexHull, TriangleMesh};
 use crate::Pose;
 use std::sync::Arc;
 
@@ -49,6 +49,7 @@ pub struct ColliderDescription {
     shape: ShapeDescription,
     pose: Pose,
     material: ContactMaterial,
+    policy: ColliderPolicy,
 }
 impl ColliderDescription {
     /// Validate geometry, a finite unit-quaternion mounting pose and contact data.
@@ -82,7 +83,30 @@ impl ColliderDescription {
             shape,
             pose,
             material,
+            policy: ColliderPolicy::default(),
         })
+    }
+    /// Attach an explicit validated mass/contact policy, retaining source geometry.
+    /// Zero-mass auxiliaries and native shape mass aggregation are opt-in.
+    ///
+    /// ```
+    /// use rm_simulator_engine::{Pose, model::{ColliderDescription, ColliderMass,
+    ///     ColliderPolicy, ContactMaterial, ShapeDescription}};
+    /// let collider = ColliderDescription::new(ShapeDescription::Ball { radius_m: 0.1 },
+    ///     Pose::default(), ContactMaterial { friction: 0.4, restitution: 0.,
+    ///         memberships: u32::MAX, filter: u32::MAX })?
+    ///     .with_policy(ColliderPolicy { mass: ColliderMass::MassKg(2.), ..Default::default() })?;
+    /// assert_eq!(collider.policy().mass, ColliderMass::MassKg(2.));
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn with_policy(mut self, policy: ColliderPolicy) -> Result<Self, &'static str> {
+        policy.mass.validate()?;
+        self.policy = policy;
+        Ok(self)
+    }
+    /// Explicit mass and contact combination settings.
+    pub fn policy(&self) -> ColliderPolicy {
+        self.policy
     }
     /// Original immutable local geometry.
     pub fn shape(&self) -> &ShapeDescription {
@@ -150,28 +174,32 @@ impl Inertial {
     }
 }
 
-/// Rigid-body integration mode. Dynamic bodies require explicit inertial data.
+/// Rigid-body integration mode and explicit choice of mass authority.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BodyKind {
     /// Immovable rigid body.
     Fixed,
     /// Force-driven rigid body with explicitly supplied mass and inertia.
     Dynamic(Inertial),
+    /// Force-driven body whose mass/COM/inertia aggregate the explicitly selected
+    /// collider masses/densities, in source order, using the backend shape laws.
+    DynamicFromColliders,
     /// Prescribed endpoint motion; reactions do not alter its trajectory.
     Kinematic,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct BodyData {
     kind: BodyKind,
     colliders: Vec<ColliderDescription>,
+    policy: BodyPolicy,
 }
 
 /// Immutable physical body source. Clones share the complete description.
 /// Initial world pose/velocity and runtime identity are supplied at installation.
 /// Dynamic bodies support primitives and explicit convex hulls with mandatory
-/// caller-supplied inertial data; dynamic triangle meshes are explicitly rejected.
-/// Geometry never synthesizes mass or inertia.
+/// caller-selected explicit inertia or collider aggregation; dynamic triangle
+/// meshes are explicitly rejected. Collider mass is zero unless opted into.
 ///
 /// ```
 /// use rm_simulator_engine::model::{BodyKind, RigidBodyDescription};
@@ -183,19 +211,50 @@ struct BodyData {
 pub struct RigidBodyDescription(Arc<BodyData>);
 impl RigidBodyDescription {
     /// Bind validated local colliders to a body kind. Collider-free anchors are
-    /// permitted. Dynamic convex hulls require explicit inertial data through
-    /// [`BodyKind::Dynamic`]; dynamic triangle surfaces remain unsupported.
+    /// permitted. Dynamic triangle surfaces remain unsupported. Explicit inertia
+    /// and collider-derived mass are exclusive: only [`BodyKind::DynamicFromColliders`]
+    /// accepts positive collider mass and requires at least one contribution.
     pub fn new(kind: BodyKind, colliders: Vec<ColliderDescription>) -> Result<Self, &'static str> {
-        if matches!(kind, BodyKind::Dynamic(_))
+        if matches!(kind, BodyKind::Dynamic(_) | BodyKind::DynamicFromColliders)
             && colliders
                 .iter()
                 .any(|c| matches!(c.shape(), ShapeDescription::TriangleMesh(_)))
         {
             return Err("dynamic triangle surfaces are unsupported");
         }
-        Ok(Self(Arc::new(BodyData { kind, colliders })))
+        let contributes = colliders.iter().any(|c| c.policy().mass.contributes());
+        if matches!(kind, BodyKind::DynamicFromColliders) && !contributes {
+            return Err("collider-derived dynamic body requires a positive mass contribution");
+        }
+        if !matches!(kind, BodyKind::DynamicFromColliders) && contributes {
+            return Err("collider mass requires explicit collider-derived dynamic body mode");
+        }
+        Ok(Self(Arc::new(BodyData {
+            kind,
+            colliders,
+            policy: BodyPolicy::default(),
+        })))
     }
-    /// Integration mode and explicit dynamic inertial data.
+    /// Attach validated integration settings without changing kind or colliders.
+    /// Clones retain their original immutable description.
+    ///
+    /// ```
+    /// use rm_simulator_engine::model::{BodyKind, BodyPolicy, RigidBodyDescription};
+    /// let body = RigidBodyDescription::new(BodyKind::Fixed, vec![])?
+    ///     .with_policy(BodyPolicy { ccd_enabled: true, ..Default::default() })?;
+    /// assert!(body.policy().ccd_enabled);
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn with_policy(mut self, policy: BodyPolicy) -> Result<Self, &'static str> {
+        policy.validate()?;
+        Arc::make_mut(&mut self.0).policy = policy;
+        Ok(self)
+    }
+    /// Validated integration settings; independent of runtime motion state.
+    pub fn policy(&self) -> BodyPolicy {
+        self.0.policy
+    }
+    /// Integration mode and explicit dynamic mass authority.
     pub fn kind(&self) -> BodyKind {
         self.0.kind
     }
@@ -258,6 +317,83 @@ fn validate_pose(pose: Pose) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn policies_are_opt_in_validated_and_clones_remain_immutable() {
+        use super::super::{BodyPolicy, ColliderMass, ColliderPolicy};
+        let collider = ColliderDescription::new(
+            ShapeDescription::Ball { radius_m: 1. },
+            Pose::default(),
+            material(),
+        )
+        .unwrap();
+        assert_eq!(collider.policy(), ColliderPolicy::default());
+        for mass in [
+            ColliderMass::MassKg(f64::NAN),
+            ColliderMass::MassKg(-1.),
+            ColliderMass::DensityKgM3(f64::INFINITY),
+        ] {
+            assert!(
+                collider
+                    .clone()
+                    .with_policy(ColliderPolicy {
+                        mass,
+                        ..Default::default()
+                    })
+                    .is_err()
+            );
+        }
+        let zero = collider
+            .clone()
+            .with_policy(ColliderPolicy {
+                mass: ColliderMass::MassKg(0.),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(zero.policy().mass, ColliderMass::MassKg(0.));
+        assert!(RigidBodyDescription::new(BodyKind::DynamicFromColliders, vec![zero]).is_err());
+        let massive = collider
+            .with_policy(ColliderPolicy {
+                mass: ColliderMass::MassKg(2.),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(
+            RigidBodyDescription::new(
+                BodyKind::Dynamic(Inertial::new(1., [1.; 3], Pose::default()).unwrap()),
+                vec![massive.clone()]
+            )
+            .is_err()
+        );
+        let body =
+            RigidBodyDescription::new(BodyKind::DynamicFromColliders, vec![massive]).unwrap();
+        for p in [
+            BodyPolicy {
+                gravity_scale: f64::NAN,
+                ..Default::default()
+            },
+            BodyPolicy {
+                linear_damping: -1.,
+                ..Default::default()
+            },
+            BodyPolicy {
+                angular_damping: f64::INFINITY,
+                ..Default::default()
+            },
+        ] {
+            assert!(body.clone().with_policy(p).is_err());
+        }
+        let changed = body
+            .clone()
+            .with_policy(BodyPolicy {
+                ccd_enabled: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(!body.policy().ccd_enabled);
+        assert!(changed.policy().ccd_enabled);
+        assert_eq!(body.policy(), BodyPolicy::default());
+    }
+
     fn material() -> ContactMaterial {
         ContactMaterial {
             friction: 0.4,
@@ -335,6 +471,10 @@ mod tests {
         .unwrap();
         let dynamic = BodyKind::Dynamic(Inertial::new(1., [1.; 3], Pose::at([0.; 3])).unwrap());
         assert!(RigidBodyDescription::new(dynamic, vec![collider.clone()]).is_err());
+        assert!(
+            RigidBodyDescription::new(BodyKind::DynamicFromColliders, vec![collider.clone()])
+                .is_err()
+        );
         let fixed = RigidBodyDescription::new(BodyKind::Fixed, vec![collider.clone()]).unwrap();
         let shared = fixed.clone();
         assert_eq!(fixed.colliders().as_ptr(), shared.colliders().as_ptr());

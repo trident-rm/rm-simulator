@@ -6,6 +6,7 @@ mod assembly;
 mod body;
 mod convex;
 mod joint;
+mod policy;
 pub use assembly::{
     AssemblyDescription, AssemblyJoint, AssemblyJointId, AssemblyLink, AssemblyLinkId,
 };
@@ -15,6 +16,7 @@ pub use body::{
 };
 pub use convex::ConvexHull;
 pub use joint::{JointDescription, JointKind, JointLimits, JointMotor, JointState};
+pub use policy::{BodyPolicy, CoefficientCombineRule, ColliderMass, ColliderPolicy};
 
 #[derive(Clone, Debug, PartialEq)]
 struct MeshData {
