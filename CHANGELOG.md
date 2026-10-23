@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Add a guided wheel-contact fixture using the source-derived suspension,
+  a dynamic sprung load and driven wheel in the shared physics scene. Validate
+  small-ramp passage against flat/zero-friction controls, and publish explicit
+  assumption, contact and pose diagnostics without replacing game wheel physics.
+
 - Add an isolated, gravity-loaded EGA-derived suspension bench with four-bar and
   damper closure joints, provisional mass/stroke/spring/damping choices, CSV truth
   traces and numerical closure diagnostics. Allow a bounded standalone solver

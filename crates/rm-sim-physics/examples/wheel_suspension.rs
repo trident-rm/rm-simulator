@@ -6,8 +6,9 @@ use glam::{DMat3, DQuat, DVec3};
 use rm_sim_engine::{
     Pose,
     model::{
-        BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, JointDescription,
-        JointKind, JointLimits, JointMotor, RigidBodyDescription, ShapeDescription,
+        BodyKind, BodyPolicy, BodyState, ColliderDescription, ContactMaterial, Inertial,
+        JointDescription, JointKind, JointLimits, JointMotor, RigidBodyDescription,
+        ShapeDescription,
     },
 };
 use rm_sim_physics::{
@@ -110,6 +111,7 @@ fn body(
     mass: Option<f64>,
     half: [f64; 3],
     principal: Option<[f64; 3]>,
+    guided: bool,
 ) -> Result<CookedRigidBody, &'static str> {
     let kind = if let Some(m) = mass {
         let [x, y, z] = half;
@@ -123,7 +125,7 @@ fn body(
     } else {
         BodyKind::Fixed
     };
-    CookedRigidBody::new(RigidBodyDescription::new(
+    let source = RigidBodyDescription::new(
         kind,
         vec![ColliderDescription::new(
             ShapeDescription::Cuboid {
@@ -137,7 +139,18 @@ fn body(
                 filter: 0,
             },
         )?],
-    )?)
+    )?;
+    let source = if guided {
+        source.with_policy(BodyPolicy {
+            enabled_translations: [true, false, true],
+            enabled_rotations: [false; 3],
+            can_sleep: false,
+            ..Default::default()
+        })?
+    } else {
+        source
+    };
+    CookedRigidBody::new(source)
 }
 
 /// Actual runtime truth sampled after a completed explicit tick.
@@ -151,7 +164,7 @@ pub struct Sample {
     pub speed_m_s: f64,
     /// Moving carrier COM height, metres.
     pub height_m: f64,
-    /// Carrier rotation magnitude, radians; an ideal parallelogram preserves it.
+    /// Carrier rotation relative to the frame, radians; a parallelogram preserves it.
     pub carrier_tilt_rad: f64,
     /// Largest revolute anchor gap, metres, including both loop closures.
     pub closure_error_m: f64,
@@ -164,8 +177,9 @@ pub struct Sample {
 }
 
 /// Six-body, seven-joint bench. Both rockers and the damper loop are enforced by
-/// runtime joints; no body pose is prescribed after installation. Collisions are
-/// disabled, gravity is enabled, and the fixed frame represents a test stand.
+/// runtime joints; no body pose is prescribed after installation. Linkage
+/// collisions are disabled and gravity is enabled. The default frame is fixed;
+/// [`Self::guided_mount`] optionally installs a guided dynamic frame.
 pub struct Fixture {
     /// Sole native world, exposed for explicit diagnostics and stale-token tests.
     pub runtime: PhysicalRuntime,
@@ -181,6 +195,8 @@ pub struct Fixture {
     barrel: BodyBinding,
     rod: BodyBinding,
     bodies: [BodyBinding; 6],
+    placement: Pose,
+    sprung_mass_kg: Option<f64>,
 }
 impl Fixture {
     /// Prepare and install a closed loop at one explicit immutable rate.
@@ -192,6 +208,36 @@ impl Fixture {
         parameters: Parameters,
         duration: StepDuration,
         iterations: usize,
+    ) -> Result<Self, &'static str> {
+        Self::install(parameters, duration, iterations, Pose::default(), None)
+    }
+    /// Install the same linkage on a dynamic frame guided along world X/Z.
+    /// The guide locks lateral translation and all frame rotation; vertical
+    /// position remains dynamic. Mass and installation orientation are explicit.
+    pub fn guided_mount(
+        parameters: Parameters,
+        duration: StepDuration,
+        iterations: usize,
+        placement: Pose,
+        sprung_mass_kg: f64,
+    ) -> Result<Self, &'static str> {
+        if !sprung_mass_kg.is_finite() || sprung_mass_kg <= 0. {
+            return Err("invalid sprung mass");
+        }
+        Self::install(
+            parameters,
+            duration,
+            iterations,
+            placement,
+            Some(sprung_mass_kg),
+        )
+    }
+    fn install(
+        parameters: Parameters,
+        duration: StepDuration,
+        iterations: usize,
+        placement: Pose,
+        sprung_mass_kg: Option<f64>,
     ) -> Result<Self, &'static str> {
         parameters.validate()?;
         let mut runtime = PhysicalRuntime::with_solver_iterations(duration, iterations)?;
@@ -214,10 +260,16 @@ impl Fixture {
             pose(s, dq),
             pose(f, dq),
         ];
+        let poses = poses.map(|p| {
+            pose(
+                point(placement, DVec3::from_array(p.translation_m)),
+                rotation(placement) * rotation(p),
+            )
+        });
         // 44 g is the original assembly declaration. The 30/14 g partition and
-        // uniform-box inertias are fixture assumptions; no root CAD tensor used.
+        // non-rocker box inertias are fixture assumptions; no root CAD tensor used.
         let masses = [
-            None,
+            sprung_mass_kg,
             Some(ARM_MASS_KG),
             Some(ARM_MASS_KG),
             Some(parameters.load_kg),
@@ -240,12 +292,13 @@ impl Fixture {
                     masses[i],
                     half[i],
                     (i == 1 || i == 2).then_some(ARM_INERTIA_KG_M2),
+                    i == 0 && sprung_mass_kg.is_some(),
                 )?,
                 BodyState::at(poses[i]),
             )?);
         }
         let mut hinges = Vec::new();
-        let hq = DQuat::from_rotation_arc(DVec3::X, DVec3::Y);
+        let hq = rotation(placement) * DQuat::from_rotation_arc(DVec3::X, DVec3::Y);
         for (index, (a, b, anchor)) in [
             (0, 1, ORIGIN),
             (1, 3, ORIGIN + arm),
@@ -257,6 +310,7 @@ impl Fixture {
         .into_iter()
         .enumerate()
         {
+            let anchor = point(placement, anchor);
             let desc = JointDescription::new(
                 JointKind::Revolute,
                 frame(poses[a], anchor, hq),
@@ -304,6 +358,8 @@ impl Fixture {
             rockers: [installed[1], installed[2]],
             barrel: installed[4],
             rod: installed[5],
+            placement,
+            sprung_mass_kg,
             bodies: installed
                 .as_slice()
                 .try_into()
@@ -346,10 +402,12 @@ impl Fixture {
     }
     /// Reconstruct the same scenario; all old bindings become stale.
     pub fn reset(&mut self) -> Result<(), &'static str> {
-        *self = Self::with_solver_iterations(
+        *self = Self::install(
             self.parameters,
             self.duration,
             self.runtime.solver_iterations(),
+            self.placement,
+            self.sprung_mass_kg,
         )?;
         Ok(())
     }
@@ -371,6 +429,7 @@ impl Fixture {
         }
         let c = DVec3::from_array(carrier.translation_m);
         let q = rotation(carrier);
+        let base = self.runtime.body_state(self.bodies[0])?.pose;
         let r0 = self.runtime.body_state(self.rockers[0])?.pose;
         let r1 = self.runtime.body_state(self.rockers[1])?.pose;
         let a = point(r0, DVec3::new(-0.0125, 0., 0.));
@@ -386,13 +445,13 @@ impl Fixture {
             length_m: state.position,
             speed_m_s: state.velocity,
             height_m: c.z,
-            carrier_tilt_rad: q.angle_between(DQuat::IDENTITY),
+            carrier_tilt_rad: q.angle_between(rotation(base)),
             closure_error_m: gap,
             slider_error_m: (s.distance(f) - state.position).abs(),
             body_poses,
             points_m: [
-                ORIGIN.to_array(),
-                (ORIGIN + DVec3::from_array(SECOND)).to_array(),
+                point(base, DVec3::ZERO).to_array(),
+                point(base, DVec3::from_array(SECOND)).to_array(),
                 a.to_array(),
                 b.to_array(),
                 s.to_array(),

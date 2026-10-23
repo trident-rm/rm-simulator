@@ -312,3 +312,7 @@ coil, bearings, the rest of the wheel/robot and the explicitly unverified intern
 shaft/barrel interface. It is finite pose sampling, not continuous swept-volume
 clearance certification. The initial unsplit intersection report is retained
 alongside the corrected report instead of hiding the grouping error.
+
+The next [guided wheel-contact fixture](wheel-contact.md) adds a dynamic sprung
+frame, a driven rolling envelope and generated terrain in the same runtime,
+without changing playable robot physics.

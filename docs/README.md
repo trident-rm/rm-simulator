@@ -70,3 +70,5 @@ Git history.
 - [Tunnel RFID calibration](tunnel-rfid-calibration.md): CAD measurements, antenna approximations and live reward checks.
 
 - [Suspension recovery evidence](suspension-recovery.md): EGA native mates, linkage geometry and mass/force-law gaps.
+
+- [Guided wheel contact](wheel-contact.md): loaded source-derived linkage, driven tyre and a small-obstacle control experiment.

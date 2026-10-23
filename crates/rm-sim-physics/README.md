@@ -245,3 +245,8 @@ recovered EGA rocker/mount dimensions and explicitly provisional mass, stroke an
 spring/damping choices. It emits actual solved poses and closure residuals to CSV;
 see [suspension recovery](../../docs/suspension-recovery.md#provisional-isolated-physical-fixture).
 It does not replace the game's ray-wheel model or certify native CAD mates.
+
+The `wheel_contact` example extends that linkage with a guided dynamic frame,
+a driven wheel and floor/ramp contacts in the same runtime. It compares loading,
+traction and obstacle response against flat and zero-friction controls; see
+[guided wheel contact](../../docs/wheel-contact.md) for assumptions and commands.
