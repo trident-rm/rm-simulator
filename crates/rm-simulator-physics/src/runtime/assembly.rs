@@ -101,7 +101,7 @@ pub(crate) fn validate_cooked(model: &CookedAssembly) -> Result<(), &'static str
     stage(model, Pose::default()).map(|_| ())
 }
 
-impl WorldPhysics {
+impl PhysicalRuntime {
     /// Install all bodies/joints under explicit keys at an assembly-to-world pose.
     /// Source poses are in one common assembly frame; placement rotates COM and
     /// angular velocities without adding platform velocity. All recoverable errors

@@ -31,7 +31,7 @@ fn contact_storage_preserves_order_latches_and_recontact() {
             let id = world
                 .add_chassis(Team::Red, config, Pose::at([0., y, height]))
                 .unwrap();
-            let armor = world.chassis[id as usize].armor_pose(&world.world, 1);
+            let armor = world.chassis[id as usize].armor_pose(&world.physical.world, 1);
             world.add_static_box(Pose::at(armor.translation.to_array()), [0.04; 3]);
             world
                 .command_chassis(
@@ -109,6 +109,7 @@ fn contact_storage_preserves_order_latches_and_recontact() {
                 .iter()
                 .flat_map(|&armor| {
                     retained
+                        .physical
                         .world
                         .contact_pairs_with(armor)
                         .filter_map(move |pair| {

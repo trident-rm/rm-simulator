@@ -42,6 +42,7 @@ use crate::{
     control::{DriveControl, WheelTorques},
 };
 pub(crate) use backend::Chassis;
+pub use backend::PreparedChassis;
 pub use model::{ChassisConfig, ChassisDynamics, OmniFrame, Tether};
 use model::{WheelGeometry, wheel_geometry, wheel_geometry_at};
 use rapier3d_f64::prelude::{PhysicsWorld, Pose3, Rotation, Vector};

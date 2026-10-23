@@ -2,9 +2,10 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Exact same-platform trajectory probe for the six wheel-adapter reference cases.
 //! Compare output before/after construction changes; hashes are not portable promises.
+//! Pass `--prepared` to exercise reusable prepared installation with identical inputs.
 use rm_simulator_physics::{
     Pose, TargetFrames, Team, WorldPhysics,
-    chassis::{ChassisCommand, ChassisConfig},
+    chassis::{ChassisCommand, ChassisConfig, PreparedChassis},
     control::WheelTorques,
     tick_ns,
 };
@@ -14,6 +15,7 @@ use std::{
 };
 
 fn main() -> Result<(), &'static str> {
+    let use_prepared = std::env::args().any(|arg| arg == "--prepared");
     for case in 0..6 {
         let mut config = match case {
             1 => ChassisConfig::folding_hero(),
@@ -29,7 +31,13 @@ fn main() -> Result<(), &'static str> {
             config.rest_height_m()
         };
         let mut world = WorldPhysics::new(&[], 0.);
-        let id = world.add_chassis(Team::Red, config, Pose::at([0., 0., height]))?;
+        let spawn = Pose::at([0., 0., height]);
+        let id = if use_prepared {
+            let prepared = PreparedChassis::new(config)?;
+            world.add_prepared_chassis(Team::Red, &prepared, spawn)?
+        } else {
+            world.add_chassis(Team::Red, config, spawn)?
+        };
         world.command_chassis(
             id,
             ChassisCommand {

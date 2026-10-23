@@ -112,7 +112,7 @@ impl Bodies {
     }
 }
 
-impl WorldPhysics {
+impl PhysicalRuntime {
     /// Install a cooked body under an explicit unique key and initial world state.
     /// Validation/duplicate checks precede mutation. Dynamic mass/COM/inertia come
     /// only from the source: explicit inertia or opt-in collider aggregation. Fixed and
@@ -357,6 +357,7 @@ pub(super) fn prepare_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TargetFrames;
     use rm_simulator_engine::model::{
         ColliderDescription, ContactMaterial, Inertial, ShapeDescription,
     };
@@ -418,8 +419,8 @@ mod tests {
             angular_velocity_rad_s: [0., 0., 0.5],
         };
         let binding = generic.install_body(BodyKey(1), &model, state).unwrap();
-        let a = generic.bound_bodies.handle(binding).unwrap();
-        let b = native.world.insert_body(
+        let a = generic.physical.bound_bodies.handle(binding).unwrap();
+        let b = native.physical.world.insert_body(
             RigidBodyBuilder::dynamic()
                 .gravity_scale(0.)
                 .enabled_translations(true, true, false)
@@ -437,7 +438,7 @@ mod tests {
             (1., [0.1, 0., 0.5]),
             (0., [0., 0., -0.5]),
         ] {
-            native.world.insert_collider(
+            native.physical.world.insert_collider(
                 ColliderBuilder::cuboid(0.2, 0.2, 0.2)
                     .translation(vector(center))
                     .mass(mass)
@@ -448,45 +449,50 @@ mod tests {
                 Some(b),
             );
         }
-        native.world.bodies[b].recompute_mass_properties_from_colliders(&native.world.colliders);
+        native.physical.world.bodies[b]
+            .recompute_mass_properties_from_colliders(&native.physical.world.colliders);
         assert_eq!(
-            generic.world.bodies[a].mass_properties().local_mprops,
-            native.world.bodies[b].mass_properties().local_mprops
+            generic.physical.world.bodies[a]
+                .mass_properties()
+                .local_mprops,
+            native.physical.world.bodies[b]
+                .mass_properties()
+                .local_mprops
         );
-        assert_eq!(generic.world.bodies[a].mass(), 4.);
+        assert_eq!(generic.physical.world.bodies[a].mass(), 4.);
         assert_eq!(
-            generic.world.bodies[a].locked_axes(),
-            native.world.bodies[b].locked_axes()
+            generic.physical.world.bodies[a].locked_axes(),
+            native.physical.world.bodies[b].locked_axes()
         );
         assert_eq!(
-            generic.world.bodies[a].is_ccd_enabled(),
-            native.world.bodies[b].is_ccd_enabled()
+            generic.physical.world.bodies[a].is_ccd_enabled(),
+            native.physical.world.bodies[b].is_ccd_enabled()
         );
-        for (&ca, &cb) in generic.world.bodies[a]
+        for (&ca, &cb) in generic.physical.world.bodies[a]
             .colliders()
             .iter()
-            .zip(native.world.bodies[b].colliders())
+            .zip(native.physical.world.bodies[b].colliders())
         {
-            let ca = &generic.world.colliders[ca];
-            let cb = &native.world.colliders[cb];
+            let ca = &generic.physical.world.colliders[ca];
+            let cb = &native.physical.world.colliders[cb];
             assert_eq!(ca.mass_properties(), cb.mass_properties());
             assert_eq!(ca.friction_combine_rule(), cb.friction_combine_rule());
             assert_eq!(ca.restitution_combine_rule(), cb.restitution_combine_rule());
         }
         for _ in 0..128 {
-            generic.world.step();
-            native.world.step();
+            generic.physical.world.step();
+            native.physical.world.step();
             assert_eq!(
-                generic.world.bodies[a].position(),
-                native.world.bodies[b].position()
+                generic.physical.world.bodies[a].position(),
+                native.physical.world.bodies[b].position()
             );
             assert_eq!(
-                generic.world.bodies[a].linvel(),
-                native.world.bodies[b].linvel()
+                generic.physical.world.bodies[a].linvel(),
+                native.physical.world.bodies[b].linvel()
             );
             assert_eq!(
-                generic.world.bodies[a].angvel(),
-                native.world.bodies[b].angvel()
+                generic.physical.world.bodies[a].angvel(),
+                native.physical.world.bodies[b].angvel()
             );
         }
     }
@@ -518,8 +524,8 @@ mod tests {
         let live = generic
             .install_body(BodyKey(1), &model, BodyState::at(initial))
             .unwrap();
-        let a = generic.bound_bodies.handle(live).unwrap();
-        let b = native.world.insert_body(
+        let a = generic.physical.bound_bodies.handle(live).unwrap();
+        let b = native.physical.world.insert_body(
             RigidBodyBuilder::dynamic()
                 .additional_mass_properties(MassProperties::with_principal_inertia_frame(
                     vector([0.1, 0., 0.2]),
@@ -529,33 +535,34 @@ mod tests {
                 ))
                 .pose(pose(initial)),
         );
-        native.world.insert_collider(
+        native.physical.world.insert_collider(
             ColliderBuilder::ball(0.1)
                 .density(0.)
                 .friction(0.4)
                 .restitution(0.2),
             Some(b),
         );
-        native.world.bodies[b].recompute_mass_properties_from_colliders(&native.world.colliders);
+        native.physical.world.bodies[b]
+            .recompute_mass_properties_from_colliders(&native.physical.world.colliders);
         for _ in 0..128 {
             assert_eq!(
-                generic.world.bodies[a].position(),
-                native.world.bodies[b].position()
+                generic.physical.world.bodies[a].position(),
+                native.physical.world.bodies[b].position()
             );
             assert_eq!(
-                generic.world.bodies[a].linvel(),
-                native.world.bodies[b].linvel()
+                generic.physical.world.bodies[a].linvel(),
+                native.physical.world.bodies[b].linvel()
             );
             assert_eq!(
-                generic.world.bodies[a].angvel(),
-                native.world.bodies[b].angvel()
+                generic.physical.world.bodies[a].angvel(),
+                native.physical.world.bodies[b].angvel()
             );
             assert_eq!(
-                generic.world.bodies[a].is_sleeping(),
-                native.world.bodies[b].is_sleeping()
+                generic.physical.world.bodies[a].is_sleeping(),
+                native.physical.world.bodies[b].is_sleeping()
             );
-            generic.world.step();
-            native.world.step();
+            generic.physical.world.step();
+            native.physical.world.step();
         }
     }
 
@@ -564,9 +571,9 @@ mod tests {
         let model = CookedRigidBody::new(aggregate_source()).unwrap();
         let mut world = WorldPhysics::new(&[], -10.);
         let before = (
-            world.world.bodies.len(),
-            world.world.colliders.len(),
-            world.bound_bodies.next_generation,
+            world.physical.world.bodies.len(),
+            world.physical.world.colliders.len(),
+            world.physical.bound_bodies.next_generation,
         );
         assert!(
             world
@@ -582,9 +589,9 @@ mod tests {
         );
         assert_eq!(
             (
-                world.world.bodies.len(),
-                world.world.colliders.len(),
-                world.bound_bodies.next_generation
+                world.physical.world.bodies.len(),
+                world.physical.world.colliders.len(),
+                world.physical.bound_bodies.next_generation
             ),
             before
         );
@@ -599,7 +606,7 @@ mod tests {
         );
         assert_eq!(world.body_state(live).unwrap(), state);
         assert_eq!(
-            world.bound_bodies.entry(live).unwrap().force_n,
+            world.physical.bound_bodies.entry(live).unwrap().force_n,
             Vector::ZERO
         );
         assert_eq!(live.generation, 0);
@@ -649,29 +656,38 @@ mod tests {
             joints: vec![],
         };
         let mut world = WorldPhysics::new(&[], 0.);
-        let before = (world.world.bodies.len(), world.world.colliders.len());
+        let before = (
+            world.physical.world.bodies.len(),
+            world.physical.world.colliders.len(),
+        );
         assert!(
             world
                 .install_assembly(&prepared, Pose::at([f64::NAN, 0., 0.]), &keys)
                 .is_err()
         );
-        assert_eq!(world.bound_bodies.next_generation, 0);
+        assert_eq!(world.physical.bound_bodies.next_generation, 0);
         assert_eq!(
-            (world.world.bodies.len(), world.world.colliders.len()),
+            (
+                world.physical.world.bodies.len(),
+                world.physical.world.colliders.len()
+            ),
             before
         );
-        world.bound_bodies.next_generation = u64::MAX;
+        world.physical.bound_bodies.next_generation = u64::MAX;
         assert!(
             world
                 .install_assembly(&prepared, Pose::default(), &keys)
                 .is_err()
         );
-        assert_eq!(world.bound_bodies.next_generation, u64::MAX);
+        assert_eq!(world.physical.bound_bodies.next_generation, u64::MAX);
         assert_eq!(
-            (world.world.bodies.len(), world.world.colliders.len()),
+            (
+                world.physical.world.bodies.len(),
+                world.physical.world.colliders.len()
+            ),
             before
         );
-        world.bound_bodies.next_generation = 0;
+        world.physical.bound_bodies.next_generation = 0;
         let live = world
             .install_assembly(&prepared, Pose::default(), &keys)
             .unwrap();
@@ -686,8 +702,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            world.bound_bodies.handle(binding).unwrap(),
-            control.bound_bodies.handle(direct).unwrap()
+            world.physical.bound_bodies.handle(binding).unwrap(),
+            control.physical.bound_bodies.handle(direct).unwrap()
         );
     }
 
@@ -719,8 +735,8 @@ mod tests {
             })
             .collect();
         let shape = |binding| {
-            let handle = world.bound_bodies.handle(binding).unwrap();
-            &world.world.colliders[world.world.bodies[handle].colliders()[0]]
+            let handle = world.physical.bound_bodies.handle(binding).unwrap();
+            &world.physical.world.colliders[world.physical.world.bodies[handle].colliders()[0]]
                 .shared_shape()
                 .0
         };
@@ -763,16 +779,18 @@ mod tests {
         let right_binding = b
             .install_body(BodyKey(7), &model, BodyState::at(Pose::at([0.; 3])))
             .unwrap();
-        let left_handle = a.bound_bodies.entry(left_binding).unwrap().handle;
-        let right_handle = b.bound_bodies.entry(right_binding).unwrap().handle;
-        let ca = &a.world.colliders[a.world.bodies[left_handle].colliders()[0]];
-        let cb = &b.world.colliders[b.world.bodies[right_handle].colliders()[0]];
+        let left_handle = a.physical.bound_bodies.entry(left_binding).unwrap().handle;
+        let right_handle = b.physical.bound_bodies.entry(right_binding).unwrap().handle;
+        let ca = &a.physical.world.colliders[a.physical.world.bodies[left_handle].colliders()[0]];
+        let cb = &b.physical.world.colliders[b.physical.world.bodies[right_handle].colliders()[0]];
         assert!(Arc::ptr_eq(&ca.shared_shape().0, &cb.shared_shape().0));
         assert_eq!(ca.collision_groups().memberships.bits(), 1);
         assert_eq!(ca.collision_groups().filter.bits(), 4);
         a.step(0, &TargetFrames::new(vec![])).unwrap();
-        let m = &a.world.bodies[left_handle].mass_properties().local_mprops;
-        assert_eq!(a.world.bodies[left_handle].mass(), 2.);
+        let m = &a.physical.world.bodies[left_handle]
+            .mass_properties()
+            .local_mprops;
+        assert_eq!(a.physical.world.bodies[left_handle].mass(), 2.);
         assert!((m.local_com - vector(frame.translation_m)).length() < 1e-12);
         assert!((m.inv_principal_inertia - vector([0.5, 1. / 3., 0.25])).length() < 1e-12);
         assert!(

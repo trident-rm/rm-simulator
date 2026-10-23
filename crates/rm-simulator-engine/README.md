@@ -15,8 +15,8 @@ Solver-free core for the incrementally separated robotics simulation engine.
   operation fills concavities; backend cooking owns dimensionality and numerical
   tolerances and may reject degenerate or unrepresentable clouds. No tessellation
   inference, point perturbation or fallback shape is performed. Dynamic convex
-  bodies require explicit inertia; no mass or inertia is synthesized, and dynamic
-  triangle meshes remain rejected. `BodyPolicy` preserves explicit gravity,
+  bodies require an explicit choice of inertia or collider mass aggregation;
+  CAD mass is never inferred, and dynamic triangle meshes remain rejected. `BodyPolicy` preserves explicit gravity,
   axis locks, damping, sleep and CCD choices. `ColliderPolicy` declares mass and
   contact combination; `DynamicFromColliders` opts into native shape aggregation
   using caller-selected mass/density, independently of explicit `Inertial`.
@@ -37,6 +37,10 @@ Solver-free core for the incrementally separated robotics simulation engine.
   checks locked frames and capabilities, including fixed-to-fixed constraints.
 - `contacts`: copied world FLU contact geometry without participants or scoring;
   backend sampling semantics remain explicit in the runtime observation.
+- Model-local `MountTable` records share immutable carrier/mount attachments for
+  sensor and visual pose consumers; live bindings and measurement state stay in
+  physics/adapters. Bounded compound sources retain ordered child transforms as
+  one collider; backend unsupported combinations reject without flattening.
 - `queries`: immutable validated metric rays and capture-local hit records.
 - `control`: held drive modes and validated wheel-axis torque requests.
 - `wheel_model`: scalar suspension, slip, motor/inertia and shared-power laws

@@ -204,7 +204,7 @@ fn state_for_bodies(description: &JointDescription, a: &RigidBody, b: &RigidBody
     }
 }
 
-impl WorldPhysics {
+impl PhysicalRuntime {
     /// Install a described impulse joint between distinct, live bound bodies.
     /// At least one body must be dynamic: Rapier cannot enforce a constraint
     /// between two prescribed/fixed bodies. Initial locked coordinates must agree
@@ -529,18 +529,18 @@ mod tests {
             joints: vec![(AssemblyJointId(1), JointKey(1))],
         };
         let mut world = WorldPhysics::new(&[], 0.);
-        world.bound_joints.next_generation = u64::MAX;
+        world.physical.bound_joints.next_generation = u64::MAX;
         assert!(
             world
                 .install_assembly(&model, Pose::default(), &keys)
                 .is_err()
         );
-        assert_eq!(world.world.bodies.len(), 0);
-        assert_eq!(world.world.colliders.len(), 1);
-        assert_eq!(world.world.impulse_joints.len(), 0);
-        assert_eq!(world.bound_joints.next_generation, u64::MAX);
+        assert_eq!(world.physical.world.bodies.len(), 0);
+        assert_eq!(world.physical.world.colliders.len(), 1);
+        assert_eq!(world.physical.world.impulse_joints.len(), 0);
+        assert_eq!(world.physical.bound_joints.next_generation, u64::MAX);
         assert!(world.body_binding(BodyKey(1)).is_none());
-        world.bound_joints.next_generation = 0;
+        world.physical.bound_joints.next_generation = 0;
         let live = world
             .install_assembly(&model, Pose::default(), &keys)
             .unwrap();

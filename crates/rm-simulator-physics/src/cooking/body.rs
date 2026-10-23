@@ -23,6 +23,12 @@ pub struct CookedRigidBody {
 impl CookedRigidBody {
     /// Cook collider shapes once. Empty surfaces or backend geometry failures
     /// return an error before any world installation. Clones share all buffers.
+    /// Compounds remain single native shapes/colliders. This backend rejects
+    /// composite children (nested compounds or triangle surfaces) without fallback.
+    /// Collider-derived compounds validate each child's native mass properties at
+    /// the selected density before aggregation can hide overflow/underflow. Explicit
+    /// collider mass follows native unit-density aggregation then rescaling; lost
+    /// unit-density information cannot be recovered by choosing a smaller mass.
     ///
     /// ```
     /// use rm_simulator_engine::model::{BodyKind, RigidBodyDescription};
@@ -36,16 +42,7 @@ impl CookedRigidBody {
         let shapes = source
             .colliders()
             .iter()
-            .map(|c| {
-                Ok(match c.shape() {
-                    ShapeDescription::Ball { radius_m } => SharedShape::ball(*radius_m),
-                    ShapeDescription::Cuboid { half_extents_m: h } => {
-                        SharedShape::cuboid(h[0], h[1], h[2])
-                    }
-                    ShapeDescription::TriangleMesh(mesh) => cook_surface(mesh)?,
-                    ShapeDescription::ConvexHull(hull) => cook_convex(hull)?,
-                })
-            })
+            .map(|c| cook_shape(c.shape()))
             .collect::<Result<Vec<_>, &'static str>>()?;
         let mut cooked = Self {
             source,
@@ -73,7 +70,7 @@ impl CookedRigidBody {
                         Vector::from_array(frame.translation_m),
                         inertia.mass_kg(),
                         Vector::from_array(inertia.principal_inertia_kg_m2()),
-                        crate::projectile::pose(frame).rotation,
+                        crate::runtime::math::pose(frame).rotation,
                     ),
                 )
             }
@@ -136,7 +133,14 @@ impl CookedRigidBody {
         // touching a live world. Source frames and shape laws remain unchanged.
         let mut total = MassProperties::default();
         let mut accumulated_mass_kg = 0.;
-        for (description, builder) in self.source.colliders().iter().zip(self.collider_builders()) {
+        for ((description, shape), builder) in self
+            .source
+            .colliders()
+            .iter()
+            .zip(self.shapes())
+            .zip(self.collider_builders())
+        {
+            validate_compound_child_mass(shape, description.policy().mass)?;
             let collider = builder.build();
             let mass = collider.mass_properties().transform_by(collider.position());
             let positive = matches!(description.policy().mass,
@@ -175,6 +179,92 @@ impl CookedRigidBody {
     pub(crate) fn shapes(&self) -> &[SharedShape] {
         &self.shapes
     }
+}
+
+/// Validate before native compound summation can interpret infinite inertia's
+/// zero inverse as zero inertia. This is a preflight only: the installed compound
+/// and its single collider retain the backend's exact mass allocation/arithmetic.
+fn validate_compound_child_mass(
+    shape: &SharedShape,
+    policy: ColliderMass,
+) -> Result<(), &'static str> {
+    let density = match policy {
+        ColliderMass::DensityKgM3(density) if density > 0. => density,
+        ColliderMass::MassKg(mass) if mass > 0. => 1.,
+        _ => return Ok(()),
+    };
+    let Some(compound) = shape.as_compound() else {
+        return Ok(());
+    };
+    let validate = |mass: &MassProperties| {
+        if mass.mass() <= 0.
+            || !mass.mass().is_finite()
+            || !mass.local_com.is_finite()
+            || !mass.inv_mass.is_finite()
+            || !mass.inv_principal_inertia.is_finite()
+            || !mass.principal_inertia().is_finite()
+            || mass.inv_principal_inertia.min_element() <= 0.
+            || !mass.principal_inertia_local_frame.is_finite()
+        {
+            Err("unrepresentable cooked compound child mass properties")
+        } else {
+            Ok(())
+        }
+    };
+    let children = compound
+        .shapes()
+        .iter()
+        .map(|(pose, shape)| {
+            let mass = shape.mass_properties(density).transform_by(pose);
+            validate(&mass)?;
+            Ok(mass)
+        })
+        .collect::<Result<Vec<_>, &'static str>>()?;
+    if let ColliderMass::MassKg(mass) = policy {
+        // Match MassProperties::set_mass's inverse-inertia multiplier exactly.
+        // Do not assign the whole collider mass independently to each leaf, or
+        // recompute leaves at a different density than native unit-density cooking.
+        let scale = mass.recip() * shape.mass_properties(1.).mass();
+        for mut child in children {
+            child.inv_mass *= scale;
+            child.inv_principal_inertia *= scale;
+            validate(&child)?;
+        }
+    }
+    Ok(())
+}
+
+/// Preserve one native shape per source collider, including source child order.
+fn cook_shape(source: &ShapeDescription) -> Result<SharedShape, &'static str> {
+    Ok(match source {
+        ShapeDescription::Ball { radius_m } => SharedShape::ball(*radius_m),
+        ShapeDescription::Cuboid { half_extents_m: h } => SharedShape::cuboid(h[0], h[1], h[2]),
+        ShapeDescription::TriangleMesh(mesh) => cook_surface(mesh)?,
+        ShapeDescription::ConvexHull(hull) => cook_convex(hull)?,
+        ShapeDescription::Compound(compound) => {
+            let children = compound
+                .children()
+                .iter()
+                .map(|(pose, shape)| {
+                    let shape = cook_shape(shape)?;
+                    // Parry panics for composite children (including triangle meshes).
+                    // Reject before native construction; never flatten or split them.
+                    if shape.as_composite_shape().is_some() {
+                        return Err("backend does not support composite children in compounds");
+                    }
+                    let [w, x, y, z] = pose.rotation_wxyz;
+                    Ok((
+                        Pose3::from_parts(
+                            Vector::from_array(pose.translation_m),
+                            Rotation::from_xyzw(x, y, z, w),
+                        ),
+                        shape,
+                    ))
+                })
+                .collect::<Result<Vec<_>, &'static str>>()?;
+            SharedShape::compound(children)
+        }
+    })
 }
 
 fn native_combine(
@@ -266,6 +356,342 @@ mod tests {
         Pose,
         model::{BodyKind, ColliderDescription, ContactMaterial, Inertial},
     };
+
+    fn compound_fixture() -> (ShapeDescription, SharedShape) {
+        use rm_simulator_engine::model::CompoundShape;
+        // Unequal offset, rotated convex leaves expose order, frame and inertia
+        // changes that symmetric primitives or identity mounts would conceal.
+        let points = [
+            vec![[0., 0., 0.], [0.3, 0., 0.], [0., 0.5, 0.], [0., 0., 0.7]],
+            vec![[0., 0., 0.], [0.4, 0., 0.], [0., 0.2, 0.], [0., 0., 0.6]],
+        ];
+        let poses = [
+            Pose {
+                translation_m: [0.2, -0.4, 0.6],
+                rotation_wxyz: [0.5, 0.5, 0.5, 0.5],
+            },
+            Pose {
+                translation_m: [-0.3, 0.8, -0.2],
+                rotation_wxyz: [1. + f64::EPSILON, 0., 0., 0.],
+            },
+        ];
+        let source = CompoundShape::new(
+            poses
+                .into_iter()
+                .zip(&points)
+                .map(|(pose, points)| {
+                    (
+                        pose,
+                        ShapeDescription::ConvexHull(ConvexHull::new(points.clone()).unwrap()),
+                    )
+                })
+                .collect(),
+        )
+        .unwrap();
+        let native = SharedShape::compound(
+            poses
+                .into_iter()
+                .zip(&points)
+                .map(|(pose, points)| {
+                    let [w, x, y, z] = pose.rotation_wxyz;
+                    (
+                        Pose3::from_parts(
+                            Vector::from_array(pose.translation_m),
+                            Rotation::from_xyzw(x, y, z, w),
+                        ),
+                        SharedShape::convex_hull(
+                            &points
+                                .iter()
+                                .copied()
+                                .map(Vector::from_array)
+                                .collect::<Vec<_>>(),
+                        )
+                        .unwrap(),
+                    )
+                })
+                .collect(),
+        );
+        (ShapeDescription::Compound(source), native)
+    }
+
+    fn compound_collider(shape: ShapeDescription) -> ColliderDescription {
+        ColliderDescription::new(
+            shape,
+            Pose {
+                translation_m: [-1., 2., 0.3],
+                rotation_wxyz: [0.5, -0.5, 0.5, 0.5],
+            },
+            ContactMaterial {
+                friction: 0.4,
+                restitution: 0.,
+                memberships: u32::MAX,
+                filter: u32::MAX,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn compound_cooking_matches_native_order_frames_shapes_and_single_collider_mass() {
+        use rm_simulator_engine::model::ColliderPolicy;
+        let (source, native) = compound_fixture();
+        for mass in [ColliderMass::MassKg(3.7), ColliderMass::DensityKgM3(11.)] {
+            let collider = compound_collider(source.clone())
+                .with_policy(ColliderPolicy {
+                    mass,
+                    ..Default::default()
+                })
+                .unwrap();
+            let cooked = CookedRigidBody::new(
+                RigidBodyDescription::new(BodyKind::DynamicFromColliders, vec![collider.clone()])
+                    .unwrap(),
+            )
+            .unwrap();
+            let shared = cooked.clone();
+            assert!(Arc::ptr_eq(&cooked.shapes, &shared.shapes));
+            assert!(Arc::ptr_eq(&cooked.shapes()[0].0, &shared.shapes()[0].0));
+            let actual = cooked.shapes()[0].as_compound().unwrap().shapes();
+            let expected = native.as_compound().unwrap().shapes();
+            assert_eq!(actual.len(), 2);
+            for ((actual_pose, actual_shape), (expected_pose, expected_shape)) in
+                actual.iter().zip(expected)
+            {
+                assert_eq!(actual_pose, expected_pose);
+                assert_eq!(
+                    actual_pose.rotation.w.to_bits(),
+                    expected_pose.rotation.w.to_bits()
+                );
+                let actual_hull = actual_shape.as_convex_polyhedron().unwrap();
+                let expected_hull = expected_shape.as_convex_polyhedron().unwrap();
+                assert_eq!(actual_hull.points(), expected_hull.points());
+                assert_eq!(actual_hull.faces().len(), expected_hull.faces().len());
+                assert_eq!(
+                    actual_shape.mass_properties(1.),
+                    expected_shape.mass_properties(1.)
+                );
+            }
+            let builders: Vec<_> = cooked.collider_builders().collect();
+            assert_eq!(builders.len(), 1);
+            let actual = builders.into_iter().next().unwrap().build();
+            let [w, x, y, z] = collider.pose().rotation_wxyz;
+            let expected = ColliderBuilder::new(native.clone()).position(Pose3::from_parts(
+                Vector::from_array(collider.pose().translation_m),
+                Rotation::from_xyzw(x, y, z, w),
+            ));
+            let expected = match mass {
+                ColliderMass::MassKg(mass) => expected.mass(mass),
+                ColliderMass::DensityKgM3(density) => expected.density(density),
+                _ => unreachable!(),
+            }
+            .build();
+            assert_eq!(actual.mass_properties(), expected.mass_properties());
+            let expected_mass = expected.mass_properties().transform_by(expected.position());
+            assert_eq!(cooked.aggregate_mass_properties(), Some(&expected_mass));
+            // Native insertion refreshes body mass once for this one collider.
+            let mut bodies = rapier3d_f64::prelude::RigidBodySet::new();
+            let mut colliders = rapier3d_f64::prelude::ColliderSet::new();
+            let body = bodies.insert(cooked.body_builder());
+            colliders.insert_with_parent(actual, body, &mut bodies);
+            let native_body = bodies.insert(RigidBodyBuilder::dynamic());
+            colliders.insert_with_parent(expected, native_body, &mut bodies);
+            bodies[body].recompute_mass_properties_from_colliders(&colliders);
+            bodies[native_body].recompute_mass_properties_from_colliders(&colliders);
+            assert_eq!(bodies[body].colliders().len(), 1);
+            assert_eq!(
+                bodies[body].mass_properties(),
+                bodies[native_body].mass_properties()
+            );
+        }
+    }
+
+    fn compound_balls(radii: &[f64], policy: ColliderMass) -> RigidBodyDescription {
+        use rm_simulator_engine::model::{ColliderPolicy, CompoundShape};
+        let shape = ShapeDescription::Compound(
+            CompoundShape::new(
+                radii
+                    .iter()
+                    .map(|radius_m| {
+                        (
+                            Pose::default(),
+                            ShapeDescription::Ball {
+                                radius_m: *radius_m,
+                            },
+                        )
+                    })
+                    .collect(),
+            )
+            .unwrap(),
+        );
+        let collider = compound_collider(shape)
+            .with_policy(ColliderPolicy {
+                mass: policy,
+                ..Default::default()
+            })
+            .unwrap();
+        RigidBodyDescription::new(BodyKind::DynamicFromColliders, vec![collider]).unwrap()
+    }
+
+    #[test]
+    fn compound_child_inertia_overflow_cannot_be_hidden_by_a_small_child() {
+        // Native summation treats the giant ball's zero inverse inertia as zero
+        // inertia, so the small ball can make the final result look valid.
+        let giant = SharedShape::ball(1e100);
+        let giant_mass = giant.mass_properties(1.);
+        assert!(giant_mass.mass().is_finite());
+        assert_eq!(giant_mass.inv_principal_inertia, Vector::ZERO);
+        let native = SharedShape::compound(vec![
+            (Pose3::IDENTITY, giant.clone()),
+            (Pose3::IDENTITY, SharedShape::ball(1.)),
+        ]);
+        assert!(
+            native
+                .mass_properties(1.)
+                .inv_principal_inertia
+                .min_element()
+                > 0.
+        );
+        for radii in [&[1e100, 1.][..], &[1., 1e100][..], &[1e100][..]] {
+            for policy in [
+                ColliderMass::DensityKgM3(1.),
+                ColliderMass::MassKg(1.),
+                ColliderMass::MassKg(1e-100),
+            ] {
+                assert!(
+                    CookedRigidBody::new(compound_balls(radii, policy)).is_err(),
+                    "{radii:?}, {policy:?}"
+                );
+            }
+        }
+        // Standalone rejection remains consistent with compound rejection.
+        let mut source = compound_balls(&[1.], ColliderMass::DensityKgM3(1.));
+        let collider = ColliderDescription::new(
+            ShapeDescription::Ball { radius_m: 1e100 },
+            Pose::default(),
+            source.colliders()[0].material(),
+        )
+        .unwrap()
+        .with_policy(source.colliders()[0].policy())
+        .unwrap();
+        source = RigidBodyDescription::new(BodyKind::DynamicFromColliders, vec![collider]).unwrap();
+        assert!(CookedRigidBody::new(source).is_err());
+    }
+
+    #[test]
+    fn compound_child_validation_uses_native_policy_scaling() {
+        // Unit-density inertia overflows, but direct density cooking remains
+        // representable. Rejecting all unit-density-invalid sources would lose it.
+        for (radii, policy) in [
+            ([1e100, 1.], ColliderMass::DensityKgM3(1e-200)),
+            ([1e50, 1e50], ColliderMass::MassKg(1e-50)),
+        ] {
+            let cooked = CookedRigidBody::new(compound_balls(&radii, policy)).unwrap();
+            let native = ColliderBuilder::new(cooked.shapes()[0].clone())
+                .position(cooked.collider_builders().next().unwrap().position);
+            let native = match policy {
+                ColliderMass::DensityKgM3(density) => native.density(density),
+                ColliderMass::MassKg(mass) => native.mass(mass),
+                _ => unreachable!(),
+            }
+            .build();
+            let expected = native.mass_properties().transform_by(native.position());
+            assert_eq!(cooked.aggregate_mass_properties(), Some(&expected));
+        }
+        // Extreme mass scaling can underflow a tiny child's inverse inertia or
+        // overflow it even when another child leaves a valid-looking aggregate.
+        for (radii, mass) in [([1e-60, 1.], 1e-100), ([1e60, 1.], 1e250)] {
+            assert!(
+                CookedRigidBody::new(compound_balls(&radii, ColliderMass::MassKg(mass))).is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn compound_does_not_infer_mass_for_explicit_inertia_or_massless_shapes() {
+        let (source, _) = compound_fixture();
+        let inertia = Inertial::new(7., [2., 3., 4.], Pose::at([0.1, 0.2, 0.3])).unwrap();
+        let cooked = CookedRigidBody::new(
+            RigidBodyDescription::new(BodyKind::Dynamic(inertia), vec![compound_collider(source)])
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(cooked.aggregate_mass_properties().is_none());
+        let collider = cooked.collider_builders().next().unwrap().build();
+        assert_eq!(collider.mass(), 0.);
+        let expected = MassProperties::with_principal_inertia_frame(
+            Vector::from_array(inertia.frame().translation_m),
+            inertia.mass_kg(),
+            Vector::from_array(inertia.principal_inertia_kg_m2()),
+            crate::projectile::pose(inertia.frame()).rotation,
+        );
+        let mut bodies = rapier3d_f64::prelude::RigidBodySet::new();
+        let mut colliders = rapier3d_f64::prelude::ColliderSet::new();
+        let body = bodies.insert(cooked.body_builder());
+        colliders.insert_with_parent(collider, body, &mut bodies);
+        bodies[body].recompute_mass_properties_from_colliders(&colliders);
+        let actual = &bodies[body].mass_properties().local_mprops;
+        assert_eq!(actual.mass(), expected.mass());
+        assert_eq!(actual.local_com, expected.local_com);
+        // Native aggregation may choose equivalent principal-axis signs.
+        assert_eq!(
+            actual.reconstruct_inertia_matrix(),
+            expected.reconstruct_inertia_matrix()
+        );
+    }
+
+    #[test]
+    fn unsupported_composite_children_fail_before_install_and_bad_state_is_atomic() {
+        use crate::runtime::{BodyKey, WorldPhysics};
+        use rm_simulator_engine::model::{BodyState, CompoundShape};
+        let (source, _) = compound_fixture();
+        let triangle = ShapeDescription::TriangleMesh(
+            TriangleMesh::new(vec![[0.; 3], [1., 0., 0.], [0., 1., 0.]], vec![[0, 1, 2]]).unwrap(),
+        );
+        let mut world = WorldPhysics::new(&[], -10.);
+        for kind in [BodyKind::Fixed, BodyKind::Kinematic] {
+            for child in [source.clone(), triangle.clone()] {
+                let shape = ShapeDescription::Compound(
+                    CompoundShape::new(vec![(Pose::default(), child)]).unwrap(),
+                );
+                let source =
+                    RigidBodyDescription::new(kind, vec![compound_collider(shape)]).unwrap();
+                assert!(matches!(
+                    CookedRigidBody::new(source),
+                    Err("backend does not support composite children in compounds")
+                ));
+                assert!(world.body_binding(BodyKey(99)).is_none());
+            }
+        }
+        // A failed child hull also propagates as an error, without substitution.
+        let bad_hull = ShapeDescription::ConvexHull(ConvexHull::new(vec![[0.; 3]; 4]).unwrap());
+        let bad = ShapeDescription::Compound(
+            CompoundShape::new(vec![(Pose::default(), bad_hull)]).unwrap(),
+        );
+        assert!(
+            CookedRigidBody::new(
+                RigidBodyDescription::new(BodyKind::Fixed, vec![compound_collider(bad)]).unwrap()
+            )
+            .is_err()
+        );
+        let cooked = CookedRigidBody::new(
+            RigidBodyDescription::new(BodyKind::Fixed, vec![compound_collider(source)]).unwrap(),
+        )
+        .unwrap();
+        let mut bad = BodyState::at(Pose::default());
+        bad.pose.rotation_wxyz = [0.; 4];
+        assert!(world.install_body(BodyKey(99), &cooked, bad).is_err());
+        assert!(world.body_binding(BodyKey(99)).is_none());
+        assert!(
+            world
+                .static_geometry_snapshot(true)
+                .cast_ray([-2., 2., 0.3], [1., 0., 0.], 4.)
+                .unwrap()
+                .is_none()
+        );
+        let binding = world
+            .install_body(BodyKey(99), &cooked, BodyState::at(Pose::default()))
+            .unwrap();
+        assert_eq!(world.body_binding(BodyKey(99)), Some(binding));
+    }
 
     fn aggregate(
         half: [f64; 3],

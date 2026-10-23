@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! Deterministic physical RoboMaster field building blocks, without match rules,
-//! networking, CAD loading, Bevy or host time. Callers supply target endpoint
+//! Reusable physical runtime and RoboMaster participant adapters, without match
+//! rules, networking, CAD loading, Bevy or host time. Callers supply target endpoint
 //! poses and resolved mechanism state, step once per explicit `tick_ns` tick, then
 //! consume contacts in returned order. See the `moving_armor` example.
 //!
@@ -42,7 +42,9 @@ pub mod motion;
 pub mod projectile;
 pub mod queries;
 /// Single-owner physical runtime, also available through compatibility exports.
-pub use projectile::runtime;
+pub mod runtime;
+/// Standalone physical scene without competition participant adapters.
+pub use runtime::PhysicalRuntime;
 pub mod sensors;
 pub mod session;
 pub mod wheel_model;

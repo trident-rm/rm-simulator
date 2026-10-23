@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Separate a standalone `PhysicalRuntime` from the RoboMaster `WorldPhysics`
+  composition, preserving one solver scene and existing slice order. Add neutral
+  geometry capture/query and carrier observation paths, reusable prepared chassis,
+  and model-local mount descriptions with stamped frame inputs.
+
 - Construct existing chassis through immutable physical descriptions and shared
   cooking code, preserving collider order, mass aggregation and prescribed
   part mappings. Add explicit integration, collider mass and material-combination

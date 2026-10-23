@@ -10,17 +10,38 @@ use rm_simulator_engine::model::{
     BodyKind, BodyPolicy, CoefficientCombineRule as Combine, ColliderDescription, ColliderMass,
     ColliderPolicy, ContactMaterial, ConvexHull, RigidBodyDescription, ShapeDescription,
 };
+use std::sync::Arc;
 
-/// Cooked immutable construction recipe, with source-order indices for moving
-/// proxies and scoring housings. Neither role changes collider insertion order.
-pub(super) struct PreparedChassis {
+/// Validated chassis configuration and cooked geometry reusable across robots/worlds.
+///
+/// Clones share the immutable configuration, source description, cooked shapes and
+/// collider role indices. Each installation owns its controls, wheels and solver
+/// handles independently; this recipe contains no live world state.
+#[derive(Clone)]
+pub struct PreparedChassis {
+    pub(super) inner: Arc<PreparedChassisData>,
+}
+
+pub(super) struct PreparedChassisData {
+    pub(super) config: ChassisConfig,
     pub(super) body: CookedRigidBody,
     pub(super) armor: Vec<usize>,
     pub(super) prescribed: Vec<usize>,
 }
 
 impl PreparedChassis {
-    pub(super) fn new(config: &ChassisConfig) -> Result<Self, &'static str> {
+    /// Validate an owned configuration and cook every shape before installation.
+    /// Returns an error for invalid configuration or geometry without changing a world.
+    ///
+    /// ```
+    /// use rm_simulator_physics::chassis::{ChassisConfig, PreparedChassis};
+    /// let prepared = PreparedChassis::new(ChassisConfig::default())?;
+    /// let shared = prepared.clone();
+    /// assert!(std::ptr::eq(prepared.config(), shared.config()));
+    /// assert!(!prepared.source().colliders().is_empty());
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn new(config: ChassisConfig) -> Result<Self, &'static str> {
         config.validate()?;
         let mut colliders = Vec::new();
         let mut prescribed = Vec::new();
@@ -187,10 +208,28 @@ impl PreparedChassis {
                 ccd_enabled: false,
             })?;
         Ok(Self {
-            body: CookedRigidBody::new(source)?,
-            armor,
-            prescribed,
+            inner: Arc::new(PreparedChassisData {
+                config,
+                body: CookedRigidBody::new(source)?,
+                armor,
+                prescribed,
+            }),
         })
+    }
+
+    /// Immutable validated configuration used by each installation.
+    pub fn config(&self) -> &ChassisConfig {
+        &self.inner.config
+    }
+
+    /// Immutable backend-neutral body description in original collider order.
+    pub fn source(&self) -> &RigidBodyDescription {
+        self.inner.body.source()
+    }
+
+    /// Immutable cooked body whose shapes are shared by every installation.
+    pub fn cooked(&self) -> &CookedRigidBody {
+        &self.inner.body
     }
 }
 

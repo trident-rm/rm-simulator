@@ -11,8 +11,7 @@ use rm_simulator_engine::{
 use rm_simulator_physics::{
     StepDuration,
     cooking::CookedRigidBody,
-    runtime::BodyKey,
-    session::{RobotScenario, RobotSession},
+    runtime::{BodyKey, PhysicalRuntime},
 };
 fn main() -> Result<(), &'static str> {
     // Explicit uniform 2 kg cube inertia about its centre (0.2 m sides), kg m².
@@ -33,34 +32,47 @@ fn main() -> Result<(), &'static str> {
         )?],
     )?;
     let cooked = CookedRigidBody::new(source)?;
-    let recipe = RobotScenario::new(vec![], 0., StepDuration::HZ_1000, move |world| {
+    let duration = StepDuration::HZ_1000;
+    let recipe = |world: &mut PhysicalRuntime| {
+        world.install_catch_floor(
+            0.,
+            ContactMaterial {
+                friction: 0.4,
+                restitution: 0.,
+                memberships: u32::MAX,
+                filter: u32::MAX,
+            },
+        )?;
         world.install_body(BodyKey(7), &cooked, BodyState::at(Pose::at([0., 0., 1.])))?;
+        world.enable_contact_observations(64)?;
         Ok(())
-    })?;
-    let mut session = RobotSession::new(recipe)?;
-    let binding = session
-        .ground_truth()
+    };
+    let mut runtime = PhysicalRuntime::from_recipe(duration, recipe)?;
+    let binding = runtime
         .body_binding(BodyKey(7))
         .ok_or("missing example body")?;
-    let mut contacts = Vec::new();
-    session.step_into(1000, &mut contacts)?;
-    let state = session.ground_truth().body_state(binding)?;
-    println!("after one second: {:?}", state.pose.translation_m);
+    let mut observed = 0;
+    for tick in 0..1000 {
+        runtime.step(tick * duration.as_ns())?;
+        observed += runtime.physical_contacts().len();
+        assert_eq!(runtime.physical_contacts_dropped(), 0);
+    }
+    let state = runtime.body_state(binding)?;
+    println!(
+        "after one second: {:?}; {observed} contact samples",
+        state.pose.translation_m
+    );
     assert!((state.pose.translation_m[2] - 0.1).abs() < 0.01);
-    session.reset()?;
-    assert!(session.ground_truth().body_state(binding).is_err());
-    let rebound = session
-        .ground_truth()
+    assert!(observed > 0);
+    runtime = PhysicalRuntime::from_recipe(duration, recipe)?;
+    assert!(runtime.body_state(binding).is_err());
+    let rebound = runtime
         .body_binding(BodyKey(7))
         .ok_or("missing reset body")?;
     assert_ne!(binding, rebound);
     println!(
         "reset: {:?}",
-        session
-            .ground_truth()
-            .body_state(rebound)?
-            .pose
-            .translation_m
+        runtime.body_state(rebound)?.pose.translation_m
     );
     Ok(())
 }

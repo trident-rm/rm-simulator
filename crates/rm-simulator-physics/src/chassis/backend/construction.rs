@@ -18,18 +18,38 @@ impl Chassis {
         if !pose_is_valid(spawn) {
             return Err("chassis spawn pose must be finite with a unit rotation");
         }
+        let prepared = PreparedChassis::new(config)?;
+        Self::new_prepared(world, id, team, &prepared, spawn)
+    }
+
+    /// Install shared cooked geometry with independent controls and wheel state.
+    pub(crate) fn new_prepared(
+        world: &mut PhysicsWorld,
+        id: u32,
+        team: Team,
+        prepared: &PreparedChassis,
+        spawn: Pose,
+    ) -> Result<Self, &'static str> {
+        if !pose_is_valid(spawn) {
+            return Err("chassis spawn pose must be finite with a unit rotation");
+        }
+        let config = prepared.config().clone();
         // Preparation validates and cooks every shape before touching the live
         // world. Use the cooked builders directly: generic body registration
         // would reset the wheel forces, and eager COM refresh changes timing.
-        let prepared = preparation::PreparedChassis::new(&config)?;
-        let body = world.insert_body(prepared.body.body_builder().pose(rapier_pose(spawn)));
+        let body = world.insert_body(prepared.cooked().body_builder().pose(rapier_pose(spawn)));
         let colliders: Vec<_> = prepared
-            .body
+            .cooked()
             .collider_builders()
             .map(|collider| world.insert_collider(collider, Some(body)))
             .collect();
-        let armor = prepared.armor.iter().map(|&i| colliders[i]).collect();
-        let fold_colliders = prepared.prescribed.iter().map(|&i| colliders[i]).collect();
+        let armor = prepared.inner.armor.iter().map(|&i| colliders[i]).collect();
+        let fold_colliders = prepared
+            .inner
+            .prescribed
+            .iter()
+            .map(|&i| colliders[i])
+            .collect();
         let geometry = wheel_geometry(&config);
         let wheels = vec![
             WheelState {

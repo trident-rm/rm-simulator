@@ -79,13 +79,14 @@ options; `Arc` identity alone is insufficient. No numerical speedup is claimed.
 
 ## Implemented concrete physical runtime
 
-`physics::runtime::WorldPhysics` now defines the single interacting Rapier world,
-its construction and immutable integration duration, query priming, solver slices,
-wheel/plant force ordering, prescribed target endpoints, carrier traces and raw
-contact capture. The existing root and `projectile::WorldPhysics` paths re-export
-that exact type. No facade world, second clock, solver trait or plugin scheduler
-is introduced. Implementation remains inside the projectile module family so its
-participant adapters keep private access; separating those adapters is later work.
+`physics::PhysicalRuntime` owns the single generic Rapier scene, its immutable
+integration duration, body/joint bindings, query priming and physical contact
+observations. The `WorldPhysics` compatibility facade composes that scene with
+RoboMaster chassis, projectiles, payloads, mechanisms and scoring. Its original
+slice schedule remains authoritative for those adapters. Existing root,
+`runtime::WorldPhysics` and `projectile::WorldPhysics` paths identify that same
+facade, not a second scene. There is no additional clock, solver trait or plugin
+scheduler. See [Physical runtime](physical-runtime.md) for standalone use.
 
 `WorldPhysics::step_into(prev_ns, frames, contacts)` appends to caller-owned contact
 storage. The owned-output `step` adapter uses that implementation. Neither method

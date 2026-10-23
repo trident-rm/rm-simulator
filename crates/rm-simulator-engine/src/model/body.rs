@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Validated source collider and rigid-body descriptions; no runtime handles.
-use super::{BodyPolicy, ColliderPolicy, ConvexHull, TriangleMesh};
+use super::{BodyPolicy, ColliderPolicy, CompoundShape, ConvexHull, TriangleMesh};
 use crate::Pose;
 use std::sync::Arc;
 
@@ -25,6 +25,28 @@ pub enum ShapeDescription {
     /// cooking may reject degenerate or unrepresentable point clouds; no
     /// tessellation inference, point perturbation or fallback shape is implied.
     ConvexHull(ConvexHull),
+    /// Ordered immutable child shapes and their local mounting frames. This is
+    /// one collider shape; children have no separate material or mass policy.
+    Compound(CompoundShape),
+}
+impl ShapeDescription {
+    pub(super) fn validate(&self) -> Result<(), &'static str> {
+        match self {
+            Self::Ball { radius_m } if !positive(*radius_m) => Err("invalid sphere radius"),
+            Self::Cuboid { half_extents_m } if !half_extents_m.iter().copied().all(positive) => {
+                Err("invalid box half extents")
+            }
+            _ => Ok(()),
+        }
+    }
+
+    pub(super) fn contains_triangle_surface(&self) -> bool {
+        match self {
+            Self::TriangleMesh(_) => true,
+            Self::Compound(compound) => compound.contains_triangle_surface(),
+            _ => false,
+        }
+    }
 }
 
 /// Contact coefficients and symmetric membership/filter bits for a collider.
@@ -60,17 +82,7 @@ impl ColliderDescription {
         pose: Pose,
         material: ContactMaterial,
     ) -> Result<Self, &'static str> {
-        match &shape {
-            ShapeDescription::Ball { radius_m } if !positive(*radius_m) => {
-                return Err("invalid sphere radius");
-            }
-            ShapeDescription::Cuboid { half_extents_m }
-                if !half_extents_m.iter().copied().all(positive) =>
-            {
-                return Err("invalid box half extents");
-            }
-            _ => {}
-        }
+        shape.validate()?;
         validate_pose(pose)?;
         if !material.friction.is_finite()
             || material.friction < 0.
@@ -199,7 +211,8 @@ struct BodyData {
 /// Initial world pose/velocity and runtime identity are supplied at installation.
 /// Dynamic bodies support primitives and explicit convex hulls with mandatory
 /// caller-selected explicit inertia or collider aggregation; dynamic triangle
-/// meshes are explicitly rejected. Collider mass is zero unless opted into.
+/// meshes, including those inside compounds, are explicitly rejected. Collider
+/// mass is zero unless opted into.
 ///
 /// ```
 /// use rm_simulator_engine::model::{BodyKind, RigidBodyDescription};
@@ -218,7 +231,7 @@ impl RigidBodyDescription {
         if matches!(kind, BodyKind::Dynamic(_) | BodyKind::DynamicFromColliders)
             && colliders
                 .iter()
-                .any(|c| matches!(c.shape(), ShapeDescription::TriangleMesh(_)))
+                .any(|c| c.shape().contains_triangle_surface())
         {
             return Err("dynamic triangle surfaces are unsupported");
         }
@@ -303,7 +316,7 @@ impl BodyState {
 fn positive(x: f64) -> bool {
     x.is_finite() && x > 0.
 }
-fn validate_pose(pose: Pose) -> Result<(), &'static str> {
+pub(super) fn validate_pose(pose: Pose) -> Result<(), &'static str> {
     let norm = pose.rotation_wxyz.iter().map(|x| x * x).sum::<f64>();
     if !pose.translation_m.into_iter().all(f64::is_finite)
         || !norm.is_finite()

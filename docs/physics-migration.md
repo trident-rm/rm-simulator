@@ -18,13 +18,14 @@ in assets. Gameplay owns competition rules, world composes those rules with
 physics, server owns host authority and pacing, and render consumes presentation
 records. These boundaries already work for bare sessions and match sessions.
 
-The physical runtime is still declared under `projectile::runtime` for private
-implementation access. Its state includes chassis, projectiles, payloads,
-prescribed scoring targets and mechanism channels, alongside generic bound bodies.
-Its step executes participant-specific force, motion and contact work. Merely
-renaming this type or moving it out of that module would leave those dependencies
-intact. `ArmorTarget`, `Team`, caliber helpers and projectile retirement remain
-compatibility/domain concepts in physics rather than generic engine contracts.
+The root `PhysicalRuntime` owns generic bodies, joints, bindings, queries and
+physical observations in one native scene. `WorldPhysics` composes it with
+chassis, projectiles, payloads, prescribed scoring targets and mechanism channels.
+That facade retains participant-specific force/motion/contact scheduling and
+compatibility methods. `ArmorTarget`, `Team`, caliber helpers and retirement
+remain explicit domain concepts in the participant adapters, rather than fields
+or decisions in the generic runtime. Both paths use the same cooked resources
+and native integration.
 
 `StaticGeometry`, `PreparedArena` and cooked resources retain Rapier shapes.
 They are useful shared backend resources, not a portable uncooked scene.
@@ -121,7 +122,8 @@ to complete this behavior-preserving port.
    order and deferred COM timing; it does not enter the generic held-wrench
    registry or replace wheel forces. Independent native construction parity and
    exact trajectory hashes gate this change. Public prepared-model reuse and
-   generic runtime ownership remain subsequent increments.
+   generic runtime ownership are covered by the subsequent
+   [standalone runtime](physical-runtime.md) increment.
 
 5. **Sensor and presentation bindings.** Mount sensors to explicit body/part
    frames rather than only a chassis ID. Retain per-emission motion, self-occlusion,

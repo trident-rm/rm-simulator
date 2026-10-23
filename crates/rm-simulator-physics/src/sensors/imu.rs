@@ -32,6 +32,9 @@ use crate::{
 use rapier3d_f64::prelude::{Pose as Pose3, Vector};
 use serde::{Deserialize, Serialize};
 
+mod carrier;
+pub use carrier::{CarrierImu, CarrierImuConfig, CarrierImuState};
+
 /// Largest number of carrier samples [`WorldPhysics`](crate::WorldPhysics)
 /// retains before the caller drains them, a bounded allocation policy.
 /// About eight seconds of 1 kHz substeps for eight chassis.
@@ -295,6 +298,51 @@ impl MountedImu {
             return Err("invalid IMU carrier sample");
         }
         let mounted = pose(carrier) * self.carrier_from_imu;
+        let h = sample.interval_s;
+        let continuous = self.state.last.is_some_and(|(time, revision, _)| {
+            revision == sample.placement_revision
+                && sample.time_ns > time
+                && ((sample.time_ns - time) as f64) < 2e9 * h
+        });
+        NumericFilter {
+            period_ns: self.config.period_ns,
+            epoch_ns: self.config.epoch_ns,
+            effects: self.config.effects,
+            state: &mut self.state,
+        }
+        .push(
+            mounted,
+            sample.time_ns,
+            h,
+            sample.placement_revision,
+            continuous,
+            Vector::new(0., 0., GRAVITY_M_S2),
+            out,
+        );
+        Ok(())
+    }
+}
+
+// The numeric path deliberately has no chassis, carrier or mount identity.
+// ImuState's field layout remains the legacy checkpoint contract.
+struct NumericFilter<'a> {
+    period_ns: u64,
+    epoch_ns: u64,
+    effects: ImuEffects,
+    state: &'a mut ImuState,
+}
+impl NumericFilter<'_> {
+    #[allow(clippy::too_many_arguments)]
+    fn push(
+        &mut self,
+        mounted: Pose3,
+        time_ns: u64,
+        h: f64,
+        revision: u64,
+        continuous: bool,
+        gravity_reaction: Vector,
+        out: &mut Vec<ImuSample>,
+    ) {
         let current = Pose {
             translation_m: mounted.translation.to_array(),
             rotation_wxyz: [
@@ -304,19 +352,10 @@ impl MountedImu {
                 mounted.rotation.z,
             ],
         };
-        let h = sample.interval_s;
-        let continuous = self.state.last.is_some_and(|(time, revision, _)| {
-            revision == sample.placement_revision
-                && sample.time_ns > time
-                && ((sample.time_ns - time) as f64) < 2e9 * h
-        });
-        let previous =
-            self.state
-                .last
-                .replace((sample.time_ns, sample.placement_revision, current));
+        let previous = self.state.last.replace((time_ns, revision, current));
         let Some((t0, _, before)) = previous.filter(|_| continuous) else {
             self.restart();
-            return Ok(());
+            return;
         };
         let before = pose(before);
         // Gyro: body-frame relative rotation over [t0, t1].
@@ -330,13 +369,12 @@ impl MountedImu {
         if let Some((previous_velocity, previous_h)) = self.state.velocity.replace((velocity, h)) {
             let mean_h = (h + previous_h) / 2.;
             let acceleration = Vector::from(velocity) - Vector::from(previous_velocity);
-            let world = acceleration / mean_h + Vector::new(0., 0., GRAVITY_M_S2);
+            let world = acceleration / mean_h + gravity_reaction;
             let force = (before.rotation.inverse() * world).to_array();
             let start = t0 as f64 - previous_h * 0.5e9;
             let end = t0 as f64 + h * 0.5e9;
             self.add_accel(start, end, force, out);
         }
-        Ok(())
     }
     fn restart(&mut self) {
         self.state.velocity = None;
@@ -346,13 +384,13 @@ impl MountedImu {
     }
     /// Window bounds relative to the epoch, nanoseconds.
     fn window_bounds(&self, index: u64) -> (f64, f64) {
-        let period = self.config.period_ns as f64;
+        let period = self.period_ns as f64;
         let end = index as f64 * period;
         (end - period, end)
     }
     /// Index of the window containing epoch-relative time `t` in `(end - period, end]`.
     fn window_of(&self, t_ns: f64) -> u64 {
-        (t_ns / self.config.period_ns as f64).ceil().max(0.) as u64
+        (t_ns / self.period_ns as f64).ceil().max(0.) as u64
     }
     /// Integrate `value` over `[start, end]` into consecutive windows,
     /// returning each completed, fully covered window's mean.
@@ -364,15 +402,15 @@ impl MountedImu {
         value: [f64; 3],
         completed: &mut Vec<(u64, [f64; 3])>,
     ) {
-        let period_s = self.config.period_ns as f64 * 1e-9;
+        let period_s = self.period_ns as f64 * 1e-9;
         // Epoch-relative times keep sub-nanosecond precision over long runs.
-        let epoch = self.config.epoch_ns as f64;
+        let epoch = self.epoch_ns as f64;
         // Carrier timestamps are floored to integer ns, while physical substeps
         // may end on half-nanoseconds. Close a nearly complete window before
         // the next integer timestamp advances its index; otherwise every such
         // boundary silently discards a whole output period.
         let snap = |time: f64| {
-            let period = self.config.period_ns as f64;
+            let period = self.period_ns as f64;
             let boundary = (time / period).round() * period;
             if (time - boundary).abs() <= 1. {
                 boundary
@@ -435,8 +473,8 @@ impl MountedImu {
         }
     }
     fn measure(&mut self, index: u64, rate: [f64; 3], force: [f64; 3]) -> ImuSample {
-        let e = self.config.effects;
-        let period_s = self.config.period_ns as f64 * 1e-9;
+        let e = self.effects;
+        let period_s = self.period_ns as f64 * 1e-9;
         // Advance the random walk to this index with counter-indexed increments,
         // so the sequence depends only on the seed and emitted sample numbers.
         // Skipped periods (after a discontinuity) take one aggregated step of
@@ -479,9 +517,8 @@ impl MountedImu {
         ImuSample {
             sample_index: index,
             time_ns: self
-                .config
                 .epoch_ns
-                .saturating_add(index.saturating_mul(self.config.period_ns)),
+                .saturating_add(index.saturating_mul(self.period_ns)),
             angular_velocity_rad_s: gyro,
             specific_force_m_s2: accel,
         }

@@ -264,8 +264,8 @@ fn prepared_sources_preserve_native_shapes_policies_roles_and_mass_timing() {
         );
         assert!(new.bodies[body].mass() > 0.);
 
-        let prepared = preparation::PreparedChassis::new(&config).unwrap();
-        let source = prepared.body.source();
+        let prepared = preparation::PreparedChassis::new(config.clone()).unwrap();
+        let source = prepared.source();
         assert_eq!(source.colliders().len(), old.colliders.len());
         let mut expected_hulls = Vec::new();
         if config.omni_frame.is_some() {

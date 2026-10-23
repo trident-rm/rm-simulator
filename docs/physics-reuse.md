@@ -188,8 +188,11 @@ its native insertion order and deferred mass refresh.
 
 ## Concrete physical runtime
 
-`physics::runtime::WorldPhysics` owns one interacting Rapier scene. Root and
-`projectile::WorldPhysics` imports remain aliases of the same type. Its explicit
+`physics::PhysicalRuntime` owns the generic interacting Rapier scene.
+`physics::runtime::WorldPhysics` composes that scene with RoboMaster participant
+adapters; root and `projectile::WorldPhysics` imports remain compatible aliases.
+See [Physical runtime](physical-runtime.md) for standalone installation, command,
+query and reconstruction boundaries. Its explicit
 `step_into(prev_ns, frames, contacts)` appends raw ordered contacts into caller
 storage; `step` retains the owned-output convenience API. The caller supplies
 simulation time and target endpoints. This is the existing concrete runtime,

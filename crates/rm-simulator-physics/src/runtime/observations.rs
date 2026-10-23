@@ -10,8 +10,8 @@ use rm_simulator_engine::contacts::ContactGeometry;
 /// and is deliberately not serializable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ParticipantBinding {
-    runtime: u64,
-    handle: RigidBodyHandle,
+    pub(super) runtime: u64,
+    pub(super) handle: RigidBodyHandle,
 }
 
 /// Opaque process-local identity of any native collider in one runtime.
@@ -19,8 +19,8 @@ pub struct ParticipantBinding {
 /// This read-only token is deliberately not serializable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ColliderBinding {
-    runtime: u64,
-    handle: ColliderHandle,
+    pub(super) runtime: u64,
+    pub(super) handle: ColliderHandle,
 }
 
 /// Copied privileged collider truth, without roles or collision policy.
@@ -73,7 +73,7 @@ pub(super) struct Observer {
     dropped: usize,
 }
 
-impl WorldPhysics {
+impl PhysicalRuntime {
     /// Lazily enumerate all native rigid bodies, without registering command keys.
     /// Enumeration order is backend storage order, not a stable semantic order.
     pub fn participants(&self) -> impl Iterator<Item = ParticipantBinding> + '_ {
@@ -155,6 +155,48 @@ impl WorldPhysics {
         })
     }
 
+    /// Copy actual participant pose with runtime-derived continuity evidence.
+    /// The source carrier and discontinuity revision are caller labels; the scene
+    /// brand and native slot/generation come from this validated live participant.
+    /// Time is caller-stamped and the interval must be finite and positive.
+    /// This is privileged truth, not a measured sensor or command authority.
+    ///
+    /// ```
+    /// use rm_simulator_engine::model::{BodyKind, BodyState, CarrierKey, RigidBodyDescription};
+    /// use rm_simulator_physics::{Pose, StepDuration, cooking::CookedRigidBody,
+    ///     runtime::{BodyKey, PhysicalRuntime}};
+    /// let model = CookedRigidBody::new(RigidBodyDescription::new(BodyKind::Fixed, vec![])?)?;
+    /// let mut runtime = PhysicalRuntime::new(StepDuration::HZ_1000);
+    /// let body = runtime.install_body(BodyKey(1), &model, BodyState::at(Pose::default()))?;
+    /// let participant = runtime.body_participant(body)?;
+    /// let sample = runtime.observe_carrier(participant, CarrierKey(7), 0, 1_000_000, 0.001)?;
+    /// assert_eq!(sample.identity().world_brand, runtime.runtime_identity());
+    /// assert_eq!(sample.world_from_carrier(), Pose::default());
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn observe_carrier(
+        &self,
+        binding: ParticipantBinding,
+        carrier: rm_simulator_engine::model::CarrierKey,
+        discontinuity_revision: u64,
+        time_ns: u64,
+        interval_s: f64,
+    ) -> Result<crate::sensors::carrier::StampedCarrierPose, &'static str> {
+        let state = self.participant_state(binding)?;
+        let (index, generation) = binding.handle.into_raw_parts();
+        crate::sensors::carrier::StampedCarrierPose::new(
+            crate::sensors::carrier::CarrierIdentity {
+                carrier,
+                world_brand: self.runtime_identity(),
+                installation_generation: (u64::from(generation) << 32) | u64::from(index),
+                discontinuity_revision,
+            },
+            time_ns,
+            interval_s,
+            state.pose,
+        )
+    }
+
     /// Enable bounded observations with a positive caller-selected record budget.
     /// Reconfiguration clears records/dropped count; zero or allocation failure
     /// returns an error before mutation. No observer is allocated by default.
@@ -215,14 +257,14 @@ impl WorldPhysics {
         }
     }
 
-    pub(super) fn begin_contact_observations(&mut self) {
+    pub(crate) fn begin_contact_observations(&mut self) {
         if let Some(observer) = &mut self.contact_observer {
             observer.retained.clear();
             observer.dropped = 0;
         }
     }
 
-    pub(super) fn capture_physical_contacts(
+    pub(crate) fn capture_physical_contacts(
         &mut self,
         prev_ns: u64,
         substep: usize,
@@ -284,7 +326,7 @@ impl WorldPhysics {
     }
 }
 
-fn observed_pose(pose: &Pose3) -> Pose {
+pub(super) fn observed_pose(pose: &Pose3) -> Pose {
     Pose {
         translation_m: pose.translation.to_array(),
         rotation_wxyz: [

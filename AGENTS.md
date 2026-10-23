@@ -26,6 +26,7 @@ source file.
 | Current competitions, archived seasons and admission | `docs/seasons.md` |
 | Standalone gameplay engine and its live integration | `docs/gameplay.md` |
 | Crate ownership, ticks, restore, ECS | `docs/architecture-refactor.md` |
+| Standalone physical runtime and participant composition | `docs/physical-runtime.md` |
 | Physical body/collider identity and optional contacts | `docs/physical-contacts.md` |
 | Physics reuse without a match or server | `docs/physics-reuse.md` |
 | In-process sessions, configurable timing and adapter boundaries | `docs/simulation-embedding.md` |

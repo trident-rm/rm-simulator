@@ -2,7 +2,7 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Caller-clocked LiDAR/IMU packet assembly. No world, thread or transport is owned.
 use super::{
-    imu::{CarrierFrame, CarrierSample, ImuConfig, ImuEffects, ImuSample, MountedImu},
+    imu::{CarrierFrame, CarrierImu, CarrierSample, ImuConfig, ImuEffects, ImuSample, MountedImu},
     mid360::Mid360Pattern,
     rolling::{MountedLidar, RangeEffects, RollingFrame, SceneCapture},
 };
@@ -80,6 +80,27 @@ pub struct Frame {
     /// Cumulative input continuity failures; affected partial packets are discarded.
     pub discontinuities: u64,
 }
+mod carrier;
+pub use carrier::{CarrierConfig, CarrierSynchronized};
+
+struct PacketTiming {
+    lidar_period_ns: u64,
+    imu_period_ns: u64,
+    stride: u32,
+}
+enum Inertial {
+    Legacy(MountedImu),
+    Carrier(CarrierImu),
+}
+impl Inertial {
+    fn restart(&mut self) {
+        match self {
+            Self::Legacy(imu) => imu.restore_state(Default::default()),
+            Self::Carrier(imu) => imu.restore_state(Default::default()),
+        }
+    }
+}
+
 /// Stateful packet assembler over coherent brackets and solver substep traces.
 ///
 /// ```
@@ -89,10 +110,10 @@ pub struct Frame {
 /// # Ok::<(), &'static str>(())
 /// ```
 pub struct Synchronized {
-    config: Config,
+    config: PacketTiming,
     epoch_ns: u64,
     lidar: MountedLidar,
-    imu: MountedImu,
+    imu: Inertial,
     last_end: Option<u64>,
     boundary: u64,
     partial: RollingFrame,
@@ -134,10 +155,14 @@ impl Synchronized {
             .checked_add(config.lidar_period_ns)
             .ok_or("sensor clock overflow")?;
         Ok(Self {
-            config,
+            config: PacketTiming {
+                lidar_period_ns: config.lidar_period_ns,
+                imu_period_ns: config.imu_period_ns,
+                stride: config.stride,
+            },
             epoch_ns,
             lidar,
-            imu,
+            imu: Inertial::Legacy(imu),
             last_end: None,
             boundary,
             partial: Default::default(),
@@ -151,7 +176,7 @@ impl Synchronized {
         self.partial.points.clear();
         self.waiting.clear();
         self.inertial.clear();
-        self.imu.restore_state(Default::default());
+        self.imu.restart();
         // Resume only at the next complete packet interval, retaining the epoch/phase.
         let relative = time_ns
             .checked_sub(self.epoch_ns)
@@ -178,6 +203,14 @@ impl Synchronized {
         trace: &[CarrierSample],
         out: &mut Vec<Frame>,
     ) -> Result<(), &'static str> {
+        self.begin(before, after)?;
+        let Inertial::Legacy(imu) = &mut self.imu else {
+            return Err("generic synchronized sensors require stamped carrier inputs");
+        };
+        imu.ingest(trace, &mut self.inertial)?;
+        self.acquire(before, after, out)
+    }
+    fn begin(&mut self, before: &SceneCapture, after: &SceneCapture) -> Result<(), &'static str> {
         let start = before.time_ns();
         let end = after.time_ns();
         if start < self.epoch_ns || end <= start || end - start > 10_000_000 {
@@ -187,7 +220,16 @@ impl Synchronized {
             self.restart(start)?;
         }
         self.last_end = Some(end);
-        self.imu.ingest(trace, &mut self.inertial)?;
+        Ok(())
+    }
+    fn acquire(
+        &mut self,
+        before: &SceneCapture,
+        after: &SceneCapture,
+        out: &mut Vec<Frame>,
+    ) -> Result<(), &'static str> {
+        let start = before.time_ns();
+        let end = after.time_ns();
         let mut cursor = start.max(self.boundary - self.config.lidar_period_ns);
         while cursor < end {
             let stop = end.min(self.boundary);

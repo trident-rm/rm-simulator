@@ -28,7 +28,7 @@ simulator crate except the solver-free `rm-simulator-engine` core.
 | `src/runtime/observations.rs` | Read-only native participant/collider identities and opt-in bounded physical contact samples, independent of scoring and command bindings. |
 | `src/runtime/joints.rs` | Generic physical joint installation, world-scoped bindings, scalar state, motors and held effort. |
 | `src/runtime/assembly.rs` | Transactional prepared-assembly installation/removal, placement and source-to-live binding maps. |
-| `src/runtime.rs` | `runtime::WorldPhysics`: interacting scene ownership, construction, integration slices, carrier traces and ordered raw contact capture; legacy world paths remain compatible. |
+| `src/runtime.rs` | `PhysicalRuntime`: generic native scene, bindings, integration slices and physical observations. `projectile::WorldPhysics` composes its RoboMaster participant adapters over that scene. |
 | `src/projectile.rs` | `Shot`, `Caliber`, `Contact`, `TargetFace`, `TargetFrames`, `StaticGeometry` and `ProjectilePolicy`; participant adapters and compatibility world exports. |
 | `src/queries.rs` | Immutable validated ray batches and capture-local hits, with no public solver handles; callers retain output storage. |
 | `src/geometry.rs` | Shared collision captures and read-only clearance queries consumed by the world facade. |

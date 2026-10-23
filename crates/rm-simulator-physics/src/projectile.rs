@@ -19,14 +19,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 mod contacts;
+use crate::cooking::{CookedAssembly, CookedRigidBody};
 use contacts::Scorer;
+use rm_simulator_engine::model::{JointDescription, JointMotor, JointState, RigidBodyDescription};
+use runtime::{
+    AssemblyBinding, AssemblyKeys, BodyBinding, BodyKey, BodyState, ColliderBinding, ColliderState,
+    JointBinding, JointKey, ParticipantBinding, PhysicalContact,
+};
 
 pub use crate::geometry::{MovingGeometry, StaticGeometry};
-/// The physical runtime; re-exported at `rm_simulator_physics::runtime`.
-#[path = "runtime.rs"]
-pub mod runtime;
-/// Compatibility path for the single interacting physical world.
-pub use runtime::WorldPhysics;
+/// Compatibility path for the generic physical runtime and participant facade.
+pub use crate::runtime;
 #[path = "payload.rs"]
 mod payload;
 pub use payload::{PayloadShape, PayloadSnapshot, PayloadTelemetry};
@@ -526,23 +529,585 @@ struct TargetBody {
     target: ArmorTarget,
     body: RigidBodyHandle,
 }
-/// Convert an FLU array in metres to a Rapier vector.
-pub(crate) fn vector(v: [f64; 3]) -> Vector {
-    Vector::new(v[0], v[1], v[2])
+// Compatibility imports for existing physical adapters.
+use crate::runtime::math::finite;
+pub(crate) use crate::runtime::math::{pose, pose_is_valid, vector};
+
+/// The field's single Rapier scene and its dynamic physics participants.
+///
+/// One world holds the static collision geometry, the target faces it can
+/// score on, the projectiles in flight and every chassis. Stepping is
+/// deterministic for a fixed tick schedule.
+pub struct WorldPhysics {
+    pub(crate) physical: runtime::PhysicalRuntime,
+    /// Convex XY slab outside which projectiles are absorbed, in world FLU
+    /// metres. `None` means no perimeter absorption. A hit beyond the slab
+    /// scores nothing, which also catches a fast shot that crosses a whole
+    /// wall in one tick.
+    pub projectile_bounds_m: Option<[[f64; 3]; 2]>,
+    /// Restitution, flight limit and low-speed retirement rule applied to
+    /// projectiles created from now on. Changing it does not alter balls
+    /// already in flight.
+    policy: ProjectilePolicy,
+    /// Recent removals, oldest first, bounded to [`REMOVAL_MEMORY`].
+    removals: std::collections::VecDeque<Removal>,
+    payloads: Vec<payload::Body>,
+    projectiles: Vec<Projectile>,
+    rm_contacts: contacts::State,
+    /// Opt-in substep carrier poses for inertial sensors; observation output,
+    /// never restored world state.
+    carrier_trace: Option<Vec<crate::sensors::imu::CarrierSample>>,
+    carrier_trace_dropped: u64,
+    chassis: Vec<Chassis>,
+    next_chassis_id: u32,
+    targets: Vec<TargetBody>,
+    mechanisms: Vec<(
+        ColliderHandle,
+        crate::motion::MotionChannel,
+        crate::motion::MotionFrame,
+    )>,
+    /// Field time the target bodies currently stand at, if any.
+    synced_ns: Option<u64>,
+    next_id: u64,
+    launched: u64,
 }
-pub(crate) fn pose(p: Pose) -> Pose3 {
-    let [w, x, y, z] = p.rotation_wxyz;
-    Pose3::from_parts(
-        vector(p.translation_m),
-        Rotation::from_xyzw(x, y, z, w).normalize(),
-    )
+
+impl WorldPhysics {
+    /// A world with a flat floor at `floor_height_m`. Target bodies are created
+    /// for every face; their poses are supplied at each step.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{Caliber, Pose, Shot, tick_ns, TargetFrames, WorldPhysics};
+    ///
+    /// let mut physics = WorldPhysics::new(&[], 0.0);
+    /// let frames = TargetFrames::new(Vec::new());
+    ///
+    /// // A slow ball falls, rolls and settles one ball radius above the floor.
+    /// physics.fire(
+    ///     0,
+    ///     Pose::at([0.0, 0.0, 1.0]),
+    ///     Shot { caliber: Caliber::Mm42, speed_m_s: 3.0 },
+    ///     None,
+    /// )?;
+    /// assert!(!physics.is_idle());
+    /// for tick in 0..2_000_000_000 / tick_ns() {
+    ///     physics.step(tick * tick_ns(), &frames)?;
+    /// }
+    ///
+    /// let resting = physics.snapshot();
+    /// let radius_m = Caliber::Mm42.diameter_m() / 2.0;
+    /// let resting_z_m = resting[0].position_m[2];
+    /// assert!((resting_z_m - radius_m).abs() < 0.01, "{resting_z_m}");
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn new(faces: &[TargetFace], floor_height_m: f64) -> Self {
+        Self::with_step_duration(faces, floor_height_m, crate::StepDuration::default())
+    }
+    /// Build standalone physics with an immutable, validated integration step.
+    /// Call [`Self::step`] once per duration, passing its starting time in nanoseconds.
+    /// ```
+    /// use rm_simulator_physics::{StepDuration, TargetFrames, WorldPhysics};
+    /// let duration = StepDuration::HZ_1000;
+    /// let mut physics = WorldPhysics::with_step_duration(&[], 0., duration);
+    /// physics.step(0, &TargetFrames::new(vec![])).unwrap();
+    /// assert_eq!(physics.step_duration().as_ns(), 1_000_000);
+    /// ```
+    pub fn with_step_duration(
+        faces: &[TargetFace],
+        floor_height_m: f64,
+        step_duration: crate::StepDuration,
+    ) -> Self {
+        let mut physical = runtime::PhysicalRuntime::new(step_duration);
+        physical.world.insert_collider(
+            ColliderBuilder::new(SharedShape::halfspace(Vector::Z))
+                .translation(Vector::new(0., 0., floor_height_m))
+                .friction(FRICTION)
+                .restitution(RESTITUTION),
+            None,
+        );
+        let mut ballistics = Self {
+            physical,
+            payloads: Vec::new(),
+            projectile_bounds_m: None,
+            policy: ProjectilePolicy::default(),
+            removals: std::collections::VecDeque::new(),
+            projectiles: Vec::new(),
+            rm_contacts: Default::default(),
+            carrier_trace: None,
+            carrier_trace_dropped: 0,
+            chassis: Vec::new(),
+            next_chassis_id: 0,
+            targets: Vec::new(),
+            mechanisms: Vec::new(),
+            synced_ns: None,
+            next_id: 0,
+            launched: 0,
+        };
+        for face in faces {
+            ballistics.add_target(*face);
+        }
+        ballistics
+    }
+    /// Borrow the sole physical scene for generic truth, geometry and observation access.
+    /// Integration remains owned by this facade's participant slice schedule.
+    pub fn physical_runtime(&self) -> &runtime::PhysicalRuntime {
+        &self.physical
+    }
+
+    pub(crate) fn runtime_identity(&self) -> u64 {
+        self.physical.runtime_identity()
+    }
+
+    /// No active physical participants. Generic fixed anchors alone do not
+    /// require integration; dynamic/kinematic bound bodies keep stepping active.
+    pub fn is_idle(&self) -> bool {
+        self.projectiles.is_empty()
+            && self.chassis.is_empty()
+            && self.payloads.is_empty()
+            && self.physical.is_idle()
+    }
+
+    /// Immutable integration duration of this physical world.
+    pub fn step_duration(&self) -> crate::StepDuration {
+        self.physical.step_duration()
+    }
+
+    /// Declare the target bodies already standing at `time_ns`, so the first
+    /// restored tick moves them instead of teleporting them into place.
+    pub fn mark_synced(&mut self, time_ns: u64) {
+        self.synced_ns = Some(time_ns);
+    }
+    /// Advance one tick from `prev_ns`, taking the target face poses at the
+    /// start and end of the tick from `frames`.
+    ///
+    /// The solver runs [`runtime::SUBSTEP_MAX_NS`]-bounded slices, interpolating the
+    /// target poses across the tick, so a coarse tick still carries fast shots
+    /// past no armour between solver runs. Returns every contact first seen
+    /// this tick, oldest projectile first. Applying detection intervals,
+    /// damage and buffs is the caller's business. Errors when the face count or
+    /// identity order no longer matches the targets the world was built with.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{
+    ///     ArmorTarget, Caliber, Pose, Shot, TargetFace, TargetFrames, WorldPhysics, tick_ns,
+    /// };
+    ///
+    /// let face = TargetFace {
+    ///     target: ArmorTarget::Outpost { outpost: 0, face: 0 },
+    ///     pose: Pose::yawed([1.5, 0.0, 1.0], std::f64::consts::PI),
+    /// };
+    /// let mut physics = WorldPhysics::new(&[face], 0.0);
+    /// let frames = TargetFrames::new(vec![face]);
+    ///
+    /// // Two shots one tick apart, side by side so neither can strike the other.
+    /// let first = physics.fire(
+    ///     0, Pose::at([0.0, 0.0, 1.025]), Shot::at_limit(Caliber::Mm17), None)?;
+    /// let second = physics.fire(
+    ///     tick_ns(), Pose::at([0.0, 0.04, 1.025]), Shot::at_limit(Caliber::Mm17), None)?;
+    ///
+    /// let mut seen = Vec::new();
+    /// for tick in 0..200 {
+    ///     for contact in physics.step(tick * tick_ns(), &frames)? {
+    ///         assert_eq!(contact.target, face.target);
+    ///         assert!(contact.normal_speed_m_s > 20.0, "{contact:?}");
+    ///         seen.push(contact.projectile);
+    ///     }
+    /// }
+    /// assert_eq!(seen, vec![first, second]);
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn step(
+        &mut self,
+        prev_ns: u64,
+        frames: &TargetFrames,
+    ) -> Result<Vec<Contact>, &'static str> {
+        let mut contacts = Vec::new();
+        self.step_into(prev_ns, frames, &mut contacts)?;
+        Ok(contacts)
+    }
+
+    /// Advance one caller-stamped tick and append ordered raw contacts.
+    /// Existing output is retained, including on errors. Capacity is reused;
+    /// internal solver/contact storage may still allocate. Uses the exact same
+    /// slices, synchronization and retirement behavior as [`Self::step`].
+    ///
+    /// Errors do not promise transactional world rollback: ordinary query priming
+    /// and projectile retirement can precede target validation. No new contacts
+    /// are appended on error; already completed calls remain committed. The caller
+    /// owns the clock and must not advance/step interacting bodies elsewhere.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{runtime::WorldPhysics, TargetFrames};
+    /// let mut world = WorldPhysics::new(&[], 0.);
+    /// let frames = TargetFrames::new(vec![]);
+    /// let mut contacts = Vec::with_capacity(64);
+    /// world.step_into(0, &frames, &mut contacts)?;
+    /// world.step_into(world.step_duration().as_ns(), &frames, &mut contacts)?;
+    /// assert!(contacts.is_empty());
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn step_into(
+        &mut self,
+        prev_ns: u64,
+        frames: &TargetFrames,
+        contacts: &mut Vec<Contact>,
+    ) -> Result<(), &'static str> {
+        let next_ns = prev_ns
+            .checked_add(self.physical.step_duration().as_ns())
+            .ok_or("physics time overflow")?;
+        if frames.start.len() != self.targets.len() {
+            return Err("target face count changed");
+        }
+        // Preserve metadata when initial target positions already equal the first
+        // frame; only an actual start-pose jump breaks interpolation continuity.
+        let target_discontinuity = !self.is_idle()
+            && self.synced_ns != Some(prev_ns)
+            && self
+                .targets
+                .iter()
+                .zip(frames.motions())
+                .any(|(target, (start, _))| {
+                    pose_is_valid(start.pose)
+                        && *self.physical.world.bodies[target.body].position() != pose(start.pose)
+                });
+        if target_discontinuity {
+            self.physical.check_placement_epoch()?;
+        }
+        // Observation output is not transactional: later validation failures may
+        // leave the preceding output cleared. Basic preflight above preserves it.
+        self.physical.begin_contact_observations();
+        self.physical.ensure_queries_primed();
+        // Discard spent shots before they cost physics time.
+        let mut index = 0;
+        while index < self.projectiles.len() {
+            let projectile = &self.projectiles[index];
+            let position = self.physical.world.bodies[projectile.body].translation();
+            let reason =
+                if next_ns.saturating_sub(projectile.launched_ns) > self.policy.max_flight_ns {
+                    Some(RemovalReason::Expired)
+                } else if position.z < -1. || position.length() > 200. || !position.is_finite() {
+                    Some(RemovalReason::OutOfWorld)
+                } else if outside_projectile_bounds(
+                    self.projectile_bounds_m,
+                    position,
+                    projectile.caliber.diameter_m() / 2.0,
+                ) {
+                    Some(RemovalReason::OutOfBounds)
+                } else {
+                    None
+                };
+            if let Some(reason) = reason {
+                let projectile = self.projectiles.remove(index);
+                self.record_removal(&projectile, next_ns, reason);
+                self.physical.world.remove_body(projectile.body);
+            } else {
+                index += 1;
+            }
+        }
+        if self.is_idle() {
+            self.synced_ns = None;
+            return Ok(());
+        }
+        let teleport = self.synced_ns != Some(prev_ns);
+        for (target, (start, end)) in self.targets.iter().zip(frames.motions()) {
+            if start.target != target.target || end.target != target.target {
+                return Err("target face order changed");
+            }
+            if !pose_is_valid(start.pose) || !pose_is_valid(end.pose) {
+                return Err("target face pose must be finite with a unit rotation");
+            }
+        }
+        if target_discontinuity {
+            self.physical
+                .mark_placement_discontinuity()
+                .expect("preflighted placement epoch");
+        }
+        self.physical.begin_body_endpoints();
+        let policy = self.policy;
+        let substeps = runtime::substep_count(self.physical.step_duration());
+        let substep_s = self.physical.step_duration().as_secs_f64() / substeps as f64;
+        for substep in 0..substeps {
+            let frac_prev = substep as f64 / substeps as f64;
+            let frac_next = (substep + 1) as f64 / substeps as f64;
+            for (target, (start, end)) in self.targets.iter().zip(frames.motions()) {
+                let body = &mut self.physical.world.bodies[target.body];
+                if teleport && substep == 0 {
+                    body.set_position(pose(start.pose), true);
+                }
+                body.set_next_kinematic_position(pose(start.pose).lerp(&pose(end.pose), frac_next));
+            }
+            self.physical.apply_body_endpoints(frac_next);
+            self.rm_contacts.velocities_before.clear();
+            for projectile in &self.projectiles {
+                let body = &mut self.physical.world.bodies[projectile.body];
+                let velocity = body.linvel();
+                let area = std::f64::consts::PI * (projectile.caliber.diameter_m() / 2.).powi(2);
+                let drag = -0.5 * AIR_DENSITY_KG_M3 * DRAG_COEFFICIENT * area * velocity.length();
+                body.reset_forces(false);
+                body.add_force(velocity * drag, false);
+                self.rm_contacts.velocities_before.push(velocity);
+            }
+            for chassis in &mut self.chassis {
+                chassis.apply_forces(&mut self.physical.world, substep_s);
+            }
+            self.rm_contacts.chassis_velocities_before.clear();
+            for chassis in &self.chassis {
+                let body = &self.physical.world.bodies[chassis.body()];
+                self.rm_contacts.chassis_velocities_before.push((
+                    body.linvel(),
+                    body.angvel(),
+                    body.center_of_mass(),
+                ));
+            }
+            self.physical.apply_bound_wrenches();
+            self.physical.apply_joint_actuation();
+            self.damp_payload_contacts();
+            self.physical.integrate_slice();
+            self.physical
+                .capture_physical_contacts(prev_ns, substep, substeps);
+            for chassis in &self.chassis {
+                chassis.sync_fold_colliders(&mut self.physical.world);
+            }
+            self.record_carriers(prev_ns, substep, substeps, substep_s);
+            self.capture_contacts(frames, frac_prev, frac_next, substep_s, next_ns, contacts);
+            self.capture_armor_collisions();
+            // Absorb perimeter shots the slice they cross the wall, so a fast
+            // shot cannot reach past the perimeter and bounce back inside. The
+            // convex XY volume also catches one that traverses an entire wall
+            // in a single slice.
+            let mut index = 0;
+            while index < self.projectiles.len() {
+                let shot = &self.projectiles[index];
+                let position = self.physical.world.bodies[shot.body].translation();
+                let reason = if outside_projectile_bounds(
+                    self.projectile_bounds_m,
+                    position,
+                    shot.caliber.diameter_m() / 2.0,
+                ) {
+                    Some(RemovalReason::OutOfBounds)
+                } else if policy.retire_speed_m_s.is_some()
+                    && shot.dwell_since_ns.is_some_and(|since| {
+                        next_ns.saturating_sub(since) >= policy.retire_dwell_ns
+                    })
+                {
+                    Some(RemovalReason::Retired)
+                } else {
+                    None
+                };
+                if let Some(reason) = reason {
+                    let shot = self.projectiles.remove(index);
+                    self.record_removal(&shot, next_ns, reason);
+                    self.physical.world.remove_body(shot.body);
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        self.synced_ns = Some(next_ns);
+        Ok(())
+    }
+    fn record_carriers(&mut self, prev_ns: u64, substep: usize, substeps: usize, substep_s: f64) {
+        let Some(trace) = &mut self.carrier_trace else {
+            return;
+        };
+        let duration = u128::from(self.physical.step_duration().as_ns());
+        let offset = duration * (substep as u128 + 1) / substeps as u128;
+        let time_ns = prev_ns.saturating_add(offset as u64);
+        for chassis in &self.chassis {
+            if trace.len() >= crate::sensors::imu::MAX_CARRIER_TRACE_SAMPLES {
+                self.carrier_trace_dropped += 1;
+                continue;
+            }
+            let body = self.physical.world.bodies[chassis.body()].position();
+            trace.push(crate::sensors::imu::CarrierSample {
+                robot: chassis.id(),
+                placement_revision: chassis.revision(),
+                time_ns,
+                interval_s: substep_s,
+                chassis: Pose {
+                    translation_m: body.translation.to_array(),
+                    rotation_wxyz: [
+                        body.rotation.w,
+                        body.rotation.x,
+                        body.rotation.y,
+                        body.rotation.z,
+                    ],
+                },
+                gimbal: chassis.turret_pose(&self.physical.world),
+            });
+        }
+    }
 }
-fn finite(v: [f64; 3]) -> bool {
-    v.iter().all(|x| x.is_finite())
+
+impl WorldPhysics {
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::install_body`].
+    pub fn install_body(
+        &mut self,
+        key: BodyKey,
+        model: &CookedRigidBody,
+        state: BodyState,
+    ) -> Result<BodyBinding, &'static str> {
+        self.physical.install_body(key, model, state)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::body_binding`].
+    pub fn body_binding(&self, key: BodyKey) -> Option<BodyBinding> {
+        self.physical.body_binding(key)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::body_description`].
+    pub fn body_description(
+        &self,
+        binding: BodyBinding,
+    ) -> Result<&RigidBodyDescription, &'static str> {
+        self.physical.body_description(binding)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::body_state`].
+    pub fn body_state(&self, binding: BodyBinding) -> Result<BodyState, &'static str> {
+        self.physical.body_state(binding)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::set_body_velocity`].
+    pub fn set_body_velocity(
+        &mut self,
+        binding: BodyBinding,
+        velocity_m_s: [f64; 3],
+        angular_velocity_rad_s: [f64; 3],
+    ) -> Result<(), &'static str> {
+        self.physical
+            .set_body_velocity(binding, velocity_m_s, angular_velocity_rad_s)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::set_body_wrench`].
+    pub fn set_body_wrench(
+        &mut self,
+        binding: BodyBinding,
+        force_n: [f64; 3],
+        torque_nm: [f64; 3],
+    ) -> Result<(), &'static str> {
+        self.physical.set_body_wrench(binding, force_n, torque_nm)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::set_body_endpoint`].
+    pub fn set_body_endpoint(
+        &mut self,
+        binding: BodyBinding,
+        endpoint: Pose,
+    ) -> Result<(), &'static str> {
+        self.physical.set_body_endpoint(binding, endpoint)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::remove_bound_body`].
+    pub fn remove_bound_body(&mut self, binding: BodyBinding) -> Result<(), &'static str> {
+        self.physical.remove_bound_body(binding)
+    }
 }
-pub(crate) fn pose_is_valid(p: Pose) -> bool {
-    let norm = p.rotation_wxyz.iter().map(|v| v * v).sum::<f64>();
-    finite(p.translation_m) && norm.is_finite() && (norm - 1.).abs() < 1e-6
+
+impl WorldPhysics {
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::install_joint`].
+    pub fn install_joint(
+        &mut self,
+        key: JointKey,
+        parent: BodyBinding,
+        child: BodyBinding,
+        description: &JointDescription,
+    ) -> Result<JointBinding, &'static str> {
+        self.physical.install_joint(key, parent, child, description)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::joint_binding`].
+    pub fn joint_binding(&self, key: JointKey) -> Option<JointBinding> {
+        self.physical.joint_binding(key)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::joint_description`].
+    pub fn joint_description(
+        &self,
+        binding: JointBinding,
+    ) -> Result<&JointDescription, &'static str> {
+        self.physical.joint_description(binding)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::joint_state`].
+    pub fn joint_state(&self, binding: JointBinding) -> Result<JointState, &'static str> {
+        self.physical.joint_state(binding)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::set_joint_motor`].
+    pub fn set_joint_motor(
+        &mut self,
+        binding: JointBinding,
+        motor: Option<JointMotor>,
+    ) -> Result<(), &'static str> {
+        self.physical.set_joint_motor(binding, motor)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::set_joint_effort`].
+    pub fn set_joint_effort(
+        &mut self,
+        binding: JointBinding,
+        effort: f64,
+    ) -> Result<(), &'static str> {
+        self.physical.set_joint_effort(binding, effort)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::remove_bound_joint`].
+    pub fn remove_bound_joint(&mut self, binding: JointBinding) -> Result<(), &'static str> {
+        self.physical.remove_bound_joint(binding)
+    }
+}
+
+impl WorldPhysics {
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::install_assembly`].
+    pub fn install_assembly(
+        &mut self,
+        model: &CookedAssembly,
+        placement: Pose,
+        keys: &AssemblyKeys,
+    ) -> Result<AssemblyBinding, &'static str> {
+        self.physical.install_assembly(model, placement, keys)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::remove_assembly`].
+    pub fn remove_assembly(&mut self, live: &AssemblyBinding) -> Result<(), &'static str> {
+        self.physical.remove_assembly(live)
+    }
+}
+
+impl WorldPhysics {
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::participants`].
+    pub fn participants(&self) -> impl Iterator<Item = ParticipantBinding> + '_ {
+        self.physical.participants()
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::colliders`].
+    pub fn colliders(&self) -> impl Iterator<Item = ColliderBinding> + '_ {
+        self.physical.colliders()
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::participant_state`].
+    pub fn participant_state(
+        &self,
+        binding: ParticipantBinding,
+    ) -> Result<BodyState, &'static str> {
+        self.physical.participant_state(binding)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::collider_state`].
+    pub fn collider_state(&self, binding: ColliderBinding) -> Result<ColliderState, &'static str> {
+        self.physical.collider_state(binding)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::body_participant`].
+    pub fn body_participant(
+        &self,
+        binding: BodyBinding,
+    ) -> Result<ParticipantBinding, &'static str> {
+        self.physical.body_participant(binding)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::enable_contact_observations`].
+    pub fn enable_contact_observations(&mut self, capacity: usize) -> Result<(), &'static str> {
+        self.physical.enable_contact_observations(capacity)
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::disable_contact_observations`].
+    pub fn disable_contact_observations(&mut self) {
+        self.physical.disable_contact_observations()
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::physical_contacts`].
+    pub fn physical_contacts(&self) -> &[PhysicalContact] {
+        self.physical.physical_contacts()
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::physical_contacts_dropped`].
+    pub fn physical_contacts_dropped(&self) -> usize {
+        self.physical.physical_contacts_dropped()
+    }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::drain_physical_contacts`].
+    pub fn drain_physical_contacts(&mut self, output: &mut Vec<PhysicalContact>) {
+        self.physical.drain_physical_contacts(output)
+    }
 }
 
 impl WorldPhysics {
@@ -563,7 +1128,7 @@ impl WorldPhysics {
     /// ```
     pub fn chassis_participant(&self, id: u32) -> Option<runtime::ParticipantBinding> {
         let chassis = self.chassis_ref(id)?;
-        self.participant_for_handle(chassis.body())
+        self.physical.participant_for_handle(chassis.body())
     }
 
     /// Resolve a live projectile id to its runtime-local physical participant.
@@ -583,7 +1148,7 @@ impl WorldPhysics {
             .projectiles
             .iter()
             .find(|projectile| projectile.id == id)?;
-        self.participant_for_handle(projectile.body)
+        self.physical.participant_for_handle(projectile.body)
     }
 
     fn add_target(&mut self, face: TargetFace) {
@@ -592,13 +1157,13 @@ impl WorldPhysics {
             ArmorTarget::Rune { .. } => RUNE_HOUSING_HALF_M,
             ArmorTarget::Chassis { .. } => SMALL_ARMOR_HOUSING_HALF_M,
         };
-        let body = self.world.insert_body(
+        let body = self.physical.world.insert_body(
             RigidBodyBuilder::kinematic_position_based()
                 .pose(pose(face.pose))
                 .can_sleep(false),
         );
         let [x, y, z] = housing_half_m;
-        let collider = self.world.insert_collider(
+        let collider = self.physical.world.insert_collider(
             ColliderBuilder::cuboid(x, y, z)
                 .translation(Vector::new(-x, 0., 0.))
                 .friction(FRICTION)
@@ -615,7 +1180,7 @@ impl WorldPhysics {
     }
     /// A fixed box; used for tower bodies that projectiles must not pass through.
     pub fn add_static_box(&mut self, center: Pose, size_m: [f64; 3]) {
-        self.world.insert_collider(
+        self.physical.world.insert_collider(
             ColliderBuilder::cuboid(size_m[0] / 2., size_m[1] / 2., size_m[2] / 2.)
                 .position(pose(center))
                 .friction(FRICTION)
@@ -633,7 +1198,7 @@ impl WorldPhysics {
         triangles: Vec<[u32; 3]>,
     ) -> Result<(), &'static str> {
         let handle = self.add_static_mesh(vertices_m, triangles)?;
-        self.world.colliders[handle].set_collision_groups(InteractionGroups::new(
+        self.physical.world.colliders[handle].set_collision_groups(InteractionGroups::new(
             Group::GROUP_3,
             Group::ALL & !Group::GROUP_2,
             InteractionTestMode::And,
@@ -662,7 +1227,7 @@ impl WorldPhysics {
         self.insert_static_mesh_shape(mesh.shape.clone())
     }
     fn insert_static_mesh_shape(&mut self, shape: SharedShape) -> ColliderHandle {
-        self.world.insert_collider(
+        self.physical.world.insert_collider(
             ColliderBuilder::new(shape)
                 .friction(FRICTION)
                 .restitution(RESTITUTION),
@@ -817,7 +1382,7 @@ impl WorldPhysics {
                 && let Some(update) = updates.iter().find(|u| u.id == *id)
             {
                 let position = pose(frame.pose(update.coordinate));
-                let collider = &mut self.world.colliders[*handle];
+                let collider = &mut self.physical.world.colliders[*handle];
                 if *collider.position() != position {
                     collider.set_position(position);
                 }
@@ -840,7 +1405,7 @@ impl WorldPhysics {
             };
             let fraction = state.fraction(*kind, *team);
             let position = pose(offsets.pose(fraction));
-            let collider = &mut self.world.colliders[*handle];
+            let collider = &mut self.physical.world.colliders[*handle];
             if *collider.position() != position {
                 collider.set_position(position);
             }
@@ -850,13 +1415,14 @@ impl WorldPhysics {
     /// A loaded CAD layout calls this once it has its own ground and boundary.
     pub fn remove_catch_floor(&mut self) {
         let handles: Vec<_> = self
+            .physical
             .world
             .all_colliders()
             .filter(|(_, c)| matches!(c.shape().as_typed_shape(), TypedShape::HalfSpace(_)))
             .map(|(h, _)| h)
             .collect();
         for handle in handles {
-            self.world.remove_collider(handle);
+            self.physical.world.remove_collider(handle);
         }
     }
     /// Retain fixed shapes without copying their triangle buffers.
@@ -864,13 +1430,14 @@ impl WorldPhysics {
     /// they currently hold.
     pub fn static_geometry_snapshot(&self, include_mechanisms: bool) -> StaticGeometry {
         let colliders: Vec<_> = self
+            .physical
             .world
             .all_colliders()
             .filter(|(handle, collider)| {
                 (collider.parent().is_none()
                     || collider
                         .parent()
-                        .is_some_and(|h| self.world.bodies[h].is_fixed()))
+                        .is_some_and(|h| self.physical.world.bodies[h].is_fixed()))
                     && (include_mechanisms || !self.mechanisms.iter().any(|(h, ..)| h == handle))
                     && matches!(
                         collider.shape().as_typed_shape(),
@@ -885,6 +1452,7 @@ impl WorldPhysics {
             bounds: Default::default(),
             projectile_bounds_m: self.projectile_bounds_m,
             no_catch_floor: !self
+                .physical
                 .world
                 .all_colliders()
                 .any(|(_, c)| matches!(c.shape().as_typed_shape(), TypedShape::HalfSpace(_))),
@@ -918,17 +1486,19 @@ impl WorldPhysics {
             collision_groups: Vec::new(),
             mechanisms: Vec::new(),
             no_catch_floor: !self
+                .physical
                 .world
                 .all_colliders()
                 .any(|(_, c)| matches!(c.shape().as_typed_shape(), TypedShape::HalfSpace(_))),
             shapes: self
+                .physical
                 .world
                 .all_colliders()
                 .filter(|(handle, collider)| {
                     collider.is_enabled()
                         && (collider
                             .parent()
-                            .is_some_and(|h| !self.world.bodies[h].is_fixed())
+                            .is_some_and(|h| !self.physical.world.bodies[h].is_fixed())
                             || self.mechanisms.iter().any(|(h, ..)| h == handle))
                 })
                 .map(|(_, collider)| (*collider.position(), collider.shared_shape().clone()))
@@ -951,7 +1521,12 @@ impl WorldPhysics {
             .ok_or("unknown LiDAR robot")?;
         let mut fixed = Vec::new();
         let mut moving = Vec::new();
-        for (handle, collider) in self.world.all_colliders().filter(|(_, c)| c.is_enabled()) {
+        for (handle, collider) in self
+            .physical
+            .world
+            .all_colliders()
+            .filter(|(_, c)| c.is_enabled())
+        {
             let sample = SensorCollider {
                 handle,
                 pose: *collider.position(),
@@ -964,7 +1539,7 @@ impl WorldPhysics {
             };
             if collider
                 .parent()
-                .is_some_and(|h| !self.world.bodies[h].is_fixed())
+                .is_some_and(|h| !self.physical.world.bodies[h].is_fixed())
                 || self.mechanisms.iter().any(|(h, ..)| *h == handle)
             {
                 moving.push(sample);
@@ -1060,7 +1635,31 @@ impl WorldPhysics {
         spawn: Pose,
     ) -> Result<u32, &'static str> {
         let id = self.next_chassis_id;
-        let chassis = Chassis::new(&mut self.world, id, team, config, spawn)?;
+        let chassis = Chassis::new(&mut self.physical.world, id, team, config, spawn)?;
+        self.next_chassis_id += 1;
+        for (plate, &collider) in chassis.armor_colliders().iter().enumerate() {
+            self.rm_contacts.target_of.insert(
+                collider,
+                Scorer::Armor {
+                    chassis: id,
+                    plate: plate as u32,
+                },
+            );
+        }
+        self.chassis.push(chassis);
+        Ok(id)
+    }
+    /// Install shared prepared chassis resources with ordinary participant ownership.
+    /// Preparation does not enroll the wheel plant in generic held-wrench actuation.
+    /// Failed admission preserves the next chassis ID and native scene.
+    pub fn add_prepared_chassis(
+        &mut self,
+        team: Team,
+        prepared: &crate::chassis::PreparedChassis,
+        spawn: Pose,
+    ) -> Result<u32, &'static str> {
+        let id = self.next_chassis_id;
+        let chassis = Chassis::new_prepared(&mut self.physical.world, id, team, prepared, spawn)?;
         self.next_chassis_id += 1;
         for (plate, &collider) in chassis.armor_colliders().iter().enumerate() {
             self.rm_contacts.target_of.insert(
@@ -1085,7 +1684,7 @@ impl WorldPhysics {
         for collider in chassis.armor_colliders() {
             self.rm_contacts.target_of.remove(collider);
         }
-        chassis.remove(&mut self.world);
+        chassis.remove(&mut self.physical.world);
         Ok(())
     }
     /// Move an existing chassis to `spawn` and clear its body and wheel
@@ -1097,16 +1696,31 @@ impl WorldPhysics {
             .iter_mut()
             .find(|c| c.id() == id)
             .ok_or("no chassis with that id")?;
-        chassis.place(&mut self.world, spawn)
+        self.physical.check_placement_epoch()?;
+        chassis.place(&mut self.physical.world, spawn)?;
+        self.physical
+            .mark_placement_discontinuity()
+            .expect("preflighted placement epoch");
+        Ok(())
     }
     fn chassis_ref(&self, id: u32) -> Option<&Chassis> {
         self.chassis.iter().find(|chassis| chassis.id() == id)
     }
     /// Cut or restore a chassis' drive; ignored for ids no longer present.
     pub fn set_chassis_defeated(&mut self, id: u32, defeated: bool) {
-        if let Ok(chassis) = self.chassis_mut(id)
+        if let Some(chassis) = self.chassis.iter_mut().find(|c| c.id() == id)
             && chassis.is_defeated() != defeated
         {
+            if !defeated {
+                // Both counters are checked before either counter or chassis changes.
+                chassis
+                    .revision()
+                    .checked_add(1)
+                    .expect("chassis revision overflow");
+                self.physical
+                    .mark_placement_discontinuity()
+                    .expect("physical placement epoch exhausted");
+            }
             chassis.set_defeated(defeated);
         }
     }
@@ -1125,8 +1739,11 @@ impl WorldPhysics {
     }
     /// Body centre of a chassis in world FLU metres; `None` for an unknown id.
     pub fn chassis_position_m(&self, id: u32) -> Option<[f64; 3]> {
-        self.chassis_ref(id)
-            .map(|chassis| self.world.bodies[chassis.body()].translation().to_array())
+        self.chassis_ref(id).map(|chassis| {
+            self.physical.world.bodies[chassis.body()]
+                .translation()
+                .to_array()
+        })
     }
     /// Whether the chassis is defeated, or `None` when no chassis has that id.
     pub fn chassis_defeated(&self, id: u32) -> Option<bool> {
@@ -1179,15 +1796,17 @@ impl WorldPhysics {
     }
     /// Body centres of every chassis in id order, in world FLU metres.
     pub fn chassis_positions_m(&self) -> impl Iterator<Item = [f64; 3]> + '_ {
-        self.chassis
-            .iter()
-            .map(|chassis| self.world.bodies[chassis.body()].translation().to_array())
+        self.chassis.iter().map(|chassis| {
+            self.physical.world.bodies[chassis.body()]
+                .translation()
+                .to_array()
+        })
     }
     /// World pose of the gun muzzle, `MUZZLE_FORWARD_M` ahead of the turret
     /// pivot. `None` when no chassis has that id.
     pub fn chassis_muzzle_pose(&self, id: u32) -> Option<Pose> {
         self.chassis_ref(id)
-            .map(|chassis| chassis.muzzle_pose(&self.world))
+            .map(|chassis| chassis.muzzle_pose(&self.physical.world))
     }
     /// Allocation-free pose, held control and life state for one chassis.
     /// No configuration, wheel arrays or source articulation geometry is cloned.
@@ -1202,7 +1821,8 @@ impl WorldPhysics {
     /// # Ok::<(), &'static str>(())
     /// ```
     pub fn chassis_control_state(&self, id: u32) -> Option<crate::chassis::ChassisControlState> {
-        self.chassis_ref(id).map(|c| c.control_state(&self.world))
+        self.chassis_ref(id)
+            .map(|c| c.control_state(&self.physical.world))
     }
     /// Borrow compact body, prescribed gimbal/folding and wheel truth without cloning geometry.
     ///
@@ -1217,18 +1837,20 @@ impl WorldPhysics {
     /// # Ok::<(), &'static str>(())
     /// ```
     pub fn chassis_telemetry(&self, id: u32) -> Option<crate::chassis::ChassisTelemetry<'_>> {
-        self.chassis_ref(id).map(|c| c.telemetry(&self.world))
+        self.chassis_ref(id)
+            .map(|c| c.telemetry(&self.physical.world))
     }
     /// One chassis' state without walking the rules, for a replay that reads
     /// its own robot every tick and nothing else.
     pub fn chassis_snapshot(&self, id: u32) -> Option<ChassisSnapshot> {
-        self.chassis_ref(id).map(|c| c.snapshot(&self.world))
+        self.chassis_ref(id)
+            .map(|c| c.snapshot(&self.physical.world))
     }
     /// Every chassis snapshot, in id order.
     pub fn chassis_snapshots(&self) -> Vec<ChassisSnapshot> {
         self.chassis
             .iter()
-            .map(|chassis| chassis.snapshot(&self.world))
+            .map(|chassis| chassis.snapshot(&self.physical.world))
             .collect()
     }
     /// Total launches since the world was created. [`Self::restore_identity`]
@@ -1295,19 +1917,19 @@ impl WorldPhysics {
         if self.projectiles.len() >= MAX_PROJECTILES {
             let oldest = self.projectiles.remove(0);
             self.record_removal(&oldest, time_ns, RemovalReason::Capped);
-            self.world.remove_body(oldest.body);
+            self.physical.world.remove_body(oldest.body);
         }
         let muzzle = pose(muzzle);
         let velocity = muzzle.transform_vector(Vector::new(shot.speed_m_s, 0., 0.));
         let radius = shot.caliber.diameter_m() / 2.;
-        let body = self.world.insert_body(
+        let body = self.physical.world.insert_body(
             RigidBodyBuilder::dynamic()
                 .translation(muzzle.translation)
                 .linvel(velocity)
                 .ccd_enabled(true)
                 .can_sleep(false),
         );
-        let collider = self.world.insert_collider(
+        let collider = self.physical.world.insert_collider(
             ColliderBuilder::ball(radius)
                 .collision_groups(InteractionGroups::new(
                     Group::GROUP_2,
@@ -1378,7 +2000,7 @@ impl WorldPhysics {
         self.removals.drain(..).collect()
     }
     fn record_removal(&mut self, projectile: &Projectile, time_ns: u64, reason: RemovalReason) {
-        let body = &self.world.bodies[projectile.body];
+        let body = &self.physical.world.bodies[projectile.body];
         if self.removals.len() == REMOVAL_MEMORY {
             self.removals.pop_front();
         }
@@ -1416,7 +2038,7 @@ impl WorldPhysics {
             return Err("too many restored projectiles");
         }
         let radius = state.caliber.diameter_m() / 2.;
-        let body = self.world.insert_body(
+        let body = self.physical.world.insert_body(
             RigidBodyBuilder::dynamic()
                 .translation(vector(state.position_m))
                 .linvel(vector(state.velocity_m_s))
@@ -1424,7 +2046,7 @@ impl WorldPhysics {
                 .ccd_enabled(true)
                 .can_sleep(false),
         );
-        let collider = self.world.insert_collider(
+        let collider = self.physical.world.insert_collider(
             ColliderBuilder::ball(radius)
                 .collision_groups(InteractionGroups::new(
                     Group::GROUP_2,
@@ -1456,13 +2078,13 @@ impl WorldPhysics {
             return Err("chassis id already restored");
         }
         let mut chassis = Chassis::new(
-            &mut self.world,
+            &mut self.physical.world,
             state.id,
             state.team,
             state.config.clone(),
             state.pose,
         )?;
-        chassis.restore_prediction(&mut self.world, state)?;
+        chassis.restore_prediction(&mut self.physical.world, state)?;
         for (plate, &collider) in chassis.armor_colliders().iter().enumerate() {
             self.rm_contacts.target_of.insert(
                 collider,
@@ -1490,7 +2112,9 @@ impl WorldPhysics {
         Ok(())
     }
     /// Put an existing chassis back on a captured state. Prediction only: the
-    /// authoritative field never rewinds a body this way.
+    /// authoritative field never rewinds a body this way. A restore attempt can
+    /// invalidate geometry continuity even on error because native placement may
+    /// precede later state validation. Epoch exhaustion fails before any mutation.
     pub fn reset_chassis(&mut self, state: &ChassisSnapshot) -> Result<(), &'static str> {
         let chassis = self
             .chassis
@@ -1500,7 +2124,11 @@ impl WorldPhysics {
         if chassis.config() != &state.config {
             return Err("chassis configuration changed");
         }
-        chassis.restore_prediction(&mut self.world, state)
+        // Existing restoration can fail after placing the body and can restore
+        // an old chassis revision before a later error. Invalidate conservatively
+        // before attempting restoration so every partial mutation is covered.
+        self.physical.mark_placement_discontinuity()?;
+        chassis.restore_prediction(&mut self.physical.world, state)
     }
     /// Insert shared collision shapes captured from another field, keeping
     /// their mechanism roles so `sync_mechanisms` still moves them.
@@ -1535,7 +2163,7 @@ impl WorldPhysics {
         let mut handles = Vec::with_capacity(geometry.shapes.len());
         for (index, (position, shape)) in geometry.shapes.iter().enumerate() {
             handles.push(
-                self.world.insert_collider(
+                self.physical.world.insert_collider(
                     ColliderBuilder::new(shape.clone())
                         .collision_groups(
                             geometry
@@ -1599,7 +2227,7 @@ impl WorldPhysics {
     /// ```
     pub fn projectile_states(&self) -> impl ExactSizeIterator<Item = ProjectileSnapshot> + '_ {
         self.projectiles.iter().map(|projectile| {
-            let body = &self.world.bodies[projectile.body];
+            let body = &self.physical.world.bodies[projectile.body];
             ProjectileSnapshot {
                 id: projectile.id,
                 caliber: projectile.caliber,
@@ -1848,8 +2476,8 @@ mod tests {
                     .add_chassis(Team::Red, config.clone(), Pose::at([0., 0., 0.8]))
                     .unwrap();
                 let owner = &physics.chassis[0];
-                let face = owner.armor_pose(&physics.world, plate);
-                let collider = &physics.world.colliders[owner.armor_colliders()[plate]];
+                let face = owner.armor_pose(&physics.physical.world, plate);
+                let collider = &physics.physical.world.colliders[owner.armor_colliders()[plate]];
                 let half = collider.shape().as_cuboid().unwrap().half_extents;
                 assert_eq!(half.to_array(), config.armor_housing_half_m());
                 // The collider's front is exactly the scoring plane.
@@ -1897,7 +2525,7 @@ mod tests {
                 let mut restored = WorldPhysics::new(&[], 0.);
                 restored.restore_chassis(&snapshot).unwrap();
                 let owner = &restored.chassis[0];
-                let collider = &restored.world.colliders[owner.armor_colliders()[plate]];
+                let collider = &restored.physical.world.colliders[owner.armor_colliders()[plate]];
                 assert_eq!(
                     collider
                         .shape()
@@ -2111,7 +2739,7 @@ mod tests {
         let duration = crate::StepDuration::HZ_1000;
         let mut physics = WorldPhysics::with_step_duration(&[], 0., duration);
         assert_eq!(physics.step_duration(), duration);
-        assert_eq!(physics.world.integration_parameters.dt, 0.001);
+        assert_eq!(physics.physical.world.integration_parameters.dt, 0.001);
         physics
             .set_projectile_policy(ProjectilePolicy {
                 max_flight_ns: 100_000_000,

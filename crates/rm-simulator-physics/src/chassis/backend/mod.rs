@@ -16,6 +16,8 @@ mod dynamics;
 mod preparation;
 mod prescribed;
 
+pub use preparation::PreparedChassis;
+
 /// Low robot contact rebound. Assumed, not a measured material property.
 const ROBOT_RESTITUTION: f64 = 0.05;
 /// Body collider friction against walls and the ground.
@@ -375,3 +377,6 @@ fn balance_lqr_gains(config: &ChassisConfig) -> [f64; 2] {
 
 #[cfg(test)]
 mod preparation_tests;
+
+#[cfg(test)]
+mod reuse_tests;

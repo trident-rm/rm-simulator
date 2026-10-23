@@ -7,6 +7,7 @@
 //! in each point's sensor frame and supplies no perfect localization estimate.
 use super::{
     MAX_LIDAR_RAYS,
+    carrier::{CarrierIdentity, StampedCarrierPose},
     mid360::{Mid360Pattern, PatternWindow},
 };
 use crate::{
@@ -34,8 +35,12 @@ pub(crate) struct SensorCollider {
 #[derive(Clone)]
 pub struct SceneCapture {
     runtime_identity: u64,
-    robot: u32,
-    placement_revision: u64,
+    // Generic captures retain the runtime's scene-wide discontinuity evidence.
+    // Legacy captures retain their original complete chassis revision list.
+    scene_placement_epoch: Option<u64>,
+    robot: Option<u32>,
+    placement_revision: Option<u64>,
+    carrier_identity: Option<CarrierIdentity>,
     robot_revisions: Vec<(u32, u64)>,
     time_ns: u64,
     robot_pose: Pose3,
@@ -55,8 +60,10 @@ impl SceneCapture {
     ) -> Self {
         Self {
             runtime_identity,
-            robot: robot_identity.0,
-            placement_revision: robot_identity.1,
+            scene_placement_epoch: None,
+            robot: Some(robot_identity.0),
+            placement_revision: Some(robot_identity.1),
+            carrier_identity: None,
             robot_revisions,
             time_ns,
             robot_pose: pose(robot_pose),
@@ -64,6 +71,71 @@ impl SceneCapture {
             moving,
             fixed_queries: OnceLock::new(),
         }
+    }
+    /// Combine an immutable generic runtime capture with an actual resolved
+    /// carrier pose. The stamp supplies simulation time; no clock is consulted.
+    /// All enabled geometry, including the carrier's own colliders, occludes.
+    /// The capture retains the runtime's scene-wide placement epoch so a
+    /// discontinuous placement of any obstacle invalidates interpolation, even
+    /// when the sensor carrier's own identity and placement remain unchanged.
+    ///
+    /// The caller's freely constructible world stamp must match the capture's
+    /// actual runtime brand. This checks metadata consistency, not authenticity
+    /// of a privileged caller's asserted carrier binding or placement revision.
+    ///
+    /// ```
+    /// use rm_simulator_engine::model::CarrierKey;
+    /// use rm_simulator_physics::{Pose, StepDuration, runtime::PhysicalRuntime,
+    ///     sensors::{carrier::{CarrierIdentity, StampedCarrierPose}, rolling::SceneCapture}};
+    /// let runtime = PhysicalRuntime::new(StepDuration::HZ_1000);
+    /// let geometry = runtime.geometry_capture();
+    /// let identity = CarrierIdentity { carrier: CarrierKey(3),
+    ///     world_brand: geometry.runtime_identity(), installation_generation: 1,
+    ///     discontinuity_revision: 0 };
+    /// let carrier = StampedCarrierPose::new(identity, 0, 0.001, Pose::default())?;
+    /// let scene = SceneCapture::from_physical_geometry(&geometry, carrier)?;
+    /// assert_eq!(scene.time_ns(), 0);
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn from_physical_geometry(
+        geometry: &crate::runtime::PhysicalGeometry,
+        carrier: StampedCarrierPose,
+    ) -> Result<Self, &'static str> {
+        if carrier.identity().world_brand != geometry.runtime_identity() {
+            return Err("carrier stamp belongs to another physical runtime");
+        }
+        let (mut fixed, mut moving) = (Vec::new(), Vec::new());
+        for (_, handle, pose, shape, is_fixed) in geometry.sensor_colliders() {
+            let collider = SensorCollider {
+                handle,
+                motion_channel: None,
+                pose,
+                shape,
+            };
+            if is_fixed {
+                fixed.push(collider);
+            } else {
+                moving.push(collider);
+            }
+        }
+        Ok(Self {
+            runtime_identity: geometry.runtime_identity(),
+            scene_placement_epoch: Some(geometry.placement_epoch()),
+            robot: None,
+            placement_revision: None,
+            carrier_identity: Some(carrier.identity()),
+            robot_revisions: Vec::new(),
+            time_ns: carrier.time_ns(),
+            robot_pose: pose(carrier.world_from_carrier()),
+            fixed,
+            moving,
+            fixed_queries: OnceLock::new(),
+        })
+    }
+    /// Complete caller-stamped generic carrier identity, absent on the chassis
+    /// compatibility path. The capture's actual runtime brand is kept separately.
+    pub fn carrier_identity(&self) -> Option<CarrierIdentity> {
+        self.carrier_identity
     }
     /// Use an actual articulated carrier pose for this capture's sensor mount.
     /// Geometry, robot identity and placement revisions remain unchanged. Supply
@@ -423,7 +495,9 @@ struct SceneBracket<'a> {
 impl<'a> SceneBracket<'a> {
     fn new(before: &'a SceneCapture, after: &'a SceneCapture) -> Result<Self, &'static str> {
         if before.runtime_identity != after.runtime_identity
+            || before.scene_placement_epoch != after.scene_placement_epoch
             || before.time_ns >= after.time_ns
+            || before.carrier_identity != after.carrier_identity
             || before.robot != after.robot
             || before.placement_revision != after.placement_revision
             || before.robot_revisions != after.robot_revisions
@@ -980,7 +1054,7 @@ mod tests {
             let expected = world.chassis_snapshot(robot).unwrap();
             let scene = world.lidar_scene_capture(robot, 123).unwrap();
             assert_eq!(scene.robot_pose, pose(expected.pose));
-            assert_eq!(scene.placement_revision, expected.placement_revision);
+            assert_eq!(scene.placement_revision, Some(expected.placement_revision));
             assert_eq!(scene.time_ns(), 123);
             assert_eq!(
                 scene.robot_revisions,
@@ -1263,7 +1337,7 @@ mod tests {
         assert!(sensor.sample_into(&a, &b, invalid, &mut frame).is_err());
         assert_eq!(frame, saved);
         let mut future = b.clone();
-        future.placement_revision += 1;
+        *future.placement_revision.as_mut().unwrap() += 1;
         assert!(sensor.sample_into(&a, &future, window, &mut frame).is_err());
         assert_eq!(frame, saved);
         world.add_static_box(Pose::at([5., 5., 1.]), [1.; 3]);

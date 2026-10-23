@@ -4,8 +4,12 @@
 use std::sync::Arc;
 mod assembly;
 mod body;
+mod compound;
 mod convex;
+pub use compound::CompoundShape;
 mod joint;
+mod mount;
+pub use mount::{CarrierKey, MountDescription, MountKey, MountTable};
 mod policy;
 pub use assembly::{
     AssemblyDescription, AssemblyJoint, AssemblyJointId, AssemblyLink, AssemblyLinkId,

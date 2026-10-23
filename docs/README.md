@@ -18,6 +18,7 @@ Git history.
 | Engine core, component lifecycle and staged architecture migration | [Engine architecture](engine-architecture.md) |
 | Joint foundation, robot assembly and remaining physics migration gates | [Physics migration](physics-migration.md) |
 | Physical joint frames, motor/effort control and standalone yaw/pitch fixture | [Jointed mechanisms](jointed-mechanisms.md) |
+| Standalone physical runtime, preparation, commands and reconstruction | [Physical runtime](physical-runtime.md) |
 | Physical participant identities, contact observations and scoring ownership | [Physical contacts](physical-contacts.md) |
 | Explicit convex sources, cooking, capture/export and chassis shape parity | [Convex colliders](convex-colliders.md) |
 | Runtime/game split, two session layers and backend migration risks | [Runtime split](runtime-game-split.md) |

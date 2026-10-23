@@ -12,6 +12,7 @@ use crate::{
 };
 use rapier3d_f64::prelude::{Ray, Vector};
 
+pub mod carrier;
 pub mod imu;
 pub mod mid360;
 pub mod rolling;
