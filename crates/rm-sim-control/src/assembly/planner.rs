@@ -16,16 +16,25 @@ const CHASSIS_SPEED_M_S: f64 = 0.25;
 const CHASSIS_YAW_RAD_S: f64 = 0.35;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+/// Logical stages of the existing assembly task profile.
 pub enum Stage {
+    /// Move toward the pre-insertion guide.
     Approach,
+    /// Close jaws around the Unit.
     Grasp,
+    /// Insert the Unit onto the rod.
     Insert,
+    /// Lift the inserted Unit.
     Lift,
+    /// Perform the prescribed P flip.
     Flip,
+    /// Rotate toward the observed Q alignment.
     Align,
+    /// Hold the final attached state.
     Settle,
 }
 #[derive(Clone)]
+/// Validated planner keyframe; physical playback retiming remains explicit.
 pub struct Frame {
     /// Minimum playback duration, in 128 Hz ticks (one to eight).
     pub(super) ticks: u32,
@@ -33,15 +42,22 @@ pub struct Frame {
     pub chassis: Pose,
     /// Unit rotation around the insertion rod, radians; rigid grip is retained.
     pub rod_spin_rad: f64,
+    /// Six Engineer joint coordinates, radians.
     pub q: [f64; 6],
+    /// Insertion guide coordinates in metres.
     pub logical: [f64; 3],
+    /// P, Q and off-axis guide angles in radians.
     pub angles: [f64; 3],
+    /// Whether this keyframe requests closed jaws.
     pub close: bool,
+    /// Assembly task stage represented by the keyframe.
     pub stage: Stage,
+    /// Whether this edge is free-space approach motion.
     pub free: bool,
     validation: Option<std::sync::Arc<ValidatedTransition>>,
 }
 #[derive(Clone, Default, Serialize)]
+/// Search diagnostics; elapsed wall time is filled by a caller, not measured by this library.
 pub struct Statistics {
     /// Wall time spent searching and validating this plan, excluding load/playback.
     pub planning_elapsed_s: f64,
@@ -49,31 +65,53 @@ pub struct Statistics {
     pub approach_shortcuts: usize,
     /// Sum of maximum joint changes per edge, radians, before and after shortening.
     pub approach_travel_rad: [f64; 2],
+    /// Number of candidate routes evaluated.
     pub candidates: usize,
+    /// Number of inverse-kinematics queries requested.
     pub ik_queries: usize,
     /// Exact seed/target/model solves reused, including previous failures.
     pub ik_cache_hits: usize,
+    /// Queries seeded from a nearby previously solved target.
     pub nearby_ik_hints: usize,
+    /// Queries seeded from an exactly matching target.
     pub exact_ik_hints: usize,
+    /// Number of charged collision guard checks.
     pub collision_checks: usize,
+    /// Number of exact validated transition cache hits.
     pub collision_table_hits: usize,
+    /// Ordered keyframes, or their count in search diagnostics.
     pub frames: usize,
+    /// Whether fixture setup search selected a different initial arrangement.
     pub setup_changed: bool,
+    /// Number of reverse-search roots considered.
     pub reverse_roots: usize,
+    /// Number of initial configurations tested.
     pub tested_setups: usize,
+    /// Candidate-route counts by route ordinal.
     pub route_trials: BTreeMap<usize, usize>,
+    /// Number of unsupported chassis-route samples rejected.
     pub unsupported_route_samples: usize,
+    /// Number of checked path segments.
     pub segment_checks: usize,
+    /// Counts of connected stage segments by diagnostic label.
     pub connected_segments: BTreeMap<String, usize>,
+    /// Selected chassis pose in the rig FLU frame, if setup search succeeded.
     pub selected_chassis: Option<Pose>,
     /// Chosen prescribed base trajectory, available only after a complete plan.
     pub selected_route: Option<ChassisRoute>,
+    /// Retained endpoint diagnostics by milestone name.
     pub milestone_witnesses: BTreeMap<String, Witness>,
+    /// Retained swept collision diagnostics by segment name.
     pub swept_segment_witnesses: BTreeMap<String, Witness>,
+    /// Retained coarse collision diagnostics by segment name.
     pub coarse_segment_witnesses: BTreeMap<String, Witness>,
+    /// Collision rejection counts by participant pair.
     pub rejected_pairs: BTreeMap<String, usize>,
+    /// Structured rejected milestone diagnostics.
     pub rejected_milestones: BTreeMap<String, serde_json::Value>,
+    /// Number of rejected IK results.
     pub ik_rejections: usize,
+    /// Rejection counts by stage name.
     pub rejected_stages: BTreeMap<String, usize>,
 }
 /// Reproducible branch/placement evidence, never an executable partial plan.
@@ -99,14 +137,22 @@ impl Witness {
     }
 }
 #[derive(Clone, Serialize)]
+/// A failed search with its stage, collision witness and bounded diagnostics.
 pub struct Failure {
+    /// Human-readable planning failure reason.
     pub reason: String,
+    /// Assembly task stage represented by the keyframe.
     pub stage: Stage,
+    /// First retained collision rejection witness, if available.
     pub collision: Option<Box<CollisionHit>>,
+    /// Search counters and diagnostics for this result.
     pub statistics: Box<Statistics>,
 }
+/// Complete ordered planner keyframes and diagnostics; grants no actuation authority.
 pub struct Plan {
+    /// Ordered keyframes, or their count in search diagnostics.
     pub frames: Vec<Frame>,
+    /// Search counters and diagnostics for this result.
     pub statistics: Statistics,
 }
 /// Exact, in-memory certificate for an already swept transition. Never serialized.
@@ -259,8 +305,11 @@ struct Search {
     signal: Option<std::sync::Arc<Signal>>,
 }
 #[derive(Default)]
-pub(crate) struct Signal {
+/// Caller-owned cancellation and progress counters; the library never spawns a worker.
+pub struct Signal {
+    /// Number of charged checks, observed with relaxed atomic ordering.
     pub checks: std::sync::atomic::AtomicUsize,
+    /// Caller sets true to request cancellation at the next search guard.
     pub cancelled: std::sync::atomic::AtomicBool,
 }
 impl Search {
@@ -797,17 +846,10 @@ impl Rig {
         prepare: bool,
         budget: usize,
     ) -> Result<(Rig, Plan), Failure> {
-        let started = std::time::Instant::now();
-        let mut result =
-            self.plan_assembly_inner(difficulty, target_q, logical, angles, prepare, budget, None);
-        let elapsed = started.elapsed().as_secs_f64();
-        match &mut result {
-            Ok((_, plan)) => plan.statistics.planning_elapsed_s = elapsed,
-            Err(failure) => failure.statistics.planning_elapsed_s = elapsed,
-        }
-        result
+        self.plan_assembly_inner(difficulty, target_q, logical, angles, prepare, budget, None)
     }
-    pub(crate) fn plan_assembly_observed(
+    /// Plan the existing assembly profile with caller cancellation/progress and a check budget.
+    pub fn plan_assembly_observed(
         &self,
         difficulty: u8,
         target_q: f64,
@@ -824,7 +866,8 @@ impl Rig {
             Some(signal),
         )
     }
-    pub(crate) fn plan_runtime_segment(
+    /// Plan insertion/flip or the newly observed attached twist without anticipating the hidden target.
+    pub fn plan_runtime_segment(
         &self,
         difficulty: u8,
         twist: Option<f64>,
@@ -1137,7 +1180,8 @@ impl Rig {
         }
         Err(search.failure("No attached Q/rod continuation found within the local search budget"))
     }
-    pub(crate) fn runtime_endpoint(&self, plan: &Plan) -> Result<Rig, &'static str> {
+    /// Replay validated keyframes to a kinematic endpoint without actuating a world.
+    pub fn runtime_endpoint(&self, plan: &Plan) -> Result<Rig, &'static str> {
         let mut end = self.clone();
         for frame in &plan.frames {
             end.follow_plan(frame)?;
@@ -1796,10 +1840,10 @@ fn breakaway_edge(
     state: &mut Rig,
     target: Rig,
     search: &mut Search,
-    last: &rm_sim_world::assembly::Frame,
-    frames: &mut Vec<rm_sim_world::assembly::Frame>,
+    last: &super::PlaybackFrame,
+    frames: &mut Vec<super::PlaybackFrame>,
 ) -> Result<(), &'static str> {
-    use rm_sim_world::assembly::{JAW_SPEED_RAD_S, JOINT_SPEED_RAD_S};
+    use super::{JAW_SPEED_RAD_S, JOINT_SPEED_RAD_S};
     let from = state.clone();
     let dt = rm_sim_physics::tick_ns() as f64 * 1e-9;
     let n = (0..6)
@@ -2222,9 +2266,7 @@ fn build(
                 .map(|i| (pair[1][i] - pair[0][i]).abs())
                 .fold(0., f64::max)
                 / (if carried_entry {
-                    rm_sim_world::assembly::JOINT_SPEED_RAD_S
-                        .into_iter()
-                        .fold(f64::INFINITY, f64::min)
+                    JOINT_SPEED_RAD_S.into_iter().fold(f64::INFINITY, f64::min)
                 } else {
                     0.6
                 } * dt))
@@ -2303,12 +2345,12 @@ fn build(
 
 impl Rig {
     /// Release the seated Unit, clear the socket and return through swept-clear motion.
-    pub(crate) fn runtime_breakaway_frames(
+    pub fn runtime_breakaway_frames(
         &self,
-        last: &rm_sim_world::assembly::Frame,
+        last: &super::PlaybackFrame,
         signal: std::sync::Arc<Signal>,
-    ) -> Result<Vec<rm_sim_world::assembly::Frame>, &'static str> {
-        use rm_sim_world::assembly::NEUTRAL_JOINTS_RAD;
+    ) -> Result<Vec<super::PlaybackFrame>, &'static str> {
+        use super::NEUTRAL_JOINTS_RAD;
         let mut search = Search {
             stats: Statistics::default(),
             budget: 2500,
@@ -2433,11 +2475,11 @@ impl Rig {
     }
     /// Retime validated motion along its existing joint path. No IK goal or
     /// endpoint is projected; slow joints lengthen the corresponding segment.
-    pub(crate) fn runtime_limited_frames(
+    pub fn runtime_limited_frames(
         &self,
         plan: &Plan,
-    ) -> Result<Vec<rm_sim_world::assembly::Frame>, &'static str> {
-        use rm_sim_world::assembly::{Frame as Output, JAW_SPEED_RAD_S, JOINT_SPEED_RAD_S};
+    ) -> Result<Vec<super::PlaybackFrame>, &'static str> {
+        use super::{JAW_SPEED_RAD_S, JOINT_SPEED_RAD_S, PlaybackFrame as Output};
         let source = self.runtime_frames(plan)?;
         let mut previous = Output {
             joints_rad: self.engineer_q,
@@ -2504,9 +2546,10 @@ impl Rig {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Rig {
-    pub(crate) fn test_playback_fixture() -> (Self, Plan) {
+    /// Build a synthetic fixture and short plan for downstream diagnostic tests; no source CAD.
+    pub fn test_playback_fixture() -> (Self, Plan) {
         let mut rig = super::tests::mechanism_fixture();
         let logical = [0.09, 0.2, 0.6];
         let target = rig.target(logical, [0.; 3]);
@@ -2586,7 +2629,7 @@ mod tests {
                 closed_rad: 0.2,
             })
             .collect();
-        let mut arm = rm_sim_world::assembly::ArmState::neutral(1, rig.runtime_model());
+        let mut arm = ArmPose::neutral(&rig.runtime_model());
         arm.jaws_rad = [0.2; 2];
         rig.set_live_entry(&arm);
         let carried = rig.carried_start(&arm);

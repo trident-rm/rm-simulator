@@ -42,4 +42,5 @@ prost = { version = "0.14", optional = true }
 rumqttd = { version = "0.20", default-features = false, optional = true }
 
 [dev-dependencies]
+rm-sim-control = { version = "0.1.0", path = "../rm-sim-control", features = ["test-support"] }
 rm-sim-physics = { version = "0.1.0", path = "../rm-sim-physics" }

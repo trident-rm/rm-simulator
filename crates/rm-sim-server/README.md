@@ -31,11 +31,12 @@ with compression skipped.
 | `src/network_stats.rs`, `src/network_trace.rs` | Local diagnostics, and bounded transport metadata tracing that never records payloads. |
 | `src/http.rs`, `src/panel.html` | The HTTP/1.1 referee panel and JSON API: `GET /`, `GET /api/state`, `POST /api/referee` and `POST /api/command`. |
 | `src/lobby.rs`, `src/lifecycle.rs`, `src/math.rs`, `src/semantics.rs` | LAN directory leases, the shared worker shutdown flag, wxyz quaternion and matrix helpers, and checksum-bound semantic articulation data. |
+| `src/navigation.rs`, `src/assembly.rs`, `src/assembly_rig.rs` | Bounded controller workers, host permissions and world input/output projection; algorithms live in `rm-sim-control`. |
 | `src/main.rs` | The headless binary: `--listen`, `--http` and the rune, referee, chassis and collision toggles. |
 
 ## Dependencies
 
-`rm-sim-world` plus `anyhow`, `clap`, `serde`, `serde_json`, `sha2`,
+`rm-sim-world`, `rm-sim-assets`, `rm-sim-physics` and `rm-sim-control` plus `anyhow`, `clap`, `serde`, `serde_json`, `sha2`,
 `game-networking-sockets`, `zstd` and `if-addrs`. The crate never
 depends on Bevy, `rm-sim-render`, `rm-sim-app` or
 `rm-sim-gameplay`; the live resources arrive through the world crate. It is

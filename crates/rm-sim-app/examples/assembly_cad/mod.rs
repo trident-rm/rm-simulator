@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Workbench presentation around the same Bevy-free rig the host runs.
-// Compile the host-owned internal implementation here to keep the standalone
-// diagnostic's private inspection tests without publishing its internals.
-#[path = "../../../rm-sim-server/src/assembly_rig/mod.rs"]
-#[allow(dead_code, unused_imports)]
-mod rig;
 use bevy::prelude::*;
 pub use rig::{AssemblyPlan, PlanningFailure, Rig};
+use rm_sim_control::assembly as rig;
 use rm_sim_physics::Pose;
 use rm_sim_render::{PoseFlu, apply_pose};
 use std::{collections::BTreeMap, path::PathBuf};

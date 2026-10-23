@@ -10,7 +10,6 @@
 
 extern crate self as rm_sim_server;
 mod assembly;
-#[allow(dead_code, unused_imports)] // Shared diagnostic entry points are used by the workbench.
 mod assembly_rig;
 #[cfg(test)]
 mod bandwidth_probe;

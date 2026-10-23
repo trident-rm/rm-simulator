@@ -13,6 +13,8 @@ Rapier dynamics backend is unchanged. This design extends the [current architect
 and [embedding interface](simulation-embedding.md) so a second physical backend
 can be evaluated without making the multiplayer app its integration layer.
 The current AGENTS.md engineering contract continues to govern implementation.
+Navigation and assembly controller extraction is now implemented in
+`rm-sim-control`; see [controller contracts](controllers.md).
 
 The reusable product is a robot simulation runtime, with RoboMaster match rules
 composed above it. The driving game, vision experiments, navigation adapters and
@@ -132,8 +134,9 @@ verification. An asset manifest must never require a live physics backend merely
 to inspect it. Visual, sensor and dynamics meshes remain independently selectable
 with their source hashes and approximation provenance preserved.
 
-`server::layout` currently constructs terrain and a Field; `server::assembly_rig`
-contains reusable source rig setup and planning; `server::prediction` includes
+`server::layout` composes terrain and a Field; source rig setup and planning now
+live in `control::assembly`, with a small `server::assembly_rig` input/output
+adapter. `server::prediction` includes
 whole-match reconstruction/replay. Move construction/model loading toward assets
 and match composition, and separate pure replay from transport anchors, timing
 and acknowledgment policy. A bare simulation or match benchmark must eventually
@@ -233,7 +236,7 @@ confirmation ordering and reliable command ownership.
 | FFI and packaging | Native GPU libraries, contexts and unsafe bindings differ from a Rust-only build | Optional isolated adapter; keep core safe and CPU builds usable; review any narrow unsafe-policy exception explicitly |
 | Sensor continuity | Placement/topology changes invalidate rolling brackets and IMU traces | Backend-independent timestamps/generations and discontinuity tests; never interpolate across reset or missing capture intervals |
 | Parallel-world memory | Duplicating arena buffers/cooked geometry per PPO world can erase capacity gains | Share immutable data where backend supports it; measure GPU/CPU memory per world, capacity limits and reset costs |
-| Game/controller coupling | Assembly, optical aiming, prediction and construction still reside in server/app modules | Extract pure construction/planning/replay while retaining host authority and policy at transport boundary |
+| Game/controller coupling | Navigation/assembly algorithms are now in `rm-sim-control`; optical targeting policy, prediction and match authority remain in server/app | Continue extracting reusable algorithms where a concrete standalone consumer needs them; retain host permissions and scheduling |
 | Scope and churn | A generic rewrite can break the working game before a second backend proves useful | Same-workspace migration, compatibility facades, incremental tests and a minimal working backend prototype |
 
 GPU backend feasibility also depends on the selected SDK's feature coverage.
@@ -339,23 +342,20 @@ robotics consumers, not by file length. They are proposals, not new runtime APIs
    ownership, spawn policy and `FieldConfig` remain match/server composition.
    `PredictionScene::geometry` still constructs a temporary Field; migrating it
    requires preserving its initial rule-resolved mechanism poses.
-3. **Assembly solver state versus task and worker ownership.** Source loading and
-   IK-hint validation are now extracted, but `server::assembly_rig::Rig` still
-   combines mechanical state, source collision queries, parking assumptions and
-   manipulation task state. The app workbench includes that private server source
-   with `#[path]`. Expose reusable mechanical/query inputs and planner results;
-   retain staged assembly semantics in its task adapter and bounded workers,
-   cancellation and wall-time measurement with the host. Keep hidden Q-target
-   revelation and actual-joint entry semantics intact. Acceptance: the diagnostic
-   no longer compiles private server implementation files directly.
-4. **Navigation algorithms versus host service.** `server::navigation` contains
-   surface queries, map baking, search and shortcutting, tunnel/posture constraints,
-   following, worker queues and Field control. Extract immutable map/search and
-   explicit-input follower logic first. The host keeps map-intent permissions,
-   Sentry enrollment, worker bounds, failure policy and protocol presentation.
-   Avoid physics depending on assets' `GroundMesh`; supply prepared data or a
-   narrow query input. Acceptance: the same route/follower can run over a bare
-   RobotSession without hosting a match.
+3. **Assembly solver state versus task and worker ownership — implemented.**
+   `control::assembly::Rig` now owns verified loading, copied mechanical state,
+   collision queries, parking search and staged planning. It takes explicit arm
+   and payload observations rather than live match objects. The workbench uses
+   the public API, with no private server-source inclusion. Host/world still own
+   permission checks, hidden Q revelation, threads, cancellation decisions,
+   timing and authoritative playback. Source tests retain manually parked L1–L3
+   behavior, including bounded unresolved attached-twist cases.
+4. **Navigation algorithms versus host service — implemented.**
+   `control::navigation` owns shared-map preparation/search, explicit passage
+   hints and explicit-interval following/recovery. The server retains one bounded
+   worker, map-intent permissions, Sentry enrollment and world command projection.
+   The same controller drives a bare physical robot in its standalone example.
+   Physics still has no dependency on asset support meshes or controllers.
 5. **Instance identity versus competition motion channels.** Physical moving geometry now supports explicit `MotionId` channels alongside
    the existing `(Mechanism, Team)` adapter. Compositions can drive two same-team
    Outposts independently, retaining identities through reset/capture/insertion;

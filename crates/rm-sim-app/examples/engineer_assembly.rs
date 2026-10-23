@@ -184,6 +184,13 @@ const ARM: Arm = Arm {
 };
 type PlannedAssembly =
     Result<(assembly_cad::Rig, assembly_cad::AssemblyPlan), assembly_cad::PlanningFailure>;
+fn record_planning_time(result: &mut PlannedAssembly, elapsed_s: f64) {
+    match result {
+        Ok((_, plan)) => plan.statistics.planning_elapsed_s = elapsed_s,
+        Err(failure) => failure.statistics.planning_elapsed_s = elapsed_s,
+    }
+}
+
 type PendingPlan = Arc<std::sync::Mutex<Option<PlannedAssembly>>>;
 #[derive(Resource)]
 struct Workbench {
@@ -308,7 +315,8 @@ impl Workbench {
             self.message = "Source CAD required for collision-aware planning".into();
             return;
         };
-        let result = rig.plan_assembly(
+        let started = std::time::Instant::now();
+        let mut result = rig.plan_assembly(
             self.task.difficulty,
             self.task.target_q_rad[0],
             self.tool.translation_m,
@@ -316,6 +324,7 @@ impl Workbench {
             prepare,
             budget,
         );
+        record_planning_time(&mut result, started.elapsed().as_secs_f64());
         self.apply_plan(result, automatic);
     }
     fn apply_plan(&mut self, result: PlannedAssembly, automatic: bool) {
@@ -371,7 +380,9 @@ impl Workbench {
             self.angles,
         );
         std::thread::spawn(move || {
-            let plan = rig.plan_assembly(d, q, logical, angles, false, budget);
+            let started = std::time::Instant::now();
+            let mut plan = rig.plan_assembly(d, q, logical, angles, false, budget);
+            record_planning_time(&mut plan, started.elapsed().as_secs_f64());
             *result.lock().unwrap() = Some(plan);
         });
     }

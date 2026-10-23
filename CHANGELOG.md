@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Extract shared navigation planning/following and source assembly planning into
+  `rm-sim-control`, with explicit observations, elapsed time and caller-owned
+  cancellation. Keep bounded workers, permissions and actuation in the server.
+  The assembly workbench uses the public controller API without including server
+  implementation files; add a bare-physics navigation example and boundary tests.
+
 - Rename workspace crates and Rust imports from `rm-simulator-*` /
   `rm_simulator_*` to `rm-sim-*` / `rm_sim_*`, including crate directories,
   optional integrations and suffixed server/benchmark executables. The main

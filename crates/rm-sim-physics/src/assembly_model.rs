@@ -11,6 +11,14 @@
 //! };
 //! assert!(jaw.closed_rad < jaw.open_rad);
 //! ```
+/// Simulator joint-rate limits, radians/second; not donor motor specifications.
+pub const JOINT_SPEED_RAD_S: [f64; 6] = [1.; 6];
+/// Simulator jaw-rate limit, radians/second; not a measured motor specification.
+pub const JAW_SPEED_RAD_S: f64 = 1.;
+/// Raised, compact neutral posture for the PIE donor, radians. Simulator preset;
+/// the shoulder/forearm oppose so the empty wrist stays approximately level.
+pub const NEUTRAL_JOINTS_RAD: [f64; 6] = [0., 0.35, -0.35, 0., 0., 0.];
+
 use crate::{Pose, manipulator::SerialArm};
 use glam::DQuat;
 use serde::{Deserialize, Serialize};

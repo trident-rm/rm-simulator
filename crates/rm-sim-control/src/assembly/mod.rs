@@ -6,16 +6,22 @@ pub(super) const SPEED: f64 = 0.12;
 pub(super) const ENTRANCE_X: f64 = 0.05;
 pub(super) const SOCKET: [f64; 3] = [-0.05, 0.2, 0.6];
 mod area;
+mod inputs;
 mod planner;
 use glam::DQuat;
-pub(crate) use planner::Signal;
-pub use planner::{Failure as PlanningFailure, Plan as AssemblyPlan};
+pub use inputs::{ArmPose, PayloadObservation, PlaybackFrame};
+pub use planner::Signal;
+pub use planner::{
+    ChassisRoute, Failure as PlanningFailure, Frame as Keyframe, Plan as AssemblyPlan, Stage,
+    Statistics as PlanningStatistics, Witness,
+};
+use rm_sim_gameplay::rmuc_2027::assembly_pose::TargetPose;
+pub use rm_sim_physics::assembly_model::{JAW_SPEED_RAD_S, JOINT_SPEED_RAD_S, NEUTRAL_JOINTS_RAD};
 use rm_sim_physics::{
     Pose,
     manipulator::SerialArm,
     manipulator_collision::{CollisionHit, CollisionScene},
 };
-use rm_sim_world::gameplay::rmuc_2027::assembly_pose::TargetPose;
 use serde::Deserialize;
 // Fixed cylinder grasp clocking; the unit gets the inverse offset at rendering.
 const GRASP_ROLL_RAD: f64 = -std::f64::consts::FRAC_PI_2;
@@ -29,6 +35,7 @@ use std::{
     path::{Path, PathBuf},
 };
 #[derive(Clone)]
+/// Caller-owned assembly kinematics, geometry and planning hints; never a live match or worker.
 pub struct Rig {
     config: Config,
     source_config_sha256: Option<String>,
@@ -45,11 +52,17 @@ pub struct Rig {
     engineer_q: [f64; 6],
     core_q: [f64; 6],
     initial_engineer_q: [f64; 6],
+    /// Engineer chassis pose in the rig FLU frame, metres and wxyz quaternion.
     pub engineer_body: Pose,
+    /// Resolved gripper tool pose in the rig frame, metres and wxyz quaternion.
     pub tool: Pose,
+    /// Resolved Core socket pose in the rig frame, metres and wxyz quaternion.
     pub socket: Pose,
+    /// Optional requested rule-profile Core pose; selection belongs to the caller.
     pub requested_pose: Option<TargetPose>,
+    /// Last Cartesian solve position residual, metres.
     pub position_error_m: f64,
+    /// Last Cartesian solve orientation residual, radians.
     pub angle_error_rad: f64,
     peak_joint_step_rad: f64,
     cached_guard_replays: usize,
@@ -62,8 +75,10 @@ pub struct Rig {
     rod_spin_rad: f64,
     grasp_axial_m: f64,
     grip_requested: bool,
+    /// Resolved Energy Unit pose in the rig frame, metres and wxyz quaternion.
     pub unit_pose: Pose,
     collision: Option<std::sync::Arc<CollisionScene>>,
+    /// Last rejected motion collision witness, if any.
     pub last_collision: Option<CollisionHit>,
 }
 // Earlier recordings predate the approach/insertion/alignment spin fields.
@@ -95,20 +110,24 @@ fn checked_ik_hint(
 ) -> Result<(Pose, [f64; 6]), &'static str> {
     rm_sim_physics::manipulator_plan::checked_ik_hint(arm, body, tool, q)
 }
-pub(super) fn quaternion(p: Pose) -> DQuat {
+/// Read a FLU pose quaternion as wxyz without normalization.
+pub fn quaternion(p: Pose) -> DQuat {
     let [w, x, y, z] = p.rotation_wxyz;
     DQuat::from_xyzw(x, y, z, w)
 }
-pub(super) fn position(p: Pose) -> glam::DVec3 {
+/// Read a FLU pose translation in metres.
+pub fn position(p: Pose) -> glam::DVec3 {
     glam::DVec3::from_array(p.translation_m)
 }
-pub(super) fn pose(p: glam::DVec3, q: DQuat) -> Pose {
+/// Construct a FLU pose from metre translation and quaternion without normalization.
+pub fn pose(p: glam::DVec3, q: DQuat) -> Pose {
     Pose {
         translation_m: p.to_array(),
         rotation_wxyz: [q.w, q.x, q.y, q.z],
     }
 }
-pub(super) fn compose(a: Pose, b: Pose) -> Pose {
+/// Compose parent and local FLU poses using the existing kinematic arithmetic.
+pub fn compose(a: Pose, b: Pose) -> Pose {
     let q = quaternion(a);
     pose(position(a) + q * position(b), q * quaternion(b))
 }
@@ -154,6 +173,7 @@ fn solve_initial(arm: &SerialArm, target: Pose) -> Result<[f64; 6], &'static str
     Err("source CAD arm cannot reach the workbench's initial tool pose")
 }
 impl Rig {
+    /// Whether verified assembly terrain is installed in this rig.
     pub fn has_area(&self) -> bool {
         self.area.is_some()
     }
@@ -167,7 +187,8 @@ impl Rig {
             }))
         });
     }
-    pub(crate) fn use_live_collisions(&mut self) {
+    /// Select the existing conservative arm-link proxies for live planning.
+    pub fn use_live_collisions(&mut self) {
         self.collision = self.collision.as_ref().map(|scene| {
             std::sync::Arc::new(scene.convex_approximation(|name| {
                 matches!(
@@ -177,6 +198,7 @@ impl Rig {
             }))
         });
     }
+    /// Owned diagnostic state; does not sample or mutate a live simulation.
     pub fn report(&self) -> serde_json::Value {
         serde_json::json!({"initial_engineer_body":self.initial_engineer_body,"camera_deployed":self.camera_deployed,"fixed_chassis":self.fixed_chassis,"ik_hint_count":self.ik_hints.len(),"requested_spin_deltas_rad":self.requested_spin_deltas_rad,"area":self.area.as_ref().map(|a| &a.evidence),"engineer_body":self.engineer_body,"engineer_q_rad":self.engineer_q,"core_q_rad":self.core_q,"tool":self.tool,
             "fast_collisions":self.collision.as_ref().is_some_and(|s| s.uses_convex_approximation()),
@@ -188,15 +210,18 @@ impl Rig {
             "p_origin_world_m":compose(self.core_delta(), translation(self.config.core_p_origin_m)).translation_m,
             "post_tip_world_m":compose(self.head_delta(self.lift_m,self.p_rad,self.q_rad), self.config.core.tool).translation_m})
     }
+    /// Load the verified source assembly package at its default target pose.
     pub fn load(root: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         Self::load_impl(root, None, None)
     }
+    /// Load a verified source package with the caller-selected Core target.
     pub fn load_target(
         root: &Path,
         requested_pose: TargetPose,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Self::load_impl(root, Some(requested_pose), None)
     }
+    /// Load a source rig and checksummed terrain in their common equipment frame.
     pub fn load_in_area(
         root: &Path,
         requested_pose: TargetPose,
@@ -391,6 +416,7 @@ impl Rig {
         }
         allowed
     }
+    /// Return source collision witnesses at the current copied kinematic state.
     pub fn collision_contacts(&self) -> Result<Vec<CollisionHit>, &'static str> {
         self.collision.as_ref().map_or_else(
             || Ok(vec![]),
@@ -482,6 +508,7 @@ impl Rig {
         *self = candidate;
         Ok(())
     }
+    /// Whether the kinematic rig currently carries the Unit with its fixed grasp.
     pub fn gripped(&self) -> bool {
         self.gripped
     }
@@ -519,6 +546,7 @@ impl Rig {
             self.unit_pose = target;
         }
     }
+    /// Advance prescribed jaws toward open or closed by explicit seconds.
     pub fn step_gripper(&mut self, close: bool, dt_s: f64) -> Result<(), &'static str> {
         self.last_collision = None;
         if !dt_s.is_finite() || dt_s < 0. {
@@ -652,6 +680,7 @@ impl Rig {
         *self = candidate;
         Ok(())
     }
+    /// Return this fixture to its retained initial kinematic state.
     pub fn restart(&mut self) {
         self.last_collision = None;
         self.cached_guard_replays = 0;
@@ -770,12 +799,14 @@ impl Rig {
         );
         frames
     }
+    /// Ordered keyframes, or their count in search diagnostics.
     pub fn frames(&self) -> BTreeMap<String, Pose> {
         self.runtime_pose().frames(&self.config)
     }
 }
 impl Rig {
-    pub(crate) fn runtime_pose(&self) -> rm_sim_physics::assembly_model::RigPose {
+    /// Copy the physical pose record without match identity or authority.
+    pub fn runtime_pose(&self) -> rm_sim_physics::assembly_model::RigPose {
         rm_sim_physics::assembly_model::RigPose {
             engineer_body: self.engineer_body,
             engineer_q: self.engineer_q,
@@ -792,13 +823,15 @@ impl Rig {
             gripped: self.gripped,
         }
     }
-    pub(crate) fn runtime_model(&self) -> Config {
+    /// Clone mechanical configuration without load-time envelope witnesses.
+    pub fn runtime_model(&self) -> Config {
         let mut model = self.config.clone();
         // Source envelope witnesses are load-time checks, not motion geometry.
         model.core_envelope_m.clear();
         model
     }
-    pub(crate) fn set_live_parking(&mut self, body: Pose) -> Result<(), &'static str> {
+    /// Validate and retain caller-supplied fixed parking without searching for another pose.
+    pub fn set_live_parking(&mut self, body: Pose) -> Result<(), &'static str> {
         let mut candidate = self.clone();
         candidate.engineer_body = body;
         if !candidate.support_parking()
@@ -820,7 +853,8 @@ impl Rig {
         *self = candidate;
         Ok(())
     }
-    pub(crate) fn recovery_core_joints(&self) -> Result<[[f64; 6]; 2], &'static str> {
+    /// Solve Core discharge and idle configurations, radians, using the existing recovery policy.
+    pub fn recovery_core_joints(&self) -> Result<[[f64; 6]; 2], &'static str> {
         // UC §5.4.3 initial OXYZ pose is the return destination. The discharge
         // point is fitted above the central recessed collection opening behind
         // Fig4-29's curved front wall: 450 mm behind O, centred laterally, 650 mm
@@ -848,7 +882,8 @@ impl Rig {
             .or_else(|_| solve_initial(&self.config.core, drop))?;
         Ok([idle_q, drop_q])
     }
-    pub(crate) fn select_live_core_branch(&mut self) -> Result<(), &'static str> {
+    /// Choose a collision-clear positioning branch before an attempt begins.
+    pub fn select_live_core_branch(&mut self) -> Result<(), &'static str> {
         for q in rm_sim_physics::manipulator_plan::ik_candidates(
             &self.config.core,
             self.socket,
@@ -868,14 +903,15 @@ impl Rig {
         }
         Err("no clear Core positioning branch within setup budget")
     }
-    pub(crate) fn validate_live_jog(
+    /// Validate a swept arm jog against copied arm/payload observations without committing it.
+    pub fn validate_live_jog(
         &self,
         body: Pose,
-        arm: &rm_sim_world::assembly::ArmState,
+        arm: &ArmPose,
         target: [f64; 6],
-        unit: Option<&rm_sim_world::energy_unit::EnergyUnit>,
+        unit: Option<&PayloadObservation>,
         world_from_rig: Pose,
-        station: Option<&rm_sim_world::assembly::RigPose>,
+        station: Option<&rm_sim_physics::assembly_model::RigPose>,
     ) -> Result<(), &'static str> {
         let mut from = self.clone();
         from.engineer_body = body;
@@ -886,9 +922,8 @@ impl Rig {
         from.gripped = false;
         from.unit_pose = Pose::at([100.; 3]);
         if let Some(unit) = unit {
-            from.unit_pose = compose(inverse(world_from_rig), unit.physical.pose);
-            from.gripped =
-                unit.attachment == rm_sim_world::energy_unit::Attachment::Held(arm.owner);
+            from.unit_pose = compose(inverse(world_from_rig), unit.pose);
+            from.gripped = unit.held;
             if from.gripped {
                 from.held_grasp = Some(unit.grasp);
             }
@@ -907,15 +942,18 @@ impl Rig {
         }
         from.accept_candidate(next)
     }
-    pub(crate) fn use_held_unit(&mut self, unit: &rm_sim_world::energy_unit::EnergyUnit) {
+    /// Retain the caller-resolved fixed tool-to-payload grasp for subsequent planning.
+    pub fn use_held_unit(&mut self, unit: &PayloadObservation) {
         self.held_grasp = Some(unit.grasp);
     }
-    pub(crate) fn set_live_entry(&mut self, arm: &rm_sim_world::assembly::ArmState) {
+    /// Retain actual arm and jaw coordinates as the planning entry state.
+    pub fn set_live_entry(&mut self, arm: &ArmPose) {
         self.live_entry = Some((arm.joints_rad, arm.jaws_rad));
     }
     // Operator-loaded payload fixture: its grasp is fixed before any planning.
     // This does not seat the Unit on the Core or advance insertion evidence.
-    pub(crate) fn carried_start(&self, arm: &rm_sim_world::assembly::ArmState) -> Self {
+    /// Clone the rig at the observed arm coordinates with the retained rigid grasp.
+    pub fn carried_start(&self, arm: &ArmPose) -> Self {
         let mut carried = self.clone();
         carried.engineer_q = arm.joints_rad;
         carried.jaw_angles = arm.jaws_rad.to_vec();
@@ -928,9 +966,10 @@ impl Rig {
         carried.grip_requested = true;
         carried
     }
-    pub(crate) fn adopt_runtime_pose(
+    /// Adopt an observed attached pose, rejecting disagreement with the retained grasp.
+    pub fn adopt_runtime_pose(
         &mut self,
-        pose: &rm_sim_world::assembly::RigPose,
+        pose: &rm_sim_physics::assembly_model::RigPose,
     ) -> Result<(), &'static str> {
         self.engineer_body = pose.engineer_body;
         self.engineer_q = pose.engineer_q;
@@ -961,7 +1000,8 @@ impl Rig {
         self.unit_pose = expected;
         Ok(())
     }
-    pub(crate) fn prepare_live_gripper(&mut self) -> Result<(), &'static str> {
+    /// Prepare the nominal gripper approach; live entry retiming preserves actual starting joints.
+    pub fn prepare_live_gripper(&mut self) -> Result<(), &'static str> {
         self.engineer_q = solve_initial(
             &self.config.engineer,
             compose(
@@ -977,10 +1017,8 @@ impl Rig {
         self.unit_pose = self.tool_unit_pose();
         Ok(())
     }
-    pub(crate) fn runtime_frames(
-        &self,
-        plan: &AssemblyPlan,
-    ) -> Result<Vec<rm_sim_world::assembly::Frame>, &'static str> {
+    /// Resolve plan keyframes to rounded playback records; does not actuate a world.
+    pub fn runtime_frames(&self, plan: &AssemblyPlan) -> Result<Vec<PlaybackFrame>, &'static str> {
         let mut rig = self.clone();
         plan.frames
             .iter()
@@ -989,7 +1027,7 @@ impl Rig {
                     return Err("runtime plan must preserve manual parking");
                 }
                 rig.follow_plan(frame)?;
-                Ok(rm_sim_world::assembly::Frame {
+                Ok(PlaybackFrame {
                     // Micrometre/microradian motion samples keep the complete trajectory
                     // small; below a micrometre/radian-millionth on this source rig.
                     joints_rad: rig.engineer_q.map(|v| (v * 1e6).round() / 1e6),
@@ -1009,7 +1047,8 @@ impl Rig {
     }
 }
 impl Rig {
-    pub(crate) fn remember_runtime_plan(&mut self, plan: &AssemblyPlan) {
+    /// Retain bounded IK seed hints from a solved plan; hints are never clearance certificates.
+    pub fn remember_runtime_plan(&mut self, plan: &AssemblyPlan) {
         let mut hints = (*self.ik_hints).clone();
         let mut previous = self.engineer_q;
         let mut tick = 0usize;
@@ -1027,7 +1066,8 @@ impl Rig {
         hints.truncate(4096);
         self.ik_hints = std::sync::Arc::new(hints);
     }
-    pub(crate) fn reuse_runtime_hints(&mut self, previous: &Self) {
+    /// Reuse bounded hints only for identical model configuration.
+    pub fn reuse_runtime_hints(&mut self, previous: &Self) {
         if self.config == previous.config {
             let mut hints = (*self.ik_hints).clone();
             hints.extend(previous.ik_hints.iter().copied());
@@ -1040,7 +1080,7 @@ impl Rig {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 mod tests {
     use super::*;
     pub(super) fn mechanism_fixture() -> Rig {

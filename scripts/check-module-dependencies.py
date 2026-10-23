@@ -44,9 +44,16 @@ assert not ({"rm-sim-world", "rm-sim-server", "rm-sim-render",
              "game-networking-sockets"} & assets), assets
 world = dependencies("rm-sim-world")
 assert not any(d.startswith("bevy") for d in world), world
+assert "rm-sim-control" not in world, world
+control = dependencies("rm-sim-control")
+assert not any(d.startswith("bevy") for d in control), control
+assert not ({"rm-sim-world", "rm-sim-server", "rm-sim-render", "rm-sim-presentation",
+             "rm-sim-app", "game-networking-sockets", "rclrs", "ros-env",
+             "rosidl_runtime_rs", "r2r"} & control), control
 server = dependencies("rm-sim-server")
 assert not any(d.startswith("bevy") for d in server), server
 assert "rm-sim-render" not in server, server
+assert "rm-sim-control" in server, server
 render = dependencies("rm-sim-render")
 assert "rm-sim-physics" not in render, render
 assert "rm-sim-world" not in render, render
@@ -63,6 +70,7 @@ assert not any(p["name"] in ("rm-sim", "rm-sim-api", "rm-sim-viewer", "rm-vision
 print("PASS: engine has no solver, application or simulator dependency; physics' only simulator dependency is engine, "
       "gameplay is independent of physics and the simulator, "
       "assets have no world, networking or renderer, "
+      "controllers have no match, host, networking or renderer, "
       "world and server have no renderer, renderer has no world or server, "
       "presentation adapts world to render without hosting or transport, "
       "and no sibling simulator crate is imported")

@@ -24,13 +24,8 @@ fn compose(a: Pose, b: Pose) -> Pose {
     let q = quaternion(a);
     pose(position(a) + q * position(b), q * quaternion(b))
 }
-/// Simulator joint-rate limits, radians/second; not donor motor specifications.
-pub const JOINT_SPEED_RAD_S: [f64; 6] = [1.; 6];
-/// Simulator jaw-rate limit, radians/second; not a measured motor specification.
-pub const JAW_SPEED_RAD_S: f64 = 1.;
-/// Raised, compact neutral posture for the PIE donor, radians. Simulator preset;
-/// the shoulder/forearm oppose so the empty wrist stays approximately level.
-pub const NEUTRAL_JOINTS_RAD: [f64; 6] = [0., 0.35, -0.35, 0., 0., 0.];
+/// Compatibility exports of the simulator mechanical playback limits.
+pub use rm_sim_physics::assembly_model::{JAW_SPEED_RAD_S, JOINT_SPEED_RAD_S, NEUTRAL_JOINTS_RAD};
 /// Persistent body-local arm authority, independent of any assembly attempt.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ArmState {

@@ -142,7 +142,7 @@ impl Service {
         if unit.attachment != rm_sim_world::energy_unit::Attachment::Held(owner) {
             return Err("Assembly requires the existing held Unit".into());
         }
-        rig.use_held_unit(unit);
+        rig.use_held_unit(&crate::assembly_rig::payload(unit, owner));
         if let Some(warm) = &self.warm {
             rig.reuse_runtime_hints(warm);
         }
@@ -176,7 +176,9 @@ impl Service {
             message: "Moving Tech Core into position".into(),
             world_from_rig: origin,
             model: rig.runtime_model(),
-            pose: rig.carried_start(arm).runtime_pose(),
+            pose: rig
+                .carried_start(&crate::assembly_rig::arm_pose(arm))
+                .runtime_pose(),
             frames: Vec::new(),
             cursor: 0,
             started_ns: now_ns,
@@ -202,7 +204,7 @@ impl Service {
         ));
         run.pose.engineer_q = arm.joints_rad;
         run.pose.jaw_angles = arm.jaws_rad;
-        rig.set_live_entry(arm);
+        rig.set_live_entry(&crate::assembly_rig::arm_pose(arm));
         let worker_signal = signal.clone();
         std::thread::Builder::new()
             .name("assembly-planner".into())
@@ -274,9 +276,10 @@ impl Service {
         self.template
             .validate_live_jog(
                 compose(inverse(origin), chassis.pose),
-                arm,
+                &crate::assembly_rig::arm_pose(arm),
                 target,
-                unit,
+                unit.map(|u| crate::assembly_rig::payload(u, owner))
+                    .as_ref(),
                 origin,
                 station,
             )
@@ -518,7 +521,14 @@ fn solve_segment(
             return Err("Assembly and return exceed the playback capacity".into());
         }
     }
-    Ok(Solved { start, end, frames })
+    Ok(Solved {
+        start,
+        end,
+        frames: frames
+            .into_iter()
+            .map(crate::assembly_rig::playback)
+            .collect(),
+    })
 }
 impl Drop for Service {
     fn drop(&mut self) {
@@ -559,7 +569,7 @@ mod tests {
         ))
         .unwrap();
         let arm = rm_sim_world::assembly::ArmState::neutral(0, rig.runtime_model());
-        let carried = rig.carried_start(&arm);
+        let carried = rig.carried_start(&crate::assembly_rig::arm_pose(&arm));
         assert!(
             carried.collision_contacts().unwrap().is_empty(),
             "loaded collisions: {:?}",
@@ -664,7 +674,7 @@ mod tests {
             assert!(run.pose.gripped);
             let mut carried = service.template.clone();
             carried.set_live_parking(run.pose.engineer_body).unwrap();
-            let carried = carried.carried_start(&arm);
+            let carried = carried.carried_start(&crate::assembly_rig::arm_pose(&arm));
             assert_eq!(run.pose.unit_pose, carried.runtime_pose().unit_pose);
             let loaded_unit = run.pose.unit_pose;
             assert_eq!(
@@ -722,7 +732,10 @@ mod tests {
                     joints_rad: f.joints_rad,
                     ..arm.clone()
                 };
-                let expected = carried.carried_start(&arm).runtime_pose().unit_pose;
+                let expected = carried
+                    .carried_start(&crate::assembly_rig::arm_pose(&arm))
+                    .runtime_pose()
+                    .unit_pose;
                 assert!(
                     expected
                         .translation_m

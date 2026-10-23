@@ -289,10 +289,13 @@ the current timestamp or by a `RayHit::shape_index`.
    separate physical identity from the RoboMaster scoring adapter. See
    [Physical contacts](physical-contacts.md); specialized force/motion scheduling
    and persistent checkpoint identities remain subsequent work.
-4. **Controller/task extraction.** Separate reusable navigation/search/following
+4. **Controller/task extraction — navigation and assembly implemented.** Separate reusable navigation/search/following
    and manipulation algorithms from server queues, permissions and task authority.
    Remove diagnostic inclusion of private server implementation files. Keep
-   bounded workers and cancellation with the application owning them.
+   bounded workers and cancellation with the application owning them. `rm-sim-control`
+   now provides the existing algorithms without world/host/render dependencies;
+   the server and workbench consume its public API. Task authority remains in
+   world/server. See [controller contracts](controllers.md).
 5. **Optional backend/plugin boundary.** Refine capability and dispatch interfaces
    only with a real additional implementation/consumer. Measure complete query,
    model-law, solver, observation and synchronization cost. CPU/device buffers

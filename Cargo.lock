@@ -6065,6 +6065,7 @@ dependencies = [
  "glam 0.33.12",
  "prost",
  "rm-sim-assets",
+ "rm-sim-control",
  "rm-sim-physics",
  "rm-sim-presentation",
  "rm-sim-render",
@@ -6101,6 +6102,19 @@ dependencies = [
  "serde_json",
  "sha2",
  "wgpu",
+]
+
+[[package]]
+name = "rm-sim-control"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "rm-sim-assets",
+ "rm-sim-gameplay",
+ "rm-sim-physics",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -6164,6 +6178,7 @@ dependencies = [
  "glam 0.33.12",
  "if-addrs",
  "rm-sim-assets",
+ "rm-sim-control",
  "rm-sim-physics",
  "rm-sim-world",
  "serde",

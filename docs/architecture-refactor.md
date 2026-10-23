@@ -14,6 +14,10 @@ physical/rule stepping). Rendering consumes caller-owned appearance
 and has no dependency on physics or gameplay. The server host worker owns each
 live simulation and roster; app systems and transports submit commands to it.
 
+`rm-sim-control` now owns navigation search/following and source assembly
+planning over explicit observations and shared geometry. Host workers, permissions
+and authoritative actuation remain outside it. See [controllers](controllers.md).
+
 The authoritative engineering rules behind this layout are in `AGENTS.md`; this
 guide explains how the pieces fit together. Each crate's own `README.md` states
 what it owns, its module layout and its permitted dependencies, and

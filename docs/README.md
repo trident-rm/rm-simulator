@@ -34,6 +34,7 @@ Git history.
 | Optional RXUI inspector, source-color 3D, robot controls and overlays | [Scenario inspector](scenario-inspector.md) |
 | Generic Bevy physical scenario viewer without a match or host | [Scenario viewer](scenario-viewer.md) |
 | RoboMaster presentation adapter, generic rendering and performance contracts | [Presentation/render split](presentation-render-split.md) |
+| Reusable navigation/assembly controllers and host authority boundary | [Controllers](controllers.md) |
 | Live-game navigation integration design, joint feedback and deferred MuJoCo | [Robotics next steps](robotics-next-steps.md) |
 | Graphics presets, render limits and CPU-contention measurements | [Graphics performance](performance-graphics-20261023.md) |
 | Nearest-hit geometry and ideal LiDAR acquisition | [Navigation sensors](navigation-sensors.md) |
