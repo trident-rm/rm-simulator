@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-"""Prepare an occurrence-preserving GUI project from openswx and sldkit output.
+"""Prepare an occurrence-preserving GUI project from sw-rs native metadata and mesh output.
 
 No mates or physical units are inferred. Cached mass remains unreviewed. Display
 meshes are extracted separately from native B-Rep/edge bounds; originals are read
-only. Requires the existing extract-solidworks.py catalogue and sldkit-rs CLI.
+only. Requires the existing extract-solidworks.py catalogue and sw-rs CLI.
 """
 import argparse
 import copy
@@ -111,7 +111,8 @@ def decode_geometry(geometry, config, source_index=None, source_config_count=Non
     return vertices, triangles, evidence
 
 
-def read_geometry(binary, path, sha256, config, source_index=None, source_config_count=None):
+def read_geometry(binary, path, sha256, config, source_index=None, source_config_count=None,
+                  expected_schema=None):
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
         run = subprocess.run([str(binary), "geometry", str(path)], stdout=output,
                              stderr=errors, timeout=60, check=False)
@@ -119,13 +120,24 @@ def read_geometry(binary, path, sha256, config, source_index=None, source_config
             raise ValueError("geometry parser output exceeds 128 MiB")
         output.seek(0)
         decoded = json.load(output)
+    if not isinstance(decoded, dict):
+        raise ValueError("invalid geometry reader document")
     if run.returncode:
         codes = ",".join(str(d.get("code", "unknown")) for d in decoded.get("diagnostics", [])[:3])
         raise ValueError(f"geometry parser exit {run.returncode}: {codes}")
+    if expected_schema is not None and decoded.get("schema") != expected_schema:
+        raise ValueError("unsupported geometry reader schema")
+    if "schema" in decoded and decoded["schema"] != "sw-rs-geometry-v1":
+        raise ValueError("unsupported geometry reader schema")
     geometry = decoded.get("geometry") or {}
     if geometry.get("source", {}).get("sha256") != sha256 or digest(path) != sha256:
         raise ValueError("native bytes changed or geometry source hash mismatch")
     return decode_geometry(geometry, config, source_index, source_config_count)
+
+
+def read_sw_rs_geometry(*args):
+    """Require the versioned sw-rs envelope rather than mislabelling another CLI."""
+    return read_geometry(*args, expected_schema="sw-rs-geometry-v1")
 
 
 def prepare(catalogue, root, document, configuration, binary, max_parts=1024, geometry_reader=read_geometry):
@@ -331,17 +343,22 @@ def main():
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--document", required=True, help="exact relative catalogue path")
     parser.add_argument("--configuration", required=True)
-    parser.add_argument("--sldkit", type=Path, required=True)
+    readers = parser.add_mutually_exclusive_group(required=True)
+    readers.add_argument("--sw-rs", type=Path, help="sw-rs sw-dump metadata/geometry CLI")
+    readers.add_argument("--sldkit", type=Path, help="legacy external sldkit CLI")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--merge-review", type=Path, help="retain unchanged occurrence reviews and stage new Parts")
     parser.add_argument("--omit-missing-references", action="store_true", help="explicitly omit unresolved active occurrences and their dependent relations")
     args = parser.parse_args()
     if args.output.suffix.lower() != ".json":
         parser.error("output must be a JSON sidecar")
+    binary = (args.sw_rs or args.sldkit).resolve(strict=True)
     result = prepare(json.loads(args.catalogue.read_text()), args.source_root,
-                     args.document, args.configuration, args.sldkit.resolve(strict=True))
+                     args.document, args.configuration, binary,
+                     geometry_reader=read_sw_rs_geometry if args.sw_rs else read_geometry)
     result.setdefault("provenance", {}).update({"catalogue_sha256": digest(args.catalogue),
-                            "sldkit_binary_sha256": digest(args.sldkit),
+                            "geometry_reader": {"name": "sw-rs/sw-dump" if args.sw_rs else "sldkit-rs",
+                                                "binary_sha256": digest(binary)},
                             "geometry": "cached_native_display_tessellation_not_BRep_mass_integration",
                             "preparer_sha256": digest(Path(__file__))})
     result["omitted_occurrences"] = []

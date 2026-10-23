@@ -110,7 +110,7 @@ pub struct Project {
     pub schema: String,
     pub source: String,
     #[serde(default)]
-    pub provenance: std::collections::BTreeMap<String, String>,
+    pub provenance: std::collections::BTreeMap<String, serde_json::Value>,
     pub source_frames_and_geometry_reviewed: bool,
     pub diagnostics: Vec<String>,
     #[serde(default)]
@@ -799,6 +799,26 @@ fn principal(m: &Mass) -> Result<Inertial> {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
+    #[test]
+    fn reviewed_native_cache_accepts_object_com_and_rejects_array_shape() {
+        let mut part = fixture().parts.remove(0);
+        part.override_mass = None;
+        part.native_cache = Some(serde_json::json!({
+            "mass": 2., "center_of_gravity": {"x": 0.1, "y": 0.2, "z": 0.3},
+            "moments_of_inertia": [2., 3., 4.],
+            "products_of_inertia": [0.1, -0.2, 0.3]
+        }));
+        let mode = MassMode::ReviewedCache { products_sign: -1. };
+        let mass = part_mass(&part, &mode, &[]).unwrap();
+        assert_eq!(mass.com_m, [0.1, 0.2, 0.3]);
+        assert_eq!(mass.inertia_kg_m2[0][1], -0.1);
+        principal(&mass).unwrap();
+        part.native_cache.as_mut().unwrap()["center_of_gravity"] =
+            serde_json::json!([0.1, 0.2, 0.3]);
+        let malformed = part_mass(&part, &mode, &[]).unwrap();
+        assert!(principal(&malformed).is_err());
+    }
+
     pub fn fixture() -> Project {
         let points = vec![
             [-0.5, -0.5, -0.5],
@@ -914,6 +934,25 @@ pub(super) mod tests {
         bad.parts[1].vertices_m.push([0.; 3]);
         assert!(bad.validate().is_err());
     }
+    #[test]
+    fn reader_provenance_keeps_legacy_strings_and_structured_records() {
+        let mut p = shared_fixture();
+        p.provenance
+            .insert("legacy".into(), serde_json::json!("original reader hash"));
+        p.provenance.insert("geometry_reader".into(),serde_json::json!({"name":"sw-rs/sw-dump","binary_sha256":"recorded, not verified here"}));
+        let restored: Project = serde_json::from_slice(&serde_json::to_vec(&p).unwrap()).unwrap();
+        restored.validate().unwrap();
+        assert_eq!(restored.provenance, p.provenance);
+        assert_eq!(
+            restored.provenance["legacy"].as_str(),
+            Some("original reader hash")
+        );
+        assert_eq!(
+            restored.mesh(&restored.parts[0]).unwrap().vertices,
+            p.mesh(&p.parts[0]).unwrap().vertices
+        );
+    }
+
     #[test]
     fn aggregate_preserves_mass_com_and_parallel_axis_tensor() {
         let p = fixture();

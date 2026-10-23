@@ -2,6 +2,10 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Reviewed SolidWorks import workbench
 
+The independent [sw-rs import workflow](sw-rs-import.md) supplies both metadata
+and cached Part meshes. The older openswx/sldkit commands below remain available
+for compatibility and comparison.
+
 The optional RXUI viewer can review native Part occurrences, assign them to rigid
 bodies, fit collision proxies and prepare a physical assembly with explicit mass,
 COM and inertia. This is an offline import workbench, not a native SolidWorks

@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- Support the independent sw-rs reader for offline native SolidWorks metadata and
+  cached Part meshes, with versioned output, reader provenance and diagnostics.
+
 - Share native Part/configuration mesh definitions across import occurrences and
   GPU visuals, retain legacy projects, and preserve review annotations during
   incremental reimports. Exactly reindex duplicate vertices and admit unambiguous

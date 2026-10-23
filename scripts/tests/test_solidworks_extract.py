@@ -160,6 +160,32 @@ class SolidworksExtractionTests(unittest.TestCase):
                 _, error = EXTRACT.read_document(Path("/bin/cat"), source, 1, 1024)
                 self.assertEqual(error["code"], "invalid_parser_document")
 
+    def test_sw_rs_schema_diagnostics_cache_units_and_unknown_transform(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            source = root / "a.SLDASM"
+            source.touch()
+            document = {"schema": "sw-rs-metadata-v1", "preview_png": [1, 2, 3],
+                "diagnostics": [{"offset": 12, "message": "damaged record"}],
+                "configurations": [{"name": "default", "preview_png": [4],
+                    "mass_properties": {"mass": 1, "center_of_gravity": {"x": 0, "y": 0, "z": 0}},
+                    "components": [{"path": "missing.SLDPRT", "transform": None}]}]}
+            with patch.object(EXTRACT, "read_document", return_value=(document, None)):
+                result = EXTRACT.extract([source], root, root / "sw-dump", reader="sw-rs")
+            row = result["documents"][0]
+            self.assertNotIn("preview_png", row["metadata"])
+            config = row["configurations"][0]
+            self.assertNotIn("preview_png", config["metadata"])
+            self.assertEqual(config["physical_properties"]["upstream_declared_units"], "unverified")
+            self.assertFalse(config["occurrences"][0]["transform_checks"]["rigid_structure"])
+            self.assertEqual(result["diagnostics"][0]["code"], "native_reader_diagnostic")
+            document["schema"] = "future-schema"
+            with patch.object(EXTRACT, "read_document", return_value=(document, None)):
+                result = EXTRACT.extract([source], root, root / "sw-dump", reader="sw-rs")
+            self.assertEqual(result["documents"][0]["status"], "failed")
+            self.assertEqual(result["diagnostics"][0]["code"], "unsupported_reader_schema")
+        self.assertEqual(EXTRACT.matrix_checks(IDENTITY, "sw-rs")["source_presence"], "native_attribute_present")
+
     def test_child_configuration_is_resolved_without_defaulting_to_first(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
