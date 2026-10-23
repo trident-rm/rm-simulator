@@ -4,7 +4,7 @@
 //! Provisional drivetrain/tyre assumptions; not a complete vehicle or game replacement.
 #[allow(dead_code)]
 #[path = "wheel_suspension.rs"]
-mod suspension;
+pub mod suspension;
 use glam::{DQuat, DVec3};
 use rm_sim_engine::{
     Pose,
@@ -112,6 +112,145 @@ pub struct Sample {
     /// Contact samples lost to the explicitly bounded buffer.
     pub dropped_contacts: usize,
 }
+/// One driven rolling envelope installed in a caller-owned physical runtime.
+pub struct RollingWheel {
+    body: BodyBinding,
+    axle: JointBinding,
+    collider: ColliderBinding,
+    radius_m: f64,
+}
+impl RollingWheel {
+    /// Install on the carrier's recovered hub, with an explicit world orientation.
+    /// Uses namespace+7 body and namespace+8 joint keys. Caller discards a failed
+    /// setup runtime; this fixture helper does not promise transactional setup.
+    pub fn install(
+        runtime: &mut rm_sim_physics::runtime::PhysicalRuntime,
+        carrier: BodyBinding,
+        parameters: Parameters,
+        namespace: u64,
+        wheel_rotation: DQuat,
+    ) -> Result<Self, &'static str> {
+        namespace
+            .checked_add(8)
+            .ok_or("wheel fixture namespace overflow")?;
+        let carrier_state = runtime.body_state(carrier)?;
+        let center = DVec3::from_array(carrier_state.pose.translation_m)
+            + rotation(carrier_state.pose) * DVec3::from_array(HUB_CARRIER_M);
+        let mut points = Vec::with_capacity(128);
+        for i in 0..64 {
+            let t = i as f64 * std::f64::consts::TAU / 64.;
+            for side in [-1., 1.] {
+                points.push([
+                    parameters.radius_m * t.cos(),
+                    side * parameters.width_m / 2.,
+                    parameters.radius_m * t.sin(),
+                ]);
+            }
+        }
+        let r = parameters.radius_m;
+        let w = parameters.width_m;
+        let m = parameters.wheel_mass_kg;
+        let transverse = m * (3. * r * r + w * w) / 12.;
+        let axial = m * r * r / 2.;
+        let source = RigidBodyDescription::new(
+            BodyKind::Dynamic(Inertial::new(
+                m,
+                [transverse, axial, transverse],
+                Pose::default(),
+            )?),
+            vec![ColliderDescription::new(
+                ShapeDescription::ConvexHull(ConvexHull::new(points)?),
+                Pose::default(),
+                material(parameters.friction, 1, 2),
+            )?],
+        )?;
+        let wheel_pose = pose(center, wheel_rotation);
+        let wheel = runtime.install_body(
+            BodyKey(namespace + 7),
+            &CookedRigidBody::new(source)?,
+            BodyState::at(wheel_pose),
+        )?;
+        let participant = runtime.body_participant(wheel)?;
+        let collider = runtime
+            .colliders()
+            .find(|&c| {
+                runtime
+                    .collider_state(c)
+                    .is_ok_and(|s| s.participant == Some(participant))
+            })
+            .ok_or("missing tyre collider")?;
+        if let Some(roller) = parameters.roller_friction {
+            runtime.set_directional_friction(
+                collider,
+                Some(DirectionalFriction::new(
+                    [0., 1., 0.],
+                    parameters.friction,
+                    roller,
+                )?),
+            )?;
+        }
+        let hq = wheel_rotation * DQuat::from_rotation_arc(DVec3::X, DVec3::Y);
+        let axle = runtime.install_joint(
+            JointKey(namespace + 8),
+            carrier,
+            wheel,
+            &JointDescription::new(
+                JointKind::Revolute,
+                frame(carrier_state.pose, center, hq),
+                frame(wheel_pose, center, hq),
+                None,
+                false,
+            )?,
+        )?;
+        Ok(Self {
+            body: wheel,
+            axle,
+            collider,
+            radius_m: parameters.radius_m,
+        })
+    }
+    /// Actual wheel body, for privileged truth or command checks.
+    pub fn body(&self) -> BodyBinding {
+        self.body
+    }
+    /// Radius used by the wheel source and motor conversion, metres.
+    pub fn radius_m(&self) -> f64 {
+        self.radius_m
+    }
+    /// Actual tyre collider, for directional load/identity observations.
+    pub fn collider(&self) -> ColliderBinding {
+        self.collider
+    }
+    /// Clear axle motor/effort so coasting retains only contact and bearing-free dynamics.
+    pub fn coast(
+        &self,
+        runtime: &mut rm_sim_physics::runtime::PhysicalRuntime,
+    ) -> Result<(), &'static str> {
+        runtime.set_joint_motor(self.axle, None)
+    }
+    /// Hold the same assumed velocity motor as the isolated wheel fixture.
+    pub fn drive(
+        &self,
+        runtime: &mut rm_sim_physics::runtime::PhysicalRuntime,
+        speed_m_s: f64,
+    ) -> Result<(), &'static str> {
+        if !speed_m_s.is_finite() || speed_m_s.abs() > 1. {
+            return Err("invalid fixture drive speed");
+        }
+        runtime.set_joint_motor(
+            self.axle,
+            Some(JointMotor::new(
+                0.,
+                speed_m_s / self.radius_m,
+                0.,
+                0.5,
+                1.2,
+            )?),
+        )?;
+        Ok(())
+    }
+}
+
 /// Dynamic guided frame, actual rolling body and source-derived linkage. All
 /// interactions run inside the suspension fixture's single PhysicalRuntime.
 pub struct Fixture {
@@ -120,8 +259,7 @@ pub struct Fixture {
     /// Test choices retained for reconstruction.
     pub parameters: Parameters,
     duration: StepDuration,
-    wheel: BodyBinding,
-    axle: JointBinding,
+    wheel: RollingWheel,
     floor: ColliderBinding,
     bump: Option<ColliderBinding>,
     speed_m_s: f64,
@@ -179,75 +317,7 @@ impl Fixture {
         )?;
         let runtime = &mut module.runtime;
         let carrier = runtime.body_binding(BodyKey(4)).ok_or("missing carrier")?;
-        let carrier_state = runtime.body_state(carrier)?;
-        let center = DVec3::from_array(carrier_state.pose.translation_m)
-            + rotation(carrier_state.pose) * DVec3::from_array(HUB_CARRIER_M);
-        let mut points = Vec::with_capacity(128);
-        for i in 0..64 {
-            let t = i as f64 * std::f64::consts::TAU / 64.;
-            for side in [-1., 1.] {
-                points.push([
-                    parameters.radius_m * t.cos(),
-                    side * parameters.width_m / 2.,
-                    parameters.radius_m * t.sin(),
-                ]);
-            }
-        }
-        let r = parameters.radius_m;
-        let w = parameters.width_m;
-        let m = parameters.wheel_mass_kg;
-        let transverse = m * (3. * r * r + w * w) / 12.;
-        let axial = m * r * r / 2.;
-        let source = RigidBodyDescription::new(
-            BodyKind::Dynamic(Inertial::new(
-                m,
-                [transverse, axial, transverse],
-                Pose::default(),
-            )?),
-            vec![ColliderDescription::new(
-                ShapeDescription::ConvexHull(ConvexHull::new(points)?),
-                Pose::default(),
-                material(parameters.friction, 1, 2),
-            )?],
-        )?;
-        let wheel_pose = Pose::at(center.to_array());
-        let wheel = runtime.install_body(
-            BodyKey(7),
-            &CookedRigidBody::new(source)?,
-            BodyState::at(wheel_pose),
-        )?;
-        if let Some(roller) = parameters.roller_friction {
-            let participant = runtime.body_participant(wheel)?;
-            let collider = runtime
-                .colliders()
-                .find(|&c| {
-                    runtime
-                        .collider_state(c)
-                        .is_ok_and(|s| s.participant == Some(participant))
-                })
-                .ok_or("missing tyre collider")?;
-            runtime.set_directional_friction(
-                collider,
-                Some(DirectionalFriction::new(
-                    [0., 1., 0.],
-                    parameters.friction,
-                    roller,
-                )?),
-            )?;
-        }
-        let hq = DQuat::from_rotation_arc(DVec3::X, DVec3::Y);
-        let axle = runtime.install_joint(
-            JointKey(8),
-            carrier,
-            wheel,
-            &JointDescription::new(
-                JointKind::Revolute,
-                frame(carrier_state.pose, center, hq),
-                frame(wheel_pose, center, hq),
-                None,
-                false,
-            )?,
-        )?;
+        let wheel = RollingWheel::install(runtime, carrier, parameters, 0, DQuat::IDENTITY)?;
         let floor = runtime.install_catch_floor(0., material(parameters.friction, 2, 1))?;
         let bump = if parameters.bump_height_m > 0. {
             let mut v = Vec::new();
@@ -280,7 +350,6 @@ impl Fixture {
             parameters,
             duration,
             wheel,
-            axle,
             floor,
             bump,
             speed_m_s: 0.,
@@ -292,19 +361,7 @@ impl Fixture {
     /// ±1 m/s request bound; derivative gain 0.5 N m s/rad and 1.2 N m cap are
     /// explicit fixture assumptions, not recovered motor/power/gearbox data.
     pub fn drive(&mut self, speed_m_s: f64) -> Result<(), &'static str> {
-        if !speed_m_s.is_finite() || speed_m_s.abs() > 1. {
-            return Err("invalid fixture drive speed");
-        }
-        self.suspension.runtime.set_joint_motor(
-            self.axle,
-            Some(JointMotor::new(
-                0.,
-                speed_m_s / self.parameters.radius_m,
-                0.,
-                0.5,
-                1.2,
-            )?),
-        )?;
+        self.wheel.drive(&mut self.suspension.runtime, speed_m_s)?;
         self.speed_m_s = speed_m_s;
         Ok(())
     }
@@ -317,7 +374,7 @@ impl Fixture {
     }
     /// Wheel binding for explicit ground-truth/stale-token checks.
     pub fn wheel_binding(&self) -> BodyBinding {
-        self.wheel
+        self.wheel.body
     }
     /// One shared tick, with no second plant, clock or prescribed frame pose.
     pub fn step(&mut self) -> Result<Sample, &'static str> {
@@ -340,7 +397,7 @@ impl Fixture {
     fn observe(&self, s: suspension::Sample, support: Option<f64>) -> Result<Sample, &'static str> {
         let runtime = &self.suspension.runtime;
         let base = runtime.body_state(runtime.body_binding(BodyKey(1)).ok_or("missing frame")?)?;
-        let wheel = runtime.body_state(self.wheel)?;
+        let wheel = runtime.body_state(self.wheel.body)?;
         let speed = wheel.angular_velocity_rad_s[1] * self.parameters.radius_m;
         let mut floor_contact = false;
         let mut bump_contact = false;

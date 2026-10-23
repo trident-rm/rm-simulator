@@ -82,7 +82,8 @@ const SECOND: [f64; 3] = [0.05, 0., 0.];
 const MOVING_EYE: [f64; 3] = [0.053754609365649485, -0.0014, -0.09031420537116566];
 const FIXED_EYE: [f64; 3] = [-0.0335, -0.0014, -0.0975];
 const ORIGIN: DVec3 = DVec3::new(0., 0., 0.3);
-const ARM_MASS_KG: f64 = 0.014192920065877;
+/// Independently STEP-checked mass of one source rocker, kg.
+pub const ARM_MASS_KG: f64 = 0.014192920065877;
 // Native principal tensor about COM [12.5,0,4] mm; local source products are zero.
 // Independently checked against STEP in docs/suspension-recovery.md.
 const ARM_INERTIA_KG_M2: [f64; 3] = [5.841358266e-7, 2.0367795869e-6, 2.4695242661e-6];
@@ -177,6 +178,249 @@ pub struct Sample {
     pub body_poses: [Pose; 6],
 }
 
+/// Installed five-body suspension and seven closure joints attached to one root.
+/// Owns bindings only; the caller owns the sole runtime and clock.
+pub struct Linkage {
+    carrier: BodyBinding,
+    slider: JointBinding,
+    hinges: Vec<(BodyBinding, BodyBinding, JointDescription)>,
+    rockers: [BodyBinding; 2],
+    barrel: BodyBinding,
+    rod: BodyBinding,
+    bodies: [BodyBinding; 6],
+    root_from_mount: Option<Pose>,
+}
+impl Linkage {
+    /// Attach the source-derived linkage to an existing free chassis body.
+    /// The placement maps the original bench frame into the common world. Namespaces
+    /// reserve body/joint keys namespace+1..=namespace+7 (root key +1 is unused).
+    /// Setup is not transactional; discard the fixture runtime after a setup error.
+    pub fn attach(
+        runtime: &mut PhysicalRuntime,
+        parameters: Parameters,
+        placement: Pose,
+        root: BodyBinding,
+        namespace: u64,
+    ) -> Result<Self, &'static str> {
+        Self::install(
+            runtime,
+            parameters,
+            placement,
+            Some(root),
+            namespace,
+            None,
+            false,
+        )
+    }
+    fn install(
+        runtime: &mut PhysicalRuntime,
+        parameters: Parameters,
+        placement: Pose,
+        root: Option<BodyBinding>,
+        namespace: u64,
+        sprung_mass_kg: Option<f64>,
+        lateral_free: bool,
+    ) -> Result<Self, &'static str> {
+        parameters.validate()?;
+        namespace
+            .checked_add(7)
+            .ok_or("fixture namespace overflow")?;
+        let arm = DVec3::from_array(ARM);
+        let second = DVec3::from_array(SECOND);
+        let s = ORIGIN + DVec3::from_array(MOVING_EYE);
+        let f = ORIGIN + DVec3::from_array(FIXED_EYE);
+        let direction = (f - s).normalize();
+        let dq = DQuat::from_rotation_arc(DVec3::X, direction);
+        // Native local +X follows end 0 -> end 25 mm; local +Z is the hinge axis.
+        // Body origins are the verified native COMs, not the hole centers.
+        let ax = -arm.normalize();
+        let az = DVec3::Y;
+        let aq = DQuat::from_mat3(&DMat3::from_cols(ax, az.cross(ax), az));
+        let poses = [
+            pose(ORIGIN, DQuat::IDENTITY),
+            pose(ORIGIN + arm * 0.5, aq),
+            pose(ORIGIN + second + arm * 0.5, aq),
+            pose(ORIGIN + arm, DQuat::IDENTITY),
+            pose(s, dq),
+            pose(f, dq),
+        ];
+        let mut poses = poses.map(|p| {
+            pose(
+                point(placement, DVec3::from_array(p.translation_m)),
+                rotation(placement) * rotation(p),
+            )
+        });
+        let root_from_mount = if let Some(root) = root {
+            let actual = runtime.body_state(root)?.pose;
+            let relative = frame(
+                actual,
+                DVec3::from_array(poses[0].translation_m),
+                rotation(poses[0]),
+            );
+            poses[0] = actual;
+            Some(relative)
+        } else {
+            None
+        };
+        // 44 g is the original assembly declaration. The 30/14 g partition and
+        // non-rocker box inertias are fixture assumptions; no root CAD tensor used.
+        let masses = [
+            sprung_mass_kg,
+            Some(ARM_MASS_KG),
+            Some(ARM_MASS_KG),
+            Some(parameters.load_kg),
+            Some(parameters.damper_mass_kg * (30. / 44.)),
+            Some(parameters.damper_mass_kg * (14. / 44.)),
+        ];
+        let half = [
+            [0.04, 0.01, 0.005],
+            [0.0225, 0.010, 0.004],
+            [0.0225, 0.010, 0.004],
+            [0.03, 0.02, 0.015],
+            [0.025, 0.008, 0.008],
+            [0.015, 0.003, 0.003],
+        ];
+        let mut installed = Vec::new();
+        for i in 0..6 {
+            if i == 0
+                && let Some(root) = root
+            {
+                installed.push(root);
+                continue;
+            }
+            installed.push(runtime.install_body(
+                BodyKey(namespace + i as u64 + 1),
+                &body(
+                    masses[i],
+                    half[i],
+                    (i == 1 || i == 2).then_some(ARM_INERTIA_KG_M2),
+                    i == 0 && sprung_mass_kg.is_some(),
+                    lateral_free,
+                )?,
+                BodyState::at(poses[i]),
+            )?);
+        }
+        let mut hinges = Vec::new();
+        let hq = rotation(placement) * DQuat::from_rotation_arc(DVec3::X, DVec3::Y);
+        for (index, (a, b, anchor)) in [
+            (0, 1, ORIGIN),
+            (1, 3, ORIGIN + arm),
+            (0, 2, ORIGIN + second),
+            (2, 3, ORIGIN + second + arm),
+            (3, 4, s),
+            (0, 5, f),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let anchor = point(placement, anchor);
+            let desc = JointDescription::new(
+                JointKind::Revolute,
+                frame(poses[a], anchor, hq),
+                frame(poses[b], anchor, hq),
+                None,
+                false,
+            )?;
+            runtime.install_joint(
+                JointKey(namespace + index as u64 + 1),
+                installed[a],
+                installed[b],
+                &desc,
+            )?;
+            hinges.push((installed[a], installed[b], desc));
+        }
+        let desc = JointDescription::new(
+            JointKind::Prismatic,
+            Pose::default(),
+            Pose::default(),
+            Some(JointLimits::new(
+                parameters.free_length_m - parameters.stroke_m,
+                parameters.free_length_m,
+            )?),
+            false,
+        )?;
+        let slider =
+            runtime.install_joint(JointKey(namespace + 7), installed[4], installed[5], &desc)?;
+        runtime.set_joint_motor(
+            slider,
+            Some(JointMotor::new(
+                parameters.free_length_m,
+                0.,
+                parameters.stiffness_n_m,
+                parameters.damping_n_s_m,
+                10_000.,
+            )?),
+        )?;
+        Ok(Self {
+            carrier: installed[3],
+            slider,
+            hinges,
+            rockers: [installed[1], installed[2]],
+            barrel: installed[4],
+            rod: installed[5],
+            bodies: installed
+                .as_slice()
+                .try_into()
+                .expect("six module bindings"),
+            root_from_mount,
+        })
+    }
+    /// Carrier binding for installing a real driven wheel into the same world.
+    pub fn carrier(&self) -> BodyBinding {
+        self.carrier
+    }
+    /// Capture solved frames and residuals with the caller's explicit time, seconds.
+    pub fn sample(&self, runtime: &PhysicalRuntime, time_s: f64) -> Result<Sample, &'static str> {
+        let state = runtime.joint_state(self.slider)?;
+        let carrier = runtime.body_state(self.carrier)?.pose;
+        let mut gap: f64 = 0.;
+        for (a, b, j) in &self.hinges {
+            let pa = runtime.body_state(*a)?.pose;
+            let pb = runtime.body_state(*b)?.pose;
+            let x = point(pa, DVec3::from_array(j.parent_frame().translation_m));
+            let y = point(pb, DVec3::from_array(j.child_frame().translation_m));
+            gap = gap.max(x.distance(y));
+        }
+        let c = DVec3::from_array(carrier.translation_m);
+        let q = rotation(carrier);
+        let actual_base = runtime.body_state(self.bodies[0])?.pose;
+        let base = self.root_from_mount.map_or(actual_base, |mount| {
+            pose(
+                point(actual_base, DVec3::from_array(mount.translation_m)),
+                rotation(actual_base) * rotation(mount),
+            )
+        });
+        let r0 = runtime.body_state(self.rockers[0])?.pose;
+        let r1 = runtime.body_state(self.rockers[1])?.pose;
+        let a = point(r0, DVec3::new(-0.0125, 0., 0.));
+        let b = point(r1, DVec3::new(-0.0125, 0., 0.));
+        let s = DVec3::from_array(runtime.body_state(self.barrel)?.pose.translation_m);
+        let f = DVec3::from_array(runtime.body_state(self.rod)?.pose.translation_m);
+        let mut body_poses = [Pose::default(); 6];
+        for (pose, binding) in body_poses.iter_mut().zip(self.bodies) {
+            *pose = runtime.body_state(binding)?.pose;
+        }
+        Ok(Sample {
+            time_s,
+            length_m: state.position,
+            speed_m_s: state.velocity,
+            height_m: c.z,
+            carrier_tilt_rad: q.angle_between(rotation(base)),
+            closure_error_m: gap,
+            slider_error_m: (s.distance(f) - state.position).abs(),
+            body_poses,
+            points_m: [
+                point(base, DVec3::ZERO).to_array(),
+                point(base, DVec3::from_array(SECOND)).to_array(),
+                a.to_array(),
+                b.to_array(),
+                s.to_array(),
+                f.to_array(),
+            ],
+        })
+    }
+}
+
 /// Six-body, seven-joint bench. Both rockers and the damper loop are enforced by
 /// runtime joints; no body pose is prescribed after installation. Linkage
 /// collisions are disabled and gravity is enabled. The default frame is fixed;
@@ -188,14 +432,7 @@ pub struct Fixture {
     pub parameters: Parameters,
     duration: StepDuration,
     tick: u64,
-    carrier: BodyBinding,
-    slider: JointBinding,
-    /// Each hinge plus its immutable body-local frames for closure diagnostics.
-    hinges: Vec<(BodyBinding, BodyBinding, JointDescription)>,
-    rockers: [BodyBinding; 2],
-    barrel: BodyBinding,
-    rod: BodyBinding,
-    bodies: [BodyBinding; 6],
+    linkage: Linkage,
     placement: Pose,
     sprung_mass_kg: Option<f64>,
     lateral_free: bool,
@@ -271,138 +508,31 @@ impl Fixture {
     ) -> Result<Self, &'static str> {
         parameters.validate()?;
         let mut runtime = PhysicalRuntime::with_solver_iterations(duration, iterations)?;
-        let arm = DVec3::from_array(ARM);
-        let second = DVec3::from_array(SECOND);
-        let s = ORIGIN + DVec3::from_array(MOVING_EYE);
-        let f = ORIGIN + DVec3::from_array(FIXED_EYE);
-        let direction = (f - s).normalize();
-        let dq = DQuat::from_rotation_arc(DVec3::X, direction);
-        // Native local +X follows end 0 -> end 25 mm; local +Z is the hinge axis.
-        // Body origins are the verified native COMs, not the hole centers.
-        let ax = -arm.normalize();
-        let az = DVec3::Y;
-        let aq = DQuat::from_mat3(&DMat3::from_cols(ax, az.cross(ax), az));
-        let poses = [
-            pose(ORIGIN, DQuat::IDENTITY),
-            pose(ORIGIN + arm * 0.5, aq),
-            pose(ORIGIN + second + arm * 0.5, aq),
-            pose(ORIGIN + arm, DQuat::IDENTITY),
-            pose(s, dq),
-            pose(f, dq),
-        ];
-        let poses = poses.map(|p| {
-            pose(
-                point(placement, DVec3::from_array(p.translation_m)),
-                rotation(placement) * rotation(p),
-            )
-        });
-        // 44 g is the original assembly declaration. The 30/14 g partition and
-        // non-rocker box inertias are fixture assumptions; no root CAD tensor used.
-        let masses = [
+        let linkage = Linkage::install(
+            &mut runtime,
+            parameters,
+            placement,
+            None,
+            0,
             sprung_mass_kg,
-            Some(ARM_MASS_KG),
-            Some(ARM_MASS_KG),
-            Some(parameters.load_kg),
-            Some(parameters.damper_mass_kg * (30. / 44.)),
-            Some(parameters.damper_mass_kg * (14. / 44.)),
-        ];
-        let half = [
-            [0.04, 0.01, 0.005],
-            [0.0225, 0.010, 0.004],
-            [0.0225, 0.010, 0.004],
-            [0.03, 0.02, 0.015],
-            [0.025, 0.008, 0.008],
-            [0.015, 0.003, 0.003],
-        ];
-        let mut installed = Vec::new();
-        for i in 0..6 {
-            installed.push(runtime.install_body(
-                BodyKey(i as u64 + 1),
-                &body(
-                    masses[i],
-                    half[i],
-                    (i == 1 || i == 2).then_some(ARM_INERTIA_KG_M2),
-                    i == 0 && sprung_mass_kg.is_some(),
-                    lateral_free,
-                )?,
-                BodyState::at(poses[i]),
-            )?);
-        }
-        let mut hinges = Vec::new();
-        let hq = rotation(placement) * DQuat::from_rotation_arc(DVec3::X, DVec3::Y);
-        for (index, (a, b, anchor)) in [
-            (0, 1, ORIGIN),
-            (1, 3, ORIGIN + arm),
-            (0, 2, ORIGIN + second),
-            (2, 3, ORIGIN + second + arm),
-            (3, 4, s),
-            (0, 5, f),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let anchor = point(placement, anchor);
-            let desc = JointDescription::new(
-                JointKind::Revolute,
-                frame(poses[a], anchor, hq),
-                frame(poses[b], anchor, hq),
-                None,
-                false,
-            )?;
-            runtime.install_joint(
-                JointKey(index as u64 + 1),
-                installed[a],
-                installed[b],
-                &desc,
-            )?;
-            hinges.push((installed[a], installed[b], desc));
-        }
-        let desc = JointDescription::new(
-            JointKind::Prismatic,
-            Pose::default(),
-            Pose::default(),
-            Some(JointLimits::new(
-                parameters.free_length_m - parameters.stroke_m,
-                parameters.free_length_m,
-            )?),
-            false,
-        )?;
-        let slider = runtime.install_joint(JointKey(7), installed[4], installed[5], &desc)?;
-        runtime.set_joint_motor(
-            slider,
-            Some(JointMotor::new(
-                parameters.free_length_m,
-                0.,
-                parameters.stiffness_n_m,
-                parameters.damping_n_s_m,
-                10_000.,
-            )?),
+            lateral_free,
         )?;
         Ok(Self {
             runtime,
             parameters,
             duration,
             tick: 0,
-            carrier: installed[3],
-            slider,
-            hinges,
-            rockers: [installed[1], installed[2]],
-            barrel: installed[4],
-            rod: installed[5],
+            linkage,
             placement,
             sprung_mass_kg,
             lateral_free,
-            bodies: installed
-                .as_slice()
-                .try_into()
-                .expect("six installed fixture bodies"),
         })
     }
     /// Replace a held vertical force at the moving test load's COM, N. Zero
     /// releases the external load; gravity and the passive spring remain active.
     pub fn load(&mut self, vertical_n: f64) -> Result<(), &'static str> {
         self.runtime
-            .set_body_wrench(self.carrier, [0., 0., vertical_n], [0.; 3])
+            .set_body_wrench(self.linkage.carrier, [0., 0., vertical_n], [0.; 3])
     }
     /// Change damping for comparison without rebuilding or moving bodies.
     pub fn damping(&mut self, value: f64) -> Result<(), &'static str> {
@@ -410,7 +540,7 @@ impl Fixture {
             return Err("invalid damping");
         }
         self.runtime.set_joint_motor(
-            self.slider,
+            self.linkage.slider,
             Some(JointMotor::new(
                 self.parameters.free_length_m,
                 0.,
@@ -446,51 +576,14 @@ impl Fixture {
     }
     /// Read the slider binding for stale-token validation; never a serialized ID.
     pub fn slider(&self) -> JointBinding {
-        self.slider
+        self.linkage.slider
     }
     /// Capture solved poses and loop residuals without allocating mesh data.
     pub fn sample(&self) -> Result<Sample, &'static str> {
-        let state = self.runtime.joint_state(self.slider)?;
-        let carrier = self.runtime.body_state(self.carrier)?.pose;
-        let mut gap: f64 = 0.;
-        for (a, b, j) in &self.hinges {
-            let pa = self.runtime.body_state(*a)?.pose;
-            let pb = self.runtime.body_state(*b)?.pose;
-            let x = point(pa, DVec3::from_array(j.parent_frame().translation_m));
-            let y = point(pb, DVec3::from_array(j.child_frame().translation_m));
-            gap = gap.max(x.distance(y));
-        }
-        let c = DVec3::from_array(carrier.translation_m);
-        let q = rotation(carrier);
-        let base = self.runtime.body_state(self.bodies[0])?.pose;
-        let r0 = self.runtime.body_state(self.rockers[0])?.pose;
-        let r1 = self.runtime.body_state(self.rockers[1])?.pose;
-        let a = point(r0, DVec3::new(-0.0125, 0., 0.));
-        let b = point(r1, DVec3::new(-0.0125, 0., 0.));
-        let s = DVec3::from_array(self.runtime.body_state(self.barrel)?.pose.translation_m);
-        let f = DVec3::from_array(self.runtime.body_state(self.rod)?.pose.translation_m);
-        let mut body_poses = [Pose::default(); 6];
-        for (pose, binding) in body_poses.iter_mut().zip(self.bodies) {
-            *pose = self.runtime.body_state(binding)?.pose;
-        }
-        Ok(Sample {
-            time_s: self.tick as f64 * self.duration.as_secs_f64(),
-            length_m: state.position,
-            speed_m_s: state.velocity,
-            height_m: c.z,
-            carrier_tilt_rad: q.angle_between(rotation(base)),
-            closure_error_m: gap,
-            slider_error_m: (s.distance(f) - state.position).abs(),
-            body_poses,
-            points_m: [
-                point(base, DVec3::ZERO).to_array(),
-                point(base, DVec3::from_array(SECOND)).to_array(),
-                a.to_array(),
-                b.to_array(),
-                s.to_array(),
-                f.to_array(),
-            ],
-        })
+        self.linkage.sample(
+            &self.runtime,
+            self.tick as f64 * self.duration.as_secs_f64(),
+        )
     }
 }
 

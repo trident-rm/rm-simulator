@@ -281,6 +281,32 @@ impl PhysicsHooks for DirectionalContacts {
     }
 }
 impl PhysicalRuntime {
+    /// Read the normal load used by an active directional friction patch, N.
+    /// This privileged diagnostic is the sum of native normal-impulse magnitudes
+    /// from the preceding integration slice divided by its duration. It is not a
+    /// vertical load, fresh contact impulse, force sensor or independent ground
+    /// truth. `None` means no supported directional patch; stale/foreign tokens
+    /// return an error. See [`Self::set_directional_friction`] for a runnable setup.
+    pub fn directional_normal_load_n(
+        &self,
+        collider: ColliderBinding,
+    ) -> Result<Option<f64>, &'static str> {
+        self.collider_state(collider)?;
+        if !self
+            .directional
+            .entries
+            .iter()
+            .any(|(h, _)| *h == collider.handle)
+        {
+            return Ok(None);
+        }
+        Ok(self
+            .directional
+            .contacts
+            .iter()
+            .find(|c| c.collider == collider.handle)
+            .map(|c| c.load / self.world.integration_parameters.dt))
+    }
     /// Opt a dynamic collider into directional contact against fixed scenery.
     /// `None` restores its ordinary material law. Other dynamic/kinematic contacts
     /// retain the native isotropic law. The law is installation-local, not serialized.
@@ -310,6 +336,7 @@ impl PhysicalRuntime {
     /// }).ok_or("missing tyre")?;
     /// runtime.set_directional_friction(tyre,
     ///     Some(DirectionalFriction::new([0., 1., 0.], 0.9, 0.02)?))?;
+    /// assert_eq!(runtime.directional_normal_load_n(tyre)?, None);
     /// runtime.step(0)?;
     /// # Ok::<(), &'static str>(())
     /// ```

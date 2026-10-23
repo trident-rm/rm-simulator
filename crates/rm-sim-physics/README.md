@@ -259,3 +259,11 @@ It retains native normal support and couples bounded tangential damping to the
 native joint solver. See [the wheel-contact guide](../../docs/wheel-contact.md#directional-contact-experiment)
 for coefficients, the free-lateral test stand, reproduction and the unresolved
 5 mm surface-transition stall. It is not enabled in the game.
+
+The `whole_chassis` example attaches four reusable linkage/wheel modules to a
+free six-DOF sprung body in one runtime. Axle motors produce translation/yaw;
+flat support, COM load transfer, braking/coasting and asymmetric small-track
+response are tested at 128/1000 Hz. The full robot layout and upper mass/inertia
+remain assumed. See [the chassis experiment](../../docs/whole-chassis.md).
+`PhysicalRuntime::directional_normal_load_n` exposes the preceding-slice contact
+budget as privileged diagnostic truth, not a simulated load sensor.

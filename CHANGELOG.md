@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Add a standalone free six-DOF four-wheel chassis with shared source-derived
+  suspension installers, axle-only translation/yaw commands, passive coasting,
+  load/COM diagnostics and asymmetric small-track tests at 128/1000 Hz. Preserve
+  old isolated traces exactly; keep the assumed whole-robot layout and unresolved
+  steep-transition limitations explicit without changing game physics.
+
 - Add an opt-in directional contact approximation for fixed terrain, with separate
   tread/roller grip and implicit tangential damping. Exercise the suspension wheel
   with free lateral motion, low/high-drag controls, 2 mm ramp passage and exact
