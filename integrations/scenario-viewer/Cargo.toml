@@ -9,6 +9,16 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = false
+default-run = "rm-scenario-viewer"
+
+[features]
+default = []
+rxui-viewer = ["dep:rxui", "dep:png", "dep:serde", "dep:serde_json", "dep:nalgebra"]
+
+[[bin]]
+name = "rm-rxui-viewer"
+path = "src/rxui_viewer.rs"
+required-features = ["rxui-viewer"]
 
 [dependencies]
 bevy = { version = "=0.20.0", default-features = false, features = [
@@ -23,6 +33,12 @@ clap = { version = "=4.6.0", features = ["derive"] }
 rm-sim-engine = { version = "0.1.0", path = "../../crates/rm-sim-engine" }
 rm-sim-physics = { version = "0.1.0", path = "../../crates/rm-sim-physics" }
 rm-sim-render = { version = "0.1.0", path = "../../crates/rm-sim-render", default-features = false }
+
+rxui = { version = "=0.2.0-dev.0", git = "https://github.com/hxyulin/rxui", rev = "0fcb9ea12b552d3ee887f60c2135586001650030", default-features = false, features = ["native"], optional = true }
+png = { version = "0.18", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+nalgebra = { version = "=0.35.0", optional = true }
 
 [profile.dev]
 opt-level = 1

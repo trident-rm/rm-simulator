@@ -8,6 +8,73 @@ It uses the same `PhysicalRuntime` and generic Bevy renderer as other callers.
 It loads no RoboMaster field, match, server, network transport or ROS environment.
 Dimensions, masses and motor settings are illustrative fixture choices.
 
+## RXUI panels and shared GPU viewport
+
+The optional RXUI binary is an initial in-process visualization shell. It uses
+the same physical fixture and generic renderer, with RXUI owning the window,
+buttons and inspector. It adds no ROS, IPC, dynamically loaded plugin or match
+dependency.
+
+For native SolidWorks grouping, joint review, collision fitting and mass-property
+export, see the [import workbench](solidworks-importer.md). Import review is a
+separate mode: its joint slider is a kinematic preview and does not advance the
+fixture's physics.
+
+Run from the repository root:
+
+```sh
+mbx run --manifest-path integrations/scenario-viewer/Cargo.toml --locked \
+  --features rxui-viewer --bin rm-rxui-viewer
+
+# Render the complete UI offscreen, with a single final screenshot readback.
+mbx run --manifest-path integrations/scenario-viewer/Cargo.toml --locked \
+  --features rxui-viewer --bin rm-rxui-viewer -- \
+  --frames 60 --screenshot /tmp/rxui-viewer.png
+```
+
+**Pause/Resume**, **Step** and **Reset** operate on the caller-owned physical
+scene. Step pauses and advances one 128 Hz tick; reset retains the pause choice.
+The inspector shows the falling cube's actual FLU position, explicitly labelled
+as privileged truth. Floor visibility and orbit buttons affect presentation only.
+The original Bevy viewer remains the default binary without this feature.
+
+Bevy renders offscreen on its device and queue; Astrelis wraps those same wgpu
+handles, and RXUI samples the resulting texture view. Rendering submissions are
+ordered on the shared queue, with Bevy rendering completed on the calling CPU
+thread before the UI submits its composition. There is no viewport GPU-to-CPU
+readback or per-frame pixel upload. This is submission ordering, not a per-frame
+GPU completion wait. Synchronous shader compilation is enabled for this proof;
+startup and newly encountered shader variants may stall the UI thread.
+
+The native window resizes the viewport's GPU backing, bounded to 64–2048 pixels
+per dimension. RXUI image identity remains stable between resizes; resizing
+replaces the sampled view after Bevy extracts the resized image. Models,
+meshes/materials and visual entities survive ordinary playback and plant reset.
+Interactive pacing uses bounded frame deltas at 128 Hz (250 ms/32-tick catch-up
+cap). Explicit finite runs and captures advance four ticks per presentation
+unless paused. They do not establish real-time rendering throughput.
+
+RXUI is pinned to `0fcb9ea12b552d3ee887f60c2135586001650030`; its Astrelis
+dependency is pinned upstream. Both share Bevy's wgpu 30.0.1. Native UI libraries
+are optional and isolated to this separate workspace. This is not yet an RViz
+replacement: arbitrary scenario loading, docking, entity picking, coordinate
+frame/point-cloud/path displays and recording are follow-on work. GPU device
+loss currently requires restarting the viewer.
+
+The initial shared-device path was checked on Apple M5 Max / Metal: eight CPU
+tests, an explicit GPU resize/resource-reuse test, a complete UI PNG capture and
+a finite native-window run passed. All-target/all-feature Clippy passed with
+warnings denied. The viewport bounds test covers both 1100×760 and 900×640
+layouts. Linux/Windows GPU behavior and sustained frame rates are not yet measured.
+
+```sh
+mbx test --manifest-path integrations/scenario-viewer/Cargo.toml --locked \
+  --features rxui-viewer
+# Explicit native GPU/font test, including resize and image/mesh reuse.
+mbx test --manifest-path integrations/scenario-viewer/Cargo.toml --locked \
+  --features rxui-viewer --bin rm-rxui-viewer -- --ignored --test-threads=1
+```
+
 From the repository root:
 
 ```sh

@@ -4,6 +4,17 @@
 
 ## Unreleased
 
+- Add an offline SolidWorks import review mode to the RXUI viewer: preserve native
+  occurrences, assign rigid groups, review explicit joints, fit collision proxies
+  and aggregate independent mass/COM/inertia into cooked assembly recipes.
+  Support logged missing-reference omissions and explicit cached/estimated mass
+  choices; native mate inference remains unavailable.
+
+- Add an optional RXUI physical viewer with pause/step/reset, a truth inspector,
+  floor visibility and orbit controls. Share the Bevy GPU device and sampled
+  viewport texture with RXUI instead of reading pixels back each frame; include
+  bounded resizing and a complete offscreen UI capture mode.
+
 - Extract shared navigation planning/following and source assembly planning into
   `rm-sim-control`, with explicit observations, elapsed time and caller-owned
   cancellation. Keep bounded workers, permissions and actuation in the server.
