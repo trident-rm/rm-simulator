@@ -9,6 +9,8 @@ use rapier3d_f64::prelude::{SharedShape, TriMeshFlags, Vector};
 
 /// Compatibility access to the solver-free source mesh type.
 pub use rm_simulator_engine::model::TriangleMesh;
+mod body;
+pub use body::CookedRigidBody;
 
 /// A source surface and its cooked Rapier shape, shared across worlds/resets.
 /// The current policy merges duplicate vertices and removes degenerate faces,
@@ -40,15 +42,7 @@ impl CookedTriangleMesh {
     /// Copies source buffers into backend storage while retaining the immutable
     /// source. Backend rejection (including an empty surface) creates no world state.
     pub fn new(source: TriangleMesh) -> Result<Self, &'static str> {
-        let shape = cook_vectors(
-            source
-                .vertices_m()
-                .iter()
-                .copied()
-                .map(Vector::from_array)
-                .collect(),
-            source.triangles().to_vec(),
-        )?;
+        let shape = cook_surface(&source)?;
         Ok(Self { source, shape })
     }
 
@@ -56,6 +50,18 @@ impl CookedTriangleMesh {
     pub fn source(&self) -> &TriangleMesh {
         &self.source
     }
+}
+
+fn cook_surface(source: &TriangleMesh) -> Result<SharedShape, &'static str> {
+    cook_vectors(
+        source
+            .vertices_m()
+            .iter()
+            .copied()
+            .map(Vector::from_array)
+            .collect(),
+        source.triangles().to_vec(),
+    )
 }
 
 /// Consume already validated buffers. Kept separate so legacy owned-buffer

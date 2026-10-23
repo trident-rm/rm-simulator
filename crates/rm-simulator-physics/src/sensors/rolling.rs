@@ -33,6 +33,7 @@ pub(crate) struct SensorCollider {
 /// a reset/restore with old captures. Mesh buffers are shared and poses frozen.
 #[derive(Clone)]
 pub struct SceneCapture {
+    runtime_identity: u64,
     robot: u32,
     placement_revision: u64,
     robot_revisions: Vec<(u32, u64)>,
@@ -44,8 +45,8 @@ pub struct SceneCapture {
 }
 impl SceneCapture {
     pub(crate) fn new(
-        robot: u32,
-        placement_revision: u64,
+        runtime_identity: u64,
+        robot_identity: (u32, u64),
         time_ns: u64,
         robot_pose: Pose,
         fixed: Vec<SensorCollider>,
@@ -53,8 +54,9 @@ impl SceneCapture {
         robot_revisions: Vec<(u32, u64)>,
     ) -> Self {
         Self {
-            robot,
-            placement_revision,
+            runtime_identity,
+            robot: robot_identity.0,
+            placement_revision: robot_identity.1,
             robot_revisions,
             time_ns,
             robot_pose: pose(robot_pose),
@@ -420,7 +422,8 @@ struct SceneBracket<'a> {
 }
 impl<'a> SceneBracket<'a> {
     fn new(before: &'a SceneCapture, after: &'a SceneCapture) -> Result<Self, &'static str> {
-        if before.time_ns >= after.time_ns
+        if before.runtime_identity != after.runtime_identity
+            || before.time_ns >= after.time_ns
             || before.robot != after.robot
             || before.placement_revision != after.placement_revision
             || before.robot_revisions != after.robot_revisions
@@ -1285,5 +1288,63 @@ mod tests {
             .validate()
             .is_err()
         );
+    }
+    #[test]
+    fn runtime_brand_rejects_brackets_even_with_identical_shared_geometry() {
+        let (world, robot) = rig();
+        let (other, _) = rig();
+        let before = world.lidar_scene_capture(robot, 0).unwrap();
+        let mut after = before.clone();
+        after.time_ns = 1_000_000;
+        assert!(SceneBracket::new(&before, &after).is_ok());
+        after.runtime_identity = other.runtime_identity();
+        assert!(SceneBracket::new(&before, &after).is_err());
+    }
+
+    #[test]
+    fn bound_kinematic_geometry_is_interpolated_by_existing_sensor_queries() {
+        use crate::{cooking::CookedRigidBody, runtime::BodyKey};
+        use rm_simulator_engine::model::{
+            BodyKind, BodyState, ColliderDescription, ContactMaterial, RigidBodyDescription,
+            ShapeDescription,
+        };
+        let (mut world, robot) = rig();
+        let model = CookedRigidBody::new(
+            RigidBodyDescription::new(
+                BodyKind::Kinematic,
+                vec![
+                    ColliderDescription::new(
+                        ShapeDescription::Cuboid {
+                            half_extents_m: [0.1; 3],
+                        },
+                        Pose::at([0.; 3]),
+                        ContactMaterial {
+                            friction: 0.4,
+                            restitution: 0.,
+                            memberships: u32::MAX,
+                            filter: u32::MAX,
+                        },
+                    )
+                    .unwrap(),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let binding = world
+            .install_body(BodyKey(1), &model, BodyState::at(Pose::at([2., 0., 1.])))
+            .unwrap();
+        let before = world.lidar_scene_capture(robot, 0).unwrap();
+        world
+            .set_body_endpoint(binding, Pose::at([3., 0., 1.]))
+            .unwrap();
+        world.step(0, &crate::TargetFrames::new(vec![])).unwrap();
+        let after = world
+            .lidar_scene_capture(robot, world.step_duration().as_ns())
+            .unwrap();
+        let scene = SceneBracket::new(&before, &after).unwrap();
+        let ray = Ray::new(Vector::new(0., 0., 1.), Vector::X);
+        let hit = scene.cast(&ray, 10., 0.5).unwrap();
+        assert!((hit.distance_m - 2.4).abs() < 1e-12);
     }
 }

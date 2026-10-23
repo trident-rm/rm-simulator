@@ -13,6 +13,9 @@
 //! storage. [`WorldPhysics::step`] is the owned-output compatibility adapter.
 //! Existing root and projectile import paths name this exact same type.
 use super::*;
+#[path = "runtime/bindings.rs"]
+mod bindings;
+pub use bindings::{BodyBinding, BodyKey, BodyState};
 
 /// Longest integration slice of a world tick, in nanoseconds. A 17 mm shot at
 /// the 25 m/s limit crosses further in one 128 Hz tick than the thin armour
@@ -36,6 +39,8 @@ fn substep_count(step_duration: crate::StepDuration) -> usize {
 /// score on, the projectiles in flight and every chassis. Stepping is
 /// deterministic for a fixed tick schedule.
 pub struct WorldPhysics {
+    bound_bodies: bindings::Bodies,
+    bound_body_endpoints: Vec<(RigidBodyHandle, Pose3, Pose3)>,
     pub(super) step_duration: crate::StepDuration,
     /// Convex XY slab outside which projectiles are absorbed, in world FLU
     /// metres. `None` means no perimeter absorption. A hit beyond the slab
@@ -143,6 +148,8 @@ impl WorldPhysics {
             None,
         );
         let mut ballistics = Self {
+            bound_bodies: Default::default(),
+            bound_body_endpoints: Vec::new(),
             step_duration,
             payloads: Vec::new(),
             world,
@@ -171,6 +178,19 @@ impl WorldPhysics {
         }
         ballistics
     }
+    pub(crate) fn runtime_identity(&self) -> u64 {
+        self.bound_bodies.identity()
+    }
+
+    /// No active physical participants. Generic fixed anchors alone do not
+    /// require integration; dynamic/kinematic bound bodies keep stepping active.
+    pub fn is_idle(&self) -> bool {
+        self.projectiles.is_empty()
+            && self.chassis.is_empty()
+            && self.payloads.is_empty()
+            && self.bound_bodies.idle(&self.world)
+    }
+
     /// Immutable integration duration of this physical world.
     pub fn step_duration(&self) -> crate::StepDuration {
         self.step_duration
@@ -323,6 +343,9 @@ impl WorldPhysics {
                 return Err("target face pose must be finite with a unit rotation");
             }
         }
+        for (handle, start, _) in &mut self.bound_body_endpoints {
+            *start = *self.world.bodies[*handle].position();
+        }
         let policy = self.policy;
         let substeps = substep_count(self.step_duration);
         let substep_s = self.step_duration.as_secs_f64() / substeps as f64;
@@ -335,6 +358,9 @@ impl WorldPhysics {
                     body.set_position(pose(start.pose), true);
                 }
                 body.set_next_kinematic_position(pose(start.pose).lerp(&pose(end.pose), frac_next));
+            }
+            for (handle, start, end) in &self.bound_body_endpoints {
+                self.world.bodies[*handle].set_next_kinematic_position(start.lerp(end, frac_next));
             }
             self.velocities_before.clear();
             for projectile in &self.projectiles {

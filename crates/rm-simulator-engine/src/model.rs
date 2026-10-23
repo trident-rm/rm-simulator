@@ -2,6 +2,11 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Immutable source geometry, independent of cooked shapes and world state.
 use std::sync::Arc;
+mod body;
+pub use body::{
+    BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, RigidBodyDescription,
+    ShapeDescription,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 struct MeshData {

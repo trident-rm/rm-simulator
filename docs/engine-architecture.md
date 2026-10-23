@@ -66,9 +66,9 @@ Moving-mesh and boundary adapters continue through that path with their existing
 channels, filters and insertion order. `PreparedArena` remains a Rapier-cooked
 arena that shares shapes across construction/reset, not a neutral scene format.
 
-This is the first geometry boundary, not a complete robot/model schema. Primitive,
-body, link, joint, mass/inertia, material and sensor descriptions remain to be
-extracted. Source package hashes/provenance remain with the verified assets; mesh
+This surface boundary is complemented by primitive, collider, rigid-body and
+explicit inertial descriptions (see below). Link/joint, convex, actuator and
+sensor descriptions remain subsequent work. Source package hashes/provenance remain with the verified assets; mesh
 buffer sharing is not a persistent content hash or topology identity. There is no
 global cache, persisted cooked format or backend interchangeability guarantee.
 A future cache must include source content, backend/version/precision and cooking
@@ -97,8 +97,35 @@ ticks, avoiding a temporary returned contact vector per tick. Moving-target call
 can use `step_with_targets_into` with identical endpoint validation and completed
 stamps to `step_with_targets`. This retains buffer capacity, not every internal
 solver allocation. Reset still reconstructs an initial recipe; callers reset
-sensor/controller histories separately. Runtime IDs, reset epochs, generic body
-models and capability negotiation remain subsequent work.
+sensor/controller histories separately. World-scoped body bindings and basic rigid-body descriptions now extend this
+runtime (see below). Joint bindings, broader topology revisions and capability
+negotiation remain subsequent work.
+
+## Implemented body descriptions and runtime bindings
+
+`engine::model::{RigidBodyDescription, ColliderDescription, ShapeDescription}`
+separate primitive/indexed geometry, local mounting frames and explicit contact
+parameters from live pose/velocity. `BodyKind::Dynamic` requires a validated
+`Inertial` with total mass, COM frame and principal moments, with no inferred
+CAD mass. `BodyState` carries copied world motion. `CookedRigidBody` prepares and
+shares backend shapes while retaining source descriptions. The initial shapes
+are spheres, boxes and fixed/kinematic surfaces; dynamic surfaces are rejected.
+
+`runtime::install_body` accepts a caller `BodyKey` and returns an opaque
+`BodyBinding`. Bindings contain a process-local runtime brand and non-reused
+installation generation, hiding native handles. Duplicate/invalid installations
+are rejected before mutation; removal/reset invalidates previous bindings.
+`body_binding(key)` supports explicit rebinding after recipe reconstruction.
+Borrow source data or copy compact motion; velocity/wrench/kinematic endpoint
+commands use world axes and documented units/lifetimes. Existing participant
+APIs, match checkpoints and wire formats remain unchanged. Rolling scene brackets
+also reject different runtime brands, preserving capture lifetime boundaries.
+
+This implements basic standalone rigid bodies, not a new articulation format,
+solver trait or robot migration. Joint bindings, convex geometry and explicit
+solver capability negotiation follow after these foundations. The
+[physics reuse guide](physics-reuse.md#source-described-bodies-and-bindings)
+contains units, reset/error contracts, current limitations and a runnable example.
 
 ## Target ownership
 
@@ -185,8 +212,9 @@ the current timestamp or by a `RayHit::shape_index`.
    and separate visual, sensor and collision choices. Keep cooked caches keyed
    by backend/version/options and share immutable resources across resets. Do not
    infer trustworthy link inertia or motors from native CAD caches. Indexed surface
-   sources and shared Rapier cooking are implemented; body/joint/primitive
-   descriptions and cache identities remain subsequent work.
+   sources, shared Rapier cooking, primitive/body descriptions and explicit
+   inertial data are implemented; joint/actuator descriptions and cache
+   identities remain subsequent work.
 3. **Runtime composition and identities — concrete runtime extracted.** Introduce the minimal stable binding
    and epoch/revision contracts required by a second standalone consumer. Adapt
    existing RobotSession/MatchSession paths; preserve one world and exact clocks.

@@ -22,9 +22,40 @@ The shell sets `CARGO_TARGET_DIR="$PWD/target/nix"`, so Nix builds land in
 `.direnv/` are gitignored; commit `flake.nix`, `flake.lock` and `.envrc`. Run
 `nix flake update`, rebuild and test before committing a new lockfile.
 
+## Shared compilation cache
+
+When `mbx` is on `PATH`, `just` compilation/test/run recipes and the runtime
+validation script use it automatically; otherwise they use Cargo. Toolchain pins,
+features, profiles, targets and warning flags are unchanged. Non-compiling
+commands (`cargo fmt`, metadata and dependency policy checks) remain Cargo.
+Explicit one-off builds can use `mbx test`, `mbx check`, `mbx clippy` or `mbx run`
+with the same arguments as Cargo. No global Cargo shim is required.
+
+To bring an existing checkout under managed storage without deleting outputs:
+
+```sh
+mbx adopt --dry-run .
+mbx adopt .
+mbx gc --dry-run
+```
+
+Adoption moves build storage and leaves a `target` symlink. The Nix shell's
+explicit `target/nix` subdirectory remains unchanged; each checkout/worktree
+retains its own target. Optional integration workspaces have independent targets
+and can be adopted explicitly. Do not share one `CARGO_TARGET_DIR` across them.
+Keep the shared default mbx action cache and existing compiler-wrapper settings.
+Native-link caching stays disabled; no remote cache is required.
+
+Inspect with `mbx doctor`, `mbx explain --last` and `mbx cache stats`. Cache hits
+are measured compiler reuse, not a Cargo no-op. `mbx gc --dry-run` previews global
+collection, so review its scope before collecting unrelated workspaces. Old
+checkout-specific diagnostic targets/examples/incremental outputs can be removed
+when not in use; there is no need to clean useful dependencies before adoption.
+
 ## `just` targets
 
-`just` alone lists every target.
+`just` alone lists every target. Compile commands below show the Cargo-equivalent
+arguments; the recipes select `mbx` automatically when available.
 
 | Target | Action |
 |---|---|

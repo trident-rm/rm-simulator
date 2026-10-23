@@ -23,6 +23,8 @@ simulator crate except the solver-free `rm-simulator-engine` core.
 | `src/chassis.rs` | Compatibility facade for chassis configuration, commands, snapshots and borrowed telemetry; existing public paths remain unchanged. |
 | `src/chassis/model.rs` | Physical descriptions, presets, validation and evaluated model geometry, including conversion to `WheelModel`; no solver handles or stepping. |
 | `src/chassis/backend/` | Rapier body/collider construction (`construction.rs`), ordered wheel queries and forces (`dynamics.rs`), prescribed folding/gimbal adaptation (`prescribed.rs`), controls and observations (`mod.rs`). |
+| `src/cooking.rs` / `src/cooking/body.rs` | Shared cooked mesh/body shapes retaining solver-free source descriptions. |
+| `src/runtime/bindings.rs` | Explicit body keys, world-scoped bindings, source/state reads and generic physical control. |
 | `src/runtime.rs` | `runtime::WorldPhysics`: interacting scene ownership, construction, integration slices, carrier traces and ordered raw contact capture; legacy world paths remain compatible. |
 | `src/projectile.rs` | `Shot`, `Caliber`, `Contact`, `TargetFace`, `TargetFrames`, `StaticGeometry` and `ProjectilePolicy`; participant adapters and compatibility world exports. |
 | `src/queries.rs` | Immutable validated ray batches and capture-local hits, with no public solver handles; callers retain output storage. |
@@ -127,3 +129,11 @@ loop; root and `projectile` paths re-export the same type. `step_into` appends
 raw contacts into retained caller storage. `RobotSession::step_into` and
 `step_with_targets_into` use it directly. Sessions/match adapters retain clock,
 reset and rule scheduling ownership; no extra world or scheduler is created.
+
+`cooking::CookedRigidBody` prepares engine body descriptions once; runtime
+`BodyKey`/`BodyBinding` APIs install and address world-local instances without
+exposing native handles. Explicit mass/inertia, held world wrenches, dynamic
+velocity and interpolated kinematic endpoints are supported. Bindings reject
+other worlds/removal/reset; reacquire a key after recipe reconstruction. See
+[source-described bodies](../../docs/physics-reuse.md#source-described-bodies-and-bindings)
+and `examples/body_runtime.rs` for usage and current unsupported capabilities.

@@ -6,11 +6,13 @@
 from pathlib import Path
 import json
 import subprocess
+import shutil
 
 
 def main():
     """Reject season switches and exercise current rules without default features."""
     root = Path(__file__).resolve().parent.parent
+    rust = "mbx" if shutil.which("mbx") else "cargo"
     metadata = json.loads(subprocess.check_output(
         ["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"],
         cwd=root, text=True,
@@ -28,11 +30,11 @@ def main():
         ("rm-simulator-server", "rmul"),
     ]:
         subprocess.run([
-            "cargo", "test", "--locked", "-p", package,
+            rust, "test", "--locked", "-p", package,
             "--no-default-features", "--lib", test_filter,
         ], cwd=root, check=True)
     subprocess.run([
-        "cargo", "test", "--locked", "-p", "rm-simulator-gameplay",
+        rust, "test", "--locked", "-p", "rm-simulator-gameplay",
         "--no-default-features", "--test", "control_2027", "--test", "field_buffs_2027",
         "--test", "terrain_2027", "--test", "rune_2027", "--test", "assembly_2027",
         "--test", "adaptive_2027",

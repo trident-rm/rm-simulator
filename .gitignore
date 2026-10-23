@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-target/
+# Cargo directories and mbx-managed target symlinks.
+target
 
 # Local dependency caches.
 .cache/

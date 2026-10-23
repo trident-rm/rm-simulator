@@ -4,6 +4,14 @@
 
 ## Unreleased
 
+- Prefer mbx for `just` compilation, tests and runtime validation when installed,
+  retaining Cargo fallback and the existing per-checkout Nix target layout.
+
+- Add immutable primitive/collider/body descriptions with explicit mass, COM and
+  inertia; share cooked body shapes across standalone worlds and address live
+  bodies through reset-safe bindings. Support held world wrenches and kinematic
+  endpoints; reject rolling LiDAR brackets from different runtimes.
+
 - Extract the concrete physical runtime with compatible world imports and
   retained-buffer stepping. Bare sessions now collect raw contacts directly
   across ticks and expose a retained-output moving-target step.

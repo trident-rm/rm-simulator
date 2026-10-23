@@ -19,6 +19,7 @@ This is a reusable RM physical library, not a general physics-engine abstraction
 ## Contents
 
 - [Backend-neutral wheel model](#backend-neutral-wheel-model)
+- [Source-described bodies and bindings](#source-described-bodies-and-bindings)
 - [Concrete physical runtime](#concrete-physical-runtime)
 - [Headless use](#headless-use)
 - [Restore and prediction](#restore-and-prediction)
@@ -85,6 +86,71 @@ platform math tolerance. Independent scalar tests cover suspension, free spin,
 contact slip reaction, direct torques, shared/zero power and buffer reuse, without
 creating a solver world. Existing adapter tests cover defeat, power cuts,
 contact filtering, balance/jump and restore.
+
+## Source-described bodies and bindings
+
+`engine::model` now supplies immutable `RigidBodyDescription` and
+`ColliderDescription` records. `ShapeDescription` supports local FLU spheres,
+boxes (half extents) and indexed surfaces. Descriptions retain explicit mounting
+poses and `ContactMaterial` coefficients plus symmetric membership/filter bits;
+no team/projectile semantics are inferred from the bits. The current Rapier
+adapter uses its default average coefficient combination. Descriptions are
+in-memory values, not a new asset file or serialization format.
+
+`BodyKind` distinguishes fixed, position-driven kinematic and dynamic bodies.
+Dynamic bodies require `Inertial`: total mass in kg, principal moments in kg m²
+about the COM, and a body-local COM/principal-axis frame. Positive finite mass,
+realizable principal moments and finite unit poses are validated. Collider
+volumes/densities never add hidden mass; CAD-native cached inertia is not imported.
+Dynamic nonconvex triangle surfaces are rejected explicitly. Joint/actuator
+models, convex descriptions, damping/CCD options and body checkpoint continuation
+remain future work; this does not convert existing robot chassis to a new model.
+
+`physics::cooking::CookedRigidBody` retains the immutable source and shared
+backend shapes. `install_body(BodyKey, &cooked, BodyState)` creates world-local
+bodies/colliders with explicit initial world FLU pose and COM velocities. Fixed
+and position-driven kinematic installation requires zero initial velocity.
+Generic bodies collide with existing participants and appear in geometry/sensor
+captures. Fixed bodies alone permit idle stepping; dynamic/kinematic bodies keep
+the ordinary integration loop active.
+
+`BodyKey(u64)` is a caller-chosen key within the runtime, not an asset hash or
+backend index. An opaque `BodyBinding` brands one installation with its runtime
+and a non-reused generation. Wrong-world and removed bindings fail before
+mutation; reinstalling the same key cannot revive an old token. Runtime brands
+are process-local metadata and do not enter physical calculations/checkpoints.
+The identity counter never wraps (exhaustion panics at world construction);
+per-world generation exhaustion returns an admission error before installation.
+Moving an owned world preserves bindings; recreating/resetting it invalidates them.
+Use `body_binding(key)` to rebind after a successful recipe reset. The live table
+retains only installed bodies, and generation counters are never recycled.
+
+`body_state(binding)` copies privileged motion; `body_description(binding)` borrows
+source metadata without cloning collider buffers. `set_body_velocity` replaces
+dynamic COM linear/angular velocity in world axes. `set_body_wrench` replaces a
+held world-frame COM force in N and torque in N m, remaining active until replaced
+or removed; zero clears it. `set_body_endpoint` interpolates a kinematic body to
+its endpoint across the next tick's ordinary solver slices and holds it there.
+Repeated endpoints replace the target while retaining first-request order.
+It is not a teleport API. These trusted runtime operations introduce no player
+command path, controller assistance, networking, match policy or wall clock.
+
+Rolling LiDAR brackets now also validate runtime brands, preventing interpolation
+between separate worlds even if other handles/shapes coincide. Native body motion
+continues through the existing per-emission interpolation. Sensor/controller
+histories still require caller reset, as do ordinary RobotSession recipes.
+Generic bodies currently belong to bare runtimes/RobotSession recipes; match
+checkpoints and wire codecs do not serialize these new descriptions or bindings.
+
+Run the complete headless example:
+
+```sh
+mbx run -p rm-simulator-physics --locked --example body_runtime
+```
+
+It cooks an explicitly described cube once, drops it onto the catch floor through
+the ordinary runtime, then reconstructs the recipe and reacquires its binding.
+No setup worker, CAD file, match or renderer is involved.
 
 ## Concrete physical runtime
 

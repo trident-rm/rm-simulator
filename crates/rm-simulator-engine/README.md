@@ -7,7 +7,8 @@ Solver-free core for the incrementally separated robotics simulation engine.
 - `Pose`: FLU translation in metres and wxyz quaternion storage.
 - `time`: validated exact step durations and the existing 128 Hz default.
 - `model`: validated immutable triangle surfaces with shared source buffers,
-  independent of backend cooking, placement and collision filters.
+  independent of backend cooking; validated primitive/collider/body descriptions
+  retain mounting frames, explicit contact data and dynamic mass/COM/inertia.
 - `queries`: immutable validated metric rays and capture-local hit records.
 - `control`: held drive modes and validated wheel-axis torque requests.
 - `wheel_model`: scalar suspension, slip, motor/inertia and shared-power laws

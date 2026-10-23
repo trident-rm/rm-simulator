@@ -134,9 +134,13 @@ A global monotonically changing revision can implement an initial conservative
 invalidation policy. Separate revisions are worthwhile only when they avoid
 measured rebuilds. Hashes identify immutable content; cheap revisions identify
 live mutations. Existing placement checks are real; this complete revision scheme
-is proposed. `RobotScenario::reset` currently restarts its identity space, so an
-adapter retaining keys across resets needs an external epoch until runtime epochs
-exist. Nanoseconds alone cannot distinguish two runs at time zero.
+is proposed. Standalone `BodyBinding` now carries a runtime brand and non-reused
+installation generation, and rolling scene brackets validate runtime brands.
+`RobotScenario::reset` still restarts legacy chassis identities; an adapter
+retaining those unbranded keys across resets needs an external epoch. Nanoseconds
+alone cannot distinguish two runs at time zero. See
+[source-described bodies](physics-reuse.md#source-described-bodies-and-bindings)
+for the implemented, narrower binding contract.
 
 A borrowed truth/query view is valid only while its immutable borrow remains;
 mutation/step requires dropping it. A retained owned capture pins shapes and its

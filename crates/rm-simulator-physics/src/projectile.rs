@@ -835,11 +835,14 @@ impl WorldPhysics {
             .world
             .all_colliders()
             .filter(|(handle, collider)| {
-                collider.parent().is_none()
+                (collider.parent().is_none()
+                    || collider
+                        .parent()
+                        .is_some_and(|h| self.world.bodies[h].is_fixed()))
                     && (include_mechanisms || !self.mechanisms.iter().any(|(h, ..)| h == handle))
                     && matches!(
                         collider.shape().as_typed_shape(),
-                        TypedShape::TriMesh(_) | TypedShape::Cuboid(_)
+                        TypedShape::TriMesh(_) | TypedShape::Cuboid(_) | TypedShape::Ball(_)
                     )
             })
             .collect();
@@ -888,7 +891,9 @@ impl WorldPhysics {
                 .all_colliders()
                 .filter(|(handle, collider)| {
                     collider.is_enabled()
-                        && (collider.parent().is_some()
+                        && (collider
+                            .parent()
+                            .is_some_and(|h| !self.world.bodies[h].is_fixed())
                             || self.mechanisms.iter().any(|(h, ..)| h == handle))
                 })
                 .map(|(_, collider)| (*collider.position(), collider.shared_shape().clone()))
@@ -922,15 +927,19 @@ impl WorldPhysics {
                     .find(|(h, ..)| *h == handle)
                     .map(|(_, c, _)| *c),
             };
-            if collider.parent().is_some() || self.mechanisms.iter().any(|(h, ..)| *h == handle) {
+            if collider
+                .parent()
+                .is_some_and(|h| !self.world.bodies[h].is_fixed())
+                || self.mechanisms.iter().any(|(h, ..)| *h == handle)
+            {
                 moving.push(sample);
             } else {
                 fixed.push(sample);
             }
         }
         Ok(SceneCapture::new(
-            robot,
-            robot_state.placement_revision,
+            self.runtime_identity(),
+            (robot, robot_state.placement_revision),
             time_ns,
             robot_state.pose,
             fixed,
@@ -967,10 +976,6 @@ impl WorldPhysics {
     /// Substep samples dropped because the trace was full since it was enabled.
     pub fn carrier_trace_dropped(&self) -> u64 {
         self.carrier_trace_dropped
-    }
-    /// Nothing moves on its own: no projectile in flight and no chassis.
-    pub fn is_idle(&self) -> bool {
-        self.projectiles.is_empty() && self.chassis.is_empty() && self.payloads.is_empty()
     }
     /// Place a driven chassis in the world and return its id.
     ///
