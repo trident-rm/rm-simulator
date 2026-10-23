@@ -98,3 +98,15 @@ generic physical models are not automatically admitted to multiplayer prediction
 or added to its codecs. The [migration plan](physics-migration.md) records that
 boundary. Prescribed game gimbals, folding and manipulation remain supported;
 using a new dynamic joint model is a separate fidelity change.
+
+## Standalone constraint accuracy
+
+`PhysicalRuntime::with_solver_iterations(duration, iterations)` selects an explicit
+1–64 native solver iteration budget at construction; `solver_iterations()` reports
+it. `new()` and game/facade construction preserve their existing default (four
+iterations in the pinned backend). This does not change the explicit tick, force
+sampling, contact policy or physical coefficients. Retain the choice in a reset
+recipe; it is not serialized checkpoint state. More work may reduce closed-loop
+constraint error, but costs CPU and does not establish CAD/physical correctness.
+The [suspension fixture audit](suspension-recovery.md#solver-convergence-and-source-cad-binding)
+records measured accuracy and cost rather than applying a global game setting.

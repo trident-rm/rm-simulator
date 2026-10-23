@@ -88,6 +88,40 @@ impl PhysicalRuntime {
         }
     }
 
+    /// Create a standalone scene with an explicit native constraint-solver budget.
+    /// The inclusive 1..=64 iteration bound prevents unbounded setup choices.
+    /// More iterations can improve closed-loop accuracy at additional CPU cost;
+    /// they do not change the caller's step duration or actuation sampling rate.
+    /// This is a numerical setting, not physical spring stiffness. Match/facade
+    /// construction retains [`Self::new`] and its existing backend defaults.
+    /// Reapply this choice in a reconstruction recipe; it is not checkpoint state.
+    ///
+    /// ```
+    /// use rm_sim_physics::{StepDuration, runtime::PhysicalRuntime};
+    /// let world = PhysicalRuntime::with_solver_iterations(StepDuration::HZ_1000, 16)?;
+    /// assert_eq!(world.solver_iterations(), 16);
+    /// assert_eq!(world.step_duration(), StepDuration::HZ_1000);
+    /// assert!(PhysicalRuntime::with_solver_iterations(StepDuration::HZ_1000, 0).is_err());
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn with_solver_iterations(
+        step_duration: StepDuration,
+        iterations: usize,
+    ) -> Result<Self, &'static str> {
+        if !(1..=64).contains(&iterations) {
+            return Err("solver iterations must be within 1..=64");
+        }
+        let mut runtime = Self::new(step_duration);
+        runtime.world.integration_parameters.num_solver_iterations = iterations;
+        Ok(runtime)
+    }
+
+    /// Native constraint-solver iterations per integration slice, dimensionless.
+    /// This read-only budget is fixed at construction for this runtime instance.
+    pub fn solver_iterations(&self) -> usize {
+        self.world.integration_parameters.num_solver_iterations
+    }
+
     /// Construct a fresh scene using a caller-owned initial recipe.
     /// Errors discard the partial installation. Repeating a recipe reconstructs
     /// initial state, not solver caches or arbitrary checkpoint continuation.

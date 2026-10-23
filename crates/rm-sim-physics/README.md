@@ -239,3 +239,9 @@ Projectiles and scoring targets use the same cooked body builders; the game faca
 retains its bounded projectile preparation cache and domain scheduling. Parentless
 scenery shares the runtime factory without losing filtering or motion metadata.
 See [the physical runtime guide](../../docs/physical-runtime.md).
+
+The `wheel_suspension` example is an isolated closed-loop suspension bench using
+recovered EGA rocker/mount dimensions and explicitly provisional mass, stroke and
+spring/damping choices. It emits actual solved poses and closure residuals to CSV;
+see [suspension recovery](../../docs/suspension-recovery.md#provisional-isolated-physical-fixture).
+It does not replace the game's ray-wheel model or certify native CAD mates.

@@ -458,3 +458,7 @@ wheel-arm loops and spring/damping parameters still need further reconstruction;
 no automatic full suspension model is installed in the game. Probe inputs,
 mount candidates, fitted previews and physical reports remain ignored under
 `local-assets/recovered-mechanisms-20261023/`.
+
+See the [suspension evidence audit](suspension-recovery.md) for native flexible-assembly
+flags, candidate mate records, four-bar geometry and independently checked mass
+properties, including the remaining stroke and force-law gaps.

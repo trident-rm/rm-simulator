@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+- Add an isolated, gravity-loaded EGA-derived suspension bench with four-bar and
+  damper closure joints, provisional mass/stroke/spring/damping choices, CSV truth
+  traces and numerical closure diagnostics. Allow a bounded standalone solver
+  iteration budget for closed-loop inspection, without changing game defaults.
+  Record source-CAD binding and fused-shaft interference findings; keep the
+  existing game wheel model and imported CAD review gates unchanged.
+
 - Support the independent sw-rs reader for offline native SolidWorks metadata and
   cached Part meshes, with versioned output, reader provenance and diagnostics.
 

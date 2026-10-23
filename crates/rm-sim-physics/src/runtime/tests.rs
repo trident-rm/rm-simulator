@@ -438,3 +438,26 @@ fn target_epoch_changes_only_for_actual_discontinuous_placement_and_preflights_o
     facade.step(20 * duration.as_ns(), &frames).unwrap();
     assert_eq!(facade.physical.placement_epoch(), u64::MAX);
 }
+
+#[test]
+fn standalone_solver_budget_is_bounded_and_preserves_default_timing() {
+    let default = PhysicalRuntime::new(StepDuration::HZ_1000);
+    assert_eq!(default.solver_iterations(), 4);
+    for iterations in [1, 16, 32, 64] {
+        let tuned =
+            PhysicalRuntime::with_solver_iterations(StepDuration::HZ_1000, iterations).unwrap();
+        assert_eq!(tuned.solver_iterations(), iterations);
+        assert_eq!(tuned.step_duration(), default.step_duration());
+        assert_eq!(
+            tuned.world.integration_parameters.dt,
+            default.world.integration_parameters.dt
+        );
+        assert_eq!(
+            tuned.world.integration_parameters.max_ccd_substeps,
+            default.world.integration_parameters.max_ccd_substeps
+        );
+    }
+    for invalid in [0, 65, usize::MAX] {
+        assert!(PhysicalRuntime::with_solver_iterations(StepDuration::HZ_1000, invalid).is_err());
+    }
+}
