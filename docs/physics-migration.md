@@ -64,7 +64,7 @@ adding generic joints does not automatically make those robots dynamic arms.
    import a nonconvex dynamic CAD surface silently. Whole-chassis construction,
    mass distribution and participant ownership remain separate migration gates.
 
-3. **Participant registration and physical events.** Extract runtime-owned body,
+3. **Participant registration and physical events — first separation implemented.** Extract runtime-owned body,
    collider, joint and query bookkeeping from projectile-specific ownership.
    Keep concrete, buffered participant adapters for chassis, projectiles and
    payloads. Record the existing per-slice sequence before moving code: target
@@ -73,6 +73,13 @@ adding generic joints does not automatically make those robots dynamic arms.
    compatibility exports. Introduce explicit part identities and contact records
    sufficient for the match adapter to map contacts to armor; physical state must
    not need to understand an Outpost or damage rule.
+
+   Read-only branded participant/collider references now cover native objects
+   without a second registration map; optional bounded per-slice observations
+   remain off by default. RoboMaster scoring maps and contact scratch/capture
+   live in a domain adapter with unchanged authoritative outputs. See
+   [Physical contacts](physical-contacts.md). Participant-specific force/motion
+   scheduling, persistent part mappings and complete checkpoint support remain.
 
 4. **Migrate one existing robot adapter.** First construct an existing chassis
    through shared body resources while keeping the ray-wheel model and force
@@ -114,8 +121,8 @@ adding generic joints does not automatically make those robots dynamic arms.
    did not establish a throughput win, so a GPU port is not a migration prerequisite.
 
 Each increment can be divided into independently reviewable changes. The immediate
-follow-up after the physical tree and convex shape coverage is participant
-ownership. Building a broad plugin scheduler first would leave the
+follow-up after the first participant/contact separation is migrating an
+existing robot adapter while preserving physical policies. Building a broad plugin scheduler first would leave the
 actual participant and checkpoint coupling unresolved.
 
 ## Acceptance gates

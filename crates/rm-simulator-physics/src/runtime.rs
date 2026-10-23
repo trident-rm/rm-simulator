@@ -3,7 +3,9 @@
 //! Single-owner Rapier runtime for all interacting physical participants.
 //!
 //! The runtime owns bodies, colliders, prescribed target synchronization, wheel
-//! plant integration, raw contact history and optional sensor carrier traces.
+//! plant integration, optional physical contact observations and sensor carrier
+//! traces. RoboMaster scoring contact policy and buffers belong to the projectile
+//! adapter; stepping still composes the specialized chassis/projectile adapters.
 //! It executes one explicit caller-stamped tick, preserving the ordinary solver
 //! slices and force/contact order. Sessions and match adapters own clocks,
 //! command admission, reset recipes and rule barriers; this module adds no clock,
@@ -19,9 +21,14 @@ pub(crate) mod assembly;
 mod bindings;
 #[path = "runtime/joints.rs"]
 mod joints;
+#[path = "runtime/observations.rs"]
+mod observations;
 pub use assembly::{AssemblyBinding, AssemblyKeys};
 pub use bindings::{BodyBinding, BodyKey, BodyState};
 pub use joints::{JointBinding, JointKey};
+pub use observations::{
+    ColliderBinding, ColliderState, ContactSide, ParticipantBinding, PhysicalContact,
+};
 
 /// Longest integration slice of a world tick, in nanoseconds. A 17 mm shot at
 /// the 25 m/s limit crosses further in one 128 Hz tick than the thin armour
@@ -63,21 +70,13 @@ pub struct WorldPhysics {
     pub(super) payloads: Vec<payload::Body>,
     pub(super) world: PhysicsWorld,
     pub(super) projectiles: Vec<Projectile>,
-    /// Velocities before integration, in the current projectile order.
-    pub(super) velocities_before: Vec<Vector>,
-    /// Incoming linear/angular velocity and centre of mass, in chassis order.
-    /// Armor collision speed must be measured before the solver stops a robot.
-    pub(super) chassis_velocities_before: Vec<(Vector, Vector, Vector)>,
-    /// Next touching list while the preceding list still gates contact starts.
-    /// Swapped with projectile/chassis latches, preserving their encounter order.
-    pub(super) contact_touching: Vec<ColliderHandle>,
+    pub(super) rm_contacts: contacts::State,
+    contact_observer: Option<observations::Observer>,
     /// Opt-in substep carrier poses for inertial sensors; observation output,
     /// never restored world state.
     pub(super) carrier_trace: Option<Vec<crate::sensors::imu::CarrierSample>>,
     pub(super) carrier_trace_dropped: u64,
     pub(super) chassis: Vec<Chassis>,
-    /// Armor collisions since the last [`WorldPhysics::take_armor_collisions`].
-    pub(super) armor_collisions: Vec<ArmorCollision>,
     pub(super) next_chassis_id: u32,
     pub(super) targets: Vec<TargetBody>,
     pub(super) mechanisms: Vec<(
@@ -85,9 +84,6 @@ pub struct WorldPhysics {
         crate::motion::MotionChannel,
         crate::motion::MotionFrame,
     )>,
-    /// Every scoring collider: a face index into `targets`, or a chassis
-    /// armor module.
-    pub(super) target_of: HashMap<ColliderHandle, Scorer>,
     /// Field time the target bodies currently stand at, if any.
     pub(super) synced_ns: Option<u64>,
     /// The broad-phase tree has been filled at least once.
@@ -165,17 +161,14 @@ impl WorldPhysics {
             policy: ProjectilePolicy::default(),
             removals: std::collections::VecDeque::new(),
             projectiles: Vec::new(),
-            velocities_before: Vec::new(),
-            chassis_velocities_before: Vec::new(),
-            contact_touching: Vec::new(),
+            rm_contacts: Default::default(),
+            contact_observer: None,
             carrier_trace: None,
             carrier_trace_dropped: 0,
             chassis: Vec::new(),
-            armor_collisions: Vec::new(),
             next_chassis_id: 0,
             targets: Vec::new(),
             mechanisms: Vec::new(),
-            target_of: HashMap::new(),
             synced_ns: None,
             primed: false,
             next_id: 0,
@@ -307,6 +300,9 @@ impl WorldPhysics {
         if frames.start.len() != self.targets.len() {
             return Err("target face count changed");
         }
+        // Observation output is not transactional: later validation failures may
+        // leave the preceding output cleared. Basic preflight above preserves it.
+        self.begin_contact_observations();
         if !self.primed {
             self.prime_queries();
             self.primed = true;
@@ -370,7 +366,7 @@ impl WorldPhysics {
             for (handle, start, end) in &self.bound_body_endpoints {
                 self.world.bodies[*handle].set_next_kinematic_position(start.lerp(end, frac_next));
             }
-            self.velocities_before.clear();
+            self.rm_contacts.velocities_before.clear();
             for projectile in &self.projectiles {
                 let body = &mut self.world.bodies[projectile.body];
                 let velocity = body.linvel();
@@ -378,15 +374,15 @@ impl WorldPhysics {
                 let drag = -0.5 * AIR_DENSITY_KG_M3 * DRAG_COEFFICIENT * area * velocity.length();
                 body.reset_forces(false);
                 body.add_force(velocity * drag, false);
-                self.velocities_before.push(velocity);
+                self.rm_contacts.velocities_before.push(velocity);
             }
             for chassis in &mut self.chassis {
                 chassis.apply_forces(&mut self.world, substep_s);
             }
-            self.chassis_velocities_before.clear();
+            self.rm_contacts.chassis_velocities_before.clear();
             for chassis in &self.chassis {
                 let body = &self.world.bodies[chassis.body()];
-                self.chassis_velocities_before.push((
+                self.rm_contacts.chassis_velocities_before.push((
                     body.linvel(),
                     body.angvel(),
                     body.center_of_mass(),
@@ -396,6 +392,7 @@ impl WorldPhysics {
             self.bound_joints.apply_actuation(&mut self.world);
             self.damp_payload_contacts();
             self.world.step();
+            self.capture_physical_contacts(prev_ns, substep, substeps);
             for chassis in &self.chassis {
                 chassis.sync_fold_colliders(&mut self.world);
             }
@@ -466,216 +463,6 @@ impl WorldPhysics {
                 },
                 gimbal: chassis.turret_pose(&self.world),
             });
-        }
-    }
-    /// Contacts first seen by the substep that just stepped, which carried the
-    /// target motions between `frac_prev` and `frac_next` of the tick and
-    /// integrated for `dt_s` seconds. Latches and dwell windows stamp
-    /// `now_ns`, the end of the containing tick. Appends directly to the tick's
-    /// ordered output, retaining its storage across slices.
-    pub(super) fn capture_contacts(
-        &mut self,
-        frames: &TargetFrames,
-        frac_prev: f64,
-        frac_next: f64,
-        dt_s: f64,
-        now_ns: u64,
-        contacts: &mut Vec<Contact>,
-    ) {
-        let policy = self.policy;
-        for (projectile, velocity) in self
-            .projectiles
-            .iter_mut()
-            .zip(self.velocities_before.iter().copied())
-        {
-            self.contact_touching.clear();
-            // Any touch at all starts the ball's post-contact history; only a
-            // fixed body counts as the stationary scenery retirement needs.
-            let mut touched_anything = false;
-            let mut touching_scenery = false;
-            for pair in self.world.contact_pairs_with(projectile.collider) {
-                if !pair.has_any_active_contact() {
-                    continue;
-                }
-                let other = if pair.collider1 == projectile.collider {
-                    pair.collider2
-                } else {
-                    pair.collider1
-                };
-                touched_anything = true;
-                // Mechanism parts are parentless colliders too, but they move;
-                // a ball resting on one is not on stationary scenery.
-                touching_scenery |= match self.world.colliders[other].parent() {
-                    Some(body) => self.world.bodies[body].is_fixed(),
-                    None => !self.mechanisms.iter().any(|(handle, ..)| *handle == other),
-                };
-                let Some(&scorer) = self.target_of.get(&other) else {
-                    continue;
-                };
-                self.contact_touching.push(other);
-                if projectile.touching.contains(&other) {
-                    continue;
-                }
-                // The scoring face now, and how the plate moves: a kinematic
-                // face by where it was a tick ago, a chassis by its body.
-                let (target_of_scorer, face_next, motion) = match scorer {
-                    Scorer::Face(index) => {
-                        let (start, end) = frames.motion(index);
-                        let from = pose(start.pose);
-                        let to = pose(end.pose);
-                        (
-                            self.targets[index].target,
-                            from.lerp(&to, frac_next),
-                            PlateMotion::Kinematic {
-                                face_prev: from.lerp(&to, frac_prev),
-                            },
-                        )
-                    }
-                    Scorer::Armor { chassis, plate } => {
-                        let Some(owner) = self.chassis.iter().find(|c| c.id() == chassis) else {
-                            continue;
-                        };
-                        (
-                            ArmorTarget::Chassis { chassis, plate },
-                            owner.armor_pose(&self.world, plate as usize),
-                            PlateMotion::Body(owner.body()),
-                        )
-                    }
-                };
-                let world_point = pair
-                    .find_deepest_contact()
-                    .map(|(_, contact)| {
-                        let (collider, local) = if pair.collider1 == projectile.collider {
-                            (pair.collider2, contact.local_p2)
-                        } else {
-                            (pair.collider1, contact.local_p1)
-                        };
-                        self.world.colliders[collider]
-                            .position()
-                            .transform_point(local)
-                    })
-                    .unwrap_or_else(|| {
-                        // Project the ball centre onto the housing front.
-                        let centre = self.world.bodies[projectile.body].translation();
-                        let mut local = face_next.inverse_transform_point(centre);
-                        local.x = local.x.min(0.);
-                        face_next.transform_point(local)
-                    });
-                // A shot is already absorbed before an out-of-arena armor contact.
-                if outside_projectile_bounds(self.projectile_bounds_m, world_point, 0.0) {
-                    continue;
-                }
-                let local = face_next.inverse_transform_point(world_point);
-                let plate_velocity = match motion {
-                    PlateMotion::Kinematic { face_prev } => {
-                        (face_next.transform_point(local) - face_prev.transform_point(local)) / dt_s
-                    }
-                    PlateMotion::Body(body) => {
-                        self.world.bodies[body].velocity_at_point(world_point)
-                    }
-                };
-                let normal = face_next.transform_vector(Vector::X);
-                let normal_speed_m_s = -(velocity - plate_velocity).dot(normal);
-                contacts.push(Contact {
-                    projectile: projectile.id,
-                    shooter: projectile.shooter,
-                    caliber: projectile.caliber,
-                    target: target_of_scorer,
-                    position_m: world_point.to_array(),
-                    local_m: local.to_array(),
-                    normal_speed_m_s,
-                });
-            }
-            std::mem::swap(&mut projectile.touching, &mut self.contact_touching);
-            if touched_anything && projectile.first_contact_ns.is_none() {
-                projectile.first_contact_ns = Some(now_ns);
-            }
-            // A spent ball has touched stationary scenery, still touches it and
-            // stays below the residual speed for the whole dwell window. Any
-            // separation or renewed motion reopens the window.
-            let speed_m_s = self.world.bodies[projectile.body].linvel().length();
-            let slow = policy
-                .retire_speed_m_s
-                .is_some_and(|limit| speed_m_s <= limit);
-            if touching_scenery && slow {
-                projectile.dwell_since_ns.get_or_insert(now_ns);
-            } else {
-                projectile.dwell_since_ns = None;
-            }
-        }
-    }
-    /// Record armor modules that began touching anything but a projectile this
-    /// substep fast enough to register ([`ARMOR_COLLISION_SPEED_M_S`]). A
-    /// module resting against an obstacle registers once, when it arrives.
-    pub(super) fn capture_armor_collisions(&mut self) {
-        for index in 0..self.chassis.len() {
-            let chassis = &self.chassis[index];
-            self.contact_touching.clear();
-            for (plate, &armor) in chassis.armor_colliders().iter().enumerate() {
-                for pair in self.world.contact_pairs_with(armor) {
-                    if !pair.has_any_active_contact() {
-                        continue;
-                    }
-                    let other = if pair.collider1 == armor {
-                        pair.collider2
-                    } else {
-                        pair.collider1
-                    };
-                    if self.projectiles.iter().any(|p| p.collider == other) {
-                        continue;
-                    }
-                    self.contact_touching.push(other);
-                    if chassis.armor_touching.contains(&other) {
-                        continue;
-                    }
-                    let Some((_, contact)) = pair.find_deepest_contact() else {
-                        continue;
-                    };
-                    let local = if pair.collider1 == armor {
-                        contact.local_p1
-                    } else {
-                        contact.local_p2
-                    };
-                    let point = self.world.colliders[armor]
-                        .position()
-                        .transform_point(local);
-                    let other_body = self.world.colliders[other].parent();
-                    let other_index = other_body
-                        .and_then(|body| self.chassis.iter().position(|c| c.body() == body));
-                    let incoming = |i: usize| {
-                        let (linear, angular, com) = self.chassis_velocities_before[i];
-                        linear + angular.cross(point - com)
-                    };
-                    let other_velocity = other_index.map_or_else(
-                        || {
-                            other_body.map_or(Vector::ZERO, |body| {
-                                self.world.bodies[body].velocity_at_point(point)
-                            })
-                        },
-                        incoming,
-                    );
-                    let own_velocity = incoming(index);
-                    let normal = chassis
-                        .armor_pose(&self.world, plate)
-                        .transform_vector(Vector::X);
-                    let normal_speed_m_s = (own_velocity - other_velocity).dot(normal);
-                    if normal_speed_m_s < ARMOR_COLLISION_SPEED_M_S {
-                        continue;
-                    }
-                    let other_chassis = other_index.map(|i| self.chassis[i].id());
-                    self.armor_collisions.push(ArmorCollision {
-                        chassis: chassis.id(),
-                        plate: plate as u32,
-                        other_chassis,
-                        position_m: point.to_array(),
-                        normal_speed_m_s,
-                    });
-                }
-            }
-            std::mem::swap(
-                &mut self.chassis[index].armor_touching,
-                &mut self.contact_touching,
-            );
         }
     }
 }

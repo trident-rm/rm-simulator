@@ -18,6 +18,9 @@ use rapier3d_f64::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+mod contacts;
+use contacts::Scorer;
+
 pub use crate::geometry::{MovingGeometry, StaticGeometry};
 /// The physical runtime; re-exported at `rm_simulator_physics::runtime`.
 #[path = "runtime.rs"]
@@ -523,18 +526,6 @@ struct TargetBody {
     target: ArmorTarget,
     body: RigidBodyHandle,
 }
-#[derive(Clone, Copy)]
-enum Scorer {
-    Face(usize),
-    Armor { chassis: u32, plate: u32 },
-}
-/// How a struck plate was moving during the tick.
-#[derive(Clone, Copy)]
-enum PlateMotion {
-    Kinematic { face_prev: Pose3 },
-    Body(RigidBodyHandle),
-}
-
 /// Convert an FLU array in metres to a Rapier vector.
 pub(crate) fn vector(v: [f64; 3]) -> Vector {
     Vector::new(v[0], v[1], v[2])
@@ -555,6 +546,46 @@ pub(crate) fn pose_is_valid(p: Pose) -> bool {
 }
 
 impl WorldPhysics {
+    /// Resolve a live chassis id to its runtime-local physical participant.
+    /// The binding identifies the existing chassis body without registering it
+    /// for generic body actuation. Removed or unknown ids return `None`.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{Pose, Team, WorldPhysics, chassis::ChassisConfig};
+    /// let mut physics = WorldPhysics::new(&[], 0.);
+    /// let config = ChassisConfig::default();
+    /// let height_m = config.rest_height_m();
+    /// let id = physics.add_chassis(Team::Red, config, Pose::at([0., 0., height_m]))?;
+    /// assert!(physics.chassis_participant(id).is_some());
+    /// physics.remove_chassis(id)?;
+    /// assert!(physics.chassis_participant(id).is_none());
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn chassis_participant(&self, id: u32) -> Option<runtime::ParticipantBinding> {
+        let chassis = self.chassis_ref(id)?;
+        self.participant_for_handle(chassis.body())
+    }
+
+    /// Resolve a live projectile id to its runtime-local physical participant.
+    /// Removed or unknown ids return `None`; the binding observes the existing
+    /// projectile body without changing its flight or retirement policy.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{Caliber, Pose, Shot, WorldPhysics};
+    /// let mut physics = WorldPhysics::new(&[], 0.);
+    /// let id = physics.fire(0, Pose::at([0., 0., 1.]), Shot::at_limit(Caliber::Mm17), None)?;
+    /// assert!(physics.projectile_participant(id).is_some());
+    /// assert!(physics.projectile_participant(id + 1).is_none());
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn projectile_participant(&self, id: u64) -> Option<runtime::ParticipantBinding> {
+        let projectile = self
+            .projectiles
+            .iter()
+            .find(|projectile| projectile.id == id)?;
+        self.participant_for_handle(projectile.body)
+    }
+
     fn add_target(&mut self, face: TargetFace) {
         let housing_half_m = match face.target {
             ArmorTarget::Outpost { .. } | ArmorTarget::Base { .. } => SMALL_ARMOR_HOUSING_HALF_M,
@@ -574,7 +605,8 @@ impl WorldPhysics {
                 .restitution(RESTITUTION),
             Some(body),
         );
-        self.target_of
+        self.rm_contacts
+            .target_of
             .insert(collider, Scorer::Face(self.targets.len()));
         self.targets.push(TargetBody {
             target: face.target,
@@ -1031,7 +1063,7 @@ impl WorldPhysics {
         let chassis = Chassis::new(&mut self.world, id, team, config, spawn)?;
         self.next_chassis_id += 1;
         for (plate, &collider) in chassis.armor_colliders().iter().enumerate() {
-            self.target_of.insert(
+            self.rm_contacts.target_of.insert(
                 collider,
                 Scorer::Armor {
                     chassis: id,
@@ -1051,7 +1083,7 @@ impl WorldPhysics {
             .ok_or("no chassis with that id")?;
         let chassis = self.chassis.remove(index);
         for collider in chassis.armor_colliders() {
-            self.target_of.remove(collider);
+            self.rm_contacts.target_of.remove(collider);
         }
         chassis.remove(&mut self.world);
         Ok(())
@@ -1432,7 +1464,7 @@ impl WorldPhysics {
         )?;
         chassis.restore_prediction(&mut self.world, state)?;
         for (plate, &collider) in chassis.armor_colliders().iter().enumerate() {
-            self.target_of.insert(
+            self.rm_contacts.target_of.insert(
                 collider,
                 Scorer::Armor {
                     chassis: state.id,
@@ -1537,16 +1569,16 @@ impl WorldPhysics {
     }
     /// Borrow pending raw armor collisions in substep order, without draining them.
     pub fn armor_collisions(&self) -> &[ArmorCollision] {
-        &self.armor_collisions
+        &self.rm_contacts.armor_collisions
     }
     /// Append pending raw armor collisions and empty the queue, retaining both allocations.
     pub fn drain_armor_collisions(&mut self, out: &mut Vec<ArmorCollision>) {
-        out.append(&mut self.armor_collisions);
+        out.append(&mut self.rm_contacts.armor_collisions);
     }
     /// Take the armor collisions recorded since the last call, in the order
     /// the substeps found them. The caller decides whether they score.
     pub fn take_armor_collisions(&mut self) -> Vec<ArmorCollision> {
-        std::mem::take(&mut self.armor_collisions)
+        std::mem::take(&mut self.rm_contacts.armor_collisions)
     }
     /// Every projectile in flight, oldest first.
     pub fn snapshot(&self) -> Vec<ProjectileSnapshot> {
@@ -1727,8 +1759,8 @@ mod tests {
             position_m: [0.; 3],
             normal_speed_m_s: 2.,
         };
-        world.armor_collisions.push(collision);
-        let queue_allocation = world.armor_collisions.as_ptr();
+        world.rm_contacts.armor_collisions.push(collision);
+        let queue_allocation = world.rm_contacts.armor_collisions.as_ptr();
         assert_eq!(world.armor_collisions(), &[collision]);
         assert_eq!(world.armor_collisions(), &[collision]);
         let mut collisions = Vec::with_capacity(2);
@@ -1736,7 +1768,10 @@ mod tests {
         world.drain_armor_collisions(&mut collisions);
         assert_eq!(collisions, vec![collision]);
         assert_eq!(allocation, collisions.as_ptr());
-        assert_eq!(queue_allocation, world.armor_collisions.as_ptr());
+        assert_eq!(
+            queue_allocation,
+            world.rm_contacts.armor_collisions.as_ptr()
+        );
         assert!(world.armor_collisions().is_empty());
 
         world

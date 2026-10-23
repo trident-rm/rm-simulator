@@ -86,9 +86,10 @@ fn contact_storage_preserves_order_latches_and_recontact() {
         // Exercise both empty scratch and stale handles from unrelated owners.
         // The reference still retains the preceding latches, as fresh allocation
         // in the original collectors did.
-        fresh.contact_touching = Vec::new();
+        fresh.rm_contacts.touching = Vec::new();
         retained
-            .contact_touching
+            .rm_contacts
+            .touching
             .extend(retained.projectiles.iter().map(|p| p.collider));
         let expected = fresh.step(tick * tick_ns(), &frames).unwrap();
         let actual = retained.step(tick * tick_ns(), &frames).unwrap();
@@ -146,7 +147,7 @@ fn contact_storage_preserves_order_latches_and_recontact() {
 
     // Repeated collection over unchanged pairs must recycle the same pool.
     let buffers = |world: &WorldPhysics| {
-        let mut buffers: Vec<_> = std::iter::once(&world.contact_touching)
+        let mut buffers: Vec<_> = std::iter::once(&world.rm_contacts.touching)
             .chain(world.projectiles.iter().map(|p| &p.touching))
             .chain(world.chassis.iter().map(|c| &c.armor_touching))
             .filter(|v| v.capacity() > 0)

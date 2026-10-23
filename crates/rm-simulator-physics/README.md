@@ -25,6 +25,7 @@ simulator crate except the solver-free `rm-simulator-engine` core.
 | `src/chassis/backend/` | Rapier body/collider construction (`construction.rs`), ordered wheel queries and forces (`dynamics.rs`), prescribed folding/gimbal adaptation (`prescribed.rs`), controls and observations (`mod.rs`). |
 | `src/cooking.rs` / `src/cooking/` | Shared cooked mesh/body shapes and assembly resources retaining solver-free source descriptions. |
 | `src/runtime/bindings.rs` | Explicit body keys, world-scoped bindings, source/state reads and generic physical control. |
+| `src/runtime/observations.rs` | Read-only native participant/collider identities and opt-in bounded physical contact samples, independent of scoring and command bindings. |
 | `src/runtime/joints.rs` | Generic physical joint installation, world-scoped bindings, scalar state, motors and held effort. |
 | `src/runtime/assembly.rs` | Transactional prepared-assembly installation/removal, placement and source-to-live binding maps. |
 | `src/runtime.rs` | `runtime::WorldPhysics`: interacting scene ownership, construction, integration slices, carrier traces and ordered raw contact capture; legacy world paths remain compatible. |
@@ -190,3 +191,40 @@ nix develop --command mbx test -p rm-simulator-physics --test jointed_turret --l
 See [jointed mechanisms](../../docs/jointed-mechanisms.md) for frames, units,
 reset behavior, tests and limitations. Current game mechanisms remain prescribed;
 this fixture introduces no joint CAD import or checkpoint integration.
+
+## Physical participant and contact observations
+
+`runtime::ParticipantBinding` and `ColliderBinding` identify all native bodies
+and colliders, including chassis, projectiles and scenery. `participants()` and
+`colliders()` enumerate lazily; `participant_state` and `collider_state` return
+copied privileged truth in world FLU. Collider state includes its actual parent:
+parentless scenery and prescribed colliders have `None`. `body_participant`
+resolves a source-model `BodyBinding` without giving observation tokens command
+or wrench ownership. Tokens are opaque, process-local and not serialized;
+foreign worlds, removal/slot reuse and scenario reset invalidate state access.
+Reacquire bindings after reset. Caller-owned identity maps may retain old tokens.
+
+`enable_contact_observations(capacity)` opts into a positive per-world-tick
+record budget. The default has no observer allocation or contact-pair scan.
+`physical_contacts()` borrows records and `physical_contacts_dropped()` reports
+capacity overflow for the latest tick. `drain_physical_contacts(&mut output)`
+appends while retaining observer storage and the overflow count. The next step
+clears records/count; reconfiguration clears them, and disable releases storage.
+Zero capacity fails before mutation. Failed steps are not transactional: preflight
+errors can preserve the old buffer, while later errors can leave it cleared.
+
+Each `PhysicalContact` retains both collider identities and their native parent
+associations at capture, even if a body is subsequently removed. Records follow
+native pair encounter order, with one deepest contact per active pair per solver
+slice. Slice numbers start at one; `time_ns` is tick start plus
+`floor(step_ns * substep / substeps)`, and `tick_end_ns` is the ordinary checked
+tick endpoint. The observer owns no clock and changes no scoring/latch/retirement
+semantics. These samples are neither begin/end events nor hits or measurements.
+
+Geometry is sampled immediately after native integration, before prescribed fold
+collider synchronization: cached local points are transformed by current collider
+poses, while normal and signed separation come from cached native constraints.
+This does not promise a fresh coherent narrow-phase projection or incoming impact
+velocity. `engine::contacts::ContactGeometry` carries world points, normal from
+side 1 to side 2 and signed separation, without backend or gameplay identities.
+See `tests/physical_contacts.rs` and the runnable observation doctest.

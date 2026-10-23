@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Separate RoboMaster contact policy/scratch from physical participant identity.
+  Add read-only world-scoped body/collider references and opt-in bounded per-slice
+  contact observations, with explicit overflow and retained-buffer drains.
+  Existing scoring, contact ordering and checkpoint formats remain unchanged.
+
 - Add explicit shared convex-hull sources and body cooking with degeneracy/range
   rejection, preserving caller-supplied mass and inertia. Include convex shapes
   in static captures and triangle/debug export; verify shape parity against all

@@ -283,7 +283,11 @@ the current timestamp or by a `RayHit::shape_index`.
    and epoch/revision contracts required by a second standalone consumer. Adapt
    existing RobotSession/MatchSession paths; preserve one world and exact clocks.
    Expose coarse preparation, buffered commands, query batches, observations and
-   contact drains before considering dynamic dispatch.
+   contact drains before considering dynamic dispatch. Read-only native body and
+   collider references, with optional bounded per-slice contact observations, now
+   separate physical identity from the RoboMaster scoring adapter. See
+   [Physical contacts](physical-contacts.md); specialized force/motion scheduling
+   and persistent checkpoint identities remain subsequent work.
 4. **Controller/task extraction.** Separate reusable navigation/search/following
    and manipulation algorithms from server queues, permissions and task authority.
    Remove diagnostic inclusion of private server implementation files. Keep

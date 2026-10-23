@@ -192,6 +192,11 @@ their existing pre/post integration rule barriers. See the
 [architecture guide](engine-architecture.md#implemented-concrete-physical-runtime)
 for lifecycle, compatibility and error/reset limits.
 
+Read-only participant/collider references and optional bounded contact samples
+are described in [Physical contacts](physical-contacts.md). These physical
+identities do not imply gameplay ownership or generic command authority. The
+RoboMaster adapter retains its independent scoring state and ordered outputs.
+
 ## Headless use
 
 For a caller-paced bare robot, use `physics::session::RobotSession`. It owns one

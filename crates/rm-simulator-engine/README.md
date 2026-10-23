@@ -32,6 +32,8 @@ Solver-free core for the incrementally separated robotics simulation engine.
   never relative to its parent. Joint frames remain body-local. No initial joint
   coordinate, inertia, density or joint placement is inferred; backend preparation
   checks locked frames and capabilities, including fixed-to-fixed constraints.
+- `contacts`: copied world FLU contact geometry without participants or scoring;
+  backend sampling semantics remain explicit in the runtime observation.
 - `queries`: immutable validated metric rays and capture-local hit records.
 - `control`: held drive modes and validated wheel-axis torque requests.
 - `wheel_model`: scalar suspension, slip, motor/inertia and shared-power laws
