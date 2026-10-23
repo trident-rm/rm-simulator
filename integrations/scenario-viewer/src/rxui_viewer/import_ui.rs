@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Manual review of rigid groups and explicit joints; never inferred from names.
-use super::{Panel, importer::*};
+use super::{Panel, importer::*, mechanism::Playback, recovery::Report};
 use rxui::{Element, prelude::*};
 use std::path::PathBuf;
 
 pub struct Review {
+    pub playback: Option<Playback>,
+    pub physical_running: bool,
+    pub clock_reset: bool,
+    playback_revision: u64,
+    recovery: Option<Report>,
     pub project: Project,
     pub selected_part: usize,
     pub selected_group: u64,
@@ -30,7 +35,20 @@ impl Review {
             save.file_stem().unwrap_or_default().to_string_lossy()
         ));
         let selected_group = project.groups[0].id;
+        let status=if project.provenance.keys().any(|k|k.starts_with("mount_alignment:")) {
+            "Mount-fit proposal: inspect end centers and re-review source frames / attached joints. Geometry was not scaled."
+        }else{"Review native frames/configuration geometry, groups and mass basis before export."}.into();
+        let recovery = project
+            .provenance
+            .get("joint_recovery")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|text| serde_json::from_str(text).ok());
         Self {
+            playback: None,
+            physical_running: false,
+            clock_reset: false,
+            playback_revision: 0,
+            recovery,
             project,
             selected_part: 0,
             selected_group,
@@ -38,9 +56,7 @@ impl Review {
             revision: 1,
             save,
             export,
-            status:
-                "Review native frames/configuration geometry, groups and mass basis before export."
-                    .into(),
+            status,
             pivot: "0, 0, 0".into(),
             axis: "0, 0, 1".into(),
             limits: "-1, 1".into(),
@@ -49,6 +65,76 @@ impl Review {
             explicit_mass: String::new(),
             explicit_com: "0, 0, 0".into(),
             explicit_tensor: String::new(),
+        }
+    }
+    pub fn start_physics(&mut self) -> Result<(), String> {
+        let mut sim = Playback::new(&self.project)?;
+        if let Some(report) = &self.recovery {
+            for candidate in &report.candidates {
+                if let Some(target) = candidate.observed_target(&self.project) {
+                    sim.target(candidate.child, target)?;
+                }
+            }
+        }
+        self.playback = Some(sim);
+        self.playback_revision = self.revision;
+        self.physical_running = true;
+        self.clock_reset = true;
+        self.status="Physical constraint test: estimated/reviewed inertia; no gravity or contacts. Targets from saved poses are not hardware stops.".into();
+        Ok(())
+    }
+    fn toggle_physics(&mut self) {
+        if self.playback.is_some() {
+            self.physical_running = !self.physical_running;
+            self.clock_reset = true;
+        }
+    }
+    fn reset_physics(&mut self) {
+        if let Some(p) = &mut self.playback
+            && let Err(e) = p.reset()
+        {
+            self.status = e;
+        }
+        self.physical_running = false;
+        self.clock_reset = true;
+    }
+    pub fn advance_physics(&mut self, count: u32) -> Result<(), String> {
+        if self.playback_revision != self.revision && self.playback.is_some() {
+            self.playback = None;
+            self.physical_running = false;
+            self.clock_reset = true;
+            self.status =
+                "Review changed; physical playback stopped. Restart after reviewing edits.".into();
+        }
+        if self.physical_running {
+            self.playback
+                .as_mut()
+                .ok_or("no physical playback")?
+                .advance(count)?;
+        }
+        Ok(())
+    }
+    fn target(&mut self, value: f64) {
+        if let Some(sim) = &mut self.playback {
+            if let Err(e) = sim.target(self.selected_group, value) {
+                self.status = e;
+                return;
+            }
+        } else {
+            self.revision += 1;
+        }
+        self.preview = value;
+    }
+    fn observed(&mut self) {
+        let target = self
+            .recovery
+            .as_ref()
+            .and_then(|r| r.candidates.iter().find(|c| c.child == self.selected_group))
+            .and_then(|c| c.observed_target(&self.project));
+        if let Some(target) = target {
+            self.target(target);
+        } else {
+            self.status = "No current recovered target for this group.".into();
         }
     }
     fn select(&mut self, group: u64) {
@@ -376,11 +462,16 @@ impl Panel {
             .iter()
             .find(|g| g.id == r.selected_group)
             .unwrap();
-        let preview_limits = group
-            .joint
-            .as_ref()
-            .and_then(|j| j.limits)
-            .unwrap_or([-1., 1.]);
+        let preview_limits = group.joint.as_ref().and_then(|j| j.limits).unwrap_or(
+            if matches!(
+                group.joint.as_ref().map(|j| j.motion),
+                Some(Motion::Revolute)
+            ) {
+                [-std::f64::consts::PI, std::f64::consts::PI]
+            } else {
+                [-1., 1.]
+            },
+        );
         let mass = match r.project.mass(group) {
             Ok((m, _)) => format!(
                 "Mass {:.6} kg\nCOM [{:.4}, {:.4}, {:.4}] m\nTensor kg m²:\n{:?}\n{:?}\n{:?}",
@@ -394,6 +485,15 @@ impl Panel {
             ),
             Err(e) => format!("Mass unavailable: {e}"),
         };
+        let recovery_text=r.recovery.as_ref().and_then(|report|report.candidates.iter().find(|c|c.child==r.selected_group)).map(|c| {
+            let supported=matches!(c.kind,super::recovery::Kind::Revolute|super::recovery::Kind::Prismatic);
+            format!("Stored proposal: {:?} · {}\nObserved coordinate {:.6}; axial advance {:.6} m\nFit residual {:.3e} m / {:.3e} rad\nNot a decoded mate or travel stop. {}",c.kind,if supported {"review required"}else{"unsupported / insufficient motion"},c.observed_coordinate,c.axial_advance_m,c.fit_translation_error_m,c.fit_rotation_error_rad,c.evidence)
+        }).unwrap_or_else(||"No saved-pose proposal for this group.".into());
+        let coordinate = r
+            .playback
+            .as_ref()
+            .and_then(|p| p.target_value(r.selected_group))
+            .unwrap_or(r.preview);
         let controls=column().width(350.).fill_height().scroll_y().padding(10.).gap(10.)
             .child(label("SOURCE OCCURRENCES").font_size(14.))
             .child(button("Omit missing references").on_click(cx.listener(|s,_,_| {let r=s.review();let n=r.project.omit_missing_references();r.status=format!("Omitted {n} missing occurrences; no dependent relations were imported.");r.revision+=1;}))).child(parts)
@@ -419,11 +519,18 @@ impl Panel {
             .child(text_input(r.explicit_mass.clone()).key("part-mass").fill_width().accessibility_label("Selected part mass kg").on_change(cx.listener(|s,e:&TextChangeEvent,_|s.review().explicit_mass=e.value.clone())))
             .child(text_input(r.explicit_com.clone()).key("part-com").fill_width().accessibility_label("Part-local COM x,y,z metres").on_change(cx.listener(|s,e:&TextChangeEvent,_|s.review().explicit_com=e.value.clone())))
             .child(text_input(r.explicit_tensor.clone()).key("part-tensor").fill_width().accessibility_label("Central tensor xx,yy,zz,xy,xz,yz kg m2").on_change(cx.listener(|s,e:&TextChangeEvent,_|s.review().explicit_tensor=e.value.clone())))
-            .child(button("Apply explicit part mass / COM / tensor").on_click(cx.listener(|s,_,_| {let r=s.review();let result=(|| {let mass=r.explicit_mass.trim().parse::<f64>().map_err(|_|"invalid mass".to_owned())?;let com=triple(&r.explicit_com)?;let t=numbers(&r.explicit_tensor)?;if t.len()!=6 {return Err("tensor requires xx,yy,zz,xy,xz,yz (actual off-diagonals)".into());}r.project.set_mass_override(r.selected_part,Mass {mass_kg:mass,com_m:com,inertia_kg_m2:[[t[0],t[3],t[4]],[t[3],t[1],t[5]],[t[4],t[5],t[2]]]})})();r.status=match result {Ok(())=>"Explicit part-local physical properties applied".into(),Err(e)=>e};})))
+            .child(button("Apply explicit part mass / COM / tensor").on_click(cx.listener(|s,_,_| {let r=s.review();let result=(|| {let mass=r.explicit_mass.trim().parse::<f64>().map_err(|_|"invalid mass".to_owned())?;let com=triple(&r.explicit_com)?;let t=numbers(&r.explicit_tensor)?;if t.len()!=6 {return Err("tensor requires xx,yy,zz,xy,xz,yz (actual off-diagonals)".into());}r.project.set_mass_override(r.selected_part,Mass {mass_kg:mass,com_m:com,inertia_kg_m2:[[t[0],t[3],t[4]],[t[3],t[1],t[5]],[t[4],t[5],t[2]]]})})();r.status=match result {Ok(())=>{r.revision+=1;"Explicit part-local physical properties applied".into()},Err(e)=>e};})))
             .child(label(mass))
-            .child(label("Joint preview coordinate (kinematic, not physics)"))
-            .child(slider(r.preview as f32).range(preview_limits[0] as f32,preview_limits[1] as f32).disabled(group.joint.as_ref().is_none_or(|j|matches!(j.motion,Motion::Fixed)))
-                .on_change(cx.listener(|s,e:&SliderEvent,_| {let r=s.review();r.preview=f64::from(e.value);r.revision+=1;})))
+            .child(label(if r.playback.is_some() {"Motor target (physical, radians or metres)"}else{"Joint preview coordinate (kinematic)"}))
+            .child(button("Start physical constraint test").on_click(cx.listener(|s,_,_|{let r=s.review();if let Err(e)=r.start_physics(){r.status=e;}})))
+            .child(row().gap(4.)
+                .child(button(if r.physical_running {"Pause joints"}else{"Run joints"}).disabled(r.playback.is_none()).on_click(cx.listener(|s,_,_|{s.review().toggle_physics();})))
+                .child(button("Reset joints").disabled(r.playback.is_none()).on_click(cx.listener(|s,_,_|{s.review().reset_physics();})))
+                .child(button("Observed pose").on_click(cx.listener(|s,_,_|s.review().observed()))))
+            .child(label(r.playback.as_ref().and_then(|p|p.readings().ok().map(|v|(p.tick,v))).map(|(tick,v)|format!("Physics tick {tick}; {:?}\nNo gravity or contacts; diagnostic motor gains",v.iter().find(|x|x.group==r.selected_group).map(|r|(r.position,r.target,r.anchor_error_m)))).unwrap_or_else(||"Source poses preserved; inferred joints still require explicit review.".into())))
+            .child(slider(coordinate as f32).range(preview_limits[0] as f32,preview_limits[1] as f32).disabled(group.joint.as_ref().is_none_or(|j|matches!(j.motion,Motion::Fixed)))
+                .on_change(cx.listener(|s,e:&SliderEvent,_| {s.review().target(f64::from(e.value));})))
+            .child(label(recovery_text))
             .child(label("PARENT JOINT — source/world coordinates; zero retains CAD pose"))
             .child(label(format!("Parent: {:?}; type/limits require explicit review",group.joint.as_ref().map(|j|j.parent))))
             .child(text_input(r.pivot.clone()).key("pivot").fill_width().accessibility_label("Joint pivot metres").on_change(cx.listener(|s,e:&TextChangeEvent,_|s.review().pivot=e.value.clone())))
@@ -452,6 +559,20 @@ impl Panel {
             } else {
                 "Orange: selected rigid group · Teal: other groups · Native display geometry"
             }));
+        if let Some(p) = &r.playback {
+            scene = scene.child(
+                label(format!(
+                    "Physical tick {} · {:?} rad/m · gravity/contact disabled",
+                    p.tick,
+                    p.readings()
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|j| (j.group, (j.position * 10000.).round() / 10000.))
+                        .collect::<Vec<_>>()
+                ))
+                .font_size(13.),
+            );
+        }
         if let Some(image) = &self.image {
             scene = scene.child(
                 rxui::image(image.clone())
@@ -500,6 +621,7 @@ impl Panel {
                             let r = s.review();
                             r.project.source_frames_and_geometry_reviewed =
                                 !r.project.source_frames_and_geometry_reviewed;
+                            r.revision += 1;
                         })),
                     )
                     .child(button("Save review").on_click(cx.listener(|s, _, _| {
@@ -537,6 +659,27 @@ impl Panel {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn physical_review_pauses_and_invalidates_on_source_edits() {
+        let p = super::super::mechanism::tests::source();
+        let original = serde_json::to_string(&p).unwrap();
+        let mut r = super::Review::new(p, "unused.json".into());
+        r.select(2);
+        r.start_physics().unwrap();
+        r.target(0.4);
+        r.advance_physics(4).unwrap();
+        r.physical_running = false;
+        r.advance_physics(8).unwrap();
+        assert_eq!(r.playback.as_ref().unwrap().tick, 4);
+        assert_eq!(serde_json::to_string(&r.project).unwrap(), original);
+        r.revision += 1;
+        r.advance_physics(0).unwrap();
+        assert!(r.playback.is_none());
+        assert!(!r.physical_running);
+        r.start_physics().unwrap();
+        assert_eq!(r.playback.as_ref().unwrap().tick, 0);
+    }
+
     use super::*;
     #[test]
     fn grouping_preserves_occurrence_poses_and_requires_explicit_joint_review() {

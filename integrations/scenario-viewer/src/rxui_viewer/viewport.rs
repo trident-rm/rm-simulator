@@ -21,6 +21,7 @@ pub struct Viewport {
     target: Handle<Image>,
     camera: Entity,
     bound_image: Option<(wgpu::TextureView, rxui::Image)>,
+    import_frames: Vec<(VisualId, u64, rm_sim_engine::Pose)>,
     size: [u32; 2],
     center: Vec3,
     radius: f32,
@@ -141,6 +142,7 @@ impl Viewport {
             radius: 5.,
             imported: Vec::new(),
             bound_image: None,
+            import_frames: Vec::new(),
         };
         // Initial uploads and pipeline setup, without advancing the plant.
         for _ in 0..3 {
@@ -297,6 +299,22 @@ impl Viewport {
         if !lo.is_finite() || !hi.is_finite() || !(hi - lo).length().is_finite() {
             return Err("no supported import geometry".into());
         }
+        let frames = instances
+            .iter()
+            .enumerate()
+            .map(|(i, (group, pose, _))| {
+                let parent = project
+                    .groups
+                    .iter()
+                    .find(|g| g.id == *group)
+                    .ok_or("missing import group")?;
+                Ok((
+                    VisualId(1000 + i as u64),
+                    *group,
+                    super::importer::compose(super::importer::inverse(parent.pose), *pose),
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let world = self.app.world_mut();
         world.resource_scope(|world, mut visuals: Mut<Visuals>| {
             let mut commands = world.commands();
@@ -356,8 +374,36 @@ impl Viewport {
             self.imported.push((id, mesh, material));
         }
         world.flush();
+        self.import_frames = frames;
         self.center = (lo + hi) * 0.5;
         self.radius = ((hi - lo).length() * 1.2).max(0.15);
+        Ok(())
+    }
+
+    /// Update existing instances from live body frames; never recook meshes.
+    pub fn update_import_poses(
+        &mut self,
+        poses: &BTreeMap<u64, rm_sim_engine::Pose>,
+    ) -> Result<(), String> {
+        for (_, group, _) in &self.import_frames {
+            let p = poses.get(group).ok_or("missing playback body pose")?;
+            if !super::importer::quat(*p).is_finite()
+                || !bevy::math::DVec3::from_array(p.translation_m).is_finite()
+            {
+                return Err("nonfinite playback body pose".into());
+            }
+        }
+        let mut visuals = self.app.world_mut().resource_mut::<Visuals>();
+        for (id, group, local) in &self.import_frames {
+            let p = super::importer::compose(poses[group], *local);
+            visuals.set_pose(
+                *id,
+                PoseFlu {
+                    translation_m: p.translation_m,
+                    rotation_wxyz: p.rotation_wxyz,
+                },
+            );
+        }
         Ok(())
     }
 

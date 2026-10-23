@@ -104,7 +104,10 @@ rotation, checks the placed body frames, actuates the instances independently,
 and repeats after reset using the captured resource and fresh live tokens. These checks use
 bounded solver tolerances rather than expecting exact kinematic constraints.
 
-There is no joint CAD import or joint checkpoint integration yet. Generic joint
+The optional [SolidWorks workbench](solidworks-importer.md#recover-candidate-constraints-and-play-mechanism-states)
+can propose single-axis constraints from saved poses and test reviewed source
+subsets with diagnostic motors. It does not decode native mates or infer travel
+stops. Joint checkpoint integration remains unavailable. Generic joint
 state reads are privileged physical truth, not sensors. This fixture does not
 supply a robot controller, competition actuator parameters, collision fitting,
 or a multiplayer serialization format. Existing native integration slices,

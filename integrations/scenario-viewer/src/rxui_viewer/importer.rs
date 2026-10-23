@@ -141,14 +141,14 @@ pub fn transform(p: Pose, v: [f64; 3]) -> DVec3 {
 fn local(p: Pose, v: DVec3) -> DVec3 {
     quat(p).conjugate() * (v - DVec3::from_array(p.translation_m))
 }
-fn compose(a: Pose, b: Pose) -> Pose {
+pub(super) fn compose(a: Pose, b: Pose) -> Pose {
     let q = quat(a) * quat(b);
     Pose {
         translation_m: transform(a, b.translation_m).to_array(),
         rotation_wxyz: [q.w, q.x, q.y, q.z],
     }
 }
-fn inverse(p: Pose) -> Pose {
+pub(super) fn inverse(p: Pose) -> Pose {
     let q = quat(p).conjugate();
     Pose {
         translation_m: (q * -DVec3::from_array(p.translation_m)).to_array(),
@@ -479,6 +479,11 @@ impl Project {
         Ok((m, inertial))
     }
     pub fn assembly(&self) -> Result<(CookedAssembly, Vec<GroupReport>)> {
+        let (source, report) = self.description()?;
+        Ok((CookedAssembly::new(source).map_err(str::to_owned)?, report))
+    }
+    /// Validated source descriptions, before backend preparation.
+    pub(super) fn description(&self) -> Result<(AssemblyDescription, Vec<GroupReport>)> {
         self.validate()?;
         if !self.source_frames_and_geometry_reviewed {
             return Err("review native frames, configuration geometry and completeness before physical export".into());
@@ -595,7 +600,7 @@ impl Project {
         }
         let source = AssemblyDescription::new(AssemblyLinkId(roots[0].id), links, joints)
             .map_err(str::to_owned)?;
-        Ok((CookedAssembly::new(source).map_err(str::to_owned)?, report))
+        Ok((source, report))
     }
     pub fn check_runtime(&self) -> Result<Vec<GroupReport>> {
         let (model, report) = self.assembly()?;
@@ -643,7 +648,7 @@ fn validate_mesh(vertices: &[[f64; 3]], triangles: &[[u32; 3]]) -> Result<()> {
     Ok(())
 }
 
-fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
+pub(super) fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     // Serialize completely before replacing the destination. Never write native CAD.
     if path.extension().is_none_or(|x| x != "json") {
         return Err("output must be a JSON sidecar".into());

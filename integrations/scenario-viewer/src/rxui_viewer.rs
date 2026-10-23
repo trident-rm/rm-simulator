@@ -10,6 +10,12 @@ mod simulation;
 #[path = "rxui_viewer/viewport.rs"]
 mod viewport;
 
+#[path = "rxui_viewer/recovery.rs"]
+mod recovery;
+
+#[path = "rxui_viewer/mechanism.rs"]
+mod mechanism;
+
 use clap::Parser;
 use rxui::{
     CommandId, UiPainter, WindowInput,
@@ -42,6 +48,32 @@ struct Options {
     /// Review a prepared native SolidWorks occurrence project.
     #[arg(long)]
     solidworks_project: Option<PathBuf>,
+    /// Source/target end centers and a transverse pin axis for one rigid group.
+    #[arg(
+        long,
+        requires = "solidworks_project",
+        conflicts_with = "joint_observations"
+    )]
+    mount_observation: Option<PathBuf>,
+    /// Save an unreviewed rigid mount-fit proposal without a GPU or geometry scaling.
+    #[arg(long, requires="mount_observation", conflicts_with_all=["recover_joints","export_solidworks","simulate_joints","mechanism_report","screenshot","frames"])]
+    fit_mounts: Option<PathBuf>,
+    /// Two saved parent/child poses per proposed joint, with explicit provenance.
+    #[arg(long, requires = "solidworks_project")]
+    joint_observations: Option<PathBuf>,
+    /// Save inferred, unreviewed joints without a GPU. Does not guess travel stops.
+    #[arg(long, requires="joint_observations", conflicts_with_all=["export_solidworks","screenshot","frames","simulate_joints","mechanism_report"])]
+    recover_joints: Option<PathBuf>,
+    /// Run reviewed joints with diagnostic motors; no gravity or contacts.
+    #[arg(
+        long,
+        requires = "solidworks_project",
+        conflicts_with = "export_solidworks"
+    )]
+    simulate_joints: bool,
+    /// Headless explicit-tick motor test report, using --frames (four ticks each).
+    #[arg(long, requires = "simulate_joints", conflicts_with_all = ["screenshot","paused","export_solidworks"])]
+    mechanism_report: Option<PathBuf>,
     /// Initially show collision proxies instead of native display surfaces.
     #[arg(long, requires = "solidworks_project")]
     import_proxies: bool,
@@ -296,11 +328,35 @@ impl Host {
         let mut result = Ok(());
         self.runtime.update(|cx| {
             root.update(cx, |s, _| {
-                if let Some(review) = &s.import {
+                if let Some(review) = &mut s.import {
+                    let reset = std::mem::take(&mut review.clock_reset);
+                    if reset {
+                        clock.pending = Duration::ZERO;
+                    }
+                    let count = if finite {
+                        if review.physical_running { 4 } else { 0 }
+                    } else {
+                        clock.ticks(
+                            if reset { Duration::ZERO } else { elapsed },
+                            !review.physical_running,
+                        )
+                    };
+                    if let Err(e) = review.advance_physics(count) {
+                        review.physical_running = false;
+                        s.error = Some(e);
+                        return;
+                    }
                     if *revision != Some(review.revision) {
                         match review
                             .project
-                            .preview(review.selected_group, review.preview)
+                            .preview(
+                                review.selected_group,
+                                if review.playback.is_some() {
+                                    0.
+                                } else {
+                                    review.preview
+                                },
+                            )
                             .and_then(|p| {
                                 viewport.import_scene(&p, review.selected_group, review.proxies)
                             }) {
@@ -314,6 +370,12 @@ impl Host {
                                 return;
                             }
                         }
+                    }
+                    if let Some(playback) = &review.playback
+                        && let Err(e) = viewport.update_import_poses(&playback.poses)
+                    {
+                        s.error = Some(e);
+                        return;
                     }
                     viewport.draw(&s.plant, size, s.yaw, false);
                     // Reuse the RXUI image unless Bevy replaces its native view.
@@ -435,11 +497,58 @@ impl Handler for Host {
 
 fn main() -> Result<()> {
     let options = Options::parse();
-    let project = options
+    let mut project = options
         .solidworks_project
         .as_ref()
         .map(|p| importer::Project::load(p))
         .transpose()?;
+    if let Some(path) = &options.mount_observation {
+        let input = recovery::mounts::Observation::load(path)?;
+        let p = project.as_mut().unwrap();
+        let fit = recovery::mounts::Alignment::fit(p, &input)?;
+        fit.apply(p)?;
+        println!(
+            "Fitted group {}; closure {} m. Source-frame and attached-joint review invalidated.",
+            fit.group, fit.center_error_m
+        );
+    }
+    if let Some(output) = &options.fit_mounts {
+        project.as_ref().unwrap().save(output)?;
+        return Ok(());
+    }
+    if let Some(path) = &options.joint_observations {
+        let input = recovery::Observations::load(path)?;
+        let p = project.as_mut().unwrap();
+        let report = recovery::Report::recover(p, &input)?;
+        report.apply(p)?;
+        println!(
+            "Recovered {} proposals; inferred joints remain unreviewed",
+            report.candidates.len()
+        );
+    }
+    if let Some(output) = &options.recover_joints {
+        project.as_ref().unwrap().save(output)?;
+        return Ok(());
+    }
+    if let Some(output) = &options.mechanism_report {
+        let p = project.as_ref().unwrap();
+        let mut review = import_ui::Review::new(p.clone(), output.with_extension("reviewed.json"));
+        review.start_physics()?;
+        let sim = review.playback.as_mut().unwrap();
+        let mut history = Vec::new();
+        let frames = options.frames.unwrap_or(256);
+        for frame in 0..frames {
+            sim.advance(4)?;
+            if frame % 8 == 0 || frame + 1 == frames {
+                history.push(serde_json::json!({"tick":sim.tick,"joints":sim.readings()?,"body_poses":sim.poses}));
+            }
+        }
+        importer::write_json(
+            output,
+            &serde_json::json!({"schema":"rm-constraint-playback-report-v1","no_gravity":true,"no_contacts":true,"motor_gains":"inertia-scaled diagnostic gains, not robot calibration","frames":frames,"step_duration_ns":rm_sim_physics::StepDuration::HZ_128.as_ns(),"history":history}),
+        )?;
+        return Ok(());
+    }
     if let Some(output) = &options.export_solidworks {
         project.as_ref().unwrap().export(output)?;
         println!(
@@ -458,12 +567,16 @@ fn main() -> Result<()> {
                 .unwrap()
                 .with_extension("reviewed.json")
         });
+        let mut review = import_ui::Review::new(project, save);
+        review.proxies = options.import_proxies;
+        if options.simulate_joints {
+            review.start_physics()?;
+            review.physical_running = !options.paused;
+        }
         let root = host.ui.entity().clone();
         host.runtime.update(|cx| {
             root.update(cx, |s, _| {
                 s.plant.paused = true;
-                let mut review = import_ui::Review::new(project, save);
-                review.proxies = options.import_proxies;
                 s.import = Some(review);
             })
         });
@@ -487,7 +600,11 @@ fn capture(host: &mut Host, graphics: &GraphicsContext, path: PathBuf, count: u3
         root.update(cx, |s, _| {
             let paused = s.plant.paused;
             s.plant.paused = true;
-            paused
+            let joints = s.import.as_ref().is_some_and(|r| r.physical_running);
+            if let Some(r) = &mut s.import {
+                r.physical_running = false;
+            }
+            (paused, joints)
         })
     });
     let start = Instant::now();
@@ -506,8 +623,14 @@ fn capture(host: &mut Host, graphics: &GraphicsContext, path: PathBuf, count: u3
             return Err("viewport GPU preparation timed out".into());
         }
     }
-    host.runtime
-        .update(|cx| root.update(cx, |s, _| s.plant.paused = paused));
+    host.runtime.update(|cx| {
+        root.update(cx, |s, _| {
+            s.plant.paused = paused.0;
+            if let Some(r) = &mut s.import {
+                r.physical_running = paused.1;
+            }
+        })
+    });
     for _ in 0..count {
         host.prepare_ui([1100., 760.], 1., &target.render_format())?;
         let mut frame = target.begin_frame()?;
@@ -664,6 +787,73 @@ mod tests {
         assert!(panel.plant.paused);
         assert_eq!(panel.plant.tick, 0);
         assert!(panel.error.is_none());
+    }
+
+    #[test]
+    #[ignore = "requires a native GPU and system fonts"]
+    fn physical_import_keeps_gpu_resources_and_capture_preserves_tick_budget() {
+        use bevy::prelude::{Mesh3d, MeshMaterial3d, StandardMaterial, Transform};
+        use rm_sim_render::generic::{VisualId, Visuals};
+        let (mut host, graphics) = Host::new(true, Some(2)).unwrap();
+        let root = host.ui.entity().clone();
+        let mut r = import_ui::Review::new(mechanism::tests::source(), "unused.json".into());
+        r.start_physics().unwrap();
+        r.playback.as_mut().unwrap().target(2, 0.4).unwrap();
+        host.runtime
+            .update(|cx| root.update(cx, |s, _| s.import = Some(r)));
+        let target = graphics
+            .create_framebuffer(FramebufferOptions::new(1100, 760))
+            .unwrap();
+        host.prepare_ui([1100., 760.], 1., &target.render_format())
+            .unwrap();
+        let world = host.viewport.app.world();
+        let e = world.resource::<Visuals>().entity(VisualId(1001)).unwrap();
+        let mesh = world.get::<Mesh3d>(e).unwrap().0.clone();
+        let material = world
+            .get::<MeshMaterial3d<StandardMaterial>>(e)
+            .unwrap()
+            .0
+            .clone();
+        let before = *world.get::<Transform>(e).unwrap();
+        for _ in 0..64 {
+            host.prepare_ui([1100., 760.], 1., &target.render_format())
+                .unwrap();
+        }
+        let world = host.viewport.app.world();
+        assert_eq!(world.resource::<Visuals>().entity(VisualId(1001)), Some(e));
+        assert_eq!(world.get::<Mesh3d>(e).unwrap().0, mesh);
+        assert_eq!(
+            world.get::<MeshMaterial3d<StandardMaterial>>(e).unwrap().0,
+            material
+        );
+        assert_ne!(*world.get::<Transform>(e).unwrap(), before);
+        let tick = host.runtime.update(|cx| {
+            root.read(cx)
+                .import
+                .as_ref()
+                .unwrap()
+                .playback
+                .as_ref()
+                .unwrap()
+                .tick
+        });
+        let path =
+            std::env::temp_dir().join(format!("rm-joints-capture-{}.png", std::process::id()));
+        capture(&mut host, &graphics, path.clone(), 2).unwrap();
+        host.runtime.update(|cx| {
+            assert_eq!(
+                root.read(cx)
+                    .import
+                    .as_ref()
+                    .unwrap()
+                    .playback
+                    .as_ref()
+                    .unwrap()
+                    .tick,
+                tick + 8
+            )
+        });
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

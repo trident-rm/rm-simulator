@@ -229,7 +229,9 @@ mbx run --manifest-path integrations/scenario-viewer/Cargo.toml --locked
 
 Enable `--features rxui-viewer --bin rm-rxui-viewer` for RXUI controls and a
 shared-device GPU viewport with a physical truth inspector; see the viewer guide
-for offscreen capture and current limitations.
+for offscreen capture and current limitations. The optional
+[SolidWorks workbench](docs/solidworks-importer.md) adds rigid-group review,
+pose-based joint proposals and physical constraint previews.
 
 The game-specific presentation adapter and the generic renderer are described in
 [the rendering split guide](docs/presentation-render-split.md).

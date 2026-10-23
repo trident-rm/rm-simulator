@@ -7,6 +7,15 @@
 - Support the independent sw-rs reader for offline native SolidWorks metadata and
   cached Part meshes, with versioned output, reader provenance and diagnostics.
 
+- Fit rigid groups to measured eye/bearing mounts without scaling geometry or
+  inventing stroke, invalidating frame/joint review in the proposal. Recover
+  review-only hinge/slider proposals from relative saved assembly poses,
+  optionally anchor hinge frames at supplied bearing centers, and flag unexcited
+  or screw-like motion without inventing a weld or supported joint. Add physical
+  source-mechanism playback with retained GPU instances, pause/reset, bounded
+  diagnostic motors and headless reports; gravity and contacts are disabled in
+  this preview, and inferred joints require explicit review before cooking.
+
 - Share native Part/configuration mesh definitions across import occurrences and
   GPU visuals, retain legacy projects, and preserve review annotations during
   incremental reimports. Exactly reindex duplicate vertices and admit unambiguous

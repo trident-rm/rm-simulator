@@ -33,7 +33,7 @@ Git history.
 | Bounded CPU rollout workers and measured scaling | [Parallel rollouts](parallel-rollouts.md) |
 | Optional RXUI inspector, source-color 3D, robot controls and overlays | [Scenario inspector](scenario-inspector.md) |
 | Generic physical viewer, optional RXUI panels and shared GPU viewport | [Scenario viewer](scenario-viewer.md) |
-| Native SolidWorks group review, collision proxies and physical-property recipes | [SolidWorks importer](solidworks-importer.md) |
+| Native SolidWorks groups, recovered-joint review and physical previews | [SolidWorks importer](solidworks-importer.md) |
 | RoboMaster presentation adapter, generic rendering and performance contracts | [Presentation/render split](presentation-render-split.md) |
 | Reusable navigation/assembly controllers and host authority boundary | [Controllers](controllers.md) |
 | Live-game navigation integration design, joint feedback and deferred MuJoCo | [Robotics next steps](robotics-next-steps.md) |

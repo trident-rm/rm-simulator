@@ -17,8 +17,10 @@ dependency.
 
 For native SolidWorks grouping, joint review, collision fitting and mass-property
 export, see the [import workbench](solidworks-importer.md). Import review is a
-separate mode: its joint slider is a kinematic preview and does not advance the
-fixture's physics.
+separate mode. Its slider defaults to kinematic review; reviewed joints can also
+run in a separate constraint-only physical preview with diagnostic motors.
+That preview has its own explicit 128 Hz clock and leaves the source project
+unchanged. See [candidate recovery and playback](solidworks-importer.md#recover-candidate-constraints-and-play-mechanism-states).
 
 Run from the repository root:
 

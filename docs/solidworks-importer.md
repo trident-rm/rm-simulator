@@ -250,7 +250,8 @@ found that the first three Parts in each KJ85T33 unit share the same rigid pose
 change to within 1.8e-15 in matrix entries. The fourth changes by 20.017 degrees
 about the first Part's longitudinal axis, with axial-origin separation unchanged
 to about 1.2e-8 mm. These are coherent subassembly-state differences, not evidence
-of eight independent bad placements. The geometry suggests damper-like wheel
+of eight independent bad placements. The fourth Part was subsequently identified
+as the coil spring; its phase change is not an independent rotary-joint claim. The geometry suggests damper-like wheel
 units, but the two saved states do not establish compression travel, mounting
 constraints or spring/damping parameters.
 
@@ -288,3 +289,172 @@ remaining coverage gaps and a shared-subset view to compare placement. No CAD,
 runtime package or review project was modified. This neutral-geometry check
 establishes neither folding/joint correctness nor mass/COM/inertia accuracy;
 the runtime's assumed 20 kg mass is not an independent physical reference.
+
+## Align rigid groups to recovered mounts
+
+A stored subassembly placement needing in-context correction is not itself a
+valid motion sample. Fit its initial mounting context first; then use consistent
+states for joint inference. `--mount-observation` supplies two end centers in a
+selected rigid group's local frame, target centers in the common assembly frame,
+and transverse source/target pin directions:
+
+```json
+{
+  "schema": "rm-mount-alignment-observation-v1",
+  "group": 2,
+  "source_centers_group_m": [[0, 0, 0], [0.1, 0, 0]],
+  "source_pin_axis_group": [0, 0, 1],
+  "target_centers_m": [[1, 1, 1], [1, 1.1, 1]],
+  "target_pin_axis": [0, 0, 1],
+  "evidence": "Identify the native eye/bearing geometry and center measurements"
+}
+```
+
+```sh
+mbx run --manifest-path integrations/scenario-viewer/Cargo.toml --locked \
+  --features rxui-viewer --bin rm-rxui-viewer -- \
+  --solidworks-project /path/to/grouped.project.json \
+  --mount-observation /path/to/mounts.json \
+  --fit-mounts /path/to/mount-proposed.project.json
+```
+
+The fit rotates/translates one rigid leaf group, preserving local mesh geometry
+and Part-to-group transforms. It chooses the closer orientation for an undirected
+pin axis. End spacings must agree within 10 µm; no body scaling or invented stroke
+compensates for a mismatch. Child-group boundaries require separate review before
+this operation. The output records original member poses, supplied centers/axes and the fit under
+`provenance.mount_alignment:<group>`, invalidates source-frame approval and clears
+attached-joint review. It is a placement proposal, not a recovered joint, hard
+stop or calibrated suspension model. Omitting `--fit-mounts` opens the fitted
+proposal for GUI inspection. Keep outputs separate from the original project.
+
+## Recover candidate constraints and play mechanism states
+
+`--joint-observations` accepts an explicit parent/child group table with two saved
+poses per connection. Poses use the project's common assembly frame (metres,
+wxyz); parent motion is removed before analysis. The first sample must match the
+current group frames. For example, a child initially 100 mm along parent +X
+rotates by one radian about +Z:
+
+```json
+{
+  "schema": "rm-relative-pose-observations-v1",
+  "motions": [{
+    "parent": 1,
+    "child": 2,
+    "evidence": "Identify the source files, configurations and saved states here",
+    "mount_point_parent_m": [0, 0, 0.01],
+    "states": [
+      {
+        "parent": {"translation_m": [0, 0, 0], "rotation_wxyz": [1, 0, 0, 0]},
+        "child": {"translation_m": [0.1, 0, 0], "rotation_wxyz": [1, 0, 0, 0]}
+      },
+      {
+        "parent": {"translation_m": [0, 0, 0], "rotation_wxyz": [1, 0, 0, 0]},
+        "child": {"translation_m": [0.05403023058681398, 0.08414709848078966, 0], "rotation_wxyz": [0.8775825618903728, 0, 0, 0.479425538604203]}
+      }
+    ]
+  }]
+}
+```
+
+```sh
+mbx run --manifest-path integrations/scenario-viewer/Cargo.toml --locked \
+  --features rxui-viewer --bin rm-rxui-viewer -- \
+  --solidworks-project /path/to/grouped.project.json \
+  --joint-observations /path/to/states.json \
+  --recover-joints /path/to/proposed.project.json
+```
+
+Recovery identifies a possible revolute axis or prismatic direction, or records
+unexcited/screw-like motion (which may also represent combined joints). Unexcited bodies are not automatically welded, and a
+screw-like delta is not forced into a supported hinge/slider. Rotation under
+0.001 rad is rejected when estimating a hinge axis because the pivot is poorly
+conditioned. Tests use a 10 µm linear and 1e-6 rad angular reconstruction budget;
+these are numerical proposal tolerances, not hardware accuracy specifications.
+Two states identify compatible motion, not a unique physical mechanism or the
+complete allowed motion space.
+
+A hinge observation identifies an **axis line**, not the bearing plane along it.
+Without a mount center, the anchor is the point on that line nearest the parent's
+initial origin. Optional `mount_point_parent_m` supplies an independently selected
+geometry center: it must lie within 10 µm of the inferred line, and its projection
+fixes the anchor along the line. Slider-line offsets remain caller choices.
+Source provenance, input pose measurements, observed coordinates and fit residuals are stored under
+`provenance.joint_recovery`; changes to recorded Part identities, grouping or
+initial poses make proposals stale. This record is not a cryptographic geometry
+certificate. Observed
+angles/displacements never become hard travel limits automatically.
+
+The command writes editable, **unreviewed** joints and preserves source placements.
+Open the proposal, select each moving group, inspect its axis/pivot and explicitly
+apply **Hinge** or **Slider** after review. Supply verified stops separately if
+known. Existing mass, completeness and source-frame gates still apply. Original
+native CAD and the input project are untouched when a separate output is used.
+
+### Physical preview
+
+**Start physical constraint test** cooks the reviewed project once. The slider
+then commands a motor rather than prescribing a transform. **Observed pose**
+commands a still-current recovered coordinate; **Pause joints**, **Run joints**
+and **Reset joints** control this separate explicit 128 Hz plant. Reset reconstructs
+fresh bindings at the source's initial pose while retaining cooked resources.
+Group/source edits and selection changes stop playback; restart after review.
+Saving/exporting always writes the source recipe, not a transient simulated pose.
+
+This mode tests constraints using the declared/estimated inertia. Gravity and
+contacts are disabled: overlapping coarse proxies, brake contact, real load,
+actuator calibration, gear coupling, springs and damping laws are not validated.
+Motors use inertia-scaled illustrative gains (8/s natural frequency, critical
+damping, 30 rad/s² or m/s² nominal acceleration cap), not inferred robot settings.
+Motor targets respect reviewed stops and the runtime's single-turn coordinate
+scope. The renderer updates retained body-local instance frames without recooking
+source meshes or replacing mesh/material/entity handles on each step.
+
+```sh
+# Start at the source pose and drive toward current recovered coordinates.
+mbx run --manifest-path integrations/scenario-viewer/Cargo.toml --locked \
+  --features rxui-viewer --bin rm-rxui-viewer -- \
+  --solidworks-project /path/to/reviewed.project.json --simulate-joints
+
+# No GPU/window: 256 presentations × four ticks = eight simulated seconds.
+mbx run --manifest-path integrations/scenario-viewer/Cargo.toml --locked \
+  --features rxui-viewer --bin rm-rxui-viewer -- \
+  --solidworks-project /path/to/reviewed.project.json --simulate-joints \
+  --mechanism-report /path/to/physical-report.json --frames 256
+```
+
+Reports contain sampled joint positions, velocities, motor targets, anchor errors
+and actual body poses. Units are explicit per joint; these are diagnostic truth
+records, not continuation checkpoints. Finite GPU captures use the
+same four ticks per presentation; warming UI/GPU assets adds no physical ticks.
+
+### EGA recovered-mount experiment
+
+Two gimbal hinges were proposed from the native/STEP relative poses. The recovered
+line agrees with the native 60–71–5 bearing center and thin-axis orientation;
+that bearing center supplies the anchor-plane reference. A separately labelled
+seven-Part bench (bearing/support/stator Parts 254, 256, 257, 258, 268; moving
+rotor 255 and clamp 269) tracked the alternate 135.0607° and 22.8441° coordinates
+with ideal motor playback. This fixture explicitly approves the inferred joints
+only for the experiment and uses box-density inertia estimates, not verified CAD
+mass. It does not make the entire robot exportable.
+
+The KJ85T33 geometry is a coil-over damper. Anonymous Part 18 is the coil spring;
+its 20° saved orientation difference is not evidence of an independent rotary
+actuator or joint. Circular end-eye fits and the neighboring native thrust-bearing
+axes recover both damper mounting lines. Fitting those native eye frames to the
+bearing lines reproduces the held-out STEP main-body pose within 0.00001 mm and
+0.00001°, using no STEP pose in the fit. Those are numerical consistency results,
+not real mechanical accuracy. The native eye spacing is approximately 87.55 mm
+in this saved state; it is not a recovered stroke limit.
+
+The raw damper pin lines are offset roughly 12–18 mm and about 41.7° from their
+neighboring bearings. This cannot be explained as compression alone. It suggests
+stored subassembly poses need in-context mate resolution, although the original
+SolidWorks solve is unavailable. A separate geometry-fitted preview preserves
+all raw poses for comparison. End hinges, internal sliding travel, surrounding
+wheel-arm loops and spring/damping parameters still need further reconstruction;
+no automatic full suspension model is installed in the game. Probe inputs,
+mount candidates, fitted previews and physical reports remain ignored under
+`local-assets/recovered-mechanisms-20261023/`.
