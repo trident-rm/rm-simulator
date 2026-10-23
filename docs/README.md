@@ -11,6 +11,8 @@ Git history.
 
 | Topic | Guide |
 |---|---|
+| Features, readiness and experimental limits | [Capability overview](capabilities.md) |
+| Torque response and optional MuJoCo numerical comparison | [MuJoCo servo comparison](mujoco-servo-comparison.md) |
 | Contribution rules and review | [Contributing](../CONTRIBUTING.md) |
 | Environment, `just` targets, tests and commits | [Development](development.md) |
 | CI checks, validation reuse and releases | [CI and releases](releases.md) |

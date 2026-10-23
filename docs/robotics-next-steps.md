@@ -2,9 +2,19 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Robotics integration investigation
 
-Investigation following `939316e`, 2026-10-21. MuJoCo implementation is deferred
-at the user's request. The optional ROS adapter was added subsequently in its
-own workspace; MuJoCo remains deferred.
+Historical investigation following `939316e`, 2026-10-21. MuJoCo integration
+was deferred at the user's request; ROS support was subsequently added in a
+separate workspace.
+
+Update 2026-10-24: the historical investigation below is not the current feature
+inventory. Generic physical joints, torque commands and last-slice actuator-effort
+feedback are implemented; rolling LiDAR/IMU and optional ROS publication are also
+available. The [capability overview](capabilities.md) records current support.
+The [MuJoCo rotor comparison](mujoco-servo-comparison.md) is now reproducible,
+while an integrated MuJoCo backend remains deferred. Game gimbals/folding and
+assembly playback remain prescribed; current actuator feedback excludes
+constraint reaction wrenches and electrical motor behavior.
+
 See [the measurements](performance-20261021.md) and
 [embedding contracts](simulation-embedding.md).
 

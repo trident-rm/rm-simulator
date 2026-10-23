@@ -267,3 +267,8 @@ response are tested at 128/1000 Hz. The full robot layout and upper mass/inertia
 remain assumed. See [the chassis experiment](../../docs/whole-chassis.md).
 `PhysicalRuntime::directional_normal_load_n` exposes the preceding-slice contact
 budget as privileged diagnostic truth, not a simulated load sensor.
+
+The `servo_response` example exercises direct joint torque and bounded PD
+response against known inertia and external loads. `joint_applied_effort` reads
+last-slice actuator output, independently of joint position/velocity; it does
+not measure constraint reaction torque. See [torque and servo response](../../docs/jointed-mechanisms.md#torque-commands-and-servo-response).

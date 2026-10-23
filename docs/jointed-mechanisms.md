@@ -112,3 +112,58 @@ state reads are privileged physical truth, not sensors. This fixture does not
 supply a robot controller, competition actuator parameters, collision fitting,
 or a multiplayer serialization format. Existing native integration slices,
 checkpoint semantics and prescribed game mechanisms keep their current contract.
+
+## Torque commands and servo response
+
+`PhysicalRuntime::set_joint_effort` accepts signed output-shaft torque in N m
+(revolute) or force in N (prismatic). It replaces the PD motor and holds the
+command until changed. Every solver slice applies equal and opposite effort to
+the two bodies along the current parent-joint axis. Commands do not prescribe
+joint position or velocity. Inertia, gravity, external loads, connected bodies,
+contacts and hard stops determine the resulting motion. Direct effort has no
+implicit motor torque limit; the controller must enforce its actuator limits.
+
+`joint_state` returns position and velocity. `joint_applied_effort` reports the
+held effort or saturated PD output applied at the start of the **last solver
+slice**, initially zero. It allocates no output buffer. Commands do not change
+this observation until stepping. A 128 Hz tick can contain several solver
+slices; this observation is neither a tick average nor an integrated impulse.
+A physical stop can cancel acceleration while reported actuator torque stays
+nonzero. It is not a joint reaction sensor: constraint impulses, gravity and
+external loads are excluded. Constraint reaction/wrench feedback is not yet
+exposed through the generic joint API.
+
+Run a centered single-rotor experiment without CAD or contacts:
+
+```sh
+mbx run -p rm-sim-physics --example servo_response --locked -- response.csv
+mbx test -p rm-sim-physics --test servo_response --locked
+```
+
+The illustrative rotor has 0.02 kg m² principal inertia about each axis, with
+its COM on the hinge. The example uses a 1000 Hz caller clock, ±0.5 rad stops,
+a 4 N m/rad proportional gain, 0.4 N m s/rad damping and ±0.5 N m actuator
+saturation. It changes the target from +0.3 to −0.2 rad and applies an external
+−0.2 N m load for one second. CSV columns distinguish target, position, velocity,
+applied actuator torque and the known external test torque.
+
+Tests at 128 and 1000 Hz compare constant torque against
+`angular_velocity = (actuator_torque + external_torque) * time / inertia`.
+With +0.2 N m and no load, acceleration is 10 rad/s². An opposing −0.2 N m
+load cancels it. Under the bounded PD servo, a −0.2 N m load requires a
+0.05 rad steady error with the stated proportional gain: target +0.3 rad
+settles at +0.25 rad while the actuator supplies +0.2 N m. Tests also cover
+saturation, clearing held commands, stale bindings and pushing against stops.
+
+This establishes a mechanical plant for in-process embedded controller tests.
+It does not identify a particular servo. There is no current/voltage loop,
+back-EMF or speed-dependent torque envelope, winding temperature, gearbox
+loss/backlash, encoder quantization, communication delay or calibrated friction
+in this fixture. An MCU-facing controller can supply bounded effort each tick;
+an electrical actuator model can later convert current commands into output
+shaft torque without changing the joint mechanics. Keep controller sample timing
+explicit rather than treating the built-in per-slice PD law as MCU firmware.
+
+A [matched MuJoCo comparison](mujoco-servo-comparison.md) records numerical
+agreement, analytical checks, stop compliance and backend tradeoffs. Pass `128`
+or `1000` after the CSV path to select the response example caller rate.

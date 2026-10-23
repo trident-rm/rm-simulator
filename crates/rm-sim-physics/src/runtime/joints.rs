@@ -34,6 +34,7 @@ struct Entry {
     description: JointDescription,
     motor: Option<JointMotor>,
     effort: f64,
+    last_applied_effort: f64,
 }
 
 /// Retains installation order for deterministic force accumulation and removal.
@@ -91,14 +92,15 @@ impl Joints {
             }
         });
     }
-    pub(super) fn apply_actuation(&self, world: &mut PhysicsWorld) {
-        for entry in &self.entries {
+    pub(super) fn apply_actuation(&mut self, world: &mut PhysicsWorld) {
+        for entry in &mut self.entries {
             let effort = if let Some(motor) = entry.motor {
                 let state = state(entry, world);
                 motor_effort(motor, state)
             } else {
                 entry.effort
             };
+            entry.last_applied_effort = effort;
             if effort == 0. {
                 continue;
             }
@@ -275,6 +277,7 @@ impl PhysicalRuntime {
             description: *description,
             motor: None,
             effort: 0.,
+            last_applied_effort: 0.,
         });
         self.bound_joints.next_generation = generation;
         self.primed = false;
@@ -316,6 +319,42 @@ impl PhysicalRuntime {
             self.bound_joints.entry(self.runtime_identity(), binding)?,
             &self.world,
         ))
+    }
+
+    /// Actuator effort applied in the last completed solver slice: N m for a
+    /// revolute joint, N for a prismatic joint. Initially zero. Setting a command
+    /// does not change this observation until stepping; clearing a command likewise
+    /// leaves the previous observation until the next slice.
+    ///
+    /// This is held effort or the saturated PD output computed at slice start,
+    /// not a measured net torque, constraint reaction, tick average, or electrical
+    /// motor estimate. External loads and hard-stop reactions are excluded.
+    ///
+    /// ```
+    /// use rm_sim_engine::{Pose, model::{BodyKind, BodyState, Inertial,
+    ///     RigidBodyDescription, JointDescription, JointKind}};
+    /// use rm_sim_physics::{StepDuration, cooking::CookedRigidBody,
+    ///     runtime::{PhysicalRuntime, BodyKey, JointKey}};
+    /// # fn main() -> Result<(), &'static str> {
+    /// let mut runtime = PhysicalRuntime::new(StepDuration::HZ_1000);
+    /// let fixed = CookedRigidBody::new(RigidBodyDescription::new(BodyKind::Fixed, vec![])?)?;
+    /// let rotor = CookedRigidBody::new(RigidBodyDescription::new(
+    ///     BodyKind::Dynamic(Inertial::new(1., [0.02; 3], Pose::default())?), vec![])?)?;
+    /// let a = runtime.install_body(BodyKey(1), &fixed, BodyState::at(Pose::default()))?;
+    /// let b = runtime.install_body(BodyKey(2), &rotor, BodyState::at(Pose::default()))?;
+    /// let joint = runtime.install_joint(JointKey(1), a, b, &JointDescription::new(
+    ///     JointKind::Revolute, Pose::default(), Pose::default(), None, false)?)?;
+    /// runtime.set_joint_effort(joint, 0.2)?;
+    /// assert_eq!(runtime.joint_applied_effort(joint)?, 0.);
+    /// runtime.step(0)?;
+    /// assert_eq!(runtime.joint_applied_effort(joint)?, 0.2);
+    /// # Ok(()) }
+    /// ```
+    pub fn joint_applied_effort(&self, binding: JointBinding) -> Result<f64, &'static str> {
+        Ok(self
+            .bound_joints
+            .entry(self.runtime_identity(), binding)?
+            .last_applied_effort)
     }
 
     /// Replace held effort with an optional held spring/damper motor. Each solver

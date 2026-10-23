@@ -1036,6 +1036,11 @@ impl WorldPhysics {
     ) -> Result<(), &'static str> {
         self.physical.set_joint_motor(binding, motor)
     }
+    /// Compatibility forwarding to [`runtime::PhysicalRuntime::joint_applied_effort`].
+    pub fn joint_applied_effort(&self, binding: JointBinding) -> Result<f64, &'static str> {
+        self.physical.joint_applied_effort(binding)
+    }
+
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::set_joint_effort`].
     pub fn set_joint_effort(
         &mut self,

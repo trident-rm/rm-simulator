@@ -44,6 +44,12 @@ The application executable remains `rm-simulator`; the headless server is
 `rm-sim-server`. The generic components keep this namespace until a separate
 use case warrants an independent name.
 
+A [capability overview](docs/capabilities.md) describes the game, reusable engine,
+CAD tools, sensors and current experimental limits. Recent mechanical additions
+include a source-derived suspension, free four-wheel chassis, torque/servo
+response tests and an optional numerical comparison with MuJoCo; these do not
+replace the default game chassis or add a MuJoCo runtime dependency.
+
 ## Contents
 
 - [Quick start](#quick-start)

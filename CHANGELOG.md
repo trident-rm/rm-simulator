@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Expose last-slice joint actuator effort and add a torque/servo response bench
+  with known-inertia acceleration, opposing loads, saturation and hard-stop
+  validation at 128/1000 Hz. Keep actuator output distinct from reaction torque
+  and unmodeled electrical servo dynamics. Include an optional pinned MuJoCo
+  comparison harness with matched controller cadence and documented limits.
+
 - Add a standalone free six-DOF four-wheel chassis with shared source-derived
   suspension installers, axle-only translation/yaw commands, passive coasting,
   load/COM diagnostics and asymmetric small-track tests at 128/1000 Hz. Preserve
