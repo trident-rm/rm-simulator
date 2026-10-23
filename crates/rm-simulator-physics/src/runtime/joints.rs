@@ -43,6 +43,23 @@ pub(super) struct Joints {
     entries: Vec<Entry>,
 }
 impl Joints {
+    pub(super) fn contains(&self, key: JointKey) -> bool {
+        self.entries.iter().any(|e| e.key == key)
+    }
+    pub(super) fn check_capacity(&self, count: usize) -> Result<(), &'static str> {
+        let count = u64::try_from(count).map_err(|_| "too many joints")?;
+        self.next_generation
+            .checked_add(count)
+            .ok_or("joint binding generation exhausted")?;
+        Ok(())
+    }
+    pub(super) fn check_binding(
+        &self,
+        runtime: u64,
+        binding: JointBinding,
+    ) -> Result<(), &'static str> {
+        self.entry(runtime, binding).map(|_| ())
+    }
     fn entry(&self, runtime: u64, binding: JointBinding) -> Result<&Entry, &'static str> {
         if binding.runtime != runtime {
             return Err("joint binding belongs to another runtime");
@@ -144,12 +161,6 @@ fn motor_effort(motor: JointMotor, state: JointState) -> f64 {
     effort.clamp(-motor.max_force(), motor.max_force())
 }
 
-fn frames(entry: &Entry, world: &PhysicsWorld) -> (Pose3, Pose3) {
-    (
-        world.bodies[entry.parent].position() * pose(entry.description.parent_frame()),
-        world.bodies[entry.child].position() * pose(entry.description.child_frame()),
-    )
-}
 fn angle(parent: Pose3, child: Pose3) -> f64 {
     let rotation = parent.rotation.inverse() * child.rotation;
     // Match Rapier's principal hinge coordinate, including quaternion sign.
@@ -161,11 +172,17 @@ fn angle(parent: Pose3, child: Pose3) -> f64 {
     sign * 2. * rotation.x.clamp(-1., 1.).asin()
 }
 fn state(entry: &Entry, world: &PhysicsWorld) -> JointState {
-    let (parent, child) = frames(entry, world);
-    let a = &world.bodies[entry.parent];
-    let b = &world.bodies[entry.child];
+    state_for_bodies(
+        &entry.description,
+        &world.bodies[entry.parent],
+        &world.bodies[entry.child],
+    )
+}
+fn state_for_bodies(description: &JointDescription, a: &RigidBody, b: &RigidBody) -> JointState {
+    let parent = a.position() * pose(description.parent_frame());
+    let child = b.position() * pose(description.child_frame());
     let axis = parent.rotation * Vector::X;
-    match entry.description.kind() {
+    match description.kind() {
         JointKind::Fixed => JointState {
             position: 0.,
             velocity: 0.,
@@ -230,46 +247,42 @@ impl WorldPhysics {
         if self.bound_joints.entries.iter().any(|e| e.key == key) {
             return Err("duplicate joint key");
         }
-        if !self.world.bodies[parent].is_dynamic() && !self.world.bodies[child].is_dynamic() {
-            return Err("joint requires at least one dynamic body");
-        }
-        let generation = self
-            .bound_joints
-            .next_generation
-            .checked_add(1)
-            .ok_or("joint binding generation exhausted")?;
-        let mut entry = Entry {
+        self.bound_joints.check_capacity(1)?;
+        let joint = prepare_joint(
+            &self.world.bodies[parent],
+            &self.world.bodies[child],
+            description,
+        )?;
+        Ok(self.commit_joint(key, parent, child, description, joint))
+    }
+
+    pub(super) fn commit_joint(
+        &mut self,
+        key: JointKey,
+        parent: RigidBodyHandle,
+        child: RigidBodyHandle,
+        description: &JointDescription,
+        joint: GenericJoint,
+    ) -> JointBinding {
+        let generation = self.bound_joints.next_generation + 1;
+        let handle = self.world.impulse_joints.insert(parent, child, joint, true);
+        self.bound_joints.entries.push(Entry {
             key,
             generation,
-            handle: ImpulseJointHandle::invalid(),
+            handle,
             parent,
             child,
             description: *description,
             motor: None,
             effort: 0.,
-        };
-        validate_initial(&entry, &self.world)?;
-        let (mask, axis) = match description.kind() {
-            JointKind::Fixed => (JointAxesMask::LOCKED_FIXED_AXES, JointAxis::LinX),
-            JointKind::Revolute => (JointAxesMask::LOCKED_REVOLUTE_AXES, JointAxis::AngX),
-            JointKind::Prismatic => (JointAxesMask::LOCKED_PRISMATIC_AXES, JointAxis::LinX),
-        };
-        let mut joint = GenericJointBuilder::new(mask)
-            .local_frame1(pose(description.parent_frame()))
-            .local_frame2(pose(description.child_frame()))
-            .contacts_enabled(description.contacts_enabled());
-        if let Some(limits) = description.limits() {
-            joint = joint.limits(axis, [limits.min(), limits.max()]);
-        }
-        entry.handle = self.world.impulse_joints.insert(parent, child, joint, true);
-        self.bound_joints.entries.push(entry);
+        });
         self.bound_joints.next_generation = generation;
         self.primed = false;
-        Ok(JointBinding {
+        JointBinding {
             runtime: self.runtime_identity(),
             key,
             generation,
-        })
+        }
     }
 
     /// Acquire the current world-scoped installation token for a logical key.
@@ -379,42 +392,43 @@ impl WorldPhysics {
     }
 }
 
-fn validate_initial(entry: &Entry, world: &PhysicsWorld) -> Result<(), &'static str> {
-    let (a, b) = frames(entry, world);
+fn validate_initial(
+    description: &JointDescription,
+    parent: &RigidBody,
+    child: &RigidBody,
+) -> Result<(), &'static str> {
+    let a = parent.position() * pose(description.parent_frame());
+    let b = child.position() * pose(description.child_frame());
     let rotation = a.rotation.inverse() * b.rotation;
     let offset = a.inverse_transform_point(b.translation);
     let axis = a.rotation * Vector::X;
-    let angular = world.bodies[entry.child].angvel() - world.bodies[entry.parent].angvel();
-    let linear = world.bodies[entry.child].velocity_at_point(b.translation)
-        - world.bodies[entry.parent].velocity_at_point(a.translation);
-    let (translation_error, rotation_error, linear_error, angular_error) =
-        match entry.description.kind() {
-            JointKind::Fixed => (
-                offset.length(),
+    let angular = child.angvel() - parent.angvel();
+    let linear = child.velocity_at_point(b.translation) - parent.velocity_at_point(a.translation);
+    let (translation_error, rotation_error, linear_error, angular_error) = match description.kind()
+    {
+        JointKind::Fixed => (
+            offset.length(),
+            Vector::new(rotation.x, rotation.y, rotation.z).length(),
+            linear.length(),
+            angular.length(),
+        ),
+        JointKind::Revolute => (
+            offset.length(),
+            Vector::new(0., rotation.y, rotation.z).length(),
+            linear.length(),
+            (angular - axis * angular.dot(axis)).length(),
+        ),
+        JointKind::Prismatic => {
+            // Frame separation rotates with the parent even on a valid slider.
+            let relative = linear - parent.angvel().cross(b.translation - a.translation);
+            (
+                Vector::new(0., offset.y, offset.z).length(),
                 Vector::new(rotation.x, rotation.y, rotation.z).length(),
-                linear.length(),
+                (relative - axis * relative.dot(axis)).length(),
                 angular.length(),
-            ),
-            JointKind::Revolute => (
-                offset.length(),
-                Vector::new(0., rotation.y, rotation.z).length(),
-                linear.length(),
-                (angular - axis * angular.dot(axis)).length(),
-            ),
-            JointKind::Prismatic => {
-                // Frame separation rotates with the parent even on a valid slider.
-                let relative = linear
-                    - world.bodies[entry.parent]
-                        .angvel()
-                        .cross(b.translation - a.translation);
-                (
-                    Vector::new(0., offset.y, offset.z).length(),
-                    Vector::new(rotation.x, rotation.y, rotation.z).length(),
-                    (relative - axis * relative.dot(axis)).length(),
-                    angular.length(),
-                )
-            }
-        };
+            )
+        }
+    };
     if [
         translation_error,
         rotation_error * 2.,
@@ -426,9 +440,8 @@ fn validate_initial(entry: &Entry, world: &PhysicsWorld) -> Result<(), &'static 
     {
         return Err("initial joint locked frames or velocities disagree");
     }
-    let position = state(entry, world).position;
-    if entry
-        .description
+    let position = state_for_bodies(description, parent, child).position;
+    if description
         .limits()
         .is_some_and(|l| position < l.min() || position > l.max())
     {
@@ -437,9 +450,102 @@ fn validate_initial(entry: &Entry, world: &PhysicsWorld) -> Result<(), &'static 
     Ok(())
 }
 
+/// Validate native staged bodies and construct a constraint without world mutation.
+pub(super) fn prepare_joint(
+    parent: &RigidBody,
+    child: &RigidBody,
+    description: &JointDescription,
+) -> Result<GenericJoint, &'static str> {
+    if !parent.is_dynamic() && !child.is_dynamic() {
+        return Err("joint requires at least one dynamic body");
+    }
+    validate_initial(description, parent, child)?;
+    let (mask, axis) = match description.kind() {
+        JointKind::Fixed => (JointAxesMask::LOCKED_FIXED_AXES, JointAxis::LinX),
+        JointKind::Revolute => (JointAxesMask::LOCKED_REVOLUTE_AXES, JointAxis::AngX),
+        JointKind::Prismatic => (JointAxesMask::LOCKED_PRISMATIC_AXES, JointAxis::LinX),
+    };
+    let mut joint = GenericJointBuilder::new(mask)
+        .local_frame1(pose(description.parent_frame()))
+        .local_frame2(pose(description.child_frame()))
+        .contacts_enabled(description.contacts_enabled());
+    if let Some(limits) = description.limits() {
+        joint = joint.limits(axis, [limits.min(), limits.max()]);
+    }
+    Ok(joint.build())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assembly_joint_capacity_failure_precedes_all_body_and_joint_mutations() {
+        use rm_simulator_engine::model::{
+            AssemblyDescription, AssemblyJoint, AssemblyJointId, AssemblyLink, AssemblyLinkId,
+            BodyKind, Inertial, RigidBodyDescription,
+        };
+        let source = AssemblyDescription::new(
+            AssemblyLinkId(1),
+            vec![
+                AssemblyLink::new(
+                    AssemblyLinkId(1),
+                    RigidBodyDescription::new(BodyKind::Fixed, vec![]).unwrap(),
+                    BodyState::at(Pose::default()),
+                )
+                .unwrap(),
+                AssemblyLink::new(
+                    AssemblyLinkId(2),
+                    RigidBodyDescription::new(
+                        BodyKind::Dynamic(Inertial::new(1., [1.; 3], Pose::default()).unwrap()),
+                        vec![],
+                    )
+                    .unwrap(),
+                    BodyState::at(Pose::default()),
+                )
+                .unwrap(),
+            ],
+            vec![AssemblyJoint::new(
+                AssemblyJointId(1),
+                AssemblyLinkId(1),
+                AssemblyLinkId(2),
+                JointDescription::new(
+                    JointKind::Revolute,
+                    Pose::default(),
+                    Pose::default(),
+                    None,
+                    false,
+                )
+                .unwrap(),
+            )],
+        )
+        .unwrap();
+        let model = crate::cooking::CookedAssembly::new(source).unwrap();
+        let keys = super::super::AssemblyKeys {
+            links: vec![
+                (AssemblyLinkId(1), BodyKey(1)),
+                (AssemblyLinkId(2), BodyKey(2)),
+            ],
+            joints: vec![(AssemblyJointId(1), JointKey(1))],
+        };
+        let mut world = WorldPhysics::new(&[], 0.);
+        world.bound_joints.next_generation = u64::MAX;
+        assert!(
+            world
+                .install_assembly(&model, Pose::default(), &keys)
+                .is_err()
+        );
+        assert_eq!(world.world.bodies.len(), 0);
+        assert_eq!(world.world.colliders.len(), 1);
+        assert_eq!(world.world.impulse_joints.len(), 0);
+        assert_eq!(world.bound_joints.next_generation, u64::MAX);
+        assert!(world.body_binding(BodyKey(1)).is_none());
+        world.bound_joints.next_generation = 0;
+        let live = world
+            .install_assembly(&model, Pose::default(), &keys)
+            .unwrap();
+        assert_eq!(live.joint(AssemblyJointId(1)).unwrap().generation, 1);
+    }
 
     #[test]
     fn extreme_finite_motor_arithmetic_saturates_without_nan_or_spurious_overflow() {

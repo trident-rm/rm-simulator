@@ -36,7 +36,38 @@ One local development-profile run on 2026-10-23 measured 8.30 ms for those
 gravity error was 0.0119 rad. Under +5 N m the pitch stop held at 0.4500085 rad.
 These are single-run observations, not a benchmark distribution.
 
+## Source, prepared resource and live instance
+
+`description(dynamic_base)` builds an engine `AssemblyDescription`: three ordered
+`AssemblyLink` entries with explicit rigid-body descriptions and initial states,
+and two `AssemblyJoint` entries forming a rooted tree through source IDs. Initial body poses
+and velocities use shared assembly-local FLU coordinates. The base starts at
+z = 1 m in that frame. Joint anchor frames remain local to their own bodies;
+they are not assembly-space poses.
+
+`CookedAssembly::new` prepares the description once and retains its source.
+Cooking creates reusable backend geometry, not world bodies or live solver state.
+The scenario captures this immutable resource and an `AssemblyKeys` mapping.
+`WorldPhysics::install_assembly` installs it transactionally at a supplied placement:
+the placement maps assembly-local initial poses and velocities into world FLU.
+It leaves body-local colliders, inertial frames and joint anchors local. One
+prepared resource can supply multiple independently actuated live instances.
+
+Source `AssemblyLinkId`/`AssemblyJointId` values identify entries within a reusable
+description. `BodyKey`/`JointKey` values address a particular instance in a world;
+`AssemblyKeys` explicitly maps between these identity spaces. The turret keeps
+its original `BASE`/`YOKE`/`BARREL` and `YAW`/`PITCH` runtime keys. A second instance
+uses disjoint runtime keys while sharing all source IDs and prepared geometry.
+The returned `AssemblyBinding` resolves source IDs to opaque live body/joint
+tokens. `remove_assembly` removes that installed instance; it does not alter the
+prepared resource. Reacquire tokens after a scenario reset.
+
 ## Frames, actuation and lifetime
+
+`BodyKind::Fixed` means immovable in the world, whereas a fixed joint locks the
+relative motion of two bodies. Moving rigid CAD parts must not each be declared
+as fixed world bodies. Their mass/inertia and rigid grouping need an explicit
+physical model before import.
 
 A joint description contains parent-local and child-local anchor frames. Their
 local +X is the free axis for revolute/prismatic joints. The turret rotates +X
@@ -55,7 +86,7 @@ allows gravity-loaded pitch error; a target is not a prescribed pose.
 `set_joint_motor(binding, None)` clears actuation. Connected-pair
 contacts are disabled in this fixture, while ordinary scenery contacts remain.
 
-Caller-selected `BodyKey` and `JointKey` identify recipe entries. Runtime bindings
+Caller-selected `BodyKey` and `JointKey` identify live recipe entries. Runtime bindings
 are opaque, process-local installation tokens. A recipe reset reconstructs bodies
 and joints at time zero; reacquire every binding by key. Old body/joint tokens
 must fail, including actuation through an old token. Reset is recipe replay,
@@ -67,7 +98,10 @@ not continuation from an arbitrary saved physical state.
 tracking and reversal, world-space barrel direction, anchor separation below
 3 mm, both signs of held effort at the hard stops, and repeatable response after
 reset. A dynamic-pedestal variant verifies counter-rotation under motor torque
-and support of the connected assembly after floor impact. These checks use
+and support of the connected assembly after floor impact. A further test installs
+one prepared turret resource twice with disjoint keys, translation and yaw
+rotation, checks the placed body frames, actuates the instances independently,
+and repeats after reset using the captured resource and fresh live tokens. These checks use
 bounded solver tolerances rather than expecting exact kinematic constraints.
 
 There is no joint CAD import or joint checkpoint integration yet. Generic joint

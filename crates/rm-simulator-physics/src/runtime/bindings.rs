@@ -73,6 +73,16 @@ impl Bodies {
             .filter(|e| e.generation == binding.generation)
             .ok_or("stale body binding")
     }
+    pub(super) fn contains(&self, key: BodyKey) -> bool {
+        self.entries.contains_key(&key)
+    }
+    pub(super) fn check_capacity(&self, count: usize) -> Result<(), &'static str> {
+        let count = u64::try_from(count).map_err(|_| "too many bodies")?;
+        self.next_generation
+            .checked_add(count)
+            .ok_or("body binding generation exhausted")?;
+        Ok(())
+    }
     pub(super) fn handle(&self, binding: BodyBinding) -> Result<RigidBodyHandle, &'static str> {
         Ok(self.entry(binding)?.handle)
     }
@@ -129,39 +139,17 @@ impl WorldPhysics {
         if self.bound_bodies.entries.contains_key(&key) {
             return Err("duplicate body key");
         }
-        let next_generation = self
-            .bound_bodies
-            .next_generation
-            .checked_add(1)
-            .ok_or("body binding generation exhausted")?;
-        let mut body = match model.source().kind() {
-            BodyKind::Fixed => RigidBodyBuilder::fixed(),
-            BodyKind::Kinematic => RigidBodyBuilder::kinematic_position_based(),
-            BodyKind::Dynamic(inertia) => {
-                let frame = inertia.frame();
-                RigidBodyBuilder::dynamic().additional_mass_properties(
-                    MassProperties::with_principal_inertia_frame(
-                        vector(frame.translation_m),
-                        inertia.mass_kg(),
-                        vector(inertia.principal_inertia_kg_m2()),
-                        pose(frame).rotation,
-                    ),
-                )
-            }
-        };
-        if !matches!(model.source().kind(), BodyKind::Dynamic(_))
-            && state
-                .velocity_m_s
-                .into_iter()
-                .chain(state.angular_velocity_rad_s)
-                .any(|x| x != 0.)
-        {
-            return Err("non-dynamic body requires zero initial velocities");
-        }
-        body = body
-            .pose(pose(state.pose))
-            .linvel(vector(state.velocity_m_s))
-            .angvel(vector(state.angular_velocity_rad_s));
+        self.bound_bodies.check_capacity(1)?;
+        let body = prepare_body(model, state)?;
+        Ok(self.commit_body(key, model, body))
+    }
+
+    pub(super) fn commit_body(
+        &mut self,
+        key: BodyKey,
+        model: &CookedRigidBody,
+        body: RigidBody,
+    ) -> BodyBinding {
         let handle = self.world.insert_body(body);
         for (description, shape) in model.source().colliders().iter().zip(model.shapes()) {
             let material = description.material();
@@ -194,9 +182,9 @@ impl WorldPhysics {
         if self.world.bodies[handle].is_dynamic() {
             self.bound_bodies.dynamic_keys.push(key);
         }
-        self.bound_bodies.next_generation = next_generation;
+        self.bound_bodies.next_generation += 1;
         self.primed = false;
-        Ok(binding)
+        binding
     }
 
     /// Rebind a logical scenario key after a successful reconstruction/reset.
@@ -332,6 +320,53 @@ impl WorldPhysics {
     }
 }
 
+/// Prepare native state without consuming world handles or binding generations.
+pub(super) fn prepare_body(
+    model: &CookedRigidBody,
+    state: BodyState,
+) -> Result<RigidBody, &'static str> {
+    state.validate()?;
+    let mut body = match model.source().kind() {
+        BodyKind::Fixed => RigidBodyBuilder::fixed(),
+        BodyKind::Kinematic => RigidBodyBuilder::kinematic_position_based(),
+        BodyKind::Dynamic(inertia) => {
+            let frame = inertia.frame();
+            RigidBodyBuilder::dynamic().additional_mass_properties(
+                MassProperties::with_principal_inertia_frame(
+                    vector(frame.translation_m),
+                    inertia.mass_kg(),
+                    vector(inertia.principal_inertia_kg_m2()),
+                    pose(frame).rotation,
+                ),
+            )
+        }
+    };
+    if !matches!(model.source().kind(), BodyKind::Dynamic(_))
+        && state
+            .velocity_m_s
+            .into_iter()
+            .chain(state.angular_velocity_rad_s)
+            .any(|x| x != 0.)
+    {
+        return Err("non-dynamic body requires zero initial velocities");
+    }
+    body = body
+        .pose(pose(state.pose))
+        .linvel(vector(state.velocity_m_s))
+        .angvel(vector(state.angular_velocity_rad_s));
+    let mut body = body.build();
+    body.recompute_mass_properties_from_colliders(&ColliderSet::new());
+    if !body.center_of_mass().is_finite()
+        || model.source().colliders().iter().any(|collider| {
+            let world = body.position() * pose(collider.pose());
+            !world.translation.is_finite() || !world.rotation.is_finite()
+        })
+    {
+        return Err("nonfinite placed body mass or collider frame");
+    }
+    Ok(body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,6 +374,133 @@ mod tests {
         ColliderDescription, ContactMaterial, Inertial, ShapeDescription,
     };
     use std::sync::Arc;
+
+    fn prepared_anchor() -> crate::cooking::CookedAssembly {
+        use rm_simulator_engine::model::{AssemblyDescription, AssemblyLink, AssemblyLinkId};
+        let source = RigidBodyDescription::new(
+            BodyKind::Fixed,
+            vec![
+                ColliderDescription::new(
+                    ShapeDescription::Cuboid {
+                        half_extents_m: [0.1; 3],
+                    },
+                    Pose::default(),
+                    ContactMaterial {
+                        friction: 0.4,
+                        restitution: 0.,
+                        memberships: u32::MAX,
+                        filter: u32::MAX,
+                    },
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        crate::cooking::CookedAssembly::new(
+            AssemblyDescription::new(
+                AssemblyLinkId(1),
+                vec![
+                    AssemblyLink::new(AssemblyLinkId(1), source, BodyState::at(Pose::default()))
+                        .unwrap(),
+                ],
+                vec![],
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn assembly_rejection_consumes_no_body_generation_or_native_slots() {
+        use rm_simulator_engine::model::AssemblyLinkId;
+        let prepared = prepared_anchor();
+        let keys = super::super::AssemblyKeys {
+            links: vec![(AssemblyLinkId(1), BodyKey(1))],
+            joints: vec![],
+        };
+        let mut world = WorldPhysics::new(&[], 0.);
+        let before = (world.world.bodies.len(), world.world.colliders.len());
+        assert!(
+            world
+                .install_assembly(&prepared, Pose::at([f64::NAN, 0., 0.]), &keys)
+                .is_err()
+        );
+        assert_eq!(world.bound_bodies.next_generation, 0);
+        assert_eq!(
+            (world.world.bodies.len(), world.world.colliders.len()),
+            before
+        );
+        world.bound_bodies.next_generation = u64::MAX;
+        assert!(
+            world
+                .install_assembly(&prepared, Pose::default(), &keys)
+                .is_err()
+        );
+        assert_eq!(world.bound_bodies.next_generation, u64::MAX);
+        assert_eq!(
+            (world.world.bodies.len(), world.world.colliders.len()),
+            before
+        );
+        world.bound_bodies.next_generation = 0;
+        let live = world
+            .install_assembly(&prepared, Pose::default(), &keys)
+            .unwrap();
+        let binding = live.body(AssemblyLinkId(1)).unwrap();
+        assert_eq!(binding.generation, 0);
+        let mut control = WorldPhysics::new(&[], 0.);
+        let direct = control
+            .install_body(
+                BodyKey(1),
+                &prepared.bodies()[0],
+                BodyState::at(Pose::default()),
+            )
+            .unwrap();
+        assert_eq!(
+            world.bound_bodies.handle(binding).unwrap(),
+            control.bound_bodies.handle(direct).unwrap()
+        );
+    }
+
+    #[test]
+    fn assembly_instances_share_source_and_cooked_shapes() {
+        use rm_simulator_engine::model::AssemblyLinkId;
+        let prepared = prepared_anchor();
+        let shared = prepared.clone();
+        assert_eq!(
+            prepared.source().links().as_ptr(),
+            shared.source().links().as_ptr()
+        );
+        let mut world = WorldPhysics::new(&[], 0.);
+        let bindings: Vec<_> = [1, 2]
+            .into_iter()
+            .map(|key| {
+                world
+                    .install_assembly(
+                        &shared,
+                        Pose::at([key as f64, 0., 0.]),
+                        &super::super::AssemblyKeys {
+                            links: vec![(AssemblyLinkId(1), BodyKey(key))],
+                            joints: vec![],
+                        },
+                    )
+                    .unwrap()
+                    .body(AssemblyLinkId(1))
+                    .unwrap()
+            })
+            .collect();
+        let shape = |binding| {
+            let handle = world.bound_bodies.handle(binding).unwrap();
+            &world.world.colliders[world.world.bodies[handle].colliders()[0]]
+                .shared_shape()
+                .0
+        };
+        assert!(Arc::ptr_eq(shape(bindings[0]), shape(bindings[1])));
+        let retained = world.static_geometry_snapshot(false);
+        for binding in bindings {
+            world.remove_bound_body(binding).unwrap();
+        }
+        assert!(!retained.sphere_clear([1., 0., 0.], 0.05));
+    }
     #[test]
     fn installation_uses_explicit_mass_frame_and_shares_shapes() {
         let frame = Pose::yawed([0.1, 0.2, 0.3], 0.4);

@@ -69,8 +69,8 @@ channels, filters and insertion order. `PreparedArena` remains a Rapier-cooked
 arena that shares shapes across construction/reset, not a neutral scene format.
 
 This surface boundary is complemented by primitive, collider, rigid-body and
-explicit inertial and joint descriptions (see below). Complete link graphs,
-convex geometry, actuator electronics and sensor descriptions remain subsequent
+explicit inertial, joint and rooted assembly descriptions (see below). Convex
+geometry, actuator electronics, visual/sensor mounts and import formats remain subsequent
 work. Source package hashes/provenance remain with the verified assets; mesh
 buffer sharing is not a persistent content hash or topology identity. There is no
 global cache, persisted cooked format or backend interchangeability guarantee.
@@ -124,8 +124,8 @@ commands use world axes and documented units/lifetimes. Existing participant
 APIs, match checkpoints and wire formats remain unchanged. Rolling scene brackets
 also reject different runtime brands, preserving capture lifetime boundaries.
 
-This implements basic standalone rigid bodies, not a complete robot assembly
-format, solver trait or robot migration. Convex geometry and explicit solver
+This implements standalone rigid bodies, not a complete robot asset file format,
+solver trait or robot migration. Convex geometry and explicit solver
 capability negotiation follow after these foundations. The
 [physics reuse guide](physics-reuse.md#source-described-bodies-and-bindings)
 contains units, reset/error contracts, current limitations and a runnable example.
@@ -148,9 +148,38 @@ independent held commands. Joint state is an observation, not continuation state
 
 The [standalone turret](jointed-mechanisms.md) validates a physical yaw/pitch
 assembly, limits, reaction and reset. Existing game gimbals/folding/manipulation
-remain prescribed. Complete robot graph installation, CAD joint import,
+remain prescribed. CAD joint import, complete robot asset packages,
 checkpoint integration and migration of existing participants remain separate
 increments in the [physics migration plan](physics-migration.md).
+
+## Implemented physical assembly trees
+
+`AssemblyDescription` owns a shared immutable connected tree of source links and
+joints. `AssemblyLinkId`/`AssemblyJointId` identify entries within the source,
+independently of live `BodyKey`/`JointKey`. Initial link poses and COM/angular
+velocities are explicit in a common assembly FLU frame; joint attachments remain
+body-local. Structural validation rejects cycles, disconnected links and multiple
+parents while preserving caller array order. No CAD mass or joint placement is
+inferred, and closed loops are currently unsupported.
+
+`CookedAssembly` shares prepared body shapes, source arrays and resolved endpoint
+indices. It validates canonical native body modes and joint conditions without
+creating a world. Installation takes an explicit source-to-runtime mapping and
+rigid placement, rotates initial velocities and stages native bodies/joints before
+any mutation. Mapping, placement, numerical and generation-capacity errors return
+without consuming live slots or generations. Commit uses the same body/joint
+helpers as individual installation and preserves source order; there is no trial
+world or remove-on-failure rollback. Allocation failure retains normal Rust
+process behavior rather than a recoverable transaction guarantee.
+
+`AssemblyBinding` retains source-to-live tokens for observation/control. Aggregate
+removal validates all tokens before removing anything; ordinary body removal also
+cascades to externally attached joints. Recipe reconstruction reuses prepared
+shapes and requires fresh bindings. This adds no per-tick assembly scheduler or
+serialized continuation state. The standalone turret now uses this path; game
+robot descriptors remain fitted chassis packages. Visual/sensor mounts, convex
+shape coverage and importer contracts are still needed before general CAD robots
+can migrate.
 
 ## Target ownership
 
@@ -239,7 +268,8 @@ the current timestamp or by a `RayHit::shape_index`.
    infer trustworthy link inertia or motors from native CAD caches. Indexed surface
    sources, shared Rapier cooking, primitive/body descriptions and explicit
    inertial data, joint descriptions and bounded spring/damper motor commands are
-   implemented; complete robot graphs, actuator electronics and cache identities
+   implemented; rooted physical trees and transactional installation are also
+   available. Complete robot asset packages, actuator electronics and cache identities
    remain subsequent work.
 3. **Runtime composition and identities — concrete runtime extracted.** Introduce the minimal stable binding
    and epoch/revision contracts required by a second standalone consumer. Adapt

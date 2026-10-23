@@ -103,7 +103,7 @@ about the COM, and a body-local COM/principal-axis frame. Positive finite mass,
 realizable principal moments and finite unit poses are validated. Collider
 volumes/densities never add hidden mass; CAD-native cached inertia is not imported.
 Dynamic nonconvex triangle surfaces are rejected explicitly. Basic joint and
-motor contracts extend these bodies (see below). Complete robot graphs, actuator
+motor contracts and physical assembly trees extend these bodies (see below). Complete robot packages, actuator
 electronics, convex descriptions, damping/CCD options and body checkpoint
 continuation remain future work; existing robot chassis retain their model.
 
@@ -163,6 +163,14 @@ coordinate units, held motor/effort replacement and the physical two-axis turret
 fixture. Current game gimbals and arms remain prescribed; the
 [migration plan](physics-migration.md) separates those later modeling changes
 from behavior-preserving runtime extraction.
+
+For complete rooted physical trees, `AssemblyDescription` retains source link and
+joint IDs independently of live keys. `CookedAssembly` prepares shared resources;
+`install_assembly` stages placed native state and validates all keys before any
+world mutation. `AssemblyBinding` maps source parts to live body/joint tokens,
+and `remove_assembly` preflights the whole record. The turret guide demonstrates
+independent instances and recipe reuse. These physical descriptions do not yet
+include robot visual/sensor references or a CAD/URDF importer.
 
 ## Concrete physical runtime
 

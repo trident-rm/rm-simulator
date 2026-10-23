@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Add shared immutable physical assembly trees with distinct source link/joint
+  IDs, backend preparation and transactional placed installation/removal. Validate
+  the complete mapping, native state and generation capacity before changing the
+  world; reuse prepared resources across independent turret instances and resets.
+
 - Add solver-free fixed, revolute and prismatic joint descriptions and world-scoped
   joint bindings with compact state, explicit limits and held motor/effort control.
   A standalone two-axis turret exercises physical articulation and recipe reset;

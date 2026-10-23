@@ -12,7 +12,7 @@ an immediate second solver.
 ## Current boundary and remaining coupling
 
 The solver-free engine owns poses, step durations, query records, scalar wheel
-laws and immutable surface/body descriptions. Physics cooks and installs shared
+laws and immutable surface/body/joint/assembly descriptions. Physics cooks and installs shared
 resources into one Rapier world. Source package verification and composition live
 in assets. Gameplay owns competition rules, world composes those rules with
 physics, server owns host authority and pacing, and render consumes presentation
@@ -45,7 +45,7 @@ adding generic joints does not automatically make those robots dynamic arms.
    shapes. Arbitrary multi-turn state, physical actuator electronics and joint
    continuation checkpoints need explicit later contracts.
 
-2. **Robot assembly descriptions and installation.** Compose existing body/joint
+2. **Robot assembly descriptions and installation — physical tree implemented.** Compose existing body/joint
    descriptions into a validated immutable graph with stable source part keys,
    mount frames and separate collision, sensor and visual references. Validate
    missing references, duplicate keys and unsupported topology before installing
@@ -54,6 +54,10 @@ adding generic joints does not automatically make those robots dynamic arms.
    them from CAD assemblies. Start with a small hand-authored turret package and
    retain recipe reconstruction as its reset contract. Add a URDF importer only
    after this representation works; URDF is an input adapter, not the runtime.
+   `AssemblyDescription` now validates a connected rooted tree; `CookedAssembly`
+   shares physical resources, and transactional installation/removal returns
+   explicit source-to-live bindings. The turret exercises this path. Visual and
+   sensor references, importers and complete robot package integration remain.
    Before migrating an existing chassis, extend source/cooked shape coverage to
    its actual convex deck and collision proxies, with explicit validation and
    cooking policy. The initial sphere/box descriptions cannot preserve an
@@ -106,8 +110,8 @@ adding generic joints does not automatically make those robots dynamic arms.
    did not establish a throughput win, so a GPU port is not a migration prerequisite.
 
 Each increment can be divided into independently reviewable changes. The immediate
-follow-up after the joint fixture is the robot graph/installation boundary, then
-participant ownership. Building a broad plugin scheduler first would leave the
+follow-up after the physical tree is convex shape coverage and participant
+ownership. Building a broad plugin scheduler first would leave the
 actual participant and checkpoint coupling unresolved.
 
 ## Acceptance gates

@@ -23,9 +23,10 @@ simulator crate except the solver-free `rm-simulator-engine` core.
 | `src/chassis.rs` | Compatibility facade for chassis configuration, commands, snapshots and borrowed telemetry; existing public paths remain unchanged. |
 | `src/chassis/model.rs` | Physical descriptions, presets, validation and evaluated model geometry, including conversion to `WheelModel`; no solver handles or stepping. |
 | `src/chassis/backend/` | Rapier body/collider construction (`construction.rs`), ordered wheel queries and forces (`dynamics.rs`), prescribed folding/gimbal adaptation (`prescribed.rs`), controls and observations (`mod.rs`). |
-| `src/cooking.rs` / `src/cooking/body.rs` | Shared cooked mesh/body shapes retaining solver-free source descriptions. |
+| `src/cooking.rs` / `src/cooking/` | Shared cooked mesh/body shapes and assembly resources retaining solver-free source descriptions. |
 | `src/runtime/bindings.rs` | Explicit body keys, world-scoped bindings, source/state reads and generic physical control. |
 | `src/runtime/joints.rs` | Generic physical joint installation, world-scoped bindings, scalar state, motors and held effort. |
+| `src/runtime/assembly.rs` | Transactional prepared-assembly installation/removal, placement and source-to-live binding maps. |
 | `src/runtime.rs` | `runtime::WorldPhysics`: interacting scene ownership, construction, integration slices, carrier traces and ordered raw contact capture; legacy world paths remain compatible. |
 | `src/projectile.rs` | `Shot`, `Caliber`, `Contact`, `TargetFace`, `TargetFrames`, `StaticGeometry` and `ProjectilePolicy`; participant adapters and compatibility world exports. |
 | `src/queries.rs` | Immutable validated ray batches and capture-local hits, with no public solver handles; callers retain output storage. |
@@ -145,7 +146,13 @@ Generic source-described bodies can be connected by fixed, revolute and prismati
 joints, with local +X anchor-frame axes, limits, motors and held effort. Runtime
 joint bindings are reacquired by logical key after recipe reset, like body
 bindings. The standalone yaw/pitch turret uses explicit mass, COM and inertia and
-physical revolute joints:
+physical revolute joints. Its engine `AssemblyDescription` keeps source link/joint
+IDs and assembly-local initial states separate from runtime body/joint keys.
+`CookedAssembly` prepares that source once; `install_assembly` transactionally
+creates live instances at caller placements through explicit `AssemblyKeys`.
+The scenario reuses the prepared resource on reset and reacquires live bindings.
+The integration test also installs two independently actuated instances from one
+resource with translated/rotated placement and disjoint runtime keys:
 
 ```sh
 nix develop --command mbx run -p rm-simulator-physics --example jointed_turret --locked

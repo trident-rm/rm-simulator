@@ -16,6 +16,14 @@ Solver-free core for the incrementally separated robotics simulation engine.
   joint state and validated motor targets/gains remain separate from descriptions;
   runtime bindings supply body identities and reject targets outside limits
   without clamping. These contracts add no serialization or checkpoint format.
+  `AssemblyDescription` retains caller-ordered links and joints as shared
+  immutable arrays and validates a nonempty directed tree. `AssemblyLinkId` and
+  `AssemblyJointId` are separate source ID namespaces, independent of runtime
+  keys. Each link supplies a validated body and initial pose, COM linear velocity
+  and angular velocity in the common assembly FLU frame (m, m/s and rad/s),
+  never relative to its parent. Joint frames remain body-local. No initial joint
+  coordinate, inertia, density or joint placement is inferred; backend preparation
+  checks locked frames and capabilities, including fixed-to-fixed constraints.
 - `queries`: immutable validated metric rays and capture-local hit records.
 - `control`: held drive modes and validated wheel-axis torque requests.
 - `wheel_model`: scalar suspension, slip, motor/inertia and shared-power laws

@@ -13,10 +13,13 @@
 //! storage. [`WorldPhysics::step`] is the owned-output compatibility adapter.
 //! Existing root and projectile import paths name this exact same type.
 use super::*;
+#[path = "runtime/assembly.rs"]
+pub(crate) mod assembly;
 #[path = "runtime/bindings.rs"]
 mod bindings;
 #[path = "runtime/joints.rs"]
 mod joints;
+pub use assembly::{AssemblyBinding, AssemblyKeys};
 pub use bindings::{BodyBinding, BodyKey, BodyState};
 pub use joints::{JointBinding, JointKey};
 

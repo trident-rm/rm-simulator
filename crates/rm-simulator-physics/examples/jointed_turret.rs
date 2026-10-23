@@ -4,14 +4,15 @@
 use rm_simulator_engine::{
     Pose,
     model::{
+        AssemblyDescription, AssemblyJoint, AssemblyJointId, AssemblyLink, AssemblyLinkId,
         BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, JointDescription,
         JointKind, JointLimits, JointMotor, RigidBodyDescription, ShapeDescription,
     },
 };
 use rm_simulator_physics::{
     StepDuration,
-    cooking::CookedRigidBody,
-    runtime::{BodyKey, JointKey},
+    cooking::CookedAssembly,
+    runtime::{AssemblyKeys, BodyKey, JointKey},
     session::{RobotScenario, RobotSession},
 };
 
@@ -30,7 +31,26 @@ pub const YAW_LIMIT_RAD: f64 = 1.;
 /// Symmetric pitch hard stop, radians; a fixture choice, not a competition rule.
 pub const PITCH_LIMIT_RAD: f64 = 0.45;
 
-fn cuboid(mass_kg: Option<f64>, half: [f64; 3]) -> Result<CookedRigidBody, &'static str> {
+/// Source pedestal identity, independent of a world's body keys.
+pub const BASE_LINK: AssemblyLinkId = AssemblyLinkId(101);
+/// Source yoke identity.
+pub const YOKE_LINK: AssemblyLinkId = AssemblyLinkId(102);
+/// Source barrel identity.
+pub const BARREL_LINK: AssemblyLinkId = AssemblyLinkId(103);
+/// Source yaw connection identity.
+pub const YAW_JOINT: AssemblyJointId = AssemblyJointId(101);
+/// Source pitch connection identity.
+pub const PITCH_JOINT: AssemblyJointId = AssemblyJointId(102);
+
+/// Map the reusable source identities to this fixture's original runtime keys.
+pub fn keys() -> AssemblyKeys {
+    AssemblyKeys {
+        links: vec![(BASE_LINK, BASE), (YOKE_LINK, YOKE), (BARREL_LINK, BARREL)],
+        joints: vec![(YAW_JOINT, YAW), (PITCH_JOINT, PITCH)],
+    }
+}
+
+fn cuboid(mass_kg: Option<f64>, half: [f64; 3]) -> Result<RigidBodyDescription, &'static str> {
     let kind = if let Some(mass) = mass_kg {
         // Uniform solid box, principal inertia at its explicit central COM.
         let [x, y, z] = half;
@@ -39,7 +59,7 @@ fn cuboid(mass_kg: Option<f64>, half: [f64; 3]) -> Result<CookedRigidBody, &'sta
     } else {
         BodyKind::Fixed
     };
-    CookedRigidBody::new(RigidBodyDescription::new(
+    RigidBodyDescription::new(
         kind,
         vec![ColliderDescription::new(
             ShapeDescription::Cuboid {
@@ -53,13 +73,13 @@ fn cuboid(mass_kg: Option<f64>, half: [f64; 3]) -> Result<CookedRigidBody, &'sta
                 filter: u32::MAX,
             },
         )?],
-    )?)
+    )
 }
 
-/// Repeatable three-body fixture at 1000 Hz, with a floor at zero metres.
+/// Three-link source in shared assembly-local FLU, with its base at z = 1 m.
 /// A dynamic pedestal permits reaction/contact tests; the example fixes it.
 /// Dimensions and inertial properties are illustrative, not source CAD values.
-pub fn scenario(dynamic_base: bool) -> Result<RobotScenario, &'static str> {
+pub fn description(dynamic_base: bool) -> Result<AssemblyDescription, &'static str> {
     let base = cuboid(dynamic_base.then_some(10.), [0.25, 0.25, 0.1])?;
     let yoke = cuboid(Some(2.), [0.12, 0.12, 0.1])?;
     let barrel = cuboid(Some(1.), [0.3, 0.05, 0.05])?;
@@ -87,13 +107,31 @@ pub fn scenario(dynamic_base: bool) -> Result<RobotScenario, &'static str> {
         Some(JointLimits::new(-PITCH_LIMIT_RAD, PITCH_LIMIT_RAD)?),
         false,
     )?;
+    AssemblyDescription::new(
+        BASE_LINK,
+        vec![
+            AssemblyLink::new(BASE_LINK, base, BodyState::at(Pose::at([0., 0., 1.])))?,
+            AssemblyLink::new(YOKE_LINK, yoke, BodyState::at(Pose::at([0., 0., 1.2])))?,
+            AssemblyLink::new(
+                BARREL_LINK,
+                barrel,
+                BodyState::at(Pose::at([0.25, 0., 1.4])),
+            )?,
+        ],
+        vec![
+            AssemblyJoint::new(YAW_JOINT, BASE_LINK, YOKE_LINK, yaw),
+            AssemblyJoint::new(PITCH_JOINT, YOKE_LINK, BARREL_LINK, pitch),
+        ],
+    )
+}
+
+/// Repeatable three-body fixture at 1000 Hz, with a floor at zero metres.
+/// Prepare once; construction and reset install the same immutable resource.
+pub fn scenario(dynamic_base: bool) -> Result<RobotScenario, &'static str> {
+    let prepared = CookedAssembly::new(description(dynamic_base)?)?;
+    let keys = keys();
     RobotScenario::new(vec![], 0., StepDuration::HZ_1000, move |world| {
-        let base = world.install_body(BASE, &base, BodyState::at(Pose::at([0., 0., 1.])))?;
-        let yoke = world.install_body(YOKE, &yoke, BodyState::at(Pose::at([0., 0., 1.2])))?;
-        let barrel =
-            world.install_body(BARREL, &barrel, BodyState::at(Pose::at([0.25, 0., 1.4])))?;
-        world.install_joint(YAW, base, yoke, &yaw)?;
-        world.install_joint(PITCH, yoke, barrel, &pitch)?;
+        world.install_assembly(&prepared, Pose::default(), &keys)?;
         Ok(())
     })
 }

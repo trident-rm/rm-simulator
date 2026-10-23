@@ -2,8 +2,12 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Immutable physical descriptions, independent of cooked shapes and world state.
 use std::sync::Arc;
+mod assembly;
 mod body;
 mod joint;
+pub use assembly::{
+    AssemblyDescription, AssemblyJoint, AssemblyJointId, AssemblyLink, AssemblyLinkId,
+};
 pub use body::{
     BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, RigidBodyDescription,
     ShapeDescription,

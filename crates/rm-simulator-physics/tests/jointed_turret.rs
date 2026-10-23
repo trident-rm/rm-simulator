@@ -179,3 +179,124 @@ fn motor_reacts_on_dynamic_parent_and_floor_supports_connected_assembly() {
     );
     assert_anchors(&session);
 }
+
+#[test]
+fn prepared_turret_installs_independent_placed_instances_and_reuses_recipe_on_reset() {
+    use fixture::{BARREL_LINK, BASE_LINK, PITCH_JOINT, YAW_JOINT, YOKE_LINK};
+    use rm_simulator_physics::{
+        StepDuration,
+        cooking::CookedAssembly,
+        runtime::{AssemblyKeys, BodyKey},
+        session::RobotScenario,
+    };
+    use std::sync::Arc;
+
+    // Cooking happens once, outside the recipe invoked by construction/reset.
+    let prepared = Arc::new(CookedAssembly::new(fixture::description(false).unwrap()).unwrap());
+    let first_keys = fixture::keys();
+    let second_keys = AssemblyKeys {
+        links: vec![
+            (BASE_LINK, BodyKey(11)),
+            (YOKE_LINK, BodyKey(12)),
+            (BARREL_LINK, BodyKey(13)),
+        ],
+        joints: vec![(YAW_JOINT, JointKey(11)), (PITCH_JOINT, JointKey(12))],
+    };
+    let placement = Pose::yawed([4., -3., 0.5], std::f64::consts::FRAC_PI_2);
+    let recipe_resource = Arc::clone(&prepared);
+    let recipe = RobotScenario::new(vec![], 0., StepDuration::HZ_1000, move |world| {
+        for (keys, pose) in [(&first_keys, Pose::default()), (&second_keys, placement)] {
+            let instance = world.install_assembly(&recipe_resource, pose, keys)?;
+            for &(source, key) in &keys.links {
+                assert_eq!(instance.body(source), world.body_binding(key));
+            }
+            for &(source, key) in &keys.joints {
+                assert_eq!(instance.joint(source), world.joint_binding(key));
+            }
+        }
+        Ok(())
+    })
+    .unwrap();
+    let mut session = RobotSession::new(recipe).unwrap();
+    let original_source = prepared.source().clone();
+    let old_bodies = [BASE, YOKE, BARREL, BodyKey(11), BodyKey(12), BodyKey(13)]
+        .map(|key| session.ground_truth().body_binding(key).unwrap());
+    let old_joints = [YAW, PITCH, JointKey(11), JointKey(12)]
+        .map(|key| session.ground_truth().joint_binding(key).unwrap());
+
+    for episode in 0..2 {
+        let world = session.ground_truth();
+        for (first, second) in [
+            (BASE, BodyKey(11)),
+            (YOKE, BodyKey(12)),
+            (BARREL, BodyKey(13)),
+        ] {
+            let first_binding = world.body_binding(first).unwrap();
+            let second_binding = world.body_binding(second).unwrap();
+            assert_ne!(first_binding, second_binding);
+            let first = world.body_state(first_binding).unwrap();
+            let second = world.body_state(second_binding).unwrap();
+            assert!(
+                (DVec3::from_array(second.pose.translation_m)
+                    - point(placement, first.pose.translation_m))
+                .length()
+                    < 1e-12
+            );
+            for axis in [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]] {
+                let actual = point(second.pose, axis) - point(second.pose, [0.; 3]);
+                let expected = point(placement, axis) - point(placement, [0.; 3]);
+                assert!((actual - expected).length() < 1e-12);
+            }
+        }
+        assert_eq!(joint(&session, YAW), (0., 0.));
+        assert_eq!(joint(&session, JointKey(11)), (0., 0.));
+        aim(&mut session, 0.6, -0.25).unwrap();
+        // Only the first instance is actuated. The second yaw stays at rest even
+        // though its gravity-loaded pitch is free to move within its stops.
+        session.step(2000).unwrap();
+        assert!((joint(&session, YAW).0 - 0.6).abs() < 0.025);
+        assert!(joint(&session, JointKey(11)).0.abs() < 1e-6);
+        assert_anchors(&session);
+        let second_yaw = session.ground_truth().joint_binding(JointKey(11)).unwrap();
+        session
+            .physics_mut()
+            .set_joint_effort(second_yaw, -5.)
+            .unwrap();
+        session.step(2000).unwrap();
+        assert!((joint(&session, JointKey(11)).0 + YAW_LIMIT_RAD).abs() < 0.025);
+        assert!((joint(&session, YAW).0 - 0.6).abs() < 0.025);
+        let world = session.ground_truth();
+        let pose = |key| {
+            world
+                .body_state(world.body_binding(key).unwrap())
+                .unwrap()
+                .pose
+        };
+        for (parent, parent_anchor, child, child_anchor) in [
+            (BodyKey(11), [0., 0., 0.1], BodyKey(12), [0., 0., -0.1]),
+            (BodyKey(12), [0., 0., 0.2], BodyKey(13), [-0.25, 0., 0.]),
+        ] {
+            assert!(
+                (point(pose(parent), parent_anchor) - point(pose(child), child_anchor)).length()
+                    < 0.003
+            );
+        }
+        assert_eq!(prepared.source(), &original_source);
+        if episode == 0 {
+            session.reset().unwrap();
+            assert_eq!(session.stamp().tick, 0);
+            for old in old_bodies {
+                assert!(session.ground_truth().body_state(old).is_err());
+            }
+            for old in old_joints {
+                assert!(session.ground_truth().joint_state(old).is_err());
+            }
+            for (key, old) in [YAW, PITCH, JointKey(11), JointKey(12)]
+                .into_iter()
+                .zip(old_joints)
+            {
+                assert_ne!(session.ground_truth().joint_binding(key).unwrap(), old);
+            }
+        }
+    }
+}

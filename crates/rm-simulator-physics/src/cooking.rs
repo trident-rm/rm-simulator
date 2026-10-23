@@ -11,6 +11,8 @@ use rapier3d_f64::prelude::{SharedShape, TriMeshFlags, Vector};
 pub use rm_simulator_engine::model::TriangleMesh;
 mod body;
 pub use body::CookedRigidBody;
+mod assembly;
+pub use assembly::CookedAssembly;
 
 /// A source surface and its cooked Rapier shape, shared across worlds/resets.
 /// The current policy merges duplicate vertices and removes degenerate faces,
