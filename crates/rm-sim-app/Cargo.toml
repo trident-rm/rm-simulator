@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright (c) 2026 hxyulin <hxyulin@proton.me>
+[package]
+name = "rm-sim-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "rm-simulator"
+path = "src/main.rs"
+
+[features]
+steam = ["dep:steamworks"]
+# Opt-in MQTT referee link for testing custom clients (`--referee-link`).
+referee-link = ["dep:rumqttd", "dep:prost"]
+
+[build-dependencies]
+sha2.workspace = true
+
+[dependencies]
+rm-sim-assets = { version = "0.1.0", path = "../rm-sim-assets" }
+glam.workspace = true
+rm-sim-world = { version = "0.1.0", path = "../rm-sim-world" }
+rm-sim-render = { version = "0.1.0", path = "../rm-sim-render" }
+rm-sim-presentation = { version = "0.1.0", path = "../rm-sim-presentation" }
+rm-sim-server = { version = "0.1.0", path = "../rm-sim-server" }
+anyhow.workspace = true
+bevy = { workspace = true, features = ["bevy_feathers", "bevy_ui_widgets", "serialize"] }
+bevy_flair = "0.9.0"
+clap.workspace = true
+serde = { workspace = true, features = ["std"] }
+serde_json.workspace = true
+sha2.workspace = true
+
+steamworks = { version = "=0.13.1", optional = true }
+prost = { version = "0.14", optional = true }
+rumqttd = { version = "0.20", default-features = false, optional = true }
+
+[dev-dependencies]
+rm-sim-physics = { version = "0.1.0", path = "../rm-sim-physics" }

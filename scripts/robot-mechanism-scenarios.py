@@ -3,7 +3,7 @@
 # Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 """Exercise prescribed robot mechanisms against real 128 Hz physics contacts.
 
-Build first: cargo build -p rm-simulator-physics --example robot_mechanisms.
+Build first: cargo build -p rm-sim-physics --example robot_mechanisms.
 The stair scenario crosses two 200 mm steps. Its negative control uses the
 same drivetrain without deploying the linkage. No poses or velocities are injected.
 """

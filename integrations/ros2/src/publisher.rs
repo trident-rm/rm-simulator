@@ -137,7 +137,7 @@ impl ImuPublisher {
     /// Publish rad/s and m/s² at the actual simulation sample time in nanoseconds.
     /// Orientation covariance[0] is -1 (unavailable); other zero covariances mean
     /// unknown, not perfect measurements. No acceleration conversion to g occurs.
-    pub fn publish(&self, sample: &rm_simulator_physics::sensors::imu::ImuSample) -> Result<()> {
+    pub fn publish(&self, sample: &rm_sim_physics::sensors::imu::ImuSample) -> Result<()> {
         anyhow::ensure!(
             sample
                 .angular_velocity_rad_s

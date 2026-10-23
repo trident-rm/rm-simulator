@@ -71,9 +71,9 @@ an existing live robot from `/api/state`. The script never spawns or drives a
 robot and never changes a running match's pause state or clock:
 
 ```sh
-nix develop -c cargo build -p rm-simulator-server --locked
+nix develop -c cargo build -p rm-sim-server --locked
 # In another terminal, for example:
-target/nix/debug/rm-simulator-server --cad-assets /path/to/extracted/field-2027 \
+target/nix/debug/rm-sim-server --cad-assets /path/to/extracted/field-2027 \
   --no-referee --no-lobby --http 127.0.0.1:7780
 # Once an existing live chassis is available:
 python3 scripts/benchmark-sensors.py --host http://127.0.0.1:7780 --robot 0 \

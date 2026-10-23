@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright (c) 2026 hxyulin <hxyulin@proton.me>
+[package]
+name = "rm-sim-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+bevy.workspace = true
+rm-sim-render = { path = "../rm-sim-render", version = "0.1.0" }
+serde = { workspace = true, features = ["std"] }
+serde_json.workspace = true
+clap.workspace = true
+sha2.workspace = true
+anyhow.workspace = true
+wgpu = { version = "30.0.1", default-features = false }

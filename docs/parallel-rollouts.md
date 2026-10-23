@@ -10,7 +10,7 @@ across independent environments; they do not parallelize one physical world.
 There are no new dependencies, GPU requirements or changes to live match rules.
 
 ```rust
-use rm_simulator_world::{Field, FieldConfig, session::{MatchSession,
+use rm_sim_world::{Field, FieldConfig, session::{MatchSession,
     batch::{MatchBatch, BatchLimits, BatchStep, parallel::CpuWorkers}}};
 
 let sessions = (0..8).map(|_| Field::new(&FieldConfig::default())
@@ -81,7 +81,7 @@ After compilation and other heavy work finish:
 
 ```sh
 nix develop -c env CARGO_TARGET_DIR=target/parallel-rollouts \
-  cargo run -p rm-simulator-world --example batched_rollouts --release --locked \
+  cargo run -p rm-sim-world --example batched_rollouts --release --locked \
   -- --parallel 64 128 7
 ```
 

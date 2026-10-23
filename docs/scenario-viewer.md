@@ -90,7 +90,7 @@ GLB with its origin and orientation prepared for this attachment.
 
 ## Ownership and validation
 
-The viewer imports `rm_simulator_render::generic` with renderer default features
+The viewer imports `rm_sim_render::generic` with renderer default features
 disabled. It publishes `PoseFlu` under its own stable `VisualId`s, without an RM
 `SceneState`. One unit-cube mesh is shared by every box; the pedestal and floor
 also share a material. GLB instances use the shared source asset handle. Physics
@@ -102,8 +102,8 @@ Prepared `CookedRigidBody` resources are retained once and installed into a fres
 renderer never steps physics. The arm is dynamic, constrained by a revolute
 joint about vertical, with a bounded position motor; its displayed transform is
 read from the actual body. See [Physical runtime](physical-runtime.md) and the
-[`body_runtime.rs`](../crates/rm-simulator-physics/examples/body_runtime.rs) and
-[`jointed_turret.rs`](../crates/rm-simulator-physics/examples/jointed_turret.rs)
+[`body_runtime.rs`](../crates/rm-sim-physics/examples/body_runtime.rs) and
+[`jointed_turret.rs`](../crates/rm-sim-physics/examples/jointed_turret.rs)
 examples for the underlying contracts.
 
 Tests cover pause, manual step, motor motion, cube settling, stale bindings after

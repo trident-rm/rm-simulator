@@ -26,7 +26,7 @@ python3 scripts/build-semantic-assets.py \
   --optimized /path/to/optimized-field \
   --semantic /path/to/semantic-reference \
   --out local-assets/field-candidate
-cargo run -p rm-simulator-server --example inspect_assets -- local-assets/field-candidate
+cargo run -p rm-sim-server --example inspect_assets -- local-assets/field-candidate
 ```
 
 The compositor preserves the selected gate source geometry because its triangle

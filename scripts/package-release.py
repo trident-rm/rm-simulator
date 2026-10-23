@@ -15,7 +15,7 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARIES = ("rm-simulator", "rm-simulator-server")
+BINARIES = ("rm-simulator", "rm-sim-server")
 
 
 def output(*command):
@@ -150,7 +150,7 @@ def main():
         (stage / "START-HERE.txt").write_text(
             f"rm-simulator {args.version} ({args.target})\n\n"
             "Extract the entire ZIP. Run bin/rm-simulator (Windows: bin/rm-simulator.exe).\n"
-            "Run bin/rm-simulator-server for a headless host.\n"
+            "Run bin/rm-sim-server for a headless host.\n"
             "The runtime field is field-2027/. For RMUC 2026 use Git tag rm2026-final.\n"
             "This is the standalone build; Steam integration is disabled.\n"
             "Linux requires glibc 2.39+ and graphics/display drivers.\n"

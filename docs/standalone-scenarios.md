@@ -3,9 +3,9 @@
 # Standalone scenarios and rule adapters
 
 A small physical scenario does not need an arena, referee, host or window.
-`rm_simulator_assets::scenarios::Scenario` prepares checked equipment geometry
+`rm_sim_assets::scenarios::Scenario` prepares checked equipment geometry
 and detector definitions, then creates ordinary `RobotSession`s. Separate
-`rm_simulator_world::rule_adapters` translate observations into existing gameplay
+`rm_sim_world::rule_adapters` translate observations into existing gameplay
 authorities. Neither layer introduces a second scheduler or physics engine.
 
 ## Presets
@@ -24,10 +24,10 @@ it is not an export or clearance claim about the official arena. These presets
 use a flat catch floor at z=0, without importing surrounding terrain.
 
 ```sh
-cargo run -p rm-simulator-assets --example standalone_scenario --locked -- outpost-red field-2027
-cargo run -p rm-simulator-assets --example standalone_scenario --locked -- rune field-2027
-cargo run -p rm-simulator-assets --example standalone_scenario --locked -- tunnel-fixture
-cargo run -p rm-simulator-world --example standalone_rules --locked
+cargo run -p rm-sim-assets --example standalone_scenario --locked -- outpost-red field-2027
+cargo run -p rm-sim-assets --example standalone_scenario --locked -- rune field-2027
+cargo run -p rm-sim-assets --example standalone_scenario --locked -- tunnel-fixture
+cargo run -p rm-sim-world --example standalone_rules --locked
 ```
 
 The equipment example advances a caller-prescribed trajectory for 100 ms at

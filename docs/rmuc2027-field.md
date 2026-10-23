@@ -84,7 +84,7 @@ Rune arms now have native joints (see below); Dart and Tech Core retain their
 source hierarchy as scenery. Unsupported
 2027 gameplay is not replaced by 2026 mechanics. Native match, motion and
 restore checks exercise the hydrated package in
-`crates/rm-simulator-server/tests/rmuc2027_package.rs`.
+`crates/rm-sim-server/tests/rmuc2027_package.rs`.
 
 ### Reviewed repaired Low export (2026-10-18)
 
@@ -126,9 +126,9 @@ Inspect the export directly, or explore an unbound rest-pose export with
 `--no-referee`:
 
 ```sh
-nix develop -c cargo run --locked -p rm-simulator-server \
+nix develop -c cargo run --locked -p rm-sim-server \
   --example inspect_assets -- local-assets/field-2027-low
-nix develop -c cargo run --locked -p rm-simulator-app -- \
+nix develop -c cargo run --locked -p rm-sim-app -- \
   --cad-assets local-assets/field-2027-low --no-referee --fly --start-paused
 ```
 
@@ -263,10 +263,10 @@ Native 2027 support is always built. Unbound rest-pose packages may be
 inspected with `--no-referee`; live matches require source-bound native rules.
 
 ```sh
-nix develop -c cargo run --locked -p rm-simulator-server \
+nix develop -c cargo run --locked -p rm-sim-server \
   --example inspect_assets -- local-assets/field-2027
 
-nix develop -c cargo run --locked -p rm-simulator-app -- \
+nix develop -c cargo run --locked -p rm-sim-app -- \
   --cad-assets local-assets/field-2027 --fly --start-paused
 ```
 
@@ -293,7 +293,7 @@ The map selects the complete [2027 equipment roster](robot-equipment.md#seasonal
 Run the sandbox with inspection overlays:
 
 ```sh
-cargo run -p rm-simulator-app -- --cad-assets local-assets/field-2027 --fly --zones --rfid-zones --zone-labels
+cargo run -p rm-sim-app -- --cad-assets local-assets/field-2027 --fly --zones --rfid-zones --zone-labels
 ```
 
 F3 exposes **Buff-zone volumes**, **RFID detection areas**, and **Zone
@@ -333,7 +333,7 @@ sandbox intact; the command refuses an existing output directory:
   --split ../rm-map-tools/out/rm2027/RMUC2027_V1.0.0/split \
   --map-tools ../rm-map-tools --out local-assets/field-2027-live
 
-nix develop -c cargo run --locked -p rm-simulator-app -- \
+nix develop -c cargo run --locked -p rm-sim-app -- \
   --cad-assets local-assets/field-2027-live --zones --rfid-zones
 ```
 
@@ -430,9 +430,9 @@ Use the existing rm-map-tools meshoptimizer pipeline after source-body binding:
   --output local-assets/field-2027-optimized \
   --settings scripts/field-detail-rmuc2027.json
 
-nix develop -c cargo run --locked -p rm-simulator-server \
+nix develop -c cargo run --locked -p rm-sim-server \
   --example inspect_assets -- local-assets/field-2027-optimized
-nix develop -c cargo run --locked -p rm-simulator-server \
+nix develop -c cargo run --locked -p rm-sim-server \
   --example compare_asset_ground -- \
   local-assets/field-2027-live local-assets/field-2027-optimized
 ```
@@ -558,9 +558,9 @@ additional bytes without claiming further triangle reductions.
 Validate and install with a rollback copy:
 
 ```sh
-nix develop -c cargo run --locked -p rm-simulator-server \
+nix develop -c cargo run --locked -p rm-sim-server \
   --example inspect_assets -- local-assets/field-2027-detail-ready
-nix develop -c cargo run --locked -p rm-simulator-server \
+nix develop -c cargo run --locked -p rm-sim-server \
   --example compare_asset_ground -- \
   local-assets/field-2027-live.before-20261016-geometry local-assets/field-2027-detail-ready
 python3 scripts/install-field-detail.py \
@@ -1016,7 +1016,7 @@ Rebuild from the saved predecessor, never from the already modified live package
 ../rm-map-tools/ocpenv/bin/python scripts/build-rmuc2027-solid-walls.py \
   --input local-assets/field-2027-live.before-solid-walls-20261016 \
   --output local-assets/field-2027-solid-walls-rebuilt --map-tools ../rm-map-tools
-nix develop -c cargo run -q -p rm-simulator-server \
+nix develop -c cargo run -q -p rm-sim-server \
   --example inspect_assets -- local-assets/field-2027-solid-walls-rebuilt
 ```
 

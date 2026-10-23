@@ -19,14 +19,14 @@ joint, robot assembly, participant and sensor work into ordered acceptance gates
 
 ## Current migration: solver-free core
 
-`rm-simulator-engine` now owns the existing FLU `Pose`, `StepDuration`/default
+`rm-sim-engine` now owns the existing FLU `Pose`, `StepDuration`/default
 timing constants, validated `RayQuery`/`RayHit`, `DriveControl`/`WheelTorques` and
 scalar wheel model/state/integration. It depends only on numerical and
 serialization libraries. It contains no solver, scene loader, team identity,
 match authority, networking, renderer or host clock. It can be built/tested
 without Rapier or a running simulator.
 
-`rm-simulator-physics` retains the concrete Rapier world, chassis construction,
+`rm-sim-physics` retains the concrete Rapier world, chassis construction,
 source model fitting, query execution, collision captures, sensors and physical
 sessions. It re-exports the moved contracts, so existing caller paths name the
 same Rust types without conversion, model copies or duplicate implementations.

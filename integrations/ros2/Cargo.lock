@@ -1024,7 +1024,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rm-simulator-engine"
+name = "rm-sim-engine"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
@@ -1032,7 +1032,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rm-simulator-gameplay"
+name = "rm-sim-gameplay"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -1040,36 +1040,36 @@ dependencies = [
 ]
 
 [[package]]
-name = "rm-simulator-physics"
+name = "rm-sim-physics"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
  "mid360-sim",
  "rapier3d-f64",
- "rm-simulator-engine",
+ "rm-sim-engine",
  "serde",
 ]
 
 [[package]]
-name = "rm-simulator-ros2"
+name = "rm-sim-ros2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "rclrs",
- "rm-simulator-physics",
- "rm-simulator-world",
+ "rm-sim-physics",
+ "rm-sim-world",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "rm-simulator-world"
+name = "rm-sim-world"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
- "rm-simulator-gameplay",
- "rm-simulator-physics",
+ "rm-sim-gameplay",
+ "rm-sim-physics",
  "serde",
  "thiserror",
 ]

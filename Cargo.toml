@@ -3,16 +3,16 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/rm-simulator-engine",
-    "crates/rm-simulator-assets",
-    "crates/rm-simulator-gameplay",
-    "crates/rm-simulator-world",
-    "crates/rm-simulator-physics",
-    "crates/rm-simulator-render",
-    "crates/rm-simulator-presentation",
-    "crates/rm-simulator-server",
-    "crates/rm-simulator-app",
-    "crates/rm-simulator-bench",
+    "crates/rm-sim-engine",
+    "crates/rm-sim-assets",
+    "crates/rm-sim-gameplay",
+    "crates/rm-sim-world",
+    "crates/rm-sim-physics",
+    "crates/rm-sim-render",
+    "crates/rm-sim-presentation",
+    "crates/rm-sim-server",
+    "crates/rm-sim-app",
+    "crates/rm-sim-bench",
 ]
 
 [workspace.package]

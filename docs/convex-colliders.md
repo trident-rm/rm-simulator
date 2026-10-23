@@ -38,8 +38,8 @@ and motion interpolation are unchanged. Expanding debug triangles does not chang
 the actual solid collider or alter source geometry.
 
 ```sh
-nix develop -c mbx run -p rm-simulator-physics --locked --example convex_body
-nix develop -c mbx test -p rm-simulator-physics --locked --test convex_bodies
+nix develop -c mbx run -p rm-sim-physics --locked --example convex_body
+nix develop -c mbx test -p rm-sim-physics --locked --test convex_bodies
 ```
 
 The example supplies a cube's explicit uniform-box mass and inertia, constructs a

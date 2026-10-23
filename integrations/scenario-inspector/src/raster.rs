@@ -2,7 +2,7 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Small orthographic wire projection, shared by the native image and PNG probe.
 use crate::model::Inspector;
-use rm_simulator_assets::math;
+use rm_sim_assets::math;
 
 pub const WIDTH: u32 = 960;
 pub const HEIGHT: u32 = 640;
@@ -376,7 +376,7 @@ fn draw_overlays(model: &Inspector, options: &Options, c: &mut Canvas) {
     }
 }
 
-pub(crate) fn box_corners(pose: rm_simulator_physics::Pose, half: [f64; 3]) -> [[f64; 3]; 8] {
+pub(crate) fn box_corners(pose: rm_sim_physics::Pose, half: [f64; 3]) -> [[f64; 3]; 8] {
     std::array::from_fn(|i| {
         math::add(
             pose.translation_m,

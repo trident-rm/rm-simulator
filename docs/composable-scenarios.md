@@ -2,7 +2,7 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Composable physical scenarios
 
-`rm_simulator_assets::scenarios::composition` combines existing checked equipment,
+`rm_sim_assets::scenarios::composition` combines existing checked equipment,
 static terrain, robot spawns and explicit antenna metadata into an immutable
 `ComposedScenario`. It creates ordinary `RobotSession`s, with no match authority,
 network protocol, implicit controller or automatic mechanism scheduler. Existing
@@ -11,8 +11,8 @@ network protocol, implicit controller or automatic mechanism scheduler. Existing
 Run the example without CAD, or compose two complete source Outposts:
 
 ```sh
-cargo run -p rm-simulator-assets --example composed_scenario --locked
-cargo run -p rm-simulator-assets --example composed_scenario --locked -- field-2027
+cargo run -p rm-sim-assets --example composed_scenario --locked
+cargo run -p rm-sim-assets --example composed_scenario --locked -- field-2027
 ```
 
 The example reports preparation, initial session creation and the mean of 100
@@ -34,8 +34,8 @@ The latter validates physical metadata; its caller obtains source geometry and
 file provenance through the existing verified package loader.
 
 ```rust
-use rm_simulator_assets::scenarios::{Scenario, composition::*};
-use rm_simulator_physics::{Pose, StepDuration, arena::TunnelModel};
+use rm_sim_assets::scenarios::{Scenario, composition::*};
+use rm_sim_physics::{Pose, StepDuration, arena::TunnelModel};
 
 let tunnel = Scenario::tunnel(TunnelModel {
     pose: Pose::default(),
@@ -186,8 +186,8 @@ sensor channel continuity. The source
 check is explicit because ordinary tests must work without local CAD:
 
 ```sh
-cargo test -p rm-simulator-assets --locked
-cargo test -p rm-simulator-assets --locked checked_source_outposts -- --ignored --nocapture
+cargo test -p rm-sim-assets --locked
+cargo test -p rm-sim-assets --locked checked_source_outposts -- --ignored --nocapture
 ```
 
 The source test verifies two approved Outposts with six uniquely remapped targets,

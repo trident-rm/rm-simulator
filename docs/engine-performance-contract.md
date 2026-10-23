@@ -11,7 +11,7 @@ patches were also inspected read-only; their source fingerprints appear below.
 They are not commits in this document's branch. Parent integration and the full
 workspace gate remain separate work.
 
-The first core ownership extraction now lives in `rm-simulator-engine`:
+The first core ownership extraction now lives in `rm-sim-engine`:
 poses/time, query and drive records, and wheel laws have one solver-free
 definition, with physics compatibility exports. See [Engine architecture](engine-architecture.md)
 for the current migration stages. The richer identity/lifecycle/device contracts
@@ -154,9 +154,9 @@ additional metadata, not a reinterpretation of that ordinal.
 ## Step phases preserve the current authority
 
 The normative behavior is the current code, especially
-[`Field::step_with_hits`](../crates/rm-simulator-world/src/lib.rs),
-[`advance_2027`](../crates/rm-simulator-world/src/rmuc_2027.rs) and
-[`WorldPhysics::step`](../crates/rm-simulator-physics/src/runtime.rs).
+[`Field::step_with_hits`](../crates/rm-sim-world/src/lib.rs),
+[`advance_2027`](../crates/rm-sim-world/src/rmuc_2027.rs) and
+[`WorldPhysics::step`](../crates/rm-sim-physics/src/runtime.rs).
 The phases below document existing ordering; they are not independent scheduled
 plugins. Extraction must preserve early exits and error/partial-progress behavior
 as well as successful execution.
@@ -354,7 +354,7 @@ hashes, executable/profile/toolchain/backend configuration, exact input sequence
 reset/warmup boundaries, seeds, duration and raw output hashes. Compare baseline
 and candidate after builds complete, with paired order reversal and repeated runs.
 On Talos use private source/target directories, a moderate build job count, the
-read-only canonical `/home/hxyulin/.cache/rm-simulator-arena/field-2027`, and
+read-only canonical `/home/hxyulin/.cache/rm-sim-arena/field-2027`, and
 serialize timing with `/tmp/rm-perf-pass-20261023.lock`. Build outside that lock;
 record compiler activity/load because the lock cannot exclude external work.
 Use the fleet skill for access. This document required no remote access or timing.
@@ -394,9 +394,9 @@ later extraction may legitimately change it. No parent file was edited.
 ```text
 dd10bc1eb19294744ced930bcfc6eb9f57630269c5983e84e9aea5db7f637fb0  docs/runtime-game-split.md
 d2e3d207e56f9ad9a53f8b59b12b4a6f859f987258e20177a5b9ad76e6b2b30a  docs/performance-optimization-20261023.md
-cee8c515ac17936228ed817c6ff2e6c62083580b9a183d46b51ed518175fc5fe  crates/rm-simulator-assets/src/arena.rs
-aecbe8f7651283ffe4e55c913d0d5f713b35d9a9cfe23625a9bcfd85559908d9  crates/rm-simulator-physics/src/projectile.rs
-06eabeae6d2e958dda9b7bea8c346d64d5475ca94f515ae528010fe7b51910bd  crates/rm-simulator-physics/src/sensors/rolling.rs
-f705a8ecde9bf622eb8af5a94f10061a41a7397406e3fc6bc2befc272201d60c  crates/rm-simulator-physics/src/wheel_model.rs
-cbd7b4c1b6ea69d6d0ca89d987020fa237015fc16d215982e624069bd13267c7  crates/rm-simulator-physics/src/assembly_model.rs
+cee8c515ac17936228ed817c6ff2e6c62083580b9a183d46b51ed518175fc5fe  crates/rm-sim-assets/src/arena.rs
+aecbe8f7651283ffe4e55c913d0d5f713b35d9a9cfe23625a9bcfd85559908d9  crates/rm-sim-physics/src/projectile.rs
+06eabeae6d2e958dda9b7bea8c346d64d5475ca94f515ae528010fe7b51910bd  crates/rm-sim-physics/src/sensors/rolling.rs
+f705a8ecde9bf622eb8af5a94f10061a41a7397406e3fc6bc2befc272201d60c  crates/rm-sim-physics/src/wheel_model.rs
+cbd7b4c1b6ea69d6d0ca89d987020fa237015fc16d215982e624069bd13267c7  crates/rm-sim-physics/src/assembly_model.rs
 ```

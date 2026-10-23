@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright (c) 2026 hxyulin <hxyulin@proton.me>
+[package]
+name = "rm-sim-physics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rm-sim-engine = { version = "0.1.0", path = "../rm-sim-engine" }
+glam.workspace = true
+rapier3d-f64 = "0.35.3"
+serde.workspace = true
+mid360-sim = { version = "0.1.0", git = "https://github.com/hxyulin/mid360-sim.git", rev = "c832a45bbde4d6cc5ef1e09afb0102b699fdc8d6", default-features = false }

@@ -83,10 +83,10 @@ must not be presented as full collision-checked planning speedups.
 ## Reproduce
 
 ```sh
-nix develop -c cargo test -p rm-simulator-physics --locked
-nix develop -c cargo test -p rm-simulator-server --lib --locked assembly_rig::planner::tests
-nix develop -c cargo test -p rm-simulator-server --lib --locked source_live_manual_parking_all_levels -- --ignored --nocapture
-nix develop -c cargo build -p rm-simulator-physics --example serial_ik_bench --release --locked
+nix develop -c cargo test -p rm-sim-physics --locked
+nix develop -c cargo test -p rm-sim-server --lib --locked assembly_rig::planner::tests
+nix develop -c cargo test -p rm-sim-server --lib --locked source_live_manual_parking_all_levels -- --ignored --nocapture
+nix develop -c cargo build -p rm-sim-physics --example serial_ik_bench --release --locked
 target/nix/release/examples/serial_ik_bench /path/to/arm-bearings.txt
 ```
 

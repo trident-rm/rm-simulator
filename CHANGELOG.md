@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Rename workspace crates and Rust imports from `rm-simulator-*` /
+  `rm_simulator_*` to `rm-sim-*` / `rm_sim_*`, including crate directories,
+  optional integrations and suffixed server/benchmark executables. The main
+  `rm-simulator` executable and repository name are unchanged. Generic engine,
+  physics and renderer facilities retain the shared `rm-sim` namespace.
+
 - Separate RoboMaster snapshot-to-appearance adaptation from app orchestration.
   Add a generic-only renderer configuration with shared-handle visuals and sparse
   pose/visibility updates, preserving the game's default visual APIs. Include an

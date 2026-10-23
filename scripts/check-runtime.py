@@ -21,20 +21,20 @@ def main():
         if any(name.startswith("season-") for name in package["features"]):
             raise RuntimeError(f"{package['name']} still exposes season switches")
     for package, test_filter in [
-        ("rm-simulator-gameplay", "season::tests"),
-        ("rm-simulator-gameplay", "rmuc_2027::"),
-        ("rm-simulator-gameplay", "rmul_2027::"),
-        ("rm-simulator-world", "rmul_2027::tests"),
-        ("rm-simulator-world", "rmuc_2027::tests"),
-        ("rm-simulator-server", "runtime_admission"),
-        ("rm-simulator-server", "rmul"),
+        ("rm-sim-gameplay", "season::tests"),
+        ("rm-sim-gameplay", "rmuc_2027::"),
+        ("rm-sim-gameplay", "rmul_2027::"),
+        ("rm-sim-world", "rmul_2027::tests"),
+        ("rm-sim-world", "rmuc_2027::tests"),
+        ("rm-sim-server", "runtime_admission"),
+        ("rm-sim-server", "rmul"),
     ]:
         subprocess.run([
             rust, "test", "--locked", "-p", package,
             "--no-default-features", "--lib", test_filter,
         ], cwd=root, check=True)
     subprocess.run([
-        rust, "test", "--locked", "-p", "rm-simulator-gameplay",
+        rust, "test", "--locked", "-p", "rm-sim-gameplay",
         "--no-default-features", "--test", "control_2027", "--test", "field_buffs_2027",
         "--test", "terrain_2027", "--test", "rune_2027", "--test", "assembly_2027",
         "--test", "adaptive_2027",

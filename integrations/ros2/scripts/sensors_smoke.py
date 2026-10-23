@@ -19,7 +19,7 @@ from control import request
 def main():
     root = Path(__file__).resolve().parents[3]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--server-bin", type=Path, default=root / "target/nix/debug/rm-simulator-server")
+    parser.add_argument("--server-bin", type=Path, default=root / "target/nix/debug/rm-sim-server")
     parser.add_argument("--cad-assets", type=Path, default=root / "field-2027")
     parser.add_argument("--stride", type=int, default=3)
     parser.add_argument("--moving", action="store_true")
@@ -89,7 +89,7 @@ def main():
             node.create_subscription(CustomMsg, "/sensors_test/lidar", scans.append, qos)
             node.create_subscription(Imu, "/sensors_test/imu", inertial.append, qos)
             node.create_subscription(Clock, "/clock", clocks.append, qos)
-            bridge = subprocess.Popen([str(root / "target/ros2/release/rm-simulator-ros2"), "--host", address, "--robot", str(robot), "--frames", "6", "--stride", str(args.stride), "--range-noise-m", "0", "--dropout", "0", "--topic", "/sensors_test/lidar", "--imu-topic", "/sensors_test/imu", "--frame-id", "test_lidar", "--imu-frame-id", "test_imu", "--publish-clock", "--require-subscriber", "--wait-for-subscriber-ms", "5000"], stdout=bridge_log, stderr=subprocess.STDOUT)
+            bridge = subprocess.Popen([str(root / "target/ros2/release/rm-sim-ros2"), "--host", address, "--robot", str(robot), "--frames", "6", "--stride", str(args.stride), "--range-noise-m", "0", "--dropout", "0", "--topic", "/sensors_test/lidar", "--imu-topic", "/sensors_test/imu", "--frame-id", "test_lidar", "--imu-frame-id", "test_imu", "--publish-clock", "--require-subscriber", "--wait-for-subscriber-ms", "5000"], stdout=bridge_log, stderr=subprocess.STDOUT)
             children.append(bridge)
             deadline = time.monotonic() + 35
             while time.monotonic() < deadline:

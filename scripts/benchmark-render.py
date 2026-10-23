@@ -78,7 +78,7 @@ def power():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", type=Path)
-    parser.add_argument("--binary", type=Path, default=Path("target/debug/rm-simulator-bench"))
+    parser.add_argument("--binary", type=Path, default=Path("target/debug/rm-sim-bench"))
     parser.add_argument("--cad-assets", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--backend", choices=["auto", "metal", "vulkan", "dx12", "gl"], default="auto")

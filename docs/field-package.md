@@ -29,7 +29,7 @@ version, geometry counts and remaining fitted detector data.
 
 ## Independent equipment instances
 
-`rm_simulator_assets::components::load` composes one verified exported asset into
+`rm_sim_assets::components::load` composes one verified exported asset into
 an asset-local `ComponentModel`. Native body partitions and semantic joint
 subtrees reuse the existing package metadata; visual materials and geometry are
 not regenerated. Apply one exported root placement with `placed`, then consume

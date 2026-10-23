@@ -87,7 +87,7 @@ under the repository's `MIT OR Apache-2.0` terms and keeps this provenance
 notice. The two repositories share no crate or wire contract.
 
 The fitted outpost geometry and rune pose helpers now in
-`crates/rm-simulator-physics/src/motion.rs` were moved from the world crate.
+`crates/rm-sim-physics/src/motion.rs` were moved from the world crate.
 They carry the same `rm-vision-sim` provenance described above.
 
 The historical RMUC 2026 field geometry and `field/` LFS package are preserved
@@ -183,7 +183,7 @@ flood-fill conversion recipe; `atlas.json` retains source hashes, seeds and
 qualification. Source artwork rights remain with their original owners, so these
 SVGs carry no SPDX header and assert no copyright for this repository.
 
-The procedural robot equipment in `rm-simulator-render/src/equipment.rs` and
+The procedural robot equipment in `rm-sim-render/src/equipment.rs` and
 `chassis.rs` was hand-built using user-supplied RoboMaster module STEP files and
 DJI user-guide drawings as dimensional references. No CAD tessellation or manual
 illustrations are included. Source titles, dimensions and approximation choices

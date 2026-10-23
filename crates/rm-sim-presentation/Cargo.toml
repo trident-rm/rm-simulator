@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright (c) 2026 hxyulin <hxyulin@proton.me>
+[package]
+name = "rm-sim-presentation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rm-sim-world = { version = "0.1.0", path = "../rm-sim-world" }
+rm-sim-render = { version = "0.1.0", path = "../rm-sim-render" }
+glam.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
+serde_json.workspace = true

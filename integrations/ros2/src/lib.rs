@@ -3,7 +3,7 @@
 //! Optional ROS 2 adapter. Default builds only validate/convert rolling scans;
 //! the `ros2` feature enables rclrs and requires a sourced ROS installation.
 //! Measured points remain in each emission's sensor frame; no truth pose is sent.
-use rm_simulator_physics::sensors::{MAX_LIDAR_RAYS, rolling::RollingFrame};
+use rm_sim_physics::sensors::{MAX_LIDAR_RAYS, rolling::RollingFrame};
 
 #[cfg(feature = "ros2")]
 pub mod publisher;
@@ -39,7 +39,7 @@ impl RosTime {
     /// Convert without clamping or wrapping ROS's signed seconds field.
     ///
     /// ```
-    /// use rm_simulator_ros2::RosTime;
+    /// use rm_sim_ros2::RosTime;
     /// let time = RosTime::from_ns(1_500_000_123)?;
     /// assert_eq!((time.sec, time.nanosec), (1, 500_000_123));
     /// # Ok::<(), &'static str>(())
@@ -144,7 +144,7 @@ impl LivoxPacket {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rm_simulator_physics::sensors::rolling::TimedReturn;
+    use rm_sim_physics::sensors::rolling::TimedReturn;
     fn hit(index: u64, time: u64) -> TimedReturn {
         TimedReturn {
             sample_index: index,

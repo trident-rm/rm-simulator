@@ -60,7 +60,7 @@ jobs:
       - uses: ./.github/actions/native-cache
         id: cache
       - name: Build standalone app and server
-        run: cargo build --release --locked -p rm-simulator-app -p rm-simulator-server
+        run: cargo build --release --locked -p rm-sim-app -p rm-sim-server
       - name: Compile workspace tests
         if: inputs.validate
         run: cargo test --release --workspace "$TEST_FEATURES" --locked --no-run
@@ -71,7 +71,7 @@ jobs:
         if: inputs.validate && runner.os == 'Linux'
         run: cargo clippy --release --workspace --all-targets --all-features --locked -- -D warnings
       - name: Build field inspector
-        run: cargo build --release --locked -p rm-simulator-server --example inspect_assets
+        run: cargo build --release --locked -p rm-sim-server --example inspect_assets
       - name: Remove rebuildable native cache downloads
         if: runner.os == 'Windows'
         run: python scripts/prune-build-cache.py --apply
@@ -124,7 +124,7 @@ jobs:
       # Cache eviction is allowed; Cargo rebuilds missing artifacts if necessary.
       - name: Restore standalone binaries
         if: inputs.package
-        run: cargo build --release --locked -p rm-simulator-app -p rm-simulator-server
+        run: cargo build --release --locked -p rm-sim-app -p rm-sim-server
       - name: Test workspace
         if: inputs.validate
         run: cargo test --release --workspace "$TEST_FEATURES" --locked
@@ -133,7 +133,7 @@ jobs:
         run: python scripts/check-runtime.py
       - name: Verify RMUC 2027 field with the real loader
         if: inputs.package
-        run: cargo run --release --locked -p rm-simulator-server --example inspect_assets -- dist/field-2027
+        run: cargo run --release --locked -p rm-sim-server --example inspect_assets -- dist/field-2027
       - name: Bundle and smoke-test binaries
         if: inputs.package
         env:

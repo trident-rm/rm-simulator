@@ -16,7 +16,7 @@ fn main() -> anyhow::Result<()> {
     let mut robot_enabled = true;
     let mut script: Option<PathBuf> = None;
     let mut rfid: Option<PathBuf> = None;
-    let mut root = rm_simulator_assets::cad_assets::default_cad_assets();
+    let mut root = rm_sim_assets::cad_assets::default_cad_assets();
     let mut asset = "outpost".to_string();
     let mut placement = 0;
     let mut probe: Option<PathBuf> = None;
@@ -119,11 +119,11 @@ fn main() -> anyhow::Result<()> {
     if !robot_enabled && inspector.robot_spawn().is_some() {
         inspector.configure_robot(None)?;
     } else if let Some(v) = spawn {
-        let config = rm_simulator_physics::chassis::ChassisConfig::default();
-        inspector.configure_robot(Some(rm_simulator_assets::scenarios::RobotSpawn {
-            team: rm_simulator_physics::Team::Red,
+        let config = rm_sim_physics::chassis::ChassisConfig::default();
+        inspector.configure_robot(Some(rm_sim_assets::scenarios::RobotSpawn {
+            team: rm_sim_physics::Team::Red,
             config,
-            pose: rm_simulator_physics::Pose {
+            pose: rm_sim_physics::Pose {
                 translation_m: [v[0], v[1], v[2]],
                 rotation_wxyz: [(v[3] / 2.).cos(), 0., 0., (v[3] / 2.).sin()],
             },

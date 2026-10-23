@@ -2,13 +2,13 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Toolkit-independent selection and explicit physical preview. No rules or wall-clock reads.
 use anyhow::{Context, ensure};
-use rm_simulator_assets::{
+use rm_sim_assets::{
     cad_assets::{self, CadAsset, CadAssets},
     components::{self, ComponentRole, PlacedComponent},
     math,
     scenarios::{Preset, RobotSpawn, Scenario},
 };
-use rm_simulator_physics::{
+use rm_sim_physics::{
     Caliber, Pose, Shot, StepDuration, TargetFace, Team,
     arena::OutpostModel,
     chassis::{ChassisCommand, ChassisConfig, ChassisSnapshot},
@@ -163,7 +163,7 @@ pub struct Inspector {
     /// Per-channel offsets at inspection t=0; rotations rad, translations fraction.
     pub coordinates: Vec<f64>,
     /// Optional caller-exported RFID geometry; never treated as package-verified.
-    pub overlay_zones: Vec<rm_simulator_assets::rmuc_2027::Zone>,
+    pub overlay_zones: Vec<rm_sim_assets::rmuc_2027::Zone>,
     /// Caller-supplied overlay path, explicitly outside package verification.
     pub overlay_source: Option<std::path::PathBuf>,
     visual_cache: std::sync::OnceLock<Result<Vec<crate::viewport::Visual>, String>>,
@@ -181,7 +181,7 @@ impl Inspector {
                     .as_ref()
                     .map(|b| b.motions(&self.cad, self.asset()))
                     .unwrap_or_default();
-                rm_simulator_assets::collision_mesh::load_glb_visuals(
+                rm_sim_assets::collision_mesh::load_glb_visuals(
                     &self.cad.root.join(&self.asset().file),
                 )
                 .map(|parts| {
@@ -422,9 +422,7 @@ impl Inspector {
             aim_pitch_rad: pitch_rad,
             ..state.command
         })?;
-        if let rm_simulator_physics::control::DriveControl::WheelTorques(torques) =
-            state.drive_control
-        {
+        if let rm_sim_physics::control::DriveControl::WheelTorques(torques) = state.drive_control {
             self.robot_command(RobotCommand::WheelTorques { robot: 0, torques })?;
         }
         Ok(())
@@ -447,7 +445,7 @@ impl Inspector {
     fn robot_command(
         &mut self,
         command: RobotCommand,
-    ) -> anyhow::Result<rm_simulator_physics::session::CommandResult> {
+    ) -> anyhow::Result<rm_sim_physics::session::CommandResult> {
         self.physical
             .as_mut()
             .context("selection has no physical scenario")?
@@ -662,7 +660,7 @@ impl Inspector {
     }
     /// Import explicit caller geometry without enabling any RFID rules.
     pub fn load_zones(&mut self, path: &Path) -> anyhow::Result<()> {
-        let zones: Vec<rm_simulator_assets::rmuc_2027::Zone> =
+        let zones: Vec<rm_sim_assets::rmuc_2027::Zone> =
             serde_json::from_slice(&std::fs::read(path)?)?;
         ensure!(
             zones.iter().all(|z| z.polygon_m.len() >= 3
@@ -678,7 +676,7 @@ impl Inspector {
         Ok(())
     }
     /// Source and optional caller RFID footprints; no occupancy/rule evaluation.
-    pub fn zones(&self) -> Vec<&rm_simulator_assets::rmuc_2027::Zone> {
+    pub fn zones(&self) -> Vec<&rm_sim_assets::rmuc_2027::Zone> {
         let mut result = self.overlay_zones.iter().collect::<Vec<_>>();
         if let Some(b) = &self.cad.rmuc_2027 {
             result.extend(
@@ -824,7 +822,7 @@ mod tests {
     }
     #[test]
     fn cad_free_physical_preview_drives_fires_and_rebuilds_robot() {
-        use rm_simulator_physics::arena::TunnelModel;
+        use rm_sim_physics::arena::TunnelModel;
         let scenario = Scenario::tunnel(TunnelModel {
             pose: Pose::at([10., 0., 0.]),
             opening_m: [2., 1., 0.65],
@@ -890,7 +888,7 @@ mod tests {
             .unwrap();
         assert!(matches!(
             preview.session.robot_truth(0).unwrap().state.drive_control,
-            rm_simulator_physics::control::DriveControl::WheelTorques(_)
+            rm_sim_physics::control::DriveControl::WheelTorques(_)
         ));
         let muzzle = preview
             .session
@@ -945,7 +943,7 @@ mod package_tests {
         assert_ne!(m.robot_truth().unwrap().pose, initial.pose);
         assert!(matches!(
             m.robot_truth().unwrap().drive_control,
-            rm_simulator_physics::control::DriveControl::WheelTorques(_)
+            rm_sim_physics::control::DriveControl::WheelTorques(_)
         ));
         let muzzle = m
             .physical

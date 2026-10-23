@@ -95,8 +95,8 @@ Retain existing crate names and compatibility exports where they remain useful.
 
 The robot-model layer can remain RoboMaster-oriented. A backend-neutral boundary
 does not require turning this project into a general-purpose game engine.
-The existing rm-simulator-gameplay crate remains the independent rules engine;
-rm-simulator-world should become the match composition, rather than being renamed
+The existing rm-sim-gameplay crate remains the independent rules engine;
+rm-sim-world should become the match composition, rather than being renamed
 wholesale into a generic runtime while retaining its match-specific fields.
 
 ## Concrete moves from the current code

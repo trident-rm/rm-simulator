@@ -14,7 +14,7 @@ Unknown identities return `None`. The view borrows its world, so Rust prevents
 stepping or resetting that world while the view remains in use.
 
 ```rust
-use rm_simulator_physics::{WorldPhysics, Pose, Team, chassis::ChassisConfig};
+use rm_sim_physics::{WorldPhysics, Pose, Team, chassis::ChassisConfig};
 let mut world = WorldPhysics::new(&[], 0.);
 let id = world.add_chassis(Team::Red, ChassisConfig::default(), Pose::at([0., 0., 0.4]))?;
 let mut wheels = Vec::new(); // Retain this buffer across acquisitions.
@@ -63,7 +63,7 @@ make those captures allocation-free or change sensor interpolation/reset rules.
 Run the dependency-free extraction comparison with:
 
 ```sh
-cargo run --release -p rm-simulator-physics --example telemetry_cost --locked
+cargo run --release -p rm-sim-physics --example telemetry_cost --locked
 ```
 
 It compares complete snapshot cloning, scalar/borrowed view construction and a

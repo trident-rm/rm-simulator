@@ -8,7 +8,7 @@ use bevy::{
     render::view::screenshot::{Screenshot, ScreenshotCaptured},
 };
 use clap::Parser;
-use rm_simulator_render::generic::{PoseFlu, VisualId, VisualPlugin, Visuals};
+use rm_sim_render::generic::{PoseFlu, VisualId, VisualPlugin, Visuals};
 use simulation::{HALF_EXTENTS_M, KEYS, Simulation};
 use std::{
     path::PathBuf,
@@ -125,7 +125,7 @@ struct Orbit {
 }
 #[derive(Component)]
 struct Status;
-fn pose(p: rm_simulator_engine::Pose) -> PoseFlu {
+fn pose(p: rm_sim_engine::Pose) -> PoseFlu {
     PoseFlu {
         translation_m: p.translation_m,
         rotation_wxyz: p.rotation_wxyz,

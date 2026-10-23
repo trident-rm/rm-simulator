@@ -6055,7 +6055,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
-name = "rm-simulator-app"
+name = "rm-sim-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -6064,12 +6064,12 @@ dependencies = [
  "clap",
  "glam 0.33.12",
  "prost",
- "rm-simulator-assets",
- "rm-simulator-physics",
- "rm-simulator-presentation",
- "rm-simulator-render",
- "rm-simulator-server",
- "rm-simulator-world",
+ "rm-sim-assets",
+ "rm-sim-physics",
+ "rm-sim-presentation",
+ "rm-sim-render",
+ "rm-sim-server",
+ "rm-sim-world",
  "rumqttd",
  "serde",
  "serde_json",
@@ -6078,25 +6078,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "rm-simulator-assets"
+name = "rm-sim-assets"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "rm-simulator-gameplay",
- "rm-simulator-physics",
+ "rm-sim-gameplay",
+ "rm-sim-physics",
  "serde",
  "serde_json",
  "sha2",
 ]
 
 [[package]]
-name = "rm-simulator-bench"
+name = "rm-sim-bench"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "bevy",
  "clap",
- "rm-simulator-render",
+ "rm-sim-render",
  "serde",
  "serde_json",
  "sha2",
@@ -6104,7 +6104,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rm-simulator-engine"
+name = "rm-sim-engine"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
@@ -6113,7 +6113,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rm-simulator-gameplay"
+name = "rm-sim-gameplay"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -6122,30 +6122,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "rm-simulator-physics"
+name = "rm-sim-physics"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
  "mid360-sim",
  "rapier3d-f64",
- "rm-simulator-engine",
+ "rm-sim-engine",
  "serde",
 ]
 
 [[package]]
-name = "rm-simulator-presentation"
+name = "rm-sim-presentation"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
- "rm-simulator-render",
- "rm-simulator-world",
+ "rm-sim-render",
+ "rm-sim-world",
  "serde",
  "serde_json",
  "sha2",
 ]
 
 [[package]]
-name = "rm-simulator-render"
+name = "rm-sim-render"
 version = "0.1.0"
 dependencies = [
  "bevy",
@@ -6154,7 +6154,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rm-simulator-server"
+name = "rm-sim-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -6163,9 +6163,9 @@ dependencies = [
  "game-networking-sockets",
  "glam 0.33.12",
  "if-addrs",
- "rm-simulator-assets",
- "rm-simulator-physics",
- "rm-simulator-world",
+ "rm-sim-assets",
+ "rm-sim-physics",
+ "rm-sim-world",
  "serde",
  "serde_json",
  "sha2",
@@ -6173,12 +6173,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "rm-simulator-world"
+name = "rm-sim-world"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
- "rm-simulator-gameplay",
- "rm-simulator-physics",
+ "rm-sim-gameplay",
+ "rm-sim-physics",
  "serde",
  "thiserror 2.0.21",
 ]

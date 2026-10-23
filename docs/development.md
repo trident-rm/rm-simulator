@@ -8,7 +8,7 @@ and [CI and releases](releases.md); the [project README](../README.md) covers pl
 
 ## Environment
 
-`rust-toolchain.toml` pins stable Rust with the `rustfmt` and `clippy`
+`rust-toolchain.toml` pins stable Rust with the `rustfmt`, `clippy` and `rust-analyzer`
 components; Rust stays under rustup even inside the Nix shell.
 
 `.envrc` runs `use flake`, so `direnv allow` loads the shell from `flake.nix`;
@@ -106,20 +106,34 @@ second command line.
 
 Run it before opening a pull request, after compilation has finished.
 
+## Crate naming
+
+Workspace packages and directories use `rm-sim-*`; Rust imports use `rm_sim_*`.
+This replaces the former `rm-simulator-*` / `rm_simulator_*` names. The main
+`rm-simulator` executable and GitHub repository keep their names; suffixed
+executables use the new prefix (`rm-sim-server`, `rm-sim-bench`, `rm-sim-ros2`).
+The independent `crates/rm-sim` registry placeholder remains separate from the
+unpublished runtime workspace. Engine, physics and generic rendering retain
+this namespace until another use case warrants an independent identity.
+
+Dated performance reports preserve the package names used for their recorded
+revisions. Substitute the new prefix when running their commands on current
+source.
+
 ## Tests
 
 Tests live beside the code. `just test` runs the whole workspace; these commands
 narrow to one crate.
 
-- `rm-simulator-physics`: `cargo test -p rm-simulator-physics --locked` for
+- `rm-sim-physics`: `cargo test -p rm-sim-physics --locked` for
   dynamics, geometry and raw contacts.
-- `rm-simulator-world`: `just world-test` = `cargo test -p rm-simulator-world
+- `rm-sim-world`: `just world-test` = `cargo test -p rm-sim-world
   --locked`, building a `Field` from a `FieldConfig` and stepping it.
-- `rm-simulator-gameplay`: `just gameplay-test`, with no physics, CAD, server or
+- `rm-sim-gameplay`: `just gameplay-test`, with no physics, CAD, server or
   renderer; `just gameplay-demo` runs a complete scenario.
-- `rm-simulator-render`: a headless `App` with the sync plugin, inspecting components.
-- `rm-simulator-server`: the protocol, the UDP client flows and the HTTP routes.
-- `rm-simulator-app`: argument parsing, frame conversions, flashes, the HUD line
+- `rm-sim-render`: a headless `App` with the sync plugin, inspecting components.
+- `rm-sim-server`: the protocol, the UDP client flows and the HTTP routes.
+- `rm-sim-app`: argument parsing, frame conversions, flashes, the HUD line
   and an end-to-end trace (`net_harness.rs`) over `scripted_link.rs`.
 
 Python suites live in `scripts/tests/`; `just network-test` runs the network

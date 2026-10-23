@@ -13,9 +13,9 @@ metadata = json.loads(subprocess.check_output([
 packages = {package["id"]: package for package in metadata["packages"]}
 for node in metadata["resolve"]["nodes"]:
     name = packages[node["id"]]["name"]
-    assert name not in {"rm-simulator-assets", "rm-simulator-gameplay", "rm-simulator-world",
-                        "rm-simulator-server", "rm-simulator-presentation", "rclrs", "rosidl_runtime_rs"}, name
-    if name == "rm-simulator-render":
+    assert name not in {"rm-sim-assets", "rm-sim-gameplay", "rm-sim-world",
+                        "rm-sim-server", "rm-sim-presentation", "rclrs", "rosidl_runtime_rs"}, name
+    if name == "rm-sim-render":
         assert "robomaster" not in node["features"], node["features"]
 for name, version in [("bevy", "0.20.0"), ("wgpu", "30.0.1")]:
     versions = {package["version"] for package in packages.values() if package["name"] == name}

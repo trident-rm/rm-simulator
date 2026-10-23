@@ -1,0 +1,2017 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 hxyulin <hxyulin@proton.me>
+//! Simplified competitor display, following the July 2026 student client
+//! manual, main interface and panels 1, 3, 5 and 6. Only live simulator data
+//! is shown; the map is a schematic, not a radar detection model.
+use crate::bindings::InputAction;
+use bevy::prelude::*;
+use bevy_flair::prelude::{ClassList, Styled};
+
+mod controls_menu;
+mod heat_ring;
+mod map_interaction;
+mod menus;
+pub(crate) use map_interaction::sync as sync_map_interaction;
+mod team_status;
+/// The HUD plugin and the two input systems, re-exported from `menus` so
+/// `main.rs` wires the overlay through one `hud` path.
+pub use menus::{HudPlugin, menu_input, sync_menus};
+/// Markers for the settings shade and the toolbar, so match teardown can despawn
+/// both without naming the menus module.
+pub(crate) use menus::{Settings, Toolbar};
+use rm_sim_server::protocol::MapMarkerKind;
+use rm_sim_world::{Caliber, Team};
+
+use crate::controls::{Drive, Gun, Player};
+use crate::session::Session;
+
+const INK: Color = crate::ui_theme::PANEL;
+const WHITE: Color = crate::ui_theme::TEXT;
+const GREEN: Color = crate::ui_theme::ACCENT;
+fn team_color(team: Team) -> Color {
+    match team {
+        Team::Red => Color::srgb(0.95, 0.22, 0.22),
+        Team::Blue => Color::srgb(0.18, 0.65, 1.0),
+    }
+}
+
+/// Overlay panel state and display preferences shared by every HUD system.
+#[derive(Resource)]
+pub struct HudState {
+    /// Key and mouse bindings used for every gameplay action.
+    pub controls: crate::bindings::ControlsSettings,
+    /// A binding capture is running and owns the keyboard.
+    pub rebinding: bool,
+    /// A visible window lost focus, so gameplay input is suspended.
+    pub unfocused: bool,
+    /// Which network diagnostic overlay mode is shown.
+    pub network_stats: crate::network_hud::NetworkStatsMode,
+    /// The settings panel is open.
+    pub settings: bool,
+    /// Automatic assembly controls are open.
+    pub assembly: bool,
+    /// The pause menu is open.
+    pub pause_menu: bool,
+    /// The quit confirmation dialog is open.
+    pub quit_confirm: bool,
+    /// The respawn prompt is up after the local robot was defeated.
+    pub respawn: bool,
+    /// The debug options panel is open.
+    pub debug: bool,
+    /// The controls help panel is pinned open.
+    pub help: bool,
+    /// The team status panel is pinned open.
+    pub roster: bool,
+    /// Swallow the event that closes a menu until the next frame.
+    pub consumed: bool,
+    /// The field map is expanded to its large layout.
+    pub large_map: bool,
+    /// Draw the field map while it is not expanded.
+    pub show_map: bool,
+    /// Draw the aiming reticle.
+    pub show_reticle: bool,
+    /// Horizontal aim sensitivity in radians of yaw per pixel of mouse motion.
+    pub sensitivity: f32,
+    /// Balance stabilization strength, 0 through 100 percent.
+    pub balance_control: u8,
+    /// Escape consumed by a panel must not also quit or release capture.
+    pub closed_with_escape: bool,
+    /// Marker a map click sends, picked with a letter key on the large map.
+    pub map_marker: MapMarkerKind,
+    /// The last marker this client sent and where, drawn on the map.
+    pub last_marker: Option<(MapMarkerKind, [f64; 2])>,
+    /// Pending clicked FLU point and optional protocol key; not sent until confirmed.
+    pub pending_map: Option<([f64; 2], u8)>,
+}
+impl Default for HudState {
+    fn default() -> Self {
+        Self {
+            controls: default(),
+            rebinding: false,
+            unfocused: false,
+            network_stats: Default::default(),
+            settings: false,
+            assembly: false,
+            pause_menu: false,
+            quit_confirm: false,
+            respawn: false,
+            debug: false,
+            help: false,
+            roster: false,
+            consumed: false,
+            large_map: false,
+            show_map: true,
+            show_reticle: true,
+            sensitivity: 0.0025,
+            balance_control: 100,
+            closed_with_escape: false,
+            map_marker: MapMarkerKind::Attack,
+            last_marker: None,
+            pending_map: None,
+        }
+    }
+}
+impl HudState {
+    /// True while an open panel or a running capture must swallow gameplay input.
+    pub fn blocks_input(&self) -> bool {
+        self.pending_map.is_some()
+            || self.unfocused
+            || self.assembly
+            || self.rebinding
+            || self.respawn
+            || self.debug
+            || self.pause_menu
+            || self.quit_confirm
+            || self.settings
+            || self.large_map
+            || self.help
+            || self.roster
+            || self.closed_with_escape
+            || self.consumed
+    }
+}
+
+/// Keyboard shortcuts remain available alongside the mouse controls.
+pub fn panel_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Option<Res<ButtonInput<MouseButton>>>,
+    // The page sub-state exists only while the title screen is up.
+    page: Option<Res<State<crate::title::Page>>>,
+    mut next_page: Option<ResMut<NextState<crate::title::Page>>>,
+    mut title_state: Option<ResMut<crate::title::TitleState>>,
+    mut ui: ResMut<HudState>,
+) {
+    if ui.rebinding || ui.consumed {
+        return;
+    }
+    ui.closed_with_escape = false;
+    if keys.just_pressed(KeyCode::Escape) {
+        if ui.modal_open() {
+            ui.dismiss();
+        } else if let Some(page) = page.as_deref().map(State::get).copied() {
+            let left = match (title_state.as_mut(), next_page.as_mut()) {
+                (Some(state), Some(next)) => state.escape_back(page, next),
+                _ => false,
+            };
+            if !left {
+                ui.quit_confirm = true;
+            }
+        } else {
+            ui.pause_menu = true;
+        }
+        ui.closed_with_escape = true;
+        return;
+    }
+    if page.is_some() || ui.pause_menu {
+        return;
+    }
+    if ui
+        .controls
+        .just_pressed(InputAction::Debug, &keys, buttons.as_deref())
+    {
+        let open = !ui.debug;
+        ui.close();
+        ui.debug = open;
+    }
+    if ui
+        .controls
+        .just_pressed(InputAction::Settings, &keys, buttons.as_deref())
+    {
+        let open = !ui.settings;
+        ui.close();
+        ui.settings = open;
+    }
+    if ui
+        .controls
+        .just_pressed(InputAction::Map, &keys, buttons.as_deref())
+    {
+        let open = !ui.large_map;
+        ui.close();
+        ui.large_map = open;
+    }
+    if ui.settings {
+        if keys.just_pressed(KeyCode::Digit1) {
+            ui.show_reticle = !ui.show_reticle;
+        }
+        if keys.just_pressed(KeyCode::Digit2) {
+            ui.show_map = !ui.show_map;
+        }
+        if keys.just_pressed(KeyCode::Minus) {
+            ui.sensitivity = (ui.sensitivity - 0.00025).max(0.0005);
+        }
+        if keys.just_pressed(KeyCode::Equal) {
+            ui.sensitivity = (ui.sensitivity + 0.00025).min(0.005);
+        }
+    }
+}
+impl HudState {
+    /// True while a panel is open that Escape closes before the match is paused.
+    pub fn modal_open(&self) -> bool {
+        self.pending_map.is_some()
+            || self.assembly
+            || self.pause_menu
+            || self.quit_confirm
+            || self.respawn
+            || self.debug
+            || self.settings
+            || self.large_map
+            || self.help
+            || self.roster
+    }
+    /// Settings opened from Pause return to their parent menu.
+    pub fn dismiss(&mut self) {
+        if self.pause_menu && self.settings {
+            self.settings = false;
+            self.consumed = true;
+        } else {
+            self.close();
+        }
+    }
+    /// Close every dismissible panel and swallow this frame's remaining input.
+    /// The respawn prompt follows defeat instead and stays open.
+    pub fn close(&mut self) {
+        self.pending_map = None;
+        self.assembly = false;
+        self.pause_menu = false;
+        self.quit_confirm = false;
+        self.debug = false;
+        self.settings = false;
+        self.large_map = false;
+        self.help = false;
+        self.roster = false;
+        self.consumed = true;
+    }
+}
+
+/// Marker for one text node that `update_hud` rewrites from the session each frame.
+#[derive(Component, Clone, Copy)]
+pub enum Hud {
+    /// Transient connection toast, empty while the link is healthy.
+    Connection,
+    /// Score card for one team: base HP, shield and outpost HP.
+    Team(Team),
+    /// Match clock card: phase and remaining time as mm:ss.
+    Clock,
+    /// Auto-aim status line.
+    AutoAim,
+    /// Section 5.5.3.9 Fortress banner: when an opponent's Fortress opens
+    /// and each capture's countdown; empty while neither applies.
+    Fortress,
+    /// RMUC 2027 territory ownership, capture and activation summary.
+    Control,
+    /// Local robot card: kind, HP, speed and drive mode.
+    Robot,
+    /// Shot speed, caliber and remaining ammo.
+    Ammo,
+    /// Newest match notices, up to three lines.
+    Notice,
+    /// Contextual hint, such as the click-to-control prompt.
+    Hint,
+    /// Title of the held panel, either CONTROLS or TEAM STATUS.
+    Panel,
+    /// Caption above the field map.
+    MapLabel,
+}
+/// Fill node whose width tracks the local robot's HP fraction.
+#[derive(Component)]
+pub struct HealthBar;
+/// Local telemetry stack, hidden to make room for the expanded map on small windows.
+#[derive(Component)]
+pub struct PilotStack;
+/// Aiming reticle root, hidden while a panel owns the input.
+#[derive(Component)]
+pub struct Reticle;
+/// Barrel heat ring around the reticle, drawn by [`heat_ring::HeatRingMaterial`].
+#[derive(Component)]
+pub struct HeatRing;
+/// Outer diameter of the heat ring, in logical pixels.
+const HEAT_RING_SIZE_PX: f32 = 72.;
+/// Unfilled heat ring track, the colour of the plain ring it replaces.
+const HEAT_EMPTY: Color = Color::srgba(0.8, 0.9, 1., 0.25);
+/// Field map frame, which also carries the minimap artwork image once loaded.
+#[derive(Component)]
+pub struct FieldMap;
+/// Last three-column rows pushed into the peek panel, so they are rebuilt only on change.
+#[derive(Component, Default)]
+pub struct PanelRows(Vec<[String; 3]>);
+/// Marker for the hold-to-peek panel frame that `update_panel_rows` shows and hides.
+#[derive(Component)]
+pub(crate) struct PanelFrame;
+/// One labelled marker on the field map, keyed by the item it stands for.
+#[derive(Component)]
+pub struct MapDot(MapItem);
+#[derive(Clone, Copy, PartialEq)]
+enum MapItem {
+    Robot(u32),
+    Rune(usize),
+    Marker,
+    Interaction(u64),
+    Navigation(u32, usize),
+}
+const MARKER: Color = Color::srgb(1.0, 0.82, 0.25);
+/// Up to three characters for a marker on the map.
+fn marker_glyph(kind: MapMarkerKind) -> String {
+    match kind {
+        MapMarkerKind::Attack => "ATK".into(),
+        MapMarkerKind::Defend => "DEF".into(),
+        MapMarkerKind::Alert => "!".into(),
+        MapMarkerKind::Custom(_) => kind.label(),
+    }
+}
+
+/// Root node of the whole HUD overlay; every HUD widget is spawned under it.
+#[derive(Component)]
+pub(crate) struct HudRoot;
+/// Opaque scene cover below the HUD during a native first-person heat video cut.
+#[derive(Component)]
+pub(crate) struct VideoBlackout;
+
+fn register_styles(app: &mut App) {
+    heat_ring::register(app);
+    bevy::asset::embedded_asset!(app, "hud.css");
+}
+
+fn text_style(size: f32) -> TextFont {
+    TextFont {
+        font_size: bevy::text::FontSize::Px(size),
+        ..default()
+    }
+}
+fn label(commands: &mut Commands, parent: Entity, kind: Hud, class: &str) {
+    let mut entity = commands.spawn((
+        kind,
+        Text::new(""),
+        TextLayout::justify(
+            if matches!(
+                kind,
+                Hud::Clock | Hud::Hint | Hud::AutoAim | Hud::Fortress | Hud::Control
+            ) {
+                Justify::Center
+            } else {
+                Justify::Left
+            },
+        ),
+        Node::default(),
+        TextColor(WHITE),
+        text_style(16.),
+        ClassList::new(class),
+        Pickable::IGNORE,
+        ChildOf(parent),
+    ));
+    if matches!(kind, Hud::Panel) {
+        entity.insert((bevy::ui_widgets::ScrollArea, Pickable::default()));
+    }
+}
+fn container(commands: &mut Commands, parent: Entity, class: &str) -> Entity {
+    commands
+        .spawn((
+            Node::default(),
+            ClassList::new(class),
+            Pickable::IGNORE,
+            ChildOf(parent),
+        ))
+        .id()
+}
+fn bar(commands: &mut Commands, parent: Entity, marker: impl Bundle, color: Color) {
+    let track = container(commands, parent, "bar-track");
+    commands.spawn((
+        marker,
+        Node {
+            width: percent(100),
+            height: percent(100),
+            ..default()
+        },
+        BackgroundColor(color),
+        Pickable::IGNORE,
+        ChildOf(track),
+    ));
+}
+
+/// Spawn the HUD root, its embedded stylesheet and every node the HUD systems update.
+pub fn spawn_hud(commands: &mut Commands) {
+    commands.spawn((
+        VideoBlackout,
+        Node {
+            position_type: PositionType::Absolute,
+            width: percent(100),
+            height: percent(100),
+            display: Display::None,
+            ..default()
+        },
+        BackgroundColor(Color::BLACK),
+        GlobalZIndex(0),
+        Pickable::IGNORE,
+    ));
+    let root = commands
+        .spawn((
+            HudRoot,
+            Node::default(),
+            ClassList::new("hud"),
+            Pickable::IGNORE,
+            GlobalZIndex(1),
+        ))
+        .id();
+    // The stylesheet is embedded so --cad-assets never changes UI asset lookup.
+    commands.queue(move |world: &mut World| {
+        if let Some(assets) = world.get_resource::<AssetServer>() {
+            let style = assets.load("embedded://rm_simulator/hud.css");
+            world.entity_mut(root).insert(Styled::new(style));
+        }
+    });
+    let top = container(commands, root, "scoreboard");
+    for team in [Team::Red, Team::Blue] {
+        if team == Team::Blue {
+            let clock = container(commands, top, "clock-card");
+            label(commands, clock, Hud::Clock, "clock");
+        }
+        let card = container(
+            commands,
+            top,
+            if team == Team::Red {
+                "team-card red"
+            } else {
+                "team-card blue"
+            },
+        );
+        label(commands, card, Hud::Team(team), "team-status");
+        team_status::spawn(commands, card, team);
+    }
+    let stack = container(commands, root, "pilot-stack");
+    commands.entity(stack).insert(PilotStack);
+    label(commands, stack, Hud::Notice, "notices");
+    let bottom = container(commands, stack, "robot-card");
+    label(commands, bottom, Hud::Robot, "robot-status");
+    bar(commands, bottom, HealthBar, GREEN);
+    label(commands, root, Hud::Ammo, "ammo");
+    label(commands, root, Hud::AutoAim, "auto-aim");
+    label(commands, root, Hud::Fortress, "fortress");
+    label(commands, root, Hud::Control, "control-2027");
+    label(commands, root, Hud::Connection, "connection-toast");
+    label(commands, root, Hud::Hint, "hint");
+    // Hold-to-peek panels retain their keyboard behavior.
+    let panel = container(commands, root, "peek-panel");
+    commands.entity(panel).insert((
+        PanelFrame,
+        GlobalZIndex(10),
+        bevy::ui_widgets::ScrollArea,
+        Pickable::default(),
+    ));
+    label(commands, panel, Hud::Panel, "panel-title");
+    let rows = container(commands, panel, "panel-rows");
+    commands.entity(rows).insert(PanelRows::default());
+    let reticle = commands
+        .spawn((
+            Reticle,
+            ChildOf(root),
+            Pickable::IGNORE,
+            Node {
+                position_type: PositionType::Absolute,
+                left: percent(50.),
+                top: percent(50.),
+                width: px(0),
+                height: px(0),
+                ..default()
+            },
+        ))
+        .with_children(|p| {
+            for (x, y, w, h) in [
+                (-13., 0., 8., 1.),
+                (6., 0., 8., 1.),
+                (0., -13., 1., 8.),
+                (0., 6., 1., 8.),
+            ] {
+                p.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(x),
+                        top: px(y),
+                        width: px(w),
+                        height: px(h),
+                        ..default()
+                    },
+                    BackgroundColor(WHITE),
+                ));
+            }
+        })
+        .id();
+    let ring = commands
+        .spawn((
+            HeatRing,
+            ChildOf(reticle),
+            Pickable::IGNORE,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(-HEAT_RING_SIZE_PX / 2.),
+                top: px(-HEAT_RING_SIZE_PX / 2.),
+                width: px(HEAT_RING_SIZE_PX),
+                height: px(HEAT_RING_SIZE_PX),
+                ..default()
+            },
+        ))
+        .id();
+    // Headless tests run without the material's assets and draw no ring.
+    commands.queue(move |world: &mut World| {
+        if let Some(mut materials) = world.get_resource_mut::<Assets<heat_ring::HeatRingMaterial>>()
+        {
+            let material = materials.add(heat_ring::HeatRingMaterial {
+                ring: heat_ring_uniform(None),
+            });
+            world.entity_mut(ring).insert(MaterialNode(material));
+        }
+    });
+    commands
+        .spawn((
+            FieldMap,
+            bevy::ui::RelativeCursorPosition::default(),
+            ChildOf(root),
+            GlobalZIndex(3),
+            ClassList::new("field-map"),
+            Node {
+                position_type: PositionType::Absolute,
+                right: percent(2.),
+                bottom: percent(9.),
+                width: percent(23.),
+                height: percent(24.),
+                border: UiRect::all(px(1)),
+                ..default()
+            },
+            BackgroundColor(INK),
+            BorderColor::all(Color::srgba(0.6, 0.75, 0.8, 0.5)),
+        ))
+        .observe(map_interaction::press)
+        .with_children(|p| {
+            p.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: percent(50.),
+                    width: px(1),
+                    height: percent(100.),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.6, 0.75, 0.8, 0.25)),
+            ));
+            p.spawn((
+                Hud::MapLabel,
+                ClassList::new("map-label"),
+                Text::new("FIELD / TEAM POSITIONS"),
+                text_style(12.),
+                TextColor(WHITE),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(6),
+                    top: px(-32),
+                    ..default()
+                },
+            ));
+        });
+}
+
+fn clock_text(session: &Session) -> String {
+    if let Some(game) = &session.snapshot.rmul_2027 {
+        let remaining = if game.phase == rm_sim_world::gameplay::rmul_2027::Phase::Countdown {
+            game.countdown_remaining_ns
+        } else {
+            game.remaining_ns()
+        };
+        let seconds = remaining.div_ceil(1_000_000_000);
+        let competition = if game.format == rm_sim_world::gameplay::rmul_2027::Format::Infantry {
+            "RMUL Infantry 2027"
+        } else {
+            "RMUL 2027 3v3"
+        };
+        let phase = match game.phase {
+            rm_sim_world::gameplay::rmul_2027::Phase::Idle => "READY",
+            rm_sim_world::gameplay::rmul_2027::Phase::Countdown => "COUNTDOWN",
+            rm_sim_world::gameplay::rmul_2027::Phase::Running => "RUNNING",
+            rm_sim_world::gameplay::rmul_2027::Phase::Finished => "FINISHED",
+        };
+        let mut text = format!(
+            "{competition}\n{phase}  {:02}:{:02}",
+            seconds / 60,
+            seconds % 60
+        );
+        if session.paused {
+            text.push_str(" · PAUSED");
+        }
+        if let Some(result) = &game.result {
+            text.push_str(&format!(
+                "\n{}",
+                result.winner.map_or("DRAW", |t| if t.index() == 0 {
+                    "RED WINS"
+                } else {
+                    "BLUE WINS"
+                })
+            ));
+        }
+        return text;
+    }
+    if let Some(state) = session.rmuc_2027() {
+        use rm_sim_world::gameplay::rmuc_2027::ROUND_NS;
+        use rm_sim_world::rmuc_2027::match_rules::Phase;
+        let game = &state.game;
+        let phase = if session.paused {
+            "PAUSED"
+        } else {
+            match game.phase {
+                Phase::Idle => "READY 2027",
+                Phase::Countdown => "COUNTDOWN",
+                Phase::Running => "RMUC 2027",
+                Phase::Finished => "FINISHED",
+            }
+        };
+        let remaining = if game.phase == Phase::Countdown {
+            game.countdown_ns
+        } else {
+            ROUND_NS.saturating_sub(game.elapsed_ns())
+        };
+        let seconds = remaining.div_ceil(1_000_000_000);
+        let mut text = format!("{phase}\n{:02}:{:02}", seconds / 60, seconds % 60);
+        if let Some(result) = &game.result {
+            text.push_str(&format!(
+                "\n{}",
+                result.winner.map_or("DRAW", |t| if t.index() == 0 {
+                    "RED WINS"
+                } else {
+                    "BLUE WINS"
+                })
+            ));
+        }
+        return text;
+    }
+    "PRACTICE".into()
+}
+
+/// Heat ring uniforms for `heat`, the predicted heat in tenths and the
+/// limit: the arc fills to the heat fraction in green, amber past 60 % and
+/// red past 85 % or once overheated; no heat record leaves only the track.
+fn heat_ring_uniform(heat: Option<(u64, u32)>) -> heat_ring::HeatRingUniform {
+    let fraction = heat.map_or(0., |(tenths, limit)| {
+        tenths as f32 / (limit.max(1) as f32 * 10.)
+    });
+    let fill = if fraction > 0.85 {
+        team_color(Team::Red)
+    } else if fraction > 0.6 {
+        Color::srgb(1., 0.72, 0.2)
+    } else {
+        GREEN
+    };
+    heat_ring::HeatRingUniform {
+        fill: fill.to_linear().to_vec4(),
+        track: HEAT_EMPTY.to_linear().to_vec4(),
+        fraction,
+        thickness_px: 3.,
+    }
+}
+
+fn control_2027_text(session: &Session) -> String {
+    if let Some(game) = &session.snapshot.rmul_2027 {
+        if game.format == rm_sim_world::gameplay::rmul_2027::Format::Infantry {
+            return String::new();
+        }
+
+        return format!(
+            "RMUL 2027 · approximate practice regions\nControl: RED {} · BLUE {}\nGold: RED {} · BLUE {}",
+            game.teams[0].control, game.teams[1].control, game.teams[0].gold, game.teams[1].gold
+        );
+    }
+    let Some(state) = session.rmuc_2027() else {
+        return String::new();
+    };
+    use rm_sim_world::gameplay::rmuc_2027::{ControlState, Territory};
+    let g = &state.game;
+    let mut lines = vec!["RMUC 2027 | Control + terrain + native Rune".into()];
+    for territory in Territory::ALL {
+        let t = &g.control.snapshot().territories[territory.index()];
+        let team = if t.control.team().index() == 0 {
+            "RED"
+        } else {
+            "BLUE"
+        };
+        let strength = if matches!(t.control, ControlState::Full(_)) {
+            "FULL"
+        } else {
+            "TEMP"
+        };
+        let points = match territory {
+            Territory::RedOutpost | Territory::BlueOutpost => "OUTPOST + HIGHLAND",
+            _ => "BASE + FORTRESS",
+        };
+        let side = if territory.initial_team().index() == 0 {
+            "RED"
+        } else {
+            "BLUE"
+        };
+        let activation = t
+            .activations
+            .iter()
+            .fold([false; 2], |v, a| [v[0] || a[0], v[1] || a[1]]);
+        lines.push(format!(
+            "{side} {points}: {team} {strength}  {:.2}/5 s  RFID {}{}{}",
+            t.progress_ns as f64 * 1e-9,
+            if activation[0] { "R" } else { "-" },
+            if activation[1] { "B" } else { "-" },
+            if activation == [true, true] {
+                " CONTESTED"
+            } else {
+                ""
+            }
+        ));
+    }
+    for r in &g.robots {
+        for side in 0..2 {
+            if r.fortress_ns[side] > 0 {
+                lines.push(format!(
+                    "#{} Fortress {} {:.2}/10 s",
+                    r.id,
+                    if side == 0 { "RED" } else { "BLUE" },
+                    r.fortress_ns[side] as f64 * 1e-9
+                ));
+            }
+        }
+    }
+    for (i, rune) in g.runes.iter().enumerate() {
+        lines.push(format!(
+            "{} RUNE {:?} {:?} | OPP {}/{} | {}/5 | RING {}+",
+            if i == 0 { "RED" } else { "BLUE" },
+            rune.stage,
+            rune.phase,
+            rune.opportunities[0],
+            rune.opportunities[1],
+            rune.groups,
+            rune.minimum_ring()
+        ));
+    }
+    for r in &g.robots {
+        if let Some(p) = &r.terrain.progress {
+            lines.push(format!(
+                "#{} {:?} {:?} {:.2}s",
+                r.id,
+                p.start.course,
+                p.start.side,
+                p.deadline_ns().saturating_sub(g.elapsed_ns()) as f64 * 1e-9
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+/// Quiet overview; detailed RFID and Rune diagnostics remain in Team/F3 views.
+fn control_summary(session: &Session) -> String {
+    if session.snapshot.rmul_2027.is_some() {
+        return control_2027_text(session);
+    }
+    let Some(state) = session.rmuc_2027() else {
+        return String::new();
+    };
+    let control = state.game.control.snapshot();
+    let mut owned = [0; 2];
+    for territory in &control.territories {
+        owned[territory.control.team().index()] += 1;
+    }
+    let mut text = format!("TERRITORIES   RED {}   /   BLUE {}", owned[0], owned[1]);
+    for (i, territory) in control.territories.iter().enumerate() {
+        if territory.progress_ns > 0 {
+            text.push_str(&format!(
+                "\n{} capture  {:.1} / 5 s",
+                ["Red outpost", "Blue outpost", "Red base", "Blue base"][i],
+                territory.progress_ns as f64 * 1e-9
+            ));
+        }
+    }
+    text
+}
+
+fn roster_competition(
+    session: &Session,
+    config: Option<&crate::staging::StagingConfig>,
+) -> rm_sim_server::host_args::Competition {
+    use rm_sim_server::host_args::Competition;
+    use rm_sim_world::gameplay::rmul_2027::Format;
+    session
+        .snapshot
+        .rmul_2027
+        .as_ref()
+        .map(|game| match game.format {
+            Format::ThreeVsThree => Competition::Rmul2027,
+            Format::Infantry => Competition::RmulInfantry2027,
+        })
+        .unwrap_or_else(|| config.map_or(Competition::Rmuc2027, |c| c.0.host.competition))
+}
+
+fn team_text(session: &Session, team: Team) -> String {
+    let text = team.name().to_uppercase();
+    if let Some(game) = &session.snapshot.rmul_2027 {
+        let robots = game
+            .robots
+            .iter()
+            .filter(|r| r.team.index() == team.index())
+            .map(|r| format!("{:?}: {} HP", r.role, r.hp))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return format!("{text}\n{robots}");
+    }
+    if let Some(state) = session.rmuc_2027() {
+        let g = &state.game;
+        let i = team.index();
+        let owner = rm_sim_world::gameplay::Team::BOTH[i];
+        let outpost: u32 = g
+            .control
+            .snapshot()
+            .outposts
+            .iter()
+            .zip(g.outpost_hp)
+            .filter(|(o, _)| o.owner == owner)
+            .map(|(_, hp)| hp)
+            .sum();
+        return format!(
+            "{text}   ·   {} PTS   ·   {} GOLD\nBASE {}{}{}    /    OUTPOST {outpost}",
+            g.control.snapshot().points[i],
+            g.gold[i],
+            g.base_hp[i],
+            if g.control.base_protected(owner) {
+                " PROTECTED"
+            } else {
+                ""
+            },
+            if g.base_open[i] { " OPEN" } else { "" }
+        );
+    }
+
+    text
+}
+
+fn panel_text(
+    _session: &Session,
+    ui: &HudState,
+    keys: &ButtonInput<KeyCode>,
+    buttons: Option<&ButtonInput<MouseButton>>,
+) -> String {
+    if ui.pause_menu || ui.quit_confirm || ui.debug || ui.settings || ui.large_map {
+        String::new()
+    } else if ui.help || ui.controls.pressed(InputAction::Help, keys, buttons) {
+        "CONTROLS".into()
+    } else if ui.roster || ui.controls.pressed(InputAction::Roster, keys, buttons) {
+        "TEAM STATUS".into()
+    } else {
+        String::new()
+    }
+}
+
+/// Build real rows instead of using spaces to align a single text block.
+#[allow(clippy::too_many_arguments)]
+pub fn update_panel_rows(
+    mut commands: Commands,
+    session: Res<Session>,
+    config: Option<Res<crate::staging::StagingConfig>>,
+    ui: Res<HudState>,
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Option<Res<ButtonInput<MouseButton>>>,
+    mut frames: Query<(&mut Node, &mut ScrollPosition), With<PanelFrame>>,
+    mut previous_title: Local<String>,
+    mut panels: Query<(Entity, &mut PanelRows)>,
+) {
+    let title = panel_text(&session, &ui, &keys, buttons.as_deref());
+    for (mut node, mut scroll) in &mut frames {
+        if *previous_title != title {
+            scroll.0 = Vec2::ZERO;
+        }
+        node.display = if title.is_empty() {
+            Display::None
+        } else {
+            Display::Flex
+        };
+    }
+    previous_title.clone_from(&title);
+    let mut rows: Vec<[String; 3]> = Vec::new();
+    if title == "CONTROLS" {
+        rows.push([
+            "Mouse".into(),
+            "Aim".into(),
+            "Click field to capture".into(),
+        ]);
+        rows.push([
+            "Esc".into(),
+            "Pause menu / back".into(),
+            "Singleplayer pauses".into(),
+        ]);
+        for action in InputAction::ALL {
+            if !session.referees()
+                && matches!(
+                    action,
+                    InputAction::Pause | InputAction::Step | InputAction::Start | InputAction::Rune
+                )
+            {
+                continue;
+            }
+            rows.push([
+                ui.controls.label(action),
+                action.label().into(),
+                String::new(),
+            ]);
+        }
+    } else if title == "TEAM STATUS" {
+        rows.push(["PLAYER".into(), "ROLE / ROBOT".into(), "HEALTH".into()]);
+        for team in [Some(Team::Red), Some(Team::Blue), None] {
+            if team.is_none() && !session.roster.iter().any(|p| p.team.is_none()) {
+                continue;
+            }
+            rows.push([
+                team.map_or("SPECTATORS / REFEREE".into(), |t| t.name().to_uppercase()),
+                String::new(),
+                String::new(),
+            ]);
+            if team.is_some() {
+                for slot in rm_sim_server::roster::slots_for(roster_competition(
+                    &session,
+                    config.as_deref(),
+                )) {
+                    rows.push([
+                        format!("{} {}", slot.number, slot.name),
+                        slot.equipment.into(),
+                        if slot.prototype.is_none() {
+                            "Not implemented"
+                        } else {
+                            "Practice prototype"
+                        }
+                        .into(),
+                    ]);
+                }
+            }
+            for p in session.roster.iter().filter(|p| p.team == team) {
+                let label = match (p.chassis, p.robot) {
+                    (Some(id), Some(robot)) => format!("#{id} {}", robot.name()),
+                    _ => p.role.name().to_owned(),
+                };
+                rows.push([
+                    format!(
+                        "{}{}",
+                        p.name,
+                        if p.client_id == session.client_id {
+                            " (you)"
+                        } else {
+                            ""
+                        }
+                    ),
+                    label,
+                    p.chassis.map_or("--".into(), |id| {
+                        crate::enemy_intel::health_text(&session, id)
+                    }),
+                ]);
+            }
+            // Roster and world updates travel separately. Keep every live robot
+            // visible even before its player's name arrives.
+            for chassis in session.snapshot.chassis.iter().filter(|c| {
+                Some(c.team) == team && !session.roster.iter().any(|p| p.chassis == Some(c.id))
+            }) {
+                rows.push([
+                    format!("Robot #{}", chassis.id),
+                    "Pilot".into(),
+                    crate::enemy_intel::health_text(&session, chassis.id),
+                ]);
+            }
+        }
+    }
+    for (entity, mut previous) in &mut panels {
+        if previous.0 == rows {
+            continue;
+        }
+        previous.0.clone_from(&rows);
+        commands.entity(entity).despawn_children();
+        for row in &rows {
+            let parent = container(&mut commands, entity, "panel-row");
+            for (i, value) in row.iter().enumerate() {
+                commands.spawn((
+                    ChildOf(parent),
+                    Text::new(value),
+                    Node::default(),
+                    text_style(15.),
+                    TextColor(WHITE),
+                    Pickable::IGNORE,
+                    ClassList::new(if i == 0 { "row-key" } else { "row-value" }),
+                ));
+            }
+        }
+    }
+}
+
+fn heat_video_cut(session: &Session) -> bool {
+    if let Some(game) = &session.snapshot.rmul_2027 {
+        return game
+            .robots
+            .iter()
+            .any(|r| Some(r.id) == session.chassis_id && r.overheated);
+    }
+    session.rmuc_2027().is_some_and(|state| {
+        state
+            .game
+            .robots
+            .iter()
+            .any(|r| Some(r.id) == session.chassis_id && r.combat.video_cut())
+    })
+}
+
+/// Rewrite the overlay text, the health bar and the reticle from the latest snapshot.
+/// Runs after panel input so a panel opened this frame is already reflected.
+// Bevy system parameters keep disjoint UI queries explicit.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn update_hud(
+    session: Res<Session>,
+    player: Res<Player>,
+    gun: Res<Gun>,
+    drive: Option<Res<Drive>>,
+    ui: Res<HudState>,
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Option<Res<ButtonInput<MouseButton>>>,
+    mut texts: Query<(&Hud, &mut Text, &mut Node)>,
+    mut health: Query<(&mut Node, &mut BackgroundColor), (With<HealthBar>, Without<Hud>)>,
+    mut reticle: Query<&mut Visibility, With<Reticle>>,
+    mut blackout: Query<&mut Node, (With<VideoBlackout>, Without<Hud>, Without<HealthBar>)>,
+    heat_ring: Query<&MaterialNode<heat_ring::HeatRingMaterial>, With<HeatRing>>,
+    mut materials: Option<ResMut<Assets<heat_ring::HeatRingMaterial>>>,
+    assist: Option<Res<crate::auto_aim::AutoAim>>,
+    window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
+) {
+    let native = session.rmuc_2027();
+    let native_robot = native.and_then(|s| {
+        s.game
+            .robots
+            .iter()
+            .find(|r| Some(r.id) == session.chassis_id)
+    });
+    let video_cut = drive.as_ref().is_some_and(|d| !d.third_person) && heat_video_cut(&session);
+    for mut node in &mut blackout {
+        node.display = if video_cut {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+
+    for (kind, mut text, mut node) in &mut texts {
+        let value = match kind {
+            Hud::AutoAim => assist.as_ref().map_or_else(String::new, |a| {
+                if a.status.is_empty() {
+                    // A hand-chosen class stays on screen while idle, so the
+                    // pilot knows what the next lock will look for.
+                    a.idle_status(ui.controls.manual_aim_mode)
+                } else {
+                    format!("{} [{:.0}ms]", a.status, a.observation_age_ms.max(0.))
+                }
+            }),
+            Hud::Team(team) => team_text(&session, *team),
+            Hud::Fortress => String::new(),
+            Hud::Control => {
+                if ui.debug || ui.roster {
+                    control_2027_text(&session)
+                } else {
+                    control_summary(&session)
+                }
+            }
+            Hud::Clock => clock_text(&session),
+            Hud::Robot => {
+                let speed = session
+                    .own_chassis()
+                    .map_or(0., |c| c.velocity_m_s[0].hypot(c.velocity_m_s[1]));
+                let mut value = session.role.name().to_uppercase();
+                if let Some(r) = session.snapshot.rmul_2027.as_ref().and_then(|game| {
+                    game.robots
+                        .iter()
+                        .find(|r| Some(r.id) == session.chassis_id)
+                }) {
+                    value.push_str(&format!("\n{:?}  {} / {} HP", r.role, r.hp, r.max_hp));
+                }
+                if let Some(r) = session.rmuc_2027().and_then(|s| {
+                    s.game
+                        .robots
+                        .iter()
+                        .find(|r| Some(r.id) == session.chassis_id)
+                }) {
+                    let now = native.unwrap().game.elapsed_ns();
+                    value = format!(
+                        "{:?}  ·  L{}  ·  #{}\n{} / {} HP    |    HEAT {:.0}/{}",
+                        r.role,
+                        r.combat.level,
+                        r.id,
+                        r.hp,
+                        r.max_hp,
+                        r.combat.heat_tenths as f64 / 10.,
+                        r.stats(now).heat_limit
+                    );
+                    value.push_str(&format!(
+                        "\n{} W LIMIT  ·  {:.1} J{}",
+                        native.unwrap().game.power_limit_w(r.id),
+                        r.combat.power.buffer_uj as f64 * 1e-6,
+                        if now < r.combat.power.cut_until_ns {
+                            "  DRIVE CUT"
+                        } else {
+                            ""
+                        }
+                    ));
+                    if !r.online {
+                        value.push_str("  OFFLINE");
+                    }
+                    if r.role == rm_sim_world::gameplay::rmuc_2027::match_rules::GroundRole::Sentry
+                    {
+                        value.push_str(&format!(
+                            "\n{:?} · {:?}{}{}",
+                            r.combat.sentry.mode,
+                            r.combat.sentry.posture,
+                            if r.combat.sentry.enhanced { " +" } else { "" },
+                            if r.combat.sentry.weakened() {
+                                " (EXHAUSTED)"
+                            } else {
+                                ""
+                            }
+                        ));
+                    }
+                    if r.combat.launcher_locked(now) {
+                        value.push_str("  LOCKED");
+                    }
+                    if r.combat.weakened {
+                        value.push_str("  WEAK");
+                    }
+                    if now < r.combat.invincible_until_ns {
+                        value.push_str("  INVINCIBLE");
+                    }
+                    if r.combat.video_cut() {
+                        value.push_str("\nVIDEO OFF — COOL TO ZERO");
+                    }
+                    if r.combat.respawn.is_some() {
+                        let status = native.unwrap().game.respawn_remaining_ns(r.id).map_or_else(
+                            || "PAUSED".into(),
+                            |ns| if ns == 0 && r.role == rm_sim_world::gameplay::rmuc_2027::match_rules::GroundRole::Sentry { "READY — CONFIRM".into() } else { format!("{:.1}s", ns as f64 * 1e-9) },
+                        );
+                        value.push_str(&format!("\nRESPAWN {status}"));
+                    }
+                    if let Some(due) = r.combat.deliveries.iter().map(|d| d.due_ns).min() {
+                        value.push_str(&format!(
+                            "\nDELIVERY IN {:.1}s",
+                            due.saturating_sub(now) as f64 * 1e-9
+                        ));
+                    }
+                    if !player.captured {
+                        value.push_str(&format!(
+                            "\nXP {:.1}   ·   {} GOLD\nHP {}  /  RESPAWN {}",
+                            r.combat.experience_tenths as f64 / 10.,
+                            native.unwrap().game.gold[r.team.index()],
+                            50 + (now * 20).div_ceil(60_000_000_000),
+                            now.div_ceil(60_000_000_000) * 80 + u64::from(r.combat.level) * 20
+                        ));
+                    }
+                }
+                if let Some(drive) = &drive {
+                    let tether = session
+                        .own_chassis()
+                        .and_then(|c| Some((c.config.tether?, c.pose.translation_m)));
+                    let mode = match tether {
+                        Some((tether, hook)) => {
+                            format!("TETHER {:.1} m", tether.slack_m(hook).max(0.))
+                        }
+                        None if drive.spinning => "SPIN".into(),
+                        None => "FOLLOW".into(),
+                    };
+                    value.push_str(&format!("\n{speed:.1} m/s    {mode}"));
+                }
+                value
+            }
+            Hud::Ammo => {
+                let index = if gun.shot.caliber == Caliber::Mm17 {
+                    0
+                } else {
+                    1
+                };
+                let allowance = native_robot
+                    .map(|r| {
+                        r.combat
+                            .allowance
+                            .saturating_add(native.map_or(0, |s| {
+                                s.game.field_effects(r.id).fortress_reserve
+                                    / if gun.shot.caliber == Caliber::Mm42 {
+                                        10
+                                    } else {
+                                        1
+                                    }
+                            }))
+                            .saturating_sub(session.reserved_ammo(gun.shot.caliber))
+                            .to_string()
+                    })
+                    .or_else(|| {
+                        session
+                            .snapshot
+                            .rmul_2027
+                            .as_ref()
+                            .and_then(|game| {
+                                game.robots
+                                    .iter()
+                                    .find(|r| Some(r.id) == session.chassis_id)
+                            })
+                            .map(|r| {
+                                r.allowance
+                                    .saturating_sub(session.reserved_ammo(gun.shot.caliber))
+                                    .to_string()
+                            })
+                    })
+                    .unwrap_or_else(|| "--".into());
+                let mode = if native.is_some() || session.snapshot.rmul_2027.is_some() {
+                    "LEFT"
+                } else {
+                    "TRACKED"
+                };
+                format!(
+                    "{allowance}  {mode}   ·   {} mm\n{}",
+                    if index == 0 { 17 } else { 42 },
+                    session
+                        .last_bullet_speed_m_s()
+                        .map(|speed| format!("Last shot  {speed:.1} m/s"))
+                        .unwrap_or_else(|| "No shot recorded".into())
+                )
+            }
+            Hud::Connection => session.connection_toast.unwrap_or_default().into(),
+            Hud::Notice => session
+                .notices
+                .iter()
+                .rev()
+                .take(3)
+                .map(|(_, n)| n.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            Hud::Hint => {
+                if native_robot.is_some_and(|r| r.hp == 0)
+                    || session.snapshot.rmul_2027.as_ref().is_some_and(|game| {
+                        game.robots
+                            .iter()
+                            .any(|r| Some(r.id) == session.chassis_id && r.hp == 0)
+                    })
+                {
+                    "ROBOT DEFEATED\nWaiting for native respawn".into()
+                } else if ui.modal_open() || window.as_ref().is_some_and(|w| w.height() <= 480.) {
+                    String::new()
+                } else if !player.captured {
+                    "CLICK FIELD TO CONTROL".into()
+                } else {
+                    "ESC  Pause menu".into()
+                }
+            }
+            Hud::Panel => {
+                if ui.debug || ui.settings || ui.large_map {
+                    String::new()
+                } else {
+                    panel_text(&session, &ui, &keys, buttons.as_deref())
+                }
+            }
+            Hud::MapLabel => {
+                if ui.large_map {
+                    format!(
+                        "MAP · {} · Click for actions",
+                        ui.map_marker.label().to_uppercase()
+                    )
+                } else {
+                    format!(
+                        "TEAM MAP   ·   {} + click: {}",
+                        ui.controls.label(InputAction::FreeCursor),
+                        ui.map_marker.label()
+                    )
+                }
+            }
+        };
+        if matches!(kind, Hud::MapLabel) {
+            let top = if ui.large_map { px(8) } else { Val::Auto };
+            let bottom = if ui.large_map {
+                Val::Auto
+            } else {
+                percent(103.)
+            };
+            if node.top != top {
+                node.top = top;
+            }
+            if node.bottom != bottom {
+                node.bottom = bottom;
+            }
+        }
+        let display = if value.is_empty() || (ui.modal_open() && matches!(kind, Hud::Ammo)) {
+            Display::None
+        } else {
+            Display::Flex
+        };
+        if node.display != display {
+            node.display = display;
+        }
+        if text.0 != value {
+            text.0 = value;
+        }
+    }
+    for (mut node, mut color) in &mut health {
+        let fraction = session
+            .rmuc_2027()
+            .and_then(|s| {
+                s.game
+                    .robots
+                    .iter()
+                    .find(|r| Some(r.id) == session.chassis_id)
+            })
+            .map(|r| r.hp as f32 / r.max_hp as f32)
+            .or_else(|| {
+                session
+                    .snapshot
+                    .rmul_2027
+                    .as_ref()
+                    .and_then(|game| {
+                        game.robots
+                            .iter()
+                            .find(|r| Some(r.id) == session.chassis_id)
+                    })
+                    .map(|r| r.hp as f32 / r.max_hp.max(1) as f32)
+            })
+            .unwrap_or(0.);
+        node.width = percent(100. * fraction);
+        color.0 = if fraction < 0.2 {
+            team_color(Team::Red)
+        } else {
+            GREEN
+        };
+    }
+    let ring = heat_ring_uniform(session.predicted_heat());
+    if let Some(materials) = materials.as_mut() {
+        for node in &heat_ring {
+            if materials.get(&node.0).is_some_and(|m| m.ring != ring)
+                && let Some(mut material) = materials.get_mut(&node.0)
+            {
+                material.ring = ring;
+            }
+        }
+    }
+    for mut visibility in &mut reticle {
+        *visibility = if ui.show_reticle && !ui.blocks_input() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
+/// Size and place the field map, then keep one labelled dot per robot, outpost and rune.
+/// Robots of the other team are drawn only for the referee.
+#[allow(clippy::too_many_arguments)]
+pub fn update_map(
+    mut commands: Commands,
+    session: Res<Session>,
+    ui: Res<HudState>,
+    mut map: Single<(Entity, &mut Node), With<FieldMap>>,
+    mut dots: Query<(Entity, &MapDot, &mut Node, &mut BackgroundColor), Without<FieldMap>>,
+    artwork: Option<Res<crate::minimap::Minimap>>,
+    window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
+    images: Query<&ImageNode, With<FieldMap>>,
+    labels: Query<&Children>,
+    mut texts: Query<&mut Text>,
+    mut pilot: Query<&mut Visibility, With<PilotStack>>,
+) {
+    let (map_entity, node) = &mut *map;
+    node.display = if ui.large_map || ui.show_map {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    node.right = percent(if ui.large_map { 18. } else { 2. });
+    node.bottom = if ui.large_map { percent(19.) } else { px(24.) };
+    let bounds = artwork
+        .as_ref()
+        .map_or([-15., -9., 15., 9.], |map| map.bounds_m);
+    if let Some(artwork) = &artwork
+        && images.get(*map_entity).is_err()
+    {
+        commands
+            .entity(*map_entity)
+            .insert(ImageNode::new(artwork.image.clone()));
+    }
+    let aspect = ((bounds[2] - bounds[0]) / (bounds[3] - bounds[1])) as f32;
+    let (width, height) = window
+        .as_ref()
+        .map_or((1280., 720.), |w| (w.width(), w.height()));
+    // Reserve the scoreboard and footer even in short windows.
+    for mut visibility in &mut pilot {
+        let next = if ui.large_map && width < 900. {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+        if *visibility != next {
+            *visibility = next;
+        }
+    }
+    let available_height = (height - 208.).max(112.);
+    let map_height_limit = if ui.large_map {
+        (height * 0.62).min(available_height)
+    } else {
+        height * 0.24
+    };
+    let map_width = (width * if ui.large_map { 0.64 } else { 0.23 }).min(map_height_limit * aspect);
+    node.width = percent(map_width / width * 100.);
+    node.height = percent(map_width / aspect / height * 100.);
+    if ui.large_map {
+        node.right = percent((1. - map_width / width) * 50.);
+        node.bottom = px(72. + (available_height - map_width / aspect) * 0.5);
+    }
+    let mut items = Vec::new();
+    for c in session
+        .snapshot
+        .chassis
+        .iter()
+        .filter(|c| session.role.referees() || c.team == session.team)
+    {
+        let color = if Some(c.id) == session.chassis_id {
+            GREEN
+        } else {
+            team_color(c.team)
+        };
+        items.push((
+            MapItem::Robot(c.id),
+            c.pose.translation_m,
+            if c.defeated {
+                color.with_alpha(0.3)
+            } else {
+                color
+            },
+            c.id.to_string(),
+        ));
+    }
+    if !session.role.referees() {
+        for contact in rm_sim_server::sentry_controller::contacts(
+            &session.snapshot,
+            &session.sentry_tracking,
+            session.team,
+        ) {
+            let title = crate::enemy_intel::caption(&contact, false);
+            items.push((
+                MapItem::Robot(contact.robot),
+                contact.position_m,
+                team_color(contact.team).with_alpha(if contact.age_ns > 500_000_000 {
+                    0.5
+                } else {
+                    1.
+                }),
+                title,
+            ));
+        }
+    }
+    for (i, r) in session.snapshot.runes.iter().enumerate() {
+        items.push((
+            MapItem::Rune(i),
+            r.hub_pose.translation_m,
+            WHITE,
+            "R".into(),
+        ));
+    }
+    for nav in &session.navigation {
+        if !session
+            .snapshot
+            .chassis
+            .iter()
+            .any(|c| c.id == nav.chassis && (c.team == session.team || session.role.referees()))
+        {
+            continue;
+        }
+        for (index, &position) in nav.path_m.iter().enumerate() {
+            items.push((
+                MapItem::Navigation(nav.chassis, index),
+                position,
+                Color::srgb(0.3, 1., 0.8),
+                if index + 1 == nav.path_m.len() {
+                    "GO".into()
+                } else {
+                    "·".into()
+                },
+            ));
+        }
+    }
+    if let Some(event) = session.map_interactions.back()
+        && let rm_sim_server::map_interaction::Target::Position([x, y]) = event.interaction.target
+    {
+        items.push((
+            MapItem::Interaction(event.id),
+            [x, y, 0.],
+            Color::srgb(0.2, 0.9, 1.),
+            marker_glyph(event.interaction.kind),
+        ));
+    }
+    if let Some((kind, [x, y])) = ui.last_marker {
+        items.push((MapItem::Marker, [x, y, 0.], MARKER, marker_glyph(kind)));
+    }
+    for (entity, dot, _, _) in &mut dots {
+        if !items.iter().any(|(id, _, _, _)| *id == dot.0) {
+            commands.entity(entity).despawn();
+        }
+    }
+    for (id, position, color, title) in items {
+        let (x, y) = crate::minimap::position(position, bounds);
+        if let Some((entity, _, mut node, mut background)) =
+            dots.iter_mut().find(|(_, dot, _, _)| dot.0 == id)
+        {
+            node.left = percent(x);
+            node.top = percent(y);
+            background.0 = color;
+            if let Ok(children) = labels.get(entity) {
+                for child in children.iter() {
+                    if let Ok(mut text) = texts.get_mut(child)
+                        && text.0 != title
+                    {
+                        text.0 = title.clone();
+                    }
+                }
+            }
+        } else {
+            commands.entity(*map_entity).with_children(|p| {
+                p.spawn((
+                    MapDot(id),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: percent(x),
+                        top: percent(y),
+                        min_width: px(16),
+                        height: px(18),
+                        padding: UiRect::horizontal(px(3)),
+                        border_radius: BorderRadius::all(px(3)),
+                        ..default()
+                    },
+                    BackgroundColor(color),
+                ))
+                .with_children(|p| {
+                    p.spawn((
+                        Text::new(title),
+                        text_style(13.),
+                        TextColor(INK),
+                        ClassList::new("map-dot-label"),
+                        Pickable::IGNORE,
+                    ));
+                });
+            });
+        }
+    }
+}
+
+/// Whether the cursor is over the visible field map.
+pub(crate) fn cursor_on_map(map: &(&bevy::ui::RelativeCursorPosition, &Node)) -> bool {
+    map.0.cursor_over && map.1.display != Display::None
+}
+
+/// Map clicks: on the large map a letter key picks the marker (A attack,
+/// B defend, I alert, any other letter a custom one, except the keys bound to
+/// the map and settings panels). A left click opens a marker/Sentry intent choice. The
+/// small map takes clicks only while the mouse is free, so aiming never marks.
+#[allow(clippy::too_many_arguments)]
+pub fn click_map(
+    mut ui: ResMut<HudState>,
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Option<Res<ButtonInput<MouseButton>>>,
+    player: Res<Player>,
+    map: Single<(&bevy::ui::RelativeCursorPosition, &Node), With<FieldMap>>,
+    artwork: Option<Res<crate::minimap::Minimap>>,
+    session: Res<Session>,
+) {
+    if ui.large_map && !ui.consumed {
+        let reserved = |key: KeyCode| {
+            [InputAction::Map, InputAction::Settings]
+                .into_iter()
+                .any(|action| {
+                    ui.controls
+                        .slots(action)
+                        .contains(&Some(crate::bindings::Binding::Key(key)))
+                })
+        };
+        if let Some(kind) = keys
+            .get_just_pressed()
+            .filter(|key| !reserved(**key))
+            .find_map(|key| key_letter(*key).and_then(MapMarkerKind::from_letter))
+        {
+            ui.map_marker = kind;
+        }
+    }
+    let clicked = buttons
+        .as_ref()
+        .is_some_and(|b| b.just_pressed(MouseButton::Left));
+    let open = ui.large_map || !ui.blocks_input();
+    if !clicked
+        || !open
+        || player.captured
+        || ui.consumed
+        || ui.pending_map.is_some()
+        || !cursor_on_map(&map)
+    {
+        return;
+    }
+    let Some(normalized) = map.0.normalized else {
+        return;
+    };
+    let bounds = artwork
+        .as_ref()
+        .map_or([-15., -9., 15., 9.], |map| map.bounds_m);
+    let position_m = crate::minimap::point(normalized, bounds);
+    if session.chassis_id.is_none() || session.role != rm_sim_server::protocol::Role::Pilot {
+        return;
+    }
+    ui.pending_map = Some((position_m, 0));
+    ui.large_map = true;
+    ui.consumed = true;
+}
+/// The letter a key types on a US layout, for picking a map marker.
+fn key_letter(key: KeyCode) -> Option<char> {
+    let name = format!("{key:?}");
+    let letter = name.strip_prefix("Key")?;
+    let mut chars = letter.chars();
+    let first = chars.next()?;
+    (chars.next().is_none() && first.is_ascii_uppercase()).then_some(first)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn rmul_clock_and_team_cards_show_native_result_and_hp() {
+        use rm_sim_world::gameplay::{
+            Team as GameTeam,
+            rmul_2027::{Format, Match, Role},
+        };
+        let mut session = crate::session::test_session(false);
+        let mut game = Match::new(Format::Infantry);
+        game.add_robot(session.chassis_id.unwrap(), GameTeam::Red, Role::Infantry)
+            .unwrap();
+        game.begin_countdown().unwrap();
+        session.snapshot.rmul_2027 = Some(game);
+        assert!(clock_text(&session).contains("COUNTDOWN  00:05"));
+        assert!(team_text(&session, Team::Red).contains("200 HP"));
+        assert!(!heat_video_cut(&session));
+        session.snapshot.rmul_2027.as_mut().unwrap().robots[0].overheated = true;
+        assert!(heat_video_cut(&session));
+        session.snapshot.rmul_2027.as_mut().unwrap().robots[0].overheated = false;
+        assert!(!heat_video_cut(&session));
+        session.snapshot.rmul_2027.as_mut().unwrap().start();
+        assert!(clock_text(&session).contains("RUNNING"));
+        session.snapshot.rmul_2027.as_mut().unwrap().finish();
+        assert!(clock_text(&session).contains("FINISHED"));
+        assert!(clock_text(&session).contains("WINS") || clock_text(&session).contains("DRAW"));
+    }
+
+    #[test]
+    fn a_map_click_sends_a_marker_the_host_records_without_capturing_the_mouse() {
+        let session = crate::session::test_session(true);
+        session.ready();
+        let mut app = App::new();
+        app.insert_resource(session)
+            .insert_resource(Player::at(Vec3::ZERO, 0., 0.))
+            .init_resource::<HudState>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .add_systems(Update, click_map);
+        app.world_mut().spawn((
+            FieldMap,
+            Node::default(),
+            bevy::ui::RelativeCursorPosition {
+                cursor_over: true,
+                normalized: Some(Vec2::new(-0.5, 0.0)),
+            },
+        ));
+        app.world_mut().resource_mut::<HudState>().large_map = true;
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyB);
+        app.update();
+        assert_eq!(
+            app.world().resource::<HudState>().map_marker,
+            MapMarkerKind::Defend
+        );
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        app.update();
+        assert!(app.world().resource::<HudState>().last_marker.is_none());
+        assert!(app.world().resource::<HudState>().pending_map.is_some());
+        app.world_mut()
+            .resource_scope(|world, mut ui: Mut<HudState>| {
+                let mut session = world.resource_mut::<Session>();
+                map_interaction::choose(map_interaction::Action::Marker, &mut ui, &mut session);
+            });
+        let (kind, position_m) = app.world().resource::<HudState>().last_marker.unwrap();
+        assert_eq!(kind, MapMarkerKind::Defend);
+        // The left edge of the drawing is red's end of the field.
+        assert!(position_m[0] > 10.0 && position_m[1].abs() < 1e-9);
+        assert!(!app.world().resource::<Player>().captured);
+        let mut session = app.world_mut().resource_mut::<crate::session::Session>();
+        crate::session::wait_for_session(&mut session, crate::session::Session::commands_confirmed);
+        let markers = crate::session::host_map_markers(&session);
+        assert_eq!(markers.len(), 1, "{:?}", session.notices);
+        assert_eq!(markers[0].kind, MapMarkerKind::Defend);
+        assert_eq!(markers[0].position_m, position_m);
+    }
+    #[test]
+    fn hud_systems_render_practice_and_switch_panels_without_query_conflicts() {
+        let mut app = App::new();
+        app.insert_resource(crate::session::test_session(true))
+            .insert_resource(Player::at(Vec3::ZERO, 0., 0.))
+            .insert_resource(Gun::new(
+                rm_sim_world::Shot::at_limit(Caliber::Mm17),
+                100_000_000,
+            ))
+            .init_resource::<HudState>()
+            .add_systems(PreUpdate, |mut ui: ResMut<HudState>| ui.consumed = false)
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_systems(Startup, |mut commands: Commands| spawn_hud(&mut commands))
+            .add_systems(
+                Update,
+                (panel_input, update_hud, update_map, update_panel_rows).chain(),
+            );
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&MapDot>()
+                .iter(app.world())
+                .filter(|dot| matches!(dot.0, MapItem::Robot(_)))
+                .count(),
+            1
+        );
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyP);
+        app.update();
+        let panel = app
+            .world_mut()
+            .query::<(&Hud, &Text)>()
+            .iter(app.world())
+            .find(|(kind, _)| matches!(kind, Hud::Panel))
+            .unwrap()
+            .1;
+        assert!(panel.0.is_empty());
+        assert!(app.world().resource::<HudState>().settings);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyM);
+        app.update();
+        assert!(app.world().resource::<HudState>().large_map);
+        assert!(!app.world().resource::<HudState>().settings);
+        app.world_mut().resource_mut::<HudState>().large_map = false;
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::F12);
+        app.update();
+        let rows = app
+            .world_mut()
+            .query::<&PanelRows>()
+            .single(app.world())
+            .unwrap();
+        assert!(rows.0.iter().any(|r| r[0] == "W" && r[1] == "Move forward"));
+        assert!(rows.0.iter().any(|r| r[0] == "P" && r[1] == "Settings"));
+    }
+    #[test]
+    fn team_status_names_a_pilot_robot_without_a_referee_record() {
+        use rm_sim_server::protocol::{PlayerInfo, Robot, Role};
+        let mut app = App::new();
+        let mut session = crate::session::test_session(true);
+        session.snapshot.referee = None;
+        session.roster = vec![PlayerInfo {
+            client_id: session.client_id,
+            name: "Pilot".into(),
+            team: Some(Team::Red),
+            role: Role::Pilot,
+            chassis: Some(7),
+            robot: Some(Robot::Infantry4),
+        }];
+        app.insert_resource(session)
+            .init_resource::<HudState>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_systems(Startup, |mut commands: Commands| spawn_hud(&mut commands))
+            .add_systems(Update, update_panel_rows);
+        app.world_mut().resource_mut::<HudState>().roster = true;
+        app.update();
+        let rows = app
+            .world_mut()
+            .query::<&PanelRows>()
+            .single(app.world())
+            .unwrap();
+        assert!(
+            rows.0.iter().any(|r| r[1] == "#7 Infantry 4"),
+            "a match without a referee record must still name the robot: {:?}",
+            rows.0
+        );
+    }
+
+    #[test]
+    fn debug_panel_is_exclusive_and_escape_blocks_gameplay() {
+        let mut app = App::new();
+        app.init_resource::<HudState>()
+            .add_systems(PreUpdate, |mut ui: ResMut<HudState>| ui.consumed = false)
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_systems(Update, panel_input);
+        app.world_mut().resource_mut::<HudState>().settings = true;
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::F3);
+        app.update();
+        let ui = app.world().resource::<HudState>();
+        assert!(ui.debug && ui.blocks_input());
+        assert!(!ui.settings);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        app.update();
+        let ui = app.world().resource::<HudState>();
+        assert!(!ui.modal_open());
+        assert!(ui.blocks_input());
+    }
+
+    #[test]
+    fn panel_keys_toggle_settings_and_escape_is_consumed() {
+        let mut app = App::new();
+        app.init_resource::<HudState>()
+            .add_systems(PreUpdate, |mut ui: ResMut<HudState>| ui.consumed = false)
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_systems(Update, panel_input);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyP);
+        app.update();
+        assert!(app.world().resource::<HudState>().blocks_input());
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        app.update();
+        assert!(!app.world().resource::<HudState>().settings);
+        assert!(app.world().resource::<HudState>().closed_with_escape);
+    }
+}
+
+#[cfg(test)]
+mod title_settings_tests {
+    use super::*;
+    #[test]
+    fn typing_a_settings_binding_on_title_does_not_open_a_panel() {
+        let mut app = App::new();
+        app.init_resource::<HudState>()
+            // The page sub-state stands in for the title screen being up.
+            .insert_resource(State::new(crate::title::Page::Main))
+            .init_resource::<NextState<crate::title::Page>>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_systems(Update, panel_input);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyP);
+        app.update();
+        assert!(!app.world().resource::<HudState>().settings);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.world_mut().resource_mut::<HudState>().settings = true;
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        app.update();
+        assert!(!app.world().resource::<HudState>().settings);
+        assert!(app.world().resource::<HudState>().closed_with_escape);
+    }
+}
+
+/// Hold-to-peek panels remain scrollable while the game owns the mouse.
+/// Released cursors use the ordinary UI ScrollArea observer instead.
+pub(super) fn scroll_peek_panel(
+    mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
+    player: Option<Res<Player>>,
+    mut panels: Query<(&Node, &ComputedNode, &mut ScrollPosition), With<PanelFrame>>,
+) {
+    use bevy::input::mouse::MouseScrollUnit;
+    let delta: f32 = wheel
+        .read()
+        .map(|event| {
+            event.y
+                * if event.unit == MouseScrollUnit::Line {
+                    32.
+                } else {
+                    1.
+                }
+        })
+        .sum();
+    if !player.is_some_and(|p| p.captured) {
+        return;
+    }
+    for (node, computed, mut scroll) in &mut panels {
+        if node.display == Display::None {
+            continue;
+        }
+        let max = ((computed.content_size().y - computed.size().y) * computed.inverse_scale_factor)
+            .max(0.);
+        scroll.y = (scroll.y - delta).clamp(0., max);
+    }
+}
+
+#[cfg(test)]
+mod peek_scroll_tests {
+    use super::*;
+    #[test]
+    fn captured_wheel_scrolls_visible_panel_and_clamps_both_ends() {
+        use bevy::input::{
+            mouse::{MouseScrollUnit, MouseWheel},
+            touch::TouchPhase,
+        };
+        let mut app = App::new();
+        let mut player = Player::at(Vec3::ZERO, 0., 0.);
+        player.captured = true;
+        app.insert_resource(player)
+            .add_message::<MouseWheel>()
+            .add_systems(Update, scroll_peek_panel);
+        let panel = app
+            .world_mut()
+            .spawn((
+                PanelFrame,
+                Node::default(),
+                ScrollPosition::default(),
+                ComputedNode {
+                    size: Vec2::new(800., 400.),
+                    content_size: Vec2::new(800., 1200.),
+                    inverse_scale_factor: 1.,
+                    ..default()
+                },
+            ))
+            .id();
+        for (delta, expected) in [(-100., 100.), (-2000., 800.), (2000., 0.)] {
+            app.world_mut().write_message(MouseWheel {
+                unit: MouseScrollUnit::Pixel,
+                x: 0.,
+                y: delta,
+                window: Entity::PLACEHOLDER,
+                phase: TouchPhase::Moved,
+            });
+            app.update();
+            assert_eq!(
+                app.world().get::<ScrollPosition>(panel).unwrap().y,
+                expected
+            );
+        }
+        app.world_mut().resource_mut::<Player>().captured = false;
+        app.world_mut().write_message(MouseWheel {
+            unit: MouseScrollUnit::Line,
+            x: 0.,
+            y: -5.,
+            window: Entity::PLACEHOLDER,
+            phase: TouchPhase::Moved,
+        });
+        app.update();
+        assert_eq!(
+            app.world().get::<ScrollPosition>(panel).unwrap().y,
+            0.,
+            "released cursor uses UI scrolling, not both paths"
+        );
+    }
+}
+
+/// Passive host-path overlay, grounded in FLU and independent of controller stepping.
+pub(crate) fn navigation_paths(session: Res<Session>, mut gizmos: Gizmos) {
+    for nav in &session.navigation {
+        if !session
+            .snapshot
+            .chassis
+            .iter()
+            .any(|c| c.id == nav.chassis && (c.team == session.team || session.role.referees()))
+        {
+            continue;
+        }
+        for (i, segment) in nav.path_m.windows(2).enumerate() {
+            if nav.tunnel_segments.get(i + 1) == Some(&true) {
+                gizmos.line(
+                    rm_sim_render::flu_position([
+                        segment[0][0],
+                        segment[0][1],
+                        segment[0][2] + 0.07,
+                    ]),
+                    rm_sim_render::flu_position([
+                        segment[1][0],
+                        segment[1][1],
+                        segment[1][2] + 0.07,
+                    ]),
+                    Color::srgb(0.2, 0.6, 1.),
+                );
+            }
+        }
+        gizmos.linestrip(
+            nav.path_m
+                .iter()
+                .map(|p| rm_sim_render::flu_position([p[0], p[1], p[2] + 0.05])),
+            if matches!(
+                nav.phase,
+                rm_sim_server::navigation::Phase::Blocked
+                    | rm_sim_server::navigation::Phase::Unreachable
+            ) {
+                Color::srgb(1., 0.5, 0.1)
+            } else {
+                Color::srgb(0.2, 1., 0.7)
+            },
+        );
+    }
+}

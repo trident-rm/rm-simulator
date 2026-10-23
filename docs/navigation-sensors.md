@@ -2,7 +2,7 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Navigation sensor foundation
 
-`rm-simulator-physics::sensors` provides ideal instantaneous LiDAR over a
+`rm-sim-physics::sensors` provides ideal instantaneous LiDAR over a
 caller-owned `StaticGeometry` capture and mounted rolling scans over timestamped
 physics captures, with optional seeded range effects. It needs no match, CAD
 loader, renderer, networking, host clock or MuJoCo. It does not perform
@@ -37,7 +37,7 @@ duplicating the endpoint. Negative azimuth increments support clockwise patterns
 the config is immutable after construction.
 
 ```rust
-use rm_simulator_physics::{Pose, WorldPhysics, sensors::{Lidar, LidarConfig}};
+use rm_sim_physics::{Pose, WorldPhysics, sensors::{Lidar, LidarConfig}};
 
 let mut world = WorldPhysics::new(&[], 0.);
 world.add_static_box(Pose::at([2., 0., 1.]), [1.; 3]);
@@ -86,7 +86,7 @@ optional standalone ROS publisher remains available.
 Run the CAD query/scan benchmark with:
 
 ```sh
-cargo run --release -p rm-simulator-server --example navigation_query_cost -- field-2027
+cargo run --release -p rm-sim-server --example navigation_query_cost -- field-2027
 ```
 
 It reports boolean early-out visibility separately from nearest-hit scans, over
@@ -361,13 +361,13 @@ Run the no-CAD moving-chassis example, optionally writing raw local-frame points
 and explicit misses to CSV:
 
 ```sh
-cargo run --release -p rm-simulator-world --example rolling_lidar -- local-assets/rolling-lidar.csv
+cargo run --release -p rm-sim-world --example rolling_lidar -- local-assets/rolling-lidar.csv
 ```
 
 Run the loaded CAD probe with one driven chassis:
 
 ```sh
-cargo run --release -p rm-simulator-server --example mounted_lidar_cost -- field-2027
+cargo run --release -p rm-sim-server --example mounted_lidar_cost -- field-2027
 ```
 
 An initial release probe on the M5 Max (2026-10-21, current working tree) produced

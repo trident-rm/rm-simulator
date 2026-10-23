@@ -123,7 +123,7 @@ impl View for App {
         for (i, part) in self.model.placed.moving.iter().enumerate() {
             let rotational = matches!(
                 part.motion,
-                rm_simulator_physics::motion::MotionFrame::Rotation { .. }
+                rm_sim_physics::motion::MotionFrame::Rotation { .. }
             );
             let unit = if rotational { "rad" } else { "fraction" };
             channels = channels
@@ -270,10 +270,10 @@ impl View for App {
                     .on_click(cx.listener(|s, _, _| {
                         s.apply(|m| {
                             let mut spawn = m.robot_spawn().cloned().unwrap();
-                            spawn.team = if spawn.team == rm_simulator_physics::Team::Red {
-                                rm_simulator_physics::Team::Blue
+                            spawn.team = if spawn.team == rm_sim_physics::Team::Red {
+                                rm_sim_physics::Team::Blue
                             } else {
-                                rm_simulator_physics::Team::Red
+                                rm_sim_physics::Team::Red
                             };
                             m.configure_robot(Some(spawn))
                         })
@@ -318,17 +318,32 @@ impl View for App {
             }
             robot_controls=robot_controls.child(label("Direct torques replace body velocity control; aim preserves the drive mode. Zero torque free-rolls."));
             let torques = match robot.drive_control {
-                rm_simulator_physics::control::DriveControl::WheelTorques(t) => t.as_nm().to_vec(),
+                rm_sim_physics::control::DriveControl::WheelTorques(t) => t.as_nm().to_vec(),
                 _ => vec![0.; 4],
             };
             for (i, value) in torques.into_iter().enumerate() {
-                robot_controls=robot_controls.child(label(format!("Wheel {i} torque: {value:.3} N m"))).child(
-                    slider(value as f32).key(format!("torque-{i}")).range(-3.,3.).width(380.).accessibility_label(format!("Wheel {i} torque N m"))
-                    .on_change(cx.listener(move |s,e: &SliderEvent,_| s.apply(|m| {
-                        let robot=m.robot_truth().unwrap();
-                        let mut torques=match robot.drive_control {rm_simulator_physics::control::DriveControl::WheelTorques(t)=>t.as_nm().to_vec(),_=>vec![0.;4]};
-                        torques[i]=e.value as f64; m.wheel_torques(torques)
-                    }))));
+                robot_controls = robot_controls
+                    .child(label(format!("Wheel {i} torque: {value:.3} N m")))
+                    .child(
+                        slider(value as f32)
+                            .key(format!("torque-{i}"))
+                            .range(-3., 3.)
+                            .width(380.)
+                            .accessibility_label(format!("Wheel {i} torque N m"))
+                            .on_change(cx.listener(move |s, e: &SliderEvent, _| {
+                                s.apply(|m| {
+                                    let robot = m.robot_truth().unwrap();
+                                    let mut torques = match robot.drive_control {
+                                        rm_sim_physics::control::DriveControl::WheelTorques(t) => {
+                                            t.as_nm().to_vec()
+                                        }
+                                        _ => vec![0.; 4],
+                                    };
+                                    torques[i] = e.value as f64;
+                                    m.wheel_torques(torques)
+                                })
+                            })),
+                    );
             }
             robot_controls =
                 robot_controls.child(
@@ -338,7 +353,7 @@ impl View for App {
                             cx.listener(|s, _, _| {
                                 s.apply(|m| {
                                     let command = m.robot_truth().unwrap().command;
-                                    m.drive(rm_simulator_physics::chassis::ChassisCommand {
+                                    m.drive(rm_sim_physics::chassis::ChassisCommand {
                                         forward_m_s: 0.,
                                         left_m_s: 0.,
                                         yaw_rate_rad_s: 0.,
@@ -351,14 +366,14 @@ impl View for App {
                             button("Fire 17 mm / 25 m/s")
                                 .key("fire-17")
                                 .on_click(cx.listener(|s, _, _| {
-                                    s.apply(|m| m.fire(rm_simulator_physics::Caliber::Mm17, 25.))
+                                    s.apply(|m| m.fire(rm_sim_physics::Caliber::Mm17, 25.))
                                 })),
                         )
                         .child(
                             button("Fire 42 mm / 12 m/s")
                                 .key("fire-42")
                                 .on_click(cx.listener(|s, _, _| {
-                                    s.apply(|m| m.fire(rm_simulator_physics::Caliber::Mm42, 12.))
+                                    s.apply(|m| m.fire(rm_sim_physics::Caliber::Mm42, 12.))
                                 })),
                         ),
                 );
@@ -486,12 +501,8 @@ mod tests {
     #[test]
     #[ignore = "requires the verified field-2027 LFS package"]
     fn native_view_prepares_all_controls_without_a_display() {
-        let model = Inspector::load(
-            &rm_simulator_assets::cad_assets::default_cad_assets(),
-            "rune",
-            0,
-        )
-        .unwrap();
+        let model =
+            Inspector::load(&rm_sim_assets::cad_assets::default_cad_assets(), "rune", 0).unwrap();
         let options = Options::default();
         let image = Image::from_rgba8(
             raster::WIDTH,

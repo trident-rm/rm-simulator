@@ -2,12 +2,12 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Reusing physics and armor motion
 
-`rm-simulator-physics` depends on Rapier, serde and the standalone MID360 pattern
+`rm-sim-physics` depends on Rapier, serde and the standalone MID360 pattern
 generator. It contains chassis
 suspension and drive, prescribed gimbals, physical generic joints, projectile
 flight, raw armor contacts, shared collision geometry and analytic armor motion. It does not depend on
 world, gameplay, server, rendering, a CAD loader or host time. Its
-[crate README](../crates/rm-simulator-physics/README.md) lists its modules and
+[crate README](../crates/rm-sim-physics/README.md) lists its modules and
 permitted dependencies.
 
 The library retains RoboMaster-specific physical profiles and target labels.
@@ -146,7 +146,7 @@ checkpoints and wire codecs do not serialize these new descriptions or bindings.
 Run the complete headless example:
 
 ```sh
-mbx run -p rm-simulator-physics --locked --example body_runtime
+mbx run -p rm-sim-physics --locked --example body_runtime
 ```
 
 It cooks an explicitly described cube once, drops it onto the catch floor through
@@ -217,7 +217,7 @@ For a caller-paced bare robot, use `physics::session::RobotSession`. It owns one
 not construct a `Field`, native match authority or host. For example:
 
 ```rust
-use rm_simulator_physics::{Pose, StepDuration, Team, chassis::ChassisConfig,
+use rm_sim_physics::{Pose, StepDuration, Team, chassis::ChassisConfig,
     session::{RobotScenario, RobotSession, RobotCommand}};
 
 let scenario = RobotScenario::new(vec![], 0., StepDuration::HZ_1000, |physics| {
@@ -252,7 +252,7 @@ Do not call `step` or change the synchronization clock through that accessor.
 The lower-level target and projectile example remains available:
 
 ```sh
-cargo run -p rm-simulator-physics --example moving_armor --locked
+cargo run -p rm-sim-physics --example moving_armor --locked
 ```
 
 The example creates a moving armor face, launches ten projectiles and advances
@@ -322,7 +322,7 @@ unchanged by extraction.
   arena dimensions are inferred. It is an approximate fixture, not a replacement
   for verified CAD, tunnel route bindings or RFID traversal rules.
 
-Run `cargo run -p rm-simulator-physics --example arena_components --locked` for
+Run `cargo run -p rm-sim-physics --example arena_components --locked` for
 an independent tunnel, occupancy and rotating detector example in `RobotSession`.
 Detectors remain the existing physical armor housings: this example does not
 load an Outpost visual shell or model its complete structural collision.
@@ -353,7 +353,7 @@ filters. `ComponentModel::mechanisms` preserves binding-major, placement-minor
 insertion order, matching the previous arena composition.
 
 ```sh
-cargo run -p rm-simulator-assets --example outpost_component --locked -- field-2027
+cargo run -p rm-sim-assets --example outpost_component --locked -- field-2027
 ```
 
 This loads one complete approved source Outpost, including fixed shell, moving
@@ -412,13 +412,13 @@ adapter `referee::mechanism_view` converts referee snapshots into its input.
 
 ## Optional rendering
 
-`rm-simulator-render` remains a separate Bevy library with no physics dependency.
+`rm-sim-render` remains a separate Bevy library with no physics dependency.
 The consumer converts physical poses and its own appearance choices into
 `SceneState`. The app's `physical_scene` example demonstrates that composition
 without calling `Field`, the referee, CAD loading or server APIs:
 
 ```sh
-cargo run -p rm-simulator-app --example physical_scene --locked
+cargo run -p rm-sim-app --example physical_scene --locked
 ```
 
 This demonstration advances 16 simulation milliseconds per rendered frame.
@@ -431,13 +431,13 @@ material systems consume changed components. Required components keep manually
 spawned chassis parts usable in headless tests; the existing ID/part markers
 remain available. The projectile visual pool remains unchanged.
 
-CAD package parsing lives in `rm-simulator-assets`, without a server dependency.
+CAD package parsing lives in `rm-sim-assets`, without a server dependency.
 The server retains compatibility imports and runtime-specific validation. No
 additional asset format or sibling repository dependency is required. See
 [simulation embedding](simulation-embedding.md) for caller-owned sessions, direct
 wheel torque control, configurable step durations and future adapter boundaries.
 
-Run the crate's own tests with `cargo test -p rm-simulator-physics --locked`;
+Run the crate's own tests with `cargo test -p rm-sim-physics --locked`;
 [development](development.md) lists the workspace targets. The architecture
 boundaries that keep this crate reusable are stated in
 [simulation architecture](architecture-refactor.md).
@@ -453,7 +453,7 @@ rules. This remains a repeatable initial reset, not a bare-world continuation
 checkpoint. Example:
 
 ```sh
-cargo run --locked -p rm-simulator-assets --example arena_session -- field-2027
+cargo run --locked -p rm-sim-assets --example arena_session -- field-2027
 ```
 
 Source mechanical arm calibration and FK are available directly as

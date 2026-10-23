@@ -138,7 +138,7 @@ Hero and Balance keep their body geometry and also use the inertial drive model.
 Create actual physics-backed review renders without loading the arena:
 
 ```sh
-nix develop -c cargo run -p rm-simulator-app --example omni_chassis --locked -- local-assets/omni.png oblique flat
+nix develop -c cargo run -p rm-sim-app --example omni_chassis --locked -- local-assets/omni.png oblique flat
 # Other views: top, side. Replace flat with uneven for a 35 mm front-left-wheel step.
 # Append bare to hide armor panels while retaining carriers for inspection.
 ```
@@ -306,7 +306,7 @@ ammunition policy and host firing cadence remain authoritative.
 Render a CAD-free comparison with:
 
 ```sh
-cargo run -p rm-simulator-render --example robots -- /tmp/robots.png healthy front all
+cargo run -p rm-sim-render --example robots -- /tmp/robots.png healthy front all
 ```
 
 ## Seasonal RMUC rosters
@@ -371,7 +371,7 @@ articulate its source arm, camera, muzzle and collision proxies with T.
 Reproduce the deterministic contact tests without a GPU:
 
 ```sh
-nix develop -c cargo build -p rm-simulator-physics --example robot_mechanisms --locked
+nix develop -c cargo build -p rm-sim-physics --example robot_mechanisms --locked
 python3 scripts/robot-mechanism-scenarios.py
 ```
 
@@ -472,7 +472,7 @@ Rebuild the packages with rm-map-tools' `bind_tunnel.py`. Export the ordinary
 Engineer config as the documented baseline rather than copying a live snapshot:
 
 ```sh
-nix develop -c cargo build -p rm-simulator-app --example robot_tunnel --locked
+nix develop -c cargo build -p rm-sim-app --example robot_tunnel --locked
 target/nix/debug/examples/robot_tunnel export-base local-assets/tunnel-base-config.json
 ../rm-map-tools/ocpenv/bin/python ../rm-map-tools/benchmarks/2026-10-18-team-robot/bind_tunnel.py \
   --sources local-assets/robot-cad-survey --out local-assets/robot-cad-survey/bound-tunnel-heavy \

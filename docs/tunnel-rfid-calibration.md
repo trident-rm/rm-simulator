@@ -31,7 +31,7 @@ Reproduce rectangle measurements without CAD libraries:
 
 ```sh
 python3 scripts/survey-tunnel-rfid.py field-2027
-nix develop -c cargo run -p rm-simulator-server --example survey_tunnel_cards --locked
+nix develop -c cargo run -p rm-sim-server --example survey_tunnel_cards --locked
 ```
 
 Detection approximates the robot's antenna by its body center. Endpoint pads

@@ -4884,13 +4884,13 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "clap",
- "rm-simulator-engine",
- "rm-simulator-physics",
- "rm-simulator-render",
+ "rm-sim-engine",
+ "rm-sim-physics",
+ "rm-sim-render",
 ]
 
 [[package]]
-name = "rm-simulator-engine"
+name = "rm-sim-engine"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
@@ -4898,18 +4898,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "rm-simulator-physics"
+name = "rm-sim-physics"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
  "mid360-sim",
  "rapier3d-f64",
- "rm-simulator-engine",
+ "rm-sim-engine",
  "serde",
 ]
 
 [[package]]
-name = "rm-simulator-render"
+name = "rm-sim-render"
 version = "0.1.0"
 dependencies = [
  "bevy",

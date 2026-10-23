@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 [workspace]
-name = "rm-simulator-ros2"
+name = "rm-sim-ros2"
 channels = ["https://prefix.dev/robostack-jazzy", "https://prefix.dev/conda-forge"]
 platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
 
@@ -17,7 +17,7 @@ colcon-common-extensions = "*"
 [tasks]
 interfaces = "bash scripts/build-interfaces.sh"
 build = { cmd = "bash scripts/with-ros.sh cargo build --release --features ros2 --locked", depends-on = ["interfaces"] }
-run = { cmd = "bash scripts/with-ros.sh ../../target/ros2/release/rm-simulator-ros2", depends-on = ["build"] }
+run = { cmd = "bash scripts/with-ros.sh ../../target/ros2/release/rm-sim-ros2", depends-on = ["build"] }
 test = { cmd = "bash scripts/with-ros.sh cargo test --features ros2 --locked", depends-on = ["interfaces"] }
 smoke = { cmd = "bash scripts/with-ros.sh python scripts/smoke.py", depends-on = ["build"] }
 control = { cmd = "bash scripts/with-ros.sh python scripts/control.py", depends-on = ["interfaces"] }

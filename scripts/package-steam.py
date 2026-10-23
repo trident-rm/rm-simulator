@@ -107,7 +107,7 @@ def main():
     target = next(line.removeprefix("host: ") for line in rust_info.splitlines() if line.startswith("host: "))
     metadata = command_json([
         "cargo", "metadata", "--locked", "--format-version", "1", "--filter-platform", target,
-        "--features", "rm-simulator-app/steam",
+        "--features", "rm-sim-app/steam",
     ], env)
     package = next(p for p in metadata["packages"] if p["name"] == "steamworks-sys")
     if package["version"] != SYS_VERSION:
@@ -124,7 +124,7 @@ def main():
         print(f"SDK matches steamworks-sys {SYS_VERSION}; runtime {runtime}")
         return
     env["STEAM_SDK_LOCATION"] = str(sdk)
-    command = ["cargo", "build", "--locked", "-p", "rm-simulator-app", "--features", "steam", "--message-format=json-render-diagnostics"]
+    command = ["cargo", "build", "--locked", "-p", "rm-sim-app", "--features", "steam", "--message-format=json-render-diagnostics"]
     if args.profile == "release":
         command.append("--release")
     result = subprocess.run(command, cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, check=False)

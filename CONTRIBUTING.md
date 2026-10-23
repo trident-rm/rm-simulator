@@ -107,7 +107,7 @@ and package hashes; mark superseded designs instead of presenting them as curren
 Record user-visible changes under `Unreleased` in the changelog.
 
 `just world-test` covers the world facade and live rules. For extracted dynamics
-and geometry, run `cargo test -p rm-simulator-physics --locked`. `just verify`
+and geometry, run `cargo test -p rm-sim-physics --locked`. `just verify`
 covers both crates, the rest of the workspace, Python harness checks and dependency
 policy. Run timing probes after compilation has finished. The asynchronous network
 trace tests can also miss their comparison-count threshold under heavy competing

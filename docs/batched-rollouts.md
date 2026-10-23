@@ -22,7 +22,7 @@ or reset-only use. These limits bound facade work, not arbitrary scenario geomet
 or internal solver allocations.
 
 ```rust
-use rm_simulator_physics::{Pose, StepDuration, Team, chassis::ChassisConfig,
+use rm_sim_physics::{Pose, StepDuration, Team, chassis::ChassisConfig,
     session::{RobotCommand, RobotScenario, RobotSession,
         batch::{BatchLimits, BatchStep, RobotBatch, RobotQuery}}};
 
@@ -131,7 +131,7 @@ Run from the workspace, after compilation and other heavy work have finished:
 
 ```sh
 nix develop -c env CARGO_TARGET_DIR=target/batched-rollouts \
-  cargo run -p rm-simulator-world --example batched_rollouts --release --locked -- 16 128 5
+  cargo run -p rm-sim-world --example batched_rollouts --release --locked -- 16 128 5
 ```
 
 Arguments are session count, one-millisecond integration steps per session and

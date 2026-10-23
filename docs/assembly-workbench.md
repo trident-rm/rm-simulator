@@ -13,7 +13,7 @@ for the corrected arena OXYZ and standing terrain described below; the default
 flat fixture remains a legacy comparison.
 
 ```sh
-nix develop -c cargo run -p rm-simulator-app --example engineer_assembly -- \
+nix develop -c cargo run -p rm-sim-app --example engineer_assembly -- \
   --assembly-assets local-assets/assembly-cad/package
 ```
 
@@ -67,7 +67,7 @@ chooses 1–3. `--headless` runs that demonstration without a GPU, prints the
 serialized final authority and exits unsuccessfully if it cannot finish:
 
 ```sh
-nix develop -c cargo run -p rm-simulator-app --example engineer_assembly -- \
+nix develop -c cargo run -p rm-sim-app --example engineer_assembly -- \
   --headless --difficulty 3
 ```
 
@@ -113,7 +113,7 @@ target/nix/debug/examples/engineer_assembly \
 
 ## Reusable source loading
 
-`rm_simulator_assets::semantics::assembly::SourcePackage` verifies the approved
+`rm_sim_assets::semantics::assembly::SourcePackage` verifies the approved
 PIE package and supplies source calibration, a source-bound area frame and an
 immutable `physics::manipulator_collision::CollisionScene`. It requires no host,
 match authority or renderer. Calibration is deserialized into a caller-owned
@@ -261,7 +261,7 @@ The package records input/output hashes, bearing evidence, ownership counts,
 producer hash and a CAD-NOTICE retaining PIE and DJI provenance/terms.
 
 ```sh
-nix develop -c cargo build -p rm-simulator-app --example engineer_assembly
+nix develop -c cargo build -p rm-sim-app --example engineer_assembly
 python3 scripts/assembly-cad-scenarios.py --package local-assets/assembly-cad/package
 ```
 
@@ -321,7 +321,7 @@ For a path that completes, solve it without a renderer, then render the recorded
 source link poses. The renderer never runs IK or invents joint interpolation:
 
 ```sh
-nix develop -c cargo build -p rm-simulator-app --example engineer_assembly --locked
+nix develop -c cargo build -p rm-sim-app --example engineer_assembly --locked
 target/nix/debug/examples/engineer_assembly \
   --assembly-assets local-assets/assembly-cad/package --headless --difficulty 2 \
   --record local-assets/assembly-cad/offline-d2.jsonl
@@ -533,7 +533,7 @@ Generate a separate, disposable terrain extraction and enable it explicitly:
 ../rm-map-tools/ocpenv/bin/python scripts/bind-assembly-area.py \
   --package local-assets/assembly-cad/package --field field-2027 \
   --out local-assets/assembly-cad/area
-nix develop -c cargo run -p rm-simulator-app --example engineer_assembly -- \
+nix develop -c cargo run -p rm-sim-app --example engineer_assembly -- \
   --assembly-assets local-assets/assembly-cad/package \
   --assembly-area local-assets/assembly-cad/area --difficulty 3
 ```
@@ -631,7 +631,7 @@ joints and intersecting leaf indices; no collision exclusion is changed.
 ASSEMBLY_CAD_PACKAGE="$PWD/local-assets/assembly-cad/package" \
 ASSEMBLY_CAD_AREA="$PWD/local-assets/assembly-cad/area" \
 ASSEMBLY_COLLISION_AUDIT="$PWD/local-assets/assembly-cad/area-shoulder-leaf-audit.json" \
-nix develop -c cargo test -p rm-simulator-app --example engineer_assembly \
+nix develop -c cargo test -p rm-sim-app --example engineer_assembly \
   --all-features --locked audit_chassis_shoulder_collision_leaves -- --ignored
 ../rm-map-tools/ocpenv/bin/python scripts/render-assembly-collisions.py \
   --package local-assets/assembly-cad/package \
@@ -1047,11 +1047,11 @@ IK-only witness separately. `ASSEMBLY_AUDIT_NEAR=1` tests closer parking offsets
 ```sh
 ASSEMBLY_CAD_PACKAGE="$PWD/local-assets/assembly-cad/package" \
   ASSEMBLY_AUDIT_LIMITS=original nix develop -c cargo test \
-  -p rm-simulator-app --example engineer_assembly audit_level_three_joint_guards \
+  -p rm-sim-app --example engineer_assembly audit_level_three_joint_guards \
   -- --ignored --nocapture
 # Alternative experimental guards: j4, winding, all. These never change runtime.
 ASSEMBLY_CAD_PACKAGE="$PWD/local-assets/assembly-cad/package" \
-  nix develop -c cargo test -p rm-simulator-app --example engineer_assembly \
+  nix develop -c cargo test -p rm-sim-app --example engineer_assembly \
   audit_level_three_reverse_ik -- --ignored --nocapture
 ```
 

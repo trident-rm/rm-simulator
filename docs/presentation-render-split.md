@@ -8,16 +8,16 @@ The split adds no new clock, networking path or simulation world.
 
 ## Ownership
 
-- `rm-simulator-engine` describes physical models and scalar contracts.
-- `rm-simulator-physics` owns physical preparation/runtime and passive sensors.
-- `rm-simulator-gameplay` owns deterministic competition authorities.
-- `rm-simulator-world` composes physical participants with those authorities.
-- `rm-simulator-presentation` translates borrowed RoboMaster snapshots, caller
+- `rm-sim-engine` describes physical models and scalar contracts.
+- `rm-sim-physics` owns physical preparation/runtime and passive sensors.
+- `rm-sim-gameplay` owns deterministic competition authorities.
+- `rm-sim-world` composes physical participants with those authorities.
+- `rm-sim-presentation` translates borrowed RoboMaster snapshots, caller
   presentation time and detected hits into renderer appearances. It depends on
   world and render, with no host, transport, input, window or session dependency.
-- `rm-simulator-render::generic` owns FLU rendering conversions, camera appearance
+- `rm-sim-render::generic` owns FLU rendering conversions, camera appearance
   and shared-handle mesh/imported-scene instances with sparse pose updates.
-- `rm-simulator-render::rm` exposes the RoboMaster visual extension: armor,
+- `rm-sim-render::rm` exposes the RoboMaster visual extension: armor,
   equipment lights, robot visuals and resolved match-scene synchronization.
 - The app owns networking, prediction/interpolation selection, presentation
   scheduling, cameras, controls, HUD and menus. It selects actual presented robot

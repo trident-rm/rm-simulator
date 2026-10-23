@@ -6,7 +6,7 @@ use crate::{
     model::Inspector,
     raster::{self, HEIGHT, Options, WIDTH},
 };
-use rm_simulator_assets::collision_mesh::VisualPart;
+use rm_sim_assets::collision_mesh::VisualPart;
 use serde_json::{Value, json};
 
 /// One cached world-placed visual primitive and its native motion channel.
@@ -254,7 +254,7 @@ pub fn render(model: &Inspector, options: &Options) -> anyhow::Result<Frame> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rm_simulator_assets::collision_mesh::CollisionMesh;
+    use rm_sim_assets::collision_mesh::CollisionMesh;
     fn camera() -> Camera {
         Camera::fit(
             &[[-1.; 3], [1.; 3]],
@@ -362,7 +362,7 @@ mod tests {
     fn real_source_previews_pick_nearest_ray_and_follow_native_motion() {
         let root = std::env::var_os("RM_INSPECTOR_TEST_ASSETS")
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(rm_simulator_assets::cad_assets::default_cad_assets);
+            .unwrap_or_else(rm_sim_assets::cad_assets::default_cad_assets);
         for name in ["outpost", "base", "rune"] {
             let mut model = Inspector::load(&root, name, 0).unwrap();
             model.configure_robot(None).unwrap();

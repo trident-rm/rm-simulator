@@ -2,7 +2,7 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Standalone native equipment rules
 
-`rm_simulator_gameplay::rmuc_2027::equipment` exposes borrowed `Outposts` and
+`rm_sim_gameplay::rmuc_2027::equipment` exposes borrowed `Outposts` and
 `Bases` views used by the live `match_rules::Match`. They operate on the same
 caller-owned state fields and the existing `Control` territory authority.
 They introduce no serialized records, clock, physics, transport or dependencies.
@@ -10,9 +10,9 @@ For a complete match, continue to use `Match` or a trusted world session.
 
 ```sh
 nix develop -c env CARGO_TARGET_DIR=/tmp/rm-equipment-target \
-  cargo run --locked -p rm-simulator-gameplay --example equipment
+  cargo run --locked -p rm-sim-gameplay --example equipment
 nix develop -c env CARGO_TARGET_DIR=/tmp/rm-equipment-target \
-  cargo test --locked -p rm-simulator-gameplay --test equipment_2027
+  cargo test --locked -p rm-sim-gameplay --test equipment_2027
 ```
 
 `Outposts` borrows both HP values, permanent rotor-stop timestamps and mutable

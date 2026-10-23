@@ -122,7 +122,7 @@ def profile_metadata(batch, headers):
 def source_identity():
     """Commit plus hashes of relevant possibly uncommitted source, not binary proof."""
     files = [Path(__file__).resolve(), *(
-        ROOT / "crates/rm-simulator-server/src" / name
+        ROOT / "crates/rm-sim-server/src" / name
         for name in ("sensor_stream.rs", "host.rs", "http.rs", "simulation.rs")
     )]
     return {

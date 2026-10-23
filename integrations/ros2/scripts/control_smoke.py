@@ -36,7 +36,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     root = Path(__file__).resolve().parents[3]
     parser.add_argument(
-        "--server-bin", type=Path, default=root / "target/nix/debug/rm-simulator-server"
+        "--server-bin", type=Path, default=root / "target/nix/debug/rm-sim-server"
     )
     args = parser.parse_args()
     os.environ["RMW_IMPLEMENTATION"] = "rmw_fastrtps_cpp"

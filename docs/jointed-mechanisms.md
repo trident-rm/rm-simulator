@@ -14,8 +14,8 @@ this fixture does not migrate their behavior, rules or control paths. See the
 From the checkout with the development environment available:
 
 ```sh
-nix develop --command mbx run -p rm-simulator-physics --example jointed_turret --locked
-nix develop --command mbx test -p rm-simulator-physics --test jointed_turret --locked
+nix develop --command mbx run -p rm-sim-physics --example jointed_turret --locked
+nix develop --command mbx test -p rm-sim-physics --test jointed_turret --locked
 ```
 
 `examples/jointed_turret.rs` installs a fixed pedestal, a 2 kg yaw yoke and a

@@ -4,7 +4,7 @@
 
 ## Transport-independent Rust data
 
-`rm_simulator_server::referee_protocol` models the supplied **2026 University
+`rm_sim_server::referee_protocol` models the supplied **2026 University
 Series Communication Protocol V2.0.0 (2026-06-30)**. This communication schema
 is independent of the live RMUC 2027 gameplay identity. No 2026 rule engine or
 season execution path is added.
@@ -46,7 +46,7 @@ operational messages.
 ### Configure synthetic data
 
 ```rust
-use rm_simulator_server::referee_protocol::{MockData, client, serial};
+use rm_sim_server::referee_protocol::{MockData, client, serial};
 
 let mut mock = MockData::default();
 for message in &mut mock.serial {
@@ -75,7 +75,7 @@ synthetic and do not assert that every mechanism or sensor is simulated.
 ### Use native own-robot values
 
 ```rust
-use rm_simulator_server::{workload, referee_protocol::projection};
+use rm_sim_server::{workload, referee_protocol::projection};
 
 let (simulation, ids) = workload::simulation(1); // No-CAD example only.
 let snapshot = simulation.snapshot(); // A live adapter can use HostHandle::state().
@@ -139,7 +139,7 @@ actual firmware serialization. A byte codec should resolve conflicts against
 its target hardware revision before asserting wire compatibility. Removed serial
 0x0304 is intentionally absent.
 
-Run `cargo test -p rm-simulator-server referee_protocol --locked` for full
+Run `cargo test -p rm-sim-server referee_protocol --locked` for full
 catalog inventory, template/JSON round trips, malformed-length/bitfield checks,
 optional-vs-zero behavior and native snapshot projection tests. The existing
 MQTT app link below remains a separate older-schema implementation; it is not

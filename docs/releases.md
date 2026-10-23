@@ -186,7 +186,7 @@ preserve the ownership notice and exporter provenance, then run:
 
 ```sh
 python3 scripts/stage-release-field.py --update-checksums
-cargo run --release --locked -p rm-simulator-server --example inspect_assets -- field-2027
+cargo run --release --locked -p rm-sim-server --example inspect_assets -- field-2027
 ```
 
 Commit changed LFS pointers and `scripts/release-field-2027.json` together.

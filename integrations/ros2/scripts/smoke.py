@@ -21,7 +21,7 @@ def main():
     parser.add_argument(
         "--binary",
         type=Path,
-        default=Path("../../target/ros2/release/rm-simulator-ros2"),
+        default=Path("../../target/ros2/release/rm-sim-ros2"),
     )
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument("--frames", type=int, default=6)

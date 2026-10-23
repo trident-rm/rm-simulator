@@ -19,8 +19,8 @@ native = ["dep:rxui"]
 anyhow = "1"
 serde_json = "1"
 png = "0.18"
-rm-simulator-assets = { version = "0.1.0", path = "../../crates/rm-simulator-assets" }
-rm-simulator-physics = { version = "0.1.0", path = "../../crates/rm-simulator-physics" }
+rm-sim-assets = { version = "0.1.0", path = "../../crates/rm-sim-assets" }
+rm-sim-physics = { version = "0.1.0", path = "../../crates/rm-sim-physics" }
 rxui = { version = "=0.2.0-dev.0", git = "https://github.com/hxyulin/rxui", rev = "656bf5ed460ed9604b65fa9538354fb6c746a7d4", default-features = false, features = ["native"], optional = true }
 
 [profile.dev]

@@ -17,8 +17,8 @@ headless/PPO workload split, copy reduction and GPU candidate criteria.
 Run the dependency-free examples in release mode:
 
 ```sh
-cargo run --release -p rm-simulator-world --example step_cost
-cargo run --release -p rm-simulator-gameplay --example benchmark
+cargo run --release -p rm-sim-world --example step_cost
+cargo run --release -p rm-sim-gameplay --example benchmark
 ```
 
 The world example compares 20,000 requested ticks over several runs. These
@@ -38,8 +38,8 @@ The server example loads the checksummed collision package and runs independent
 matches on separate threads, sharing immutable geometry as prediction does:
 
 ```sh
-cargo run --release -p rm-simulator-server --example match_cost -- field-2027 1 8 1000
-cargo run --release -p rm-simulator-server --example match_cost -- field-2027 4 8 1000
+cargo run --release -p rm-sim-server --example match_cost -- field-2027 1 8 1000
+cargo run --release -p rm-sim-server --example match_cost -- field-2027 4 8 1000
 ```
 
 Arguments are CAD path, concurrent matches, pilots per match, and sample count.
@@ -67,7 +67,7 @@ server probe does not establish rendering performance or network capacity.
 ## Navigation geometry and ideal scans
 
 ```sh
-cargo run --release -p rm-simulator-server --example navigation_query_cost -- field-2027
+cargo run --release -p rm-sim-server --example navigation_query_cost -- field-2027
 ```
 
 This times cached static CAD segment-visibility queries for 1080 horizontal rays

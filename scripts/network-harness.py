@@ -572,7 +572,7 @@ def run(args, scenario):
                                      'RM_NET_SNAPSHOT', 'RM_NET_CODEC', 'RM_NET_DEFLATE_LEVEL', 'RM_NET_ZSTD_LEVEL',
                                      'RM_NET_PROFILE', 'RM_NET_UP_KIB_S', 'RM_NET_DOWN_KIB_S', 'RM_NET_FULL_CHECKPOINTS', 'RM_NET_FIXED_INPUT_LEAD', 'RM_NET_INPUT_HISTORY')
                                     if key in os.environ},
-                    'python': sys.version, 'protocol_source': (ROOT / 'crates/rm-simulator-server/src/protocol.rs').read_text().split('pub const PROTOCOL_VERSION: u32 = ')[-1].split(';')[0],
+                    'python': sys.version, 'protocol_source': (ROOT / 'crates/rm-sim-server/src/protocol.rs').read_text().split('pub const PROTOCOL_VERSION: u32 = ')[-1].split(';')[0],
                     'binaries': {name: {'path': str(path), 'sha256': digest(path)}
                                  for name, path in (('server', args.server), ('app', args.app))},
                     'cad': {str(path.relative_to(args.cad_assets)): digest(path)
@@ -860,7 +860,7 @@ def main():
     parser.add_argument('--output', type=Path, help='New artifact directory; existing directories are refused')
     parser.add_argument('--validate', action='store_true', help='Validate the scenario and exit without launching')
     target = Path(os.environ.get('CARGO_TARGET_DIR') or ROOT / 'target')
-    parser.add_argument('--server', type=Path, default=target / 'debug/rm-simulator-server')
+    parser.add_argument('--server', type=Path, default=target / 'debug/rm-sim-server')
     parser.add_argument('--app', type=Path, default=target / 'debug/rm-simulator')
     parser.add_argument('--cad-assets', type=Path, default=Path.home() / 'dev/RM/assets/rm2026-field')
     parser.add_argument('--ready-timeout', type=float, default=180)

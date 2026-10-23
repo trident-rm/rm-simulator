@@ -3,8 +3,8 @@
 //! Bounded operator-HTTP measured stream -> rclrs, with no local physical world.
 use anyhow::{Result, ensure};
 use rclrs::CreateBasicExecutor;
-use rm_simulator_physics::sensors::synchronized::{Config, Frame};
-use rm_simulator_ros2::{
+use rm_sim_physics::sensors::synchronized::{Config, Frame};
+use rm_sim_ros2::{
     LivoxConfig, LivoxPacket,
     publisher::{ImuPublisher, LivoxPublisher},
 };
@@ -59,8 +59,8 @@ pub(super) fn run(args: &super::Args, address: SocketAddr) -> Result<()> {
     } else {
         Config {
             robot: args.robot,
-            lidar_mount: rm_simulator_physics::Pose::at([0., 0., args.mount_z_m]),
-            imu_mount: rm_simulator_physics::Pose::at([0., 0., args.mount_z_m]),
+            lidar_mount: rm_sim_physics::Pose::at([0., 0., args.mount_z_m]),
+            imu_mount: rm_sim_physics::Pose::at([0., 0., args.mount_z_m]),
             stride: args.stride,
             range_sigma_m: args.range_noise_m,
             angular_sigma_rad: args.angular_noise_deg.to_radians(),

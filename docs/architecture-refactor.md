@@ -2,13 +2,13 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Simulation architecture
 
-The solver-free `rm-simulator-engine` owns shared poses/timing, query and drive
+The solver-free `rm-sim-engine` owns shared poses/timing, query and drive
 records, and scalar wheel laws. Physics re-exports these contracts and retains
 Rapier execution. See [Engine architecture](engine-architecture.md) for the
 implemented split and planned component lifecycle.
 
-Physics and prescribed motion live in `rm-simulator-physics`. The complete
-`Field` facade in `rm-simulator-world` coordinates them with live rules and the
+Physics and prescribed motion live in `rm-sim-physics`. The complete
+`Field` facade in `rm-sim-world` coordinates them with live rules and the
 referee on one explicit clock (128 Hz by default, with configurable in-process
 physical/rule stepping). Rendering consumes caller-owned appearance
 and has no dependency on physics or gameplay. The server host worker owns each
@@ -106,7 +106,7 @@ privileged truth access and complete in-memory reset points. Per-field
 `StepDuration` travels in checkpoints. Multiplayer admission remains 128 Hz until
 rate negotiation and all peer schedulers support customization.
 
-`rm-simulator-assets` owns verified CAD import and source metadata without a
+`rm-sim-assets` owns verified CAD import and source metadata without a
 dependency on world, networking or rendering. The server retains compatibility
 imports and native runtime validation. The renderer remains a separate passive
 consumer. See [simulation embedding](simulation-embedding.md) for the public API,

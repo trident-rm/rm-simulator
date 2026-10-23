@@ -2,7 +2,7 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Optional ROS 2 / Livox integration
 
-`rm-simulator-ros2` publishes rolling simulated LiDAR using **rclrs 0.8.0** and
+`rm-sim-ros2` publishes rolling simulated LiDAR using **rclrs 0.8.0** and
 actual `livox_ros_driver2/msg/CustomMsg` / `CustomPoint` interfaces. It also
 publishes `rosgraph_msgs/msg/Clock` on `/clock`. The Rust package has its own
 workspace and lockfile: ordinary app/server builds need no ROS libraries or
@@ -117,8 +117,8 @@ With the `ros2` feature enabled and ROS sourced, create a `LivoxPublisher` from
 an rclrs node, then convert and publish a completed `RollingFrame`:
 
 ```rust,ignore
-let publisher = rm_simulator_ros2::publisher::LivoxPublisher::new(&node, "/livox/lidar")?;
-let packet = rm_simulator_ros2::LivoxPacket::from_scan(&scan, &Default::default())?;
+let publisher = rm_sim_ros2::publisher::LivoxPublisher::new(&node, "/livox/lidar")?;
+let packet = rm_sim_ros2::LivoxPacket::from_scan(&scan, &Default::default())?;
 publisher.publish(&packet)?;
 publisher.publish_clock(field.time_ns())?;
 ```
@@ -314,7 +314,7 @@ Test actual DDS input against a headless CAD host (same simulation/command path
 as the game), after building the normal server binary:
 
 ```sh
-nix develop -c cargo build -p rm-simulator-server --bin rm-simulator-server --locked
+nix develop -c cargo build -p rm-sim-server --bin rm-sim-server --locked
 pixi run --manifest-path integrations/ros2/pixi.toml control-smoke
 ```
 

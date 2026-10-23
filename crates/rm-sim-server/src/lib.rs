@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 hxyulin <hxyulin@proton.me>
+//! The authoritative simulation and how to reach it: the CAD package loaded
+//! into a `Field`, a `Simulation` that paces it on a host clock, the framed GNS
+//! UDP protocol for players, and a small HTTP panel for the referee.
+//! Nothing here draws; the `rm-simulator` app is one client of this crate,
+//! whether it hosts the simulation in-process or connects to
+//! `rm-sim-server`.
+#![deny(missing_docs)]
+
+extern crate self as rm_sim_server;
+mod assembly;
+#[allow(dead_code, unused_imports)] // Shared diagnostic entry points are used by the workbench.
+mod assembly_rig;
+#[cfg(test)]
+mod bandwidth_probe;
+pub mod binary_snapshot;
+pub mod cad_assets;
+pub mod clock;
+pub use rm_sim_assets::collision_mesh;
+pub mod compression;
+pub mod deployment;
+pub mod external_control;
+pub mod host;
+pub mod host_args;
+pub mod http;
+pub mod layout;
+mod lifecycle;
+pub mod map_interaction;
+pub use rm_sim_assets::math;
+pub mod navigation;
+pub mod net;
+pub mod protocol;
+pub mod referee_protocol;
+pub mod rmuc_2027;
+pub mod roster;
+pub mod sensor_stream;
+pub mod simulation;
+pub mod snapshot_codec;
+pub mod zone_catalog;
+
+pub use rm_sim_assets::semantics;
+
+pub mod prediction;
+
+pub mod view;
+
+pub mod workload;
+
+pub mod input_stream;
+pub mod intelligence;
+pub mod sentry_controller;
+
+pub mod network_stats;
+
+pub mod network_trace;
+
+pub mod owner_stream;
+
+pub mod pacing;
+
+pub mod scripted_link;
+
+pub mod udp_codec;
+
+pub mod udp_snapshot;
+
+pub mod lobby;

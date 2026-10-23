@@ -157,7 +157,7 @@ that affects historical per-class attribution, not total byte counts.
 
 ## Deterministic bandwidth probe
 
-Run `cargo test -p rm-simulator-server --locked bandwidth_attribution_baseline
+Run `cargo test -p rm-sim-server --locked bandwidth_attribution_baseline
 -- --nocapture` on one line to measure the production peer/client codecs on a
 manual clock. The probe reports owner/world/control bytes, input batches and
 complete checkpoints for idle, driving, firing and twelve-chassis workloads.
@@ -172,7 +172,7 @@ probe to evaluate outcome-recovery traffic.
 Run the release fanout probe with:
 
 ```sh
-cargo run -p rm-simulator-server --example network_fanout --release --locked
+cargo run -p rm-sim-server --example network_fanout --release --locked
 ```
 
 It compares direct and shared preparation for one, two and twelve recipients of

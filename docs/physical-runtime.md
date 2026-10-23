@@ -65,9 +65,9 @@ Installed native shapes share storage; body handles, wheel state, commands and
 contact history remain independent. The existing `add_chassis` convenience path
 uses the same construction and preserves its validation/ID semantics.
 
-The [body runtime example](../crates/rm-simulator-physics/examples/body_runtime.rs)
+The [body runtime example](../crates/rm-sim-physics/examples/body_runtime.rs)
 constructs, steps, observes and reconstructs a bare scene without robot or match
-types. Run it with `mbx run -p rm-simulator-physics --example body_runtime --locked`.
+types. Run it with `mbx run -p rm-sim-physics --example body_runtime --locked`.
 
 ## Prepared carried objects and domain construction
 

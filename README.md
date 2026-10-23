@@ -38,6 +38,12 @@ The [2027 rules reference](docs/rules-2027.md) interprets the supplied manuals;
 from remaining gaps. Builds include RMUC 2027 and RMUL 2027 without season feature switches.
 See [the archived runtime guide](docs/seasons.md) for 2026 and shared internals.
 
+Rust packages use the `rm-sim-*` prefix (for example, `rm-sim-engine`,
+`rm-sim-physics` and `rm-sim-render`); Rust imports use `rm_sim_*`.
+The application executable remains `rm-simulator`; the headless server is
+`rm-sim-server`. The generic components keep this namespace until a separate
+use case warrants an independent name.
+
 ## Contents
 
 - [Quick start](#quick-start)
@@ -197,19 +203,19 @@ later deployment. No directory is required or running for this feature.
 
 | Crate | Responsibility |
 |---|---|
-| [`rm-simulator-gameplay`](crates/rm-simulator-gameplay/README.md) | Standalone match lifecycle and gameplay state, deterministic commands, rule coverage and unsupported-element observations. No physics or renderer; its live resource component is driven by the world referee. |
-| [`rm-simulator-physics`](crates/rm-simulator-physics/README.md) | Reusable Rapier dynamics, chassis, projectiles, raw armor contacts, shared geometry and prescribed armor motion. No gameplay, Bevy, server or CAD-loader dependency. |
-| [`rm-simulator-world`](crates/rm-simulator-world/README.md) | Complete `Field` facade: explicit ticks, activation, detection, damage, referee integration and restore. Coordinates the physics library and preserves existing public world imports. |
-| [`rm-simulator-presentation`](crates/rm-simulator-presentation/README.md) | Borrowed game snapshots and caller time into render appearances, without hosting, transport or UI ownership. |
-| [`rm-simulator-render`](crates/rm-simulator-render/README.md) | Generic Bevy visual instances plus the default RoboMaster extension. Bevy CAD scenery, lighting, rune and outpost light overlays, projectile spheres, chassis visuals, and pose/visibility/strike synchronization from caller-owned scene state. No world dependency. |
-| [`rm-simulator-server`](crates/rm-simulator-server/README.md) | Bevy-free glue: CAD loading and checksums, collision triangles, field layout, the `Simulation` wrapper, a `Host` worker that owns simulation and command ordering, the GNS UDP transport, the embedded owner's loopback codec link, the HTTP referee panel, and the headless binary. |
-| [`rm-simulator-bench`](crates/rm-simulator-bench/README.md) | Fixed-camera CAD renderer benchmark, independent of physics, world, server and gameplay. |
-| [`rm-simulator-app`](crates/rm-simulator-app/README.md) | The `rm-simulator` binary: window, chassis driving and gimbal camera (or fly camera), gun, HUD, world-to-scene adaptation, and the local or remote session that turns inputs into protocol commands. |
+| [`rm-sim-gameplay`](crates/rm-sim-gameplay/README.md) | Standalone match lifecycle and gameplay state, deterministic commands, rule coverage and unsupported-element observations. No physics or renderer; its live resource component is driven by the world referee. |
+| [`rm-sim-physics`](crates/rm-sim-physics/README.md) | Reusable Rapier dynamics, chassis, projectiles, raw armor contacts, shared geometry and prescribed armor motion. No gameplay, Bevy, server or CAD-loader dependency. |
+| [`rm-sim-world`](crates/rm-sim-world/README.md) | Complete `Field` facade: explicit ticks, activation, detection, damage, referee integration and restore. Coordinates the physics library and preserves existing public world imports. |
+| [`rm-sim-presentation`](crates/rm-sim-presentation/README.md) | Borrowed game snapshots and caller time into render appearances, without hosting, transport or UI ownership. |
+| [`rm-sim-render`](crates/rm-sim-render/README.md) | Generic Bevy visual instances plus the default RoboMaster extension. Bevy CAD scenery, lighting, rune and outpost light overlays, projectile spheres, chassis visuals, and pose/visibility/strike synchronization from caller-owned scene state. No world dependency. |
+| [`rm-sim-server`](crates/rm-sim-server/README.md) | Bevy-free glue: CAD loading and checksums, collision triangles, field layout, the `Simulation` wrapper, a `Host` worker that owns simulation and command ordering, the GNS UDP transport, the embedded owner's loopback codec link, the HTTP referee panel, and the headless binary. |
+| [`rm-sim-bench`](crates/rm-sim-bench/README.md) | Fixed-camera CAD renderer benchmark, independent of physics, world, server and gameplay. |
+| [`rm-sim-app`](crates/rm-sim-app/README.md) | The `rm-simulator` binary: window, chassis driving and gimbal camera (or fly camera), gun, HUD, world-to-scene adaptation, and the local or remote session that turns inputs into protocol commands. |
 
 Use the physical library without a match or server:
 
 ```sh
-cargo run -p rm-simulator-physics --example moving_armor --locked
+cargo run -p rm-sim-physics --example moving_armor --locked
 ```
 
 The optional [standalone scenario viewer](docs/scenario-viewer.md) uses the
@@ -227,7 +233,7 @@ An older Bevy composition example draws moving armor and projectiles without
 using `Field`, the referee or server APIs:
 
 ```sh
-cargo run -p rm-simulator-app --example physical_scene --locked
+cargo run -p rm-sim-app --example physical_scene --locked
 ```
 
 The example advances 16 simulation milliseconds per rendered frame. Production
@@ -341,7 +347,7 @@ just server --big-rune            # UDP on 0.0.0.0:7700, panel on http://127.0.0
 just run --connect 127.0.0.1:7700 --team blue --name alice
 ```
 
-`rm-simulator-server` loads the CAD, builds the same field as the app, steps
+`rm-sim-server` loads the CAD, builds the same field as the app, steps
 it in real time and serves gameplay over Valve GameNetworkingSockets UDP and an
 HTTP referee panel. Open UDP port 7700 for guests. It advertises itself as a
 LAN lobby, so Refresh LAN on the Multiplayer page lists it; `--lobby-name NAME`
@@ -546,7 +552,7 @@ The console can spawn a host-owned navigation Sentry and send it map destination
 See [navigation commands and prototype limits](docs/app-options.md#console-spawned-navigation-sentry).
 
 The current protocol version is 83, defined by `PROTOCOL_VERSION` in
-`crates/rm-simulator-server/src/protocol.rs`. GNS sends redundant controls
+`crates/rm-sim-server/src/protocol.rs`. GNS sends redundant controls
 and retried shot intents unreliably; scheduling receipts and terminal shot results
 remain reliable. There is no shooter-view fire path or input-acknowledgement
 stream. UDP deltas use acknowledged baselines. Server and client must use
@@ -573,7 +579,7 @@ reference.
 | `RM_NET_UP_KIB_S` / `RM_NET_DOWN_KIB_S` | Integer values from 4 to 2048 that override the application pacing for a trial. Invalid overrides use the defaults. |
 
 Measure snapshot bytes and codec CPU with
-`cargo run -p rm-simulator-server --example network_bandwidth --locked`.
+`cargo run -p rm-sim-server --example network_bandwidth --locked`.
 Periodic checkpoints are packed fine fixed point compressed with the embedded
 checkpoint dictionary at ZSTD level 6, except deltas under 128 bytes, which
 travel uncompressed; every other wire message is plain ZSTD at level 3. There is no codec selector and no dictionaryless or DEFLATE path.
@@ -701,11 +707,11 @@ aim even on a tilted chassis) and the armor light bars in the team colour.
 Review both models without loading field CAD:
 
 ```sh
-cargo run -p rm-simulator-render --example robots
-cargo run -p rm-simulator-render --example robots -- /tmp/robots.png healthy
-cargo run -p rm-simulator-render --example robots -- /tmp/robots-hit.png hit
-cargo run -p rm-simulator-render --example robots -- /tmp/robots-rear.png healthy rear
-cargo run -p rm-simulator-render --example robots -- /tmp/robots-defeated.png defeated
+cargo run -p rm-sim-render --example robots
+cargo run -p rm-sim-render --example robots -- /tmp/robots.png healthy
+cargo run -p rm-sim-render --example robots -- /tmp/robots-hit.png hit
+cargo run -p rm-sim-render --example robots -- /tmp/robots-rear.png healthy rear
+cargo run -p rm-sim-render --example robots -- /tmp/robots-defeated.png defeated
 ```
 
 The comparison stages Hero HP at 60%. `hit` freezes a front armor flash;
@@ -736,7 +742,7 @@ on the target GPU; a server probe does not establish rendering frame rate.
 Engine microbenchmarks and their limits are described in
 [performance checks](docs/performance.md).
 
-The separate `rm-simulator-bench` executable loads only visual field assets and
+The separate `rm-sim-bench` executable loads only visual field assets and
 measures rendering with fixed cameras, GPU timestamps and configurable JSON/raw
 output. Use `scripts/benchmark-render.py` for repeated settings sweeps. See
 [the benchmark guide](docs/render-benchmark.md) for build commands, Vulkan setup,

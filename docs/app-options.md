@@ -3,13 +3,13 @@
 # App options, controls and interface
 
 The complete command-line reference for `rm-simulator` and
-`rm-simulator-server`, the input bindings, weapon settings and the graphics
+`rm-sim-server`, the input bindings, weapon settings and the graphics
 presets. For what the simulator does, see the [project README](../README.md);
 for automation, see [console commands](console.md).
 
 ## Command-line options
 
-`rm-simulator` accepts every option below. `rm-simulator-server` accepts the
+`rm-simulator` accepts every option below. `rm-sim-server` accepts the
 field and weapon options that a host owns; a client
 joined with `--connect` takes those from the server.
 
@@ -215,7 +215,7 @@ saved bindings. Graphics changes apply live and do not change simulation physics
 Hover a graphics option or focus it with the keyboard to read its visual effect
 and performance tradeoff.
 
-The HUD stylesheet is embedded from `crates/rm-simulator-app/src/hud.css`, so
+The HUD stylesheet is embedded from `crates/rm-sim-app/src/hud.css`, so
 UI assets work with any `--cad-assets` location. It follows the July 2026 student
 manual's main interface and panels 1, 3, 5 and 6. Mirrored robot slots across the
 top show each team's individual robot HP. Empty slots are dimmed; defeated
@@ -521,14 +521,14 @@ full-arena connectivity is not yet supported.
 The headless `sentry_navigation` example exercises the same host controller:
 
 ```sh
-nix develop -c cargo run -p rm-simulator-server --example sentry_navigation --locked -- \
+nix develop -c cargo run -p rm-sim-server --example sentry_navigation --locked -- \
   fixture local-assets/robot-cad-survey/bound-tunnel-sentry/chassis.json -1 0 3 0
-nix develop -c cargo run -p rm-simulator-server --example sentry_navigation --locked -- \
+nix develop -c cargo run -p rm-sim-server --example sentry_navigation --locked -- \
   field-2027 local-assets/robot-cad-survey/bound-tunnel-sentry/chassis.json 4.7 3.5 4.5 6.8
 # Adjacent far-highland and ramp-side near-highland passages:
-nix develop -c cargo run -p rm-simulator-server --example sentry_navigation --locked -- \
+nix develop -c cargo run -p rm-sim-server --example sentry_navigation --locked -- \
   field-2027 local-assets/robot-cad-survey/bound-tunnel-sentry/chassis.json 2.5 6.93 -2.5 6.93
-nix develop -c cargo run -p rm-simulator-server --example sentry_navigation --locked -- \
+nix develop -c cargo run -p rm-sim-server --example sentry_navigation --locked -- \
   field-2027 local-assets/robot-cad-survey/bound-tunnel-sentry/chassis.json 3.5 5.7 -3.5 5.7
 ```
 

@@ -5,7 +5,7 @@
 `integrations/scenario-inspector/` is an independent Cargo workspace for inspecting
 verified equipment geometry. It does not change the interactive Bevy application,
 normal workspace dependencies, networking or match authority. It currently
-consumes `rm_simulator_assets::{components, scenarios}` and the shared
+consumes `rm_sim_assets::{components, scenarios}` and the shared
 physics motion/pose helpers. Outpost, Base and Rune selections create a physical
 `RobotSession` with a configurable existing omni chassis through `Scenario::session` and
 `RobotSpawn`. It requires the component composition changes in
@@ -227,7 +227,7 @@ reports zero footprints and an explicit unavailable message in that case; it
 does not copy the server catalogue or infer antenna calibration from CAD.
 
 Use `--rfid PATH` to import an explicit JSON array of
-`rm_simulator_assets::rmuc_2027::Zone` records exported by a caller. Each record
+`rm_sim_assets::rmuc_2027::Zone` records exported by a caller. Each record
 has `side`, `point`, `floor_m`, `height_m` and `polygon_m` in world FLU metres;
 `point` is retained metadata and enables no rules. Import rejects nonfinite
 geometry, fewer than three polygon vertices and nonpositive/overflowing height

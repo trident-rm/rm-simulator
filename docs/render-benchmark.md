@@ -2,13 +2,13 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Rendering benchmark
 
-`rm-simulator-bench` is a separate executable using the game's CAD renderer,
+`rm-sim-bench` is a separate executable using the game's CAD renderer,
 lighting and shared graphics presets. It loads checksummed visual GLBs and
 freezes mechanisms at their exported poses. It has a fixed camera and optional
 stadium, with no physics, collision loading, robots, projectiles, networking or
 gameplay UI. The renderer's normal GPU light clustering remains enabled. It never
 depends on physics, world, server or gameplay; see
-[`crates/rm-simulator-bench`](../crates/rm-simulator-bench/README.md) and
+[`crates/rm-sim-bench`](../crates/rm-sim-bench/README.md) and
 [simulation architecture](architecture-refactor.md) for the crate split.
 
 This guide is the canonical reference for the benchmark: commands, case input,
@@ -21,13 +21,13 @@ sweep files and report interpretation. It is not a full-game frame-rate claim;
 Build once on the machine being measured, before starting any captures:
 
 ```sh
-cargo build --release -p rm-simulator-bench --locked
+cargo build --release -p rm-sim-bench --locked
 ```
 
 On Linux or Windows, use native Vulkan or DX12 for GPU timestamp measurements:
 
 ```sh
-target/release/rm-simulator-bench --cad-assets local-assets/field-coarse \
+target/release/rm-sim-bench --cad-assets local-assets/field-coarse \
   --backend vulkan --detail raw --screenshot --output /tmp/rm-render-high
 ```
 
@@ -57,7 +57,7 @@ source checkout. The report records its manifest and visual-file hashes.
 Mac runs support CPU-only measurements:
 
 ```sh
-target/release/rm-simulator-bench --cad-assets local-assets/field-coarse \
+target/release/rm-sim-bench --cad-assets local-assets/field-coarse \
   --backend metal --cpu-only \
   --detail raw --screenshot --output /tmp/rm-render-metal
 ```
@@ -88,7 +88,7 @@ Write a sweep file and pass it to the driver:
 
 ```sh
 python3 scripts/benchmark-render.py /tmp/render-1080p.json \
-  --binary target/release/rm-simulator-bench \
+  --binary target/release/rm-sim-bench \
   --cad-assets local-assets/field-coarse --backend vulkan \
   --detail raw --output /tmp/rm-render-sweep
 ```
@@ -143,7 +143,7 @@ is a pure geometry throughput test.
 
 ```sh
 python3 scripts/benchmark-render.py /tmp/render-effects.json \
-  --binary target/release/rm-simulator-bench \
+  --binary target/release/rm-sim-bench \
   --cad-assets local-assets/field-coarse --backend vulkan \
   --headless --detail passes --output /tmp/rm-render-effects
 ```

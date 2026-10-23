@@ -21,15 +21,15 @@ runs on bounded workers outside ROS callbacks. Core libraries and multiplayer bu
 
 | Consumer | Entry point | Includes |
 |---|---|---|
-| Strategy evaluator | `rm-simulator-gameplay::rmuc_2027::match_rules::Match` | Native rules driven by caller observations and nanosecond durations; no physical travel/combat abstraction is invented. |
-| Low-level physical runtime | `rm-simulator-physics::runtime::WorldPhysics` | One concrete Rapier world; explicit starting timestamps, target endpoints and retained contact output. |
-| Robot physical/control test | `rm-simulator-physics::session::RobotSession` | Caller-paced physics, shared commands and sensor access; initial-scenario reset without match rules. |
-| Complete physical match or robotics scenario | `rm-simulator-world::session::MatchSession` | A `Field`, addressed controls, timestamps, checkpoints and explicit reset. |
+| Strategy evaluator | `rm-sim-gameplay::rmuc_2027::match_rules::Match` | Native rules driven by caller observations and nanosecond durations; no physical travel/combat abstraction is invented. |
+| Low-level physical runtime | `rm-sim-physics::runtime::WorldPhysics` | One concrete Rapier world; explicit starting timestamps, target endpoints and retained contact output. |
+| Robot physical/control test | `rm-sim-physics::session::RobotSession` | Caller-paced physics, shared commands and sensor access; initial-scenario reset without match rules. |
+| Complete physical match or robotics scenario | `rm-sim-world::session::MatchSession` | A `Field`, addressed controls, timestamps, checkpoints and explicit reset. |
 | Independent rollout collection | `physics::session::batch::RobotBatch` / `world::session::batch::MatchBatch` | Bounded sequential stepping, reusable observations and transactional selective reset; mixed per-slot durations. |
 | Standalone equipment rules | `gameplay::rmuc_2027::equipment` and `rune::Rune` | Borrowed native Outpost/Base transitions and existing pure Rune authority; caller-owned explicit scheduling. |
-| Verified map import | `rm-simulator-assets` | Manifests, checksums, collision GLBs, source bindings and articulation semantics, without server/network dependencies. |
-| Scene viewer / future camera adapter | `rm-simulator-render::sync::SceneState` | Caller-owned appearance and poses; rendering never steps the world. |
-| Multiplayer / external remote control | `rm-simulator-server` | Ownership, command admission, cadence, transport and real-time pacing. |
+| Verified map import | `rm-sim-assets` | Manifests, checksums, collision GLBs, source bindings and articulation semantics, without server/network dependencies. |
+| Scene viewer / future camera adapter | `rm-sim-render::sync::SceneState` | Caller-owned appearance and poses; rendering never steps the world. |
+| Multiplayer / external remote control | `rm-sim-server` | Ownership, command admission, cadence, transport and real-time pacing. |
 
 The two session layers share `Stamp`, `SampleSchedule`, `RobotCommand`,
 `CommandResult` and `RobotTruth` from `physics::session`; the world session
@@ -105,7 +105,7 @@ the same `Field` methods used by the host; it does not implement alternate rules
 or a second physics world.
 
 ```rust
-use rm_simulator_world::{Field, FieldConfig, StepDuration, session::MatchSession};
+use rm_sim_world::{Field, FieldConfig, StepDuration, session::MatchSession};
 
 let field = Field::new(&FieldConfig {
     step_duration: StepDuration::HZ_1000,
@@ -119,13 +119,13 @@ session.step(100)?;
 session.restore(&checkpoint)?;
 session.reset(42)?;
 assert_eq!(session.stamp().time_ns, 0);
-# Ok::<(), rm_simulator_world::FieldError>(())
+# Ok::<(), rm_sim_world::FieldError>(())
 ```
 
 Run the complete driving example without external assets:
 
 ```sh
-cargo run -p rm-simulator-world --example session --locked
+cargo run -p rm-sim-world --example session --locked
 ```
 
 `step_controlled` invokes a caller controller before each integration step and

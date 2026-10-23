@@ -9,8 +9,8 @@ Normal builds and `--no-default-features` builds include the same native rules;
 `steam` and `referee-link` remain independent optional app integrations.
 
 ```sh
-cargo build --locked -p rm-simulator-app
-cargo build --locked -p rm-simulator-server
+cargo build --locked -p rm-sim-app
+cargo build --locked -p rm-sim-server
 just runtime-test
 ```
 

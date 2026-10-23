@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright (c) 2026 hxyulin <hxyulin@proton.me>
+[package]
+name = "rm-sim-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["robomaster"]
+# Game equipment and compatibility appearance plugins; generic viewers omit this.
+robomaster = []
+
+[dependencies]
+bevy.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+
+[[example]]
+name = "robots"
+required-features = ["robomaster"]

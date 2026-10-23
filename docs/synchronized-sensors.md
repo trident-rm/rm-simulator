@@ -165,14 +165,14 @@ Sentry and requires positive measured yaw rate; it checks SI force magnitude
 as well as timestamps:
 
 ```sh
-nix develop -c cargo build -p rm-simulator-server --locked
+nix develop -c cargo build -p rm-sim-server --locked
 # From integrations/ros2/, after pixi run build:
 pixi run sensors-smoke
 pixi run sensors-smoke --stride 1 --moving
 ```
 
 `sensors-smoke` defaults to explicit Cyclone loopback and requires the local CAD
-package and `target/nix/debug/rm-simulator-server`. Use `--server-bin` or
+package and `target/nix/debug/rm-sim-server`. Use `--server-bin` or
 `--cad-assets` for another local build/install. It bounds the full process group
 lifecycle, including native ROS teardown, and fails rather than passing forced
 termination. These native runtime checks are macOS arm64 results; Linux remains

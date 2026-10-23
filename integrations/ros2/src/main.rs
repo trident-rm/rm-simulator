@@ -6,12 +6,12 @@ mod live;
 use anyhow::{Result, ensure};
 use clap::Parser;
 use rclrs::CreateBasicExecutor;
-use rm_simulator_physics::sensors::{
+use rm_sim_physics::sensors::{
     mid360::Mid360Pattern,
     rolling::{MountedLidar, RangeEffects, RollingFrame},
 };
-use rm_simulator_ros2::{LivoxConfig, LivoxPacket, publisher::LivoxPublisher};
-use rm_simulator_world::{
+use rm_sim_ros2::{LivoxConfig, LivoxPacket, publisher::LivoxPublisher};
+use rm_sim_world::{
     ChassisCommand, ChassisConfig, ChassisPlacement, Field, FieldConfig, Pose, RobotKind, Team,
 };
 use std::time::{Duration, Instant};

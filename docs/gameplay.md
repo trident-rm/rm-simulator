@@ -2,7 +2,7 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Native 2027 competition gameplay
 
-`rm-simulator-gameplay` runs 2027 V1.0.0 rules without Bevy, Rapier, CAD,
+`rm-sim-gameplay` runs 2027 V1.0.0 rules without Bevy, Rapier, CAD,
 networking or host time. `rmuc_2027::match_rules::Match` owns RMUC; the separate
 `rmul_2027::Match` owns RMUL 3v3 and Infantry 1v1. See
 [RMUL support and limitations](rmul-2027.md). The 2026 engine is archived at `rm2026-final`.
@@ -30,7 +30,7 @@ engine. Remaining unsupported rules are listed in the
 
 ## RMUC 2027 control component
 
-`rm_simulator_gameplay::rmuc_2027::Control` implements the UC V1.0.0 territory
+`rm_sim_gameplay::rmuc_2027::Control` implements the UC V1.0.0 territory
 state machine. The native match adapter consumes it; live world admission requires
 native source bindings.
 
@@ -87,8 +87,8 @@ of how elapsed time is partitioned, including 128 Hz caller steps.
 
 ```sh
 # Component unit tests and examples without enabling the 2026 engine.
-cargo test --locked -p rm-simulator-gameplay --lib rmuc_2027
-cargo test --locked -p rm-simulator-gameplay --doc rmuc_2027
+cargo test --locked -p rm-sim-gameplay --lib rmuc_2027
+cargo test --locked -p rm-sim-gameplay --doc rmuc_2027
 ```
 
 `just control-test` runs the native 2027 unit suite, the additional
@@ -143,7 +143,7 @@ reinforcement uses frozen selection-time areas and native observations/statistic
 The user-selected permanent heat-lock boundary is Figure 5-1's `>=`.
 It receives
 physical contact observations and explicit nanosecond durations only.
-`rm-simulator-world::rmuc_2027::State` supplies source detector geometry and
+`rm-sim-world::rmuc_2027::State` supplies source detector geometry and
 height-aware polygon contacts, with the whole state in `FieldRestore`.
 
 The [field guide](rmuc2027-field.md#enable-the-live-controlstructure-subset)

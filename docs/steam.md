@@ -88,7 +88,7 @@ python3 scripts/package-steam.py --check-sdk-only
 python3 scripts/package-steam.py --check-sdk-only --sdk vendor/steamworks-sdk
 ```
 
-For direct Cargo use, `cargo build -p rm-simulator-app --features steam` uses the
+For direct Cargo use, `cargo build -p rm-sim-app --features steam` uses the
 crate's bundled SDK unless `STEAM_SDK_LOCATION` is set. The build script validates
 that override. Prefer the package script when launching the executable, because
 it places the required runtime library beside it.
