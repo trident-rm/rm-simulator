@@ -292,7 +292,6 @@ impl Host {
         let last_tick = self.last_tick;
         let last_paused = self.last_paused;
         let finite = self.limit.is_some();
-        let replace = size != self.size;
         let revision = &mut self.import_revision;
         let mut result = Ok(());
         self.runtime.update(|cx| {
@@ -317,13 +316,10 @@ impl Host {
                         }
                     }
                     viewport.draw(&s.plant, size, s.yaw, false);
-                    // Group edits keep the camera target; resizing still replaces
-                    // the exact GPU image view through the common path below.
-                    if replace || s.image.is_none() {
-                        match viewport.image() {
-                            Ok(image) => s.image = Some(image),
-                            Err(e) => result = Err(e),
-                        }
+                    // Reuse the RXUI image unless Bevy replaces its native view.
+                    match viewport.image() {
+                        Ok(image) => s.image = Some(image),
+                        Err(e) => result = Err(e),
                     }
                     return;
                 }
@@ -345,11 +341,9 @@ impl Host {
                     s.plant.paused = true;
                 }
                 viewport.draw(&s.plant, size, s.yaw, s.floor);
-                if replace || s.image.is_none() {
-                    match viewport.image() {
-                        Ok(image) => s.image = Some(image),
-                        Err(e) => result = Err(e),
-                    }
+                match viewport.image() {
+                    Ok(image) => s.image = Some(image),
+                    Err(e) => result = Err(e),
                 }
                 self.last_tick = s.plant.tick;
                 self.last_paused = s.plant.paused;
@@ -487,6 +481,33 @@ fn capture(host: &mut Host, graphics: &GraphicsContext, path: PathBuf, count: u3
         FramebufferOptions::new(1100, 760)
             .usage(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC),
     )?;
+    // GPU preparation must not advance the requested physical trajectory.
+    let root = host.ui.entity().clone();
+    let paused = host.runtime.update(|cx| {
+        root.update(cx, |s, _| {
+            let paused = s.plant.paused;
+            s.plant.paused = true;
+            paused
+        })
+    });
+    let start = Instant::now();
+    let mut stable = 0;
+    while stable < 8 {
+        host.prepare_ui([1100., 760.], 1., &target.render_format())?;
+        let error = host.runtime.update(|cx| root.read(cx).error.clone());
+        if let Some(error) = error {
+            return Err(error.into());
+        }
+        let mut frame = target.begin_frame()?;
+        host.paint(&mut frame, 1.)?;
+        frame.finish()?;
+        stable = if host.viewport.ready() { stable + 1 } else { 0 };
+        if start.elapsed() > Duration::from_secs(30) {
+            return Err("viewport GPU preparation timed out".into());
+        }
+    }
+    host.runtime
+        .update(|cx| root.update(cx, |s, _| s.plant.paused = paused));
     for _ in 0..count {
         host.prepare_ui([1100., 760.], 1., &target.render_format())?;
         let mut frame = target.begin_frame()?;
@@ -539,6 +560,20 @@ fn capture(host: &mut Host, graphics: &GraphicsContext, path: PathBuf, count: u3
         .chunks_exact(stride as usize)
         .flat_map(|row| row[..4400].iter().copied())
         .collect();
+    let bounds = host
+        .ui
+        .elements()
+        .find(|e| e.key == Some(&rxui::Key::from("viewport")))
+        .ok_or("missing viewport in capture")?
+        .bounds;
+    if !visible_viewport(
+        &pixels,
+        [1100, 760],
+        [bounds.x, bounds.y, bounds.width, bounds.height],
+        host.size,
+    ) {
+        return Err("viewport capture is blank; refusing to save an empty preview".into());
+    }
     let mut encoder = png::Encoder::new(std::fs::File::create(path)?, 1100, 760);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
@@ -552,9 +587,55 @@ fn capture(host: &mut Host, graphics: &GraphicsContext, path: PathBuf, count: u3
     Ok(())
 }
 
+/// Check the contained image, excluding UI gutters and letterboxing.
+fn visible_viewport(pixels: &[u8], output: [u32; 2], bounds: [f32; 4], image: [u32; 2]) -> bool {
+    let fit = (bounds[2] / image[0] as f32).min(bounds[3] / image[1] as f32);
+    let width = image[0] as f32 * fit;
+    let height = image[1] as f32 * fit;
+    let x0 = bounds[0] + (bounds[2] - width) * 0.5;
+    let y0 = bounds[1] + (bounds[3] - height) * 0.5;
+    let xs = (x0.ceil() as usize + 2)
+        ..((x0 + width).floor() as usize)
+            .saturating_sub(2)
+            .min(output[0] as usize);
+    let ys = (y0.ceil() as usize + 2)
+        ..((y0 + height).floor() as usize)
+            .saturating_sub(2)
+            .min(output[1] as usize);
+    ys.into_iter().any(|y| {
+        xs.clone().any(|x| {
+            let offset = (y * output[0] as usize + x) * 4;
+            pixels[offset..offset + 3].iter().any(|v| *v > 32)
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn blank_capture_check_excludes_bright_ui_and_letterboxing() {
+        let mut pixels = vec![255; 100 * 100 * 4];
+        for y in 35..65 {
+            for x in 20..80 {
+                pixels[(y * 100 + x) * 4..(y * 100 + x) * 4 + 3].fill(0);
+            }
+        }
+        assert!(!visible_viewport(
+            &pixels,
+            [100, 100],
+            [20., 20., 60., 60.],
+            [120, 60]
+        ));
+        pixels[(50 * 100 + 50) * 4] = 180;
+        assert!(visible_viewport(
+            &pixels,
+            [100, 100],
+            [20., 20., 60., 60.],
+            [120, 60]
+        ));
+    }
+
     #[test]
     fn pacing_and_backing_sizes_are_bounded() {
         let mut clock = Clock::default();
@@ -633,6 +714,23 @@ mod tests {
             assert_eq!(state.image.as_ref().unwrap().pixel_size(), Some([612, 500]));
             assert_ne!(state.image.as_ref().unwrap().id(), image.id());
         });
+        // Replace the render asset without changing the requested size. RXUI must
+        // rebind the new native view, rather than keeping the stale sampled image.
+        let resized_image = host
+            .runtime
+            .update(|cx| root.read(cx).image.clone().unwrap());
+        host.viewport.replace_target_for_test();
+        for _ in 0..3 {
+            host.prepare_ui([900., 640.], 1., &target.render_format())
+                .unwrap();
+        }
+        host.runtime.update(|cx| {
+            assert_ne!(
+                root.read(cx).image.as_ref().unwrap().id(),
+                resized_image.id()
+            );
+            assert_eq!(root.read(cx).plant.tick, 8);
+        });
         assert!(graphics.same_device(&host.viewport.graphics()));
         assert_eq!(
             host.viewport
@@ -652,5 +750,52 @@ mod tests {
             .unwrap();
         host.runtime
             .update(|cx| assert_eq!(root.read(cx).plant.tick, 0));
+        host.runtime
+            .update(|cx| root.update(cx, |s, _| s.plant.paused = false));
+        let capture_path =
+            std::env::temp_dir().join(format!("rm-sw2-test-capture-{}.png", std::process::id()));
+        capture(&mut host, &graphics, capture_path.clone(), 2).unwrap();
+        host.runtime
+            .update(|cx| assert_eq!(root.read(cx).plant.tick, 8));
+        assert!(std::fs::metadata(&capture_path).unwrap().len() > 1000);
+        std::fs::remove_file(capture_path).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a native GPU and system fonts"]
+    fn imported_occurrences_share_gpu_meshes_without_sharing_pose_or_color() {
+        use bevy::prelude::{Mesh3d, MeshMaterial3d, StandardMaterial, Transform};
+        use rm_sim_render::generic::{VisualId, Visuals};
+        let (mut host, _) = Host::new(true, None).unwrap();
+        let mut project = importer::tests::shared_fixture();
+        let mut group = project.groups[0].clone();
+        group.id = 2;
+        project.groups.push(group);
+        project.parts[1].group = 2;
+        project.validate().unwrap();
+        host.viewport.import_scene(&project, 1, false).unwrap();
+        let world = host.viewport.app.world();
+        let visuals = world.resource::<Visuals>();
+        let first = visuals.entity(VisualId(1000)).unwrap();
+        let second = visuals.entity(VisualId(1001)).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(
+            world.get::<Mesh3d>(first).unwrap().0,
+            world.get::<Mesh3d>(second).unwrap().0
+        );
+        assert_ne!(
+            world
+                .get::<MeshMaterial3d<StandardMaterial>>(first)
+                .unwrap()
+                .0,
+            world
+                .get::<MeshMaterial3d<StandardMaterial>>(second)
+                .unwrap()
+                .0
+        );
+        assert_ne!(
+            world.get::<Transform>(first).unwrap().translation,
+            world.get::<Transform>(second).unwrap().translation
+        );
     }
 }

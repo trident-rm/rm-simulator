@@ -10,7 +10,12 @@ use rm_sim_physics::{
     runtime::{AssemblyKeys, BodyKey, JointKey, PhysicalRuntime},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+    sync::Arc,
+};
 type Result<T> = std::result::Result<T, String>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -21,11 +26,31 @@ pub struct Part {
     pub occurrence: String,
     pub source_sha256: String,
     pub pose: Pose,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub configuration: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vertices_m: Vec<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub triangles: Vec<[u32; 3]>,
     pub group: u64,
     pub native_cache: Option<serde_json::Value>,
     pub override_mass: Option<Mass>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeshDefinition {
+    pub source_sha256: String,
+    pub configuration: String,
+    pub mapping_evidence: String,
+    pub vertices_m: Arc<[[f64; 3]]>,
+    pub triangles: Arc<[[u32; 3]]>,
+}
+#[derive(Clone, Copy)]
+pub struct MeshView<'a> {
+    pub vertices: &'a [[f64; 3]],
+    pub triangles: &'a [[u32; 3]],
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -91,6 +116,8 @@ pub struct Project {
     #[serde(default)]
     pub omitted_occurrences: Vec<String>,
     pub parts: Vec<Part>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub meshes: BTreeMap<String, MeshDefinition>,
     pub groups: Vec<Group>,
 }
 #[derive(Serialize)]
@@ -241,7 +268,10 @@ impl Project {
             project: Option<Project>,
         }
         let envelope: Envelope = serde_json::from_slice(&data).map_err(|e| e.to_string())?;
-        let project: Self = if envelope.schema == "rm-reviewed-solidworks-recipe-v1" {
+        let project: Self = if matches!(
+            envelope.schema.as_str(),
+            "rm-reviewed-solidworks-recipe-v1" | "rm-reviewed-solidworks-recipe-v2"
+        ) {
             envelope
                 .project
                 .ok_or("recipe has no reconstruction project")?
@@ -252,8 +282,10 @@ impl Project {
         Ok(project)
     }
     pub fn validate(&self) -> Result<()> {
-        if self.schema != "rm-solidworks-project-v1"
-            || self.parts.is_empty()
+        if !matches!(
+            self.schema.as_str(),
+            "rm-solidworks-project-v1" | "rm-solidworks-project-v2"
+        ) || self.parts.is_empty()
             || self.parts.len() > 4096
             || self.groups.is_empty()
             || self.groups.len() > 256
@@ -291,8 +323,24 @@ impl Project {
                 return Err("invalid joint quantities".into());
             }
         }
-        let mut parts = BTreeSet::new();
+        let v2 = self.schema == "rm-solidworks-project-v2";
+        if self.meshes.len() > 4096 || (!v2 && !self.meshes.is_empty()) {
+            return Err("invalid mesh library/schema".into());
+        }
         let mut vertices = 0;
+        for mesh in self.meshes.values() {
+            if mesh.source_sha256.len() != 64
+                || !mesh.source_sha256.bytes().all(|b| b.is_ascii_hexdigit())
+                || mesh.configuration.is_empty()
+                || mesh.mapping_evidence.is_empty()
+            {
+                return Err("invalid shared mesh provenance".into());
+            }
+            validate_mesh(&mesh.vertices_m, &mesh.triangles)?;
+            vertices += mesh.vertices_m.len();
+        }
+        let mut parts = BTreeSet::new();
+        let mut placed = 0;
         for p in &self.parts {
             if !parts.insert(p.id)
                 || !ids.contains(&p.group)
@@ -305,19 +353,26 @@ impl Project {
             if let Some(m) = &p.override_mass {
                 principal(m)?;
             }
-            vertices += p.vertices_m.len();
-            if p.vertices_m.is_empty()
-                || p.vertices_m.len() > 250_000
-                || vertices > 2_000_000
-                || p.triangles.len() > 500_000
-                || p.vertices_m.iter().flatten().any(|x| !x.is_finite())
-                || p.triangles
-                    .iter()
-                    .flatten()
-                    .any(|&i| i as usize >= p.vertices_m.len())
-            {
-                return Err("invalid/beyond-limit part mesh".into());
+            if v2 {
+                if p.mesh.is_none()
+                    || p.configuration.is_empty()
+                    || !p.vertices_m.is_empty()
+                    || !p.triangles.is_empty()
+                {
+                    return Err("v2 occurrences require only a shared geometry reference".into());
+                }
+            } else if p.mesh.is_some() {
+                return Err("v1 occurrences require inline geometry".into());
             }
+            let mesh = self.mesh(p)?;
+            if p.mesh.is_none() {
+                validate_mesh(mesh.vertices, mesh.triangles)?;
+                vertices += mesh.vertices.len();
+            }
+            placed += mesh.vertices.len();
+        }
+        if vertices > 2_000_000 || placed > 8_000_000 {
+            return Err("project exceeds unique/placed vertex budget".into());
         }
         Ok(())
     }
@@ -325,11 +380,33 @@ impl Project {
         self.validate()?;
         write_json(path, self)
     }
-    pub fn points(&self, g: &Group, p: &Part) -> Vec<[f64; 3]> {
-        p.vertices_m
+    pub fn mesh<'a>(&'a self, p: &'a Part) -> Result<MeshView<'a>> {
+        if let Some(key) = &p.mesh {
+            let mesh = self
+                .meshes
+                .get(key)
+                .ok_or("missing shared mesh definition")?;
+            if mesh.source_sha256 != p.source_sha256 || mesh.configuration != p.configuration {
+                return Err("shared mesh source/configuration mismatch".into());
+            }
+            Ok(MeshView {
+                vertices: &mesh.vertices_m,
+                triangles: &mesh.triangles,
+            })
+        } else {
+            Ok(MeshView {
+                vertices: &p.vertices_m,
+                triangles: &p.triangles,
+            })
+        }
+    }
+    pub fn points(&self, g: &Group, p: &Part) -> Result<Vec<[f64; 3]>> {
+        Ok(self
+            .mesh(p)?
+            .vertices
             .iter()
             .map(|&v| local(g.pose, transform(p.pose, v)).to_array())
-            .collect()
+            .collect())
     }
     pub fn proxies(&self, g: &Group) -> Result<Vec<(Pose, ShapeDescription)>> {
         let pieces: Vec<_> = self
@@ -337,7 +414,7 @@ impl Project {
             .iter()
             .filter(|p| p.group == g.id)
             .map(|p| self.points(g, p))
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         if pieces.is_empty() {
             return Err(format!("group {} is empty", g.id));
         }
@@ -375,7 +452,7 @@ impl Project {
             let m = if let Some(m) = &p.override_mass {
                 m.clone()
             } else {
-                part_mass(p, &g.mass_mode)?
+                part_mass(p, &g.mass_mode, self.mesh(p)?.vertices)?
             };
             principal(&m)?;
             let r = DMat3::from_quat(quat(g.pose).conjugate() * quat(p.pose));
@@ -431,7 +508,9 @@ impl Project {
                     .parts
                     .iter()
                     .filter(|p| p.group == g.id)
-                    .map(|p| p.vertices_m.len())
+                    .map(|p| self.mesh(p).map(|m| m.vertices.len()))
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
                     .sum(),
                 mass_basis: format!(
                     "{:?}; explicit per-part overrides take precedence",
@@ -544,9 +623,24 @@ impl Project {
         let report = self.check_runtime()?;
         write_json(
             path,
-            &serde_json::json!({"schema":"rm-reviewed-solidworks-recipe-v1","project":self,"groups":report,"continuation":"recipe reconstruction only; no native checkpoint","collision":"explicit approximations independent of mass"}),
+            &serde_json::json!({"schema":if self.schema=="rm-solidworks-project-v2" {"rm-reviewed-solidworks-recipe-v2"}else{"rm-reviewed-solidworks-recipe-v1"},"project":self,"groups":report,"continuation":"recipe reconstruction only; no native checkpoint","collision":"explicit approximations independent of mass"}),
         )
     }
+}
+
+fn validate_mesh(vertices: &[[f64; 3]], triangles: &[[u32; 3]]) -> Result<()> {
+    if vertices.is_empty()
+        || vertices.len() > 250_000
+        || triangles.len() > 500_000
+        || vertices.iter().flatten().any(|v| !v.is_finite())
+        || triangles
+            .iter()
+            .flatten()
+            .any(|&i| i as usize >= vertices.len())
+    {
+        return Err("invalid/beyond-limit mesh definition".into());
+    }
+    Ok(())
 }
 
 fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
@@ -599,7 +693,7 @@ fn box_shape(points: &[[f64; 3]]) -> Result<(Pose, ShapeDescription)> {
         },
     ))
 }
-fn part_mass(p: &Part, mode: &MassMode) -> Result<Mass> {
+fn part_mass(p: &Part, mode: &MassMode, vertices: &[[f64; 3]]) -> Result<Mass> {
     match mode {
         MassMode::Unspecified => Err(format!(
             "{}: choose a mass basis or explicit override",
@@ -609,7 +703,7 @@ fn part_mass(p: &Part, mode: &MassMode) -> Result<Mass> {
             if !density_kg_m3.is_finite() || *density_kg_m3 <= 0. {
                 return Err("invalid estimated density".into());
             }
-            let (lo, hi) = bounds(&p.vertices_m)?;
+            let (lo, hi) = bounds(vertices)?;
             let d = hi - lo;
             let mass = d.x * d.y * d.z * density_kg_m3;
             Ok(Mass {
@@ -719,6 +813,8 @@ pub(super) mod tests {
             occurrence: format!("root/{id}"),
             source_sha256: "0".repeat(64),
             pose: Pose::at([x, 0., 0.]),
+            mesh: None,
+            configuration: String::new(),
             vertices_m: points.clone(),
             triangles: vec![[0, 1, 2], [0, 1, 3]],
             group: 1,
@@ -737,6 +833,7 @@ pub(super) mod tests {
             diagnostics: vec![],
             omitted_occurrences: vec![],
             parts: vec![part(1, -1.), part(2, 1.)],
+            meshes: Default::default(),
             groups: vec![Group {
                 id: 1,
                 name: "base".into(),
@@ -747,6 +844,75 @@ pub(super) mod tests {
                 joint: None,
             }],
         }
+    }
+    pub fn shared_fixture() -> Project {
+        let mut p = fixture();
+        p.schema = "rm-solidworks-project-v2".into();
+        let mesh = MeshDefinition {
+            source_sha256: p.parts[0].source_sha256.clone(),
+            configuration: "default".into(),
+            mapping_evidence: "synthetic fixture".into(),
+            vertices_m: Arc::from(p.parts[0].vertices_m.clone()),
+            triangles: Arc::from(p.parts[0].triangles.clone()),
+        };
+        p.meshes.insert("shared".into(), mesh);
+        for part in &mut p.parts {
+            part.mesh = Some("shared".into());
+            part.configuration = "default".into();
+            part.vertices_m.clear();
+            part.triangles.clear();
+        }
+        p
+    }
+
+    #[test]
+    fn shared_definitions_retain_legacy_geometry_and_mass_without_occurrence_copies() {
+        let old = fixture();
+        let shared = shared_fixture();
+        shared.validate().unwrap();
+        for (a, b) in old.parts.iter().zip(&shared.parts) {
+            assert_eq!(a.pose, b.pose);
+            assert_eq!(
+                old.mesh(a).unwrap().vertices,
+                shared.mesh(b).unwrap().vertices
+            );
+            assert_eq!(
+                old.mesh(a).unwrap().triangles,
+                shared.mesh(b).unwrap().triangles
+            );
+        }
+        let preview = shared.preview(1, 0.).unwrap();
+        assert!(Arc::ptr_eq(
+            &shared.meshes["shared"].vertices_m,
+            &preview.meshes["shared"].vertices_m
+        ));
+        assert!(std::ptr::eq(
+            shared.mesh(&shared.parts[0]).unwrap().vertices,
+            shared.mesh(&shared.parts[1]).unwrap().vertices
+        ));
+        assert_eq!(
+            old.mass(&old.groups[0]).unwrap().0.inertia_kg_m2,
+            shared.mass(&shared.groups[0]).unwrap().0.inertia_kg_m2
+        );
+        shared.check_runtime().unwrap();
+        let mut weighted = shared.clone();
+        weighted.parts[1].override_mass.as_mut().unwrap().mass_kg = 2.;
+        let (mass, _) = weighted.mass(&weighted.groups[0]).unwrap();
+        assert_eq!(mass.mass_kg, 3.);
+        assert!((mass.com_m[0] - 1. / 3.).abs() < 1e-12);
+        assert!(Arc::ptr_eq(
+            &weighted.meshes["shared"].vertices_m,
+            &shared.meshes["shared"].vertices_m
+        ));
+        let mut bad = shared.clone();
+        bad.parts[1].configuration = "other length".into();
+        assert!(bad.validate().is_err());
+        bad = shared.clone();
+        bad.parts[1].mesh = Some("missing".into());
+        assert!(bad.validate().is_err());
+        bad = shared;
+        bad.parts[1].vertices_m.push([0.; 3]);
+        assert!(bad.validate().is_err());
     }
     #[test]
     fn aggregate_preserves_mass_com_and_parallel_axis_tensor() {
@@ -864,15 +1030,16 @@ pub(super) mod tests {
             }
         };
         let path = dir.join("model.json");
-        let mut p = fixture();
-        p.export(&path).unwrap();
-        let original = fs::read(&path).unwrap();
-        let restored = Project::load(&path).unwrap();
-        assert_eq!(restored.check_runtime().unwrap()[0].mass.mass_kg, 2.);
-        p.source_frames_and_geometry_reviewed = false;
-        assert!(p.export(&path).is_err());
-        assert_eq!(fs::read(&path).unwrap(), original);
-        assert!(p.save(&dir.join("original.SLDASM")).is_err());
+        for mut p in [fixture(), shared_fixture()] {
+            p.export(&path).unwrap();
+            let original = fs::read(&path).unwrap();
+            let restored = Project::load(&path).unwrap();
+            assert_eq!(restored.check_runtime().unwrap()[0].mass.mass_kg, 2.);
+            p.source_frames_and_geometry_reviewed = false;
+            assert!(p.export(&path).is_err());
+            assert_eq!(fs::read(&path).unwrap(), original);
+            assert!(p.save(&dir.join("original.SLDASM")).is_err());
+        }
         fs::remove_file(path).unwrap();
         fs::remove_dir(dir).unwrap();
     }

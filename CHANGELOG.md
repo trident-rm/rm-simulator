@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Share native Part/configuration mesh definitions across import occurrences and
+  GPU visuals, retain legacy projects, and preserve review annotations during
+  incremental reimports. Exactly reindex duplicate vertices and admit unambiguous
+  single-configuration source-index aliases without relaxing multi-configuration
+  geometry checks; stage new Parts for explicit grouping and mass review.
+
 - Add an offline SolidWorks import review mode to the RXUI viewer: preserve native
   occurrences, assign rigid groups, review explicit joints, fit collision proxies
   and aggregate independent mass/COM/inertia into cooked assembly recipes.

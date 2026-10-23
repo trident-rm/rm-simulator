@@ -47,8 +47,12 @@ GPU completion wait. Synchronous shader compilation is enabled for this proof;
 startup and newly encountered shader variants may stall the UI thread.
 
 The native window resizes the viewport's GPU backing, bounded to 64–2048 pixels
-per dimension. RXUI image identity remains stable between resizes; resizing
-replaces the sampled view after Bevy extracts the resized image. Models,
+per dimension. RXUI image identity remains stable while Bevy retains the same
+GPU view. Resize or render-target replacement rebinds the current view after each
+render update. Captures warm source meshes and pipelines and settle eight ready
+render updates and UI compositions without advancing physics, then run the
+requested presentations. Preparation errors, a 30-second timeout or a black
+viewport fail the capture. Models,
 meshes/materials and visual entities survive ordinary playback and plant reset.
 Interactive pacing uses bounded frame deltas at 128 Hz (250 ms/32-tick catch-up
 cap). Explicit finite runs and captures advance four ticks per presentation

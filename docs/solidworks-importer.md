@@ -50,14 +50,51 @@ Surfaces use diagnostic group colors; native materials are not imported in this
 pass. The native assembly basis is retained for review; callers can supply an
 overall placement rotation when installing the cooked assembly.
 
-The current geometry adapter accepts only a single matching Part configuration.
-It refuses to combine display tessellations across ambiguous configurations.
+The geometry adapter accepts a single matching geometry configuration. A
+synthetic `Config-N` name may also bind by source index when the native document
+has exactly one configuration; the evidence is recorded. It refuses to combine
+display tessellations across multiple ambiguous configurations, even if one is
+marked active.
 Limits include 64 assembly levels, 1024 prepared Part occurrences, 250,000
-vertices per Part, two million vertices per project, 256 MiB project input and
+vertices per definition, two million unique vertices, eight million placed
+vertices, 256 MiB project input and
 bounded parser output. Repeated geometry successes and failures are cached during
 preparation so repeated occurrences do not repeatedly invoke the native decoder.
 Native display meshes may be partial or stale; review them against a known export.
 The bounds do not come from the parser's combined edge/mesh envelope.
+
+### Shared geometry and incremental reimports
+
+New projects use `rm-solidworks-project-v2`: each source/configuration mesh is
+stored once, with separate occurrence poses, grouping and mass data. Exact
+duplicate vertices are reindexed by their float bits, including signed zero;
+triangle order, winding and coordinates are retained without welding tolerances
+or decimation. Cloned Rust projects share geometry arrays, and repeated visual
+occurrences share GPU mesh handles while keeping independent poses and colors.
+Version 1 inline projects and recipes remain readable and editable.
+
+Add `--merge-review /path/to/robot.reviewed.json` when preparing another import
+of the same root document. Matching occurrence paths must retain their source
+hash, configuration (when recorded), pose, cache and exact geometry. Their group
+assignments and explicit mass overrides survive; group frames, collision choices
+and joint annotations are retained. Changed/absent occurrences require explicit
+rebinding rather than receiving stale review data. Source changes invalidate
+joint review flags when available provenance no longer matches.
+
+New occurrences enter a separate **New occurrences (review)** group with an
+unreviewed placeholder joint and unspecified mass. Source-frame review is reset.
+The placeholder is not an inferred native constraint. If no unique root remains,
+it is left unattached until **Parent** explicitly supplies one.
+
+Use **Assign part** to distribute new Parts, or select the staging group and
+press **Merge** beside an existing group. Bulk merging preserves source poses,
+removes the merged group's own joint and resets the target mass basis. Groups
+with children require explicit reparenting first. **Remove empty groups** removes
+empty leaves and their joints without orphaning populated children. Explicitly
+omitted references remove their previous occurrences. A group made entirely of
+omitted Parts is removed with its attached relations during review merging;
+surviving child groups become unbound roots,
+with no automatic replacement parent. All omissions remain logged.
 
 ## Review groups and joints
 
@@ -145,7 +182,8 @@ mbx run --manifest-path integrations/scenario-viewer/Cargo.toml --locked \
   --frames 2 --screenshot /tmp/robot-proxies.png
 ```
 
-The recipe contains the reconstruction project and computed mass reports. It can
+The recipe contains the reconstruction project and computed mass reports (recipe
+v2 for a shared-mesh project; legacy projects retain v1). It can
 be reopened through `--solidworks-project`; computed reports are regenerated from
 the project instead of trusted as serialized native state. This is recipe
 reconstruction, not continuation/checkpoint support. The initial importer code
@@ -168,8 +206,17 @@ Missing parts in the full EGA source remain subject to the explicit omission
 policy. This small-module check does not certify the whole robot or automatic
 native articulation recovery.
 
-A bounded full-source EGA pass also prepared a **partial** 349-occurrence scene
-and recorded 122 omitted missing references. It reached the geometry budget and
-also encountered configuration-mapping/unsupported display cases; these remain
-blocking diagnostics. That partial scene is useful for inspection, not a complete
-physical robot export.
+A first bounded EGA pass prepared a **partial** 349-occurrence scene and recorded
+122 omitted missing references. Shared definitions and exact reindexing increased
+this to **538 occurrences / 131 mesh definitions**, with 594,328 unique vertices.
+The uncompressed project shrank from 154.7 MiB to 62.1 MiB while including 189 more
+occurrences. These are storage/coverage measurements, not simulation speedups.
+Every previous occurrence retained bit-identical vertex/triangle coordinates,
+pose and cache. Review merging retained all 349 and staged the 189 additions.
+
+No vertex-budget exclusions remain in that pass. Outstanding diagnostics are
+112 occurrences rejected by the native decoder's byte ledger, 41 ambiguous
+configuration mappings and four without supported display tessellation. These
+are not missing references and remain blocking. The scene is useful for
+inspection, not yet a complete physical robot export. Native cache accuracy and
+full solver-trajectory parity are not established by geometry equivalence.

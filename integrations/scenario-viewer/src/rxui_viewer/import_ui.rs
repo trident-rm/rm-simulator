@@ -157,6 +157,70 @@ impl Review {
             self.revision += 1;
         }
     }
+    fn merge_into(&mut self, target: u64) {
+        let source = self.selected_group;
+        if source == target || !self.project.groups.iter().any(|g| g.id == target) {
+            return;
+        }
+        if self
+            .project
+            .groups
+            .iter()
+            .any(|g| g.joint.as_ref().is_some_and(|j| j.parent == source))
+        {
+            self.status = "Reparent child groups explicitly before merging their parent.".into();
+            return;
+        }
+        for part in &mut self.project.parts {
+            if part.group == source {
+                part.group = target;
+            }
+        }
+        self.project.groups.retain(|g| g.id != source);
+        self.project
+            .groups
+            .iter_mut()
+            .find(|g| g.id == target)
+            .unwrap()
+            .mass_mode = MassMode::Unspecified;
+        self.select(target);
+        self.status =
+            "Merged source placements without moving Parts; review the target mass basis again."
+                .into();
+    }
+    fn remove_empty(&mut self) {
+        use std::collections::BTreeSet;
+        let before = self.project.groups.len();
+        loop {
+            let used: BTreeSet<_> = self.project.parts.iter().map(|p| p.group).collect();
+            let parents: BTreeSet<_> = self
+                .project
+                .groups
+                .iter()
+                .filter_map(|g| g.joint.as_ref().map(|j| j.parent))
+                .collect();
+            let n = self.project.groups.len();
+            self.project
+                .groups
+                .retain(|g| used.contains(&g.id) || parents.contains(&g.id));
+            if n == self.project.groups.len() {
+                break;
+            }
+        }
+        if !self
+            .project
+            .groups
+            .iter()
+            .any(|g| g.id == self.selected_group)
+        {
+            self.select(self.project.groups[0].id);
+        }
+        self.revision += 1;
+        self.status = format!(
+            "Removed {} empty leaf groups and their parent joints; populated children require explicit reparenting.",
+            before - self.project.groups.len()
+        );
+    }
     fn joint(&mut self, motion: Motion) {
         let result = (|| {
             let pivot = triple(&self.pivot)?;
@@ -249,39 +313,61 @@ impl Panel {
                 })),
             );
         }
-        let mut groups = column().gap(6.).fill_width().max_height(160.).scroll_y();
+        let mut groups = column().gap(6.).fill_width().max_height(180.).scroll_y();
         for g in &r.project.groups {
             let id = g.id;
             groups =
                 groups.child(
-                    row()
-                        .gap(6.)
+                    column()
+                        .fill_width()
+                        .gap(4.)
                         .child(
                             button(format!(
-                                "{}: {}",
+                                "{} {}: {}",
+                                if id == r.selected_group { ">" } else { "" },
                                 id,
-                                g.name.chars().take(12).collect::<String>()
+                                g.name.chars().take(24).collect::<String>()
                             ))
                             .key(format!("group-{id}"))
+                            .fill_width()
                             .on_click(cx.listener(move |s, _, _| s.review().select(id))),
                         )
-                        .child(button("Assign part").key(format!("assign-{id}")).on_click(
-                            cx.listener(move |s, _, _| {
-                                let r = s.review();
-                                r.project.parts[r.selected_part].group = id;
-                                r.select(id);
-                            }),
-                        ))
-                        .child(button("Parent").disabled(id == r.selected_group).on_click(
-                            cx.listener(move |s, _, _| {
-                                s.review().edit_group(|g| {
-                                    if let Some(j) = &mut g.joint {
-                                        j.parent = id;
-                                        j.reviewed = false;
-                                    }
-                                });
-                            }),
-                        )),
+                        .child(
+                            row()
+                                .gap(6.)
+                                .child(button("Assign part").key(format!("assign-{id}")).on_click(
+                                    cx.listener(move |s, _, _| {
+                                        let r = s.review();
+                                        r.project.parts[r.selected_part].group = id;
+                                        r.select(id);
+                                    }),
+                                ))
+                                .child(button("Parent").disabled(id == r.selected_group).on_click(
+                                    cx.listener(move |s, _, _| {
+                                        let r = s.review();
+                                        r.edit_group(|g| {
+                                            if let Some(j) = &mut g.joint {
+                                                j.parent = id;
+                                                j.reviewed = false;
+                                            } else {
+                                                g.joint = Some(Joint {
+                                                    parent: id,
+                                                    motion: Motion::Fixed,
+                                                    pivot_m: g.pose.translation_m,
+                                                    axis: [0., 0., 1.],
+                                                    limits: None,
+                                                    reviewed: false,
+                                                    evidence: String::new(),
+                                                });
+                                            }
+                                        });
+                                        r.select(r.selected_group);
+                                    }),
+                                ))
+                                .child(button("Merge").disabled(id == r.selected_group).on_click(
+                                    cx.listener(move |s, _, _| s.review().merge_into(id)),
+                                )),
+                        ),
                 );
         }
         let group = r
@@ -313,6 +399,7 @@ impl Panel {
             .child(button("Omit missing references").on_click(cx.listener(|s,_,_| {let r=s.review();let n=r.project.omit_missing_references();r.status=format!("Omitted {n} missing occurrences; no dependent relations were imported.");r.revision+=1;}))).child(parts)
             .child(button("New moving group from selected part").key("new-group").on_click(cx.listener(|s,_,_|s.review().new_group())))
             .child(label("RIGID GROUPS").font_size(14.)).child(groups)
+            .child(button("Remove empty groups").on_click(cx.listener(|s,_,_|s.review().remove_empty())))
             .child(label("Empty groups block export; assign at least one part to each group."))
             .child(label(format!("Selected group {} · {:?}",group.id,group.proxy)))
             .child(row().gap(4.)
@@ -384,8 +471,13 @@ impl Panel {
             .gap(8.)
             .child(label("SolidWorks → reviewed physical model").font_size(22.))
             .child(label(format!(
-                "{} parts · {} groups · {} diagnostics · {} omitted · {}",
+                "{} parts · {} meshes · {} groups · {} diagnostics · {} omitted · {}",
                 r.project.parts.len(),
+                if r.project.meshes.is_empty() {
+                    r.project.parts.len()
+                } else {
+                    r.project.meshes.len()
+                },
                 r.project.groups.len(),
                 r.project.diagnostics.len(),
                 r.project.omitted_occurrences.len(),
@@ -475,5 +567,30 @@ mod tests {
                 .collect::<Vec<_>>(),
             source_poses
         );
+    }
+
+    #[test]
+    fn bulk_merge_and_empty_cleanup_preserve_poses_and_do_not_orphan_children() {
+        let project = super::super::importer::tests::shared_fixture();
+        let poses: Vec<_> = project.parts.iter().map(|p| p.pose).collect();
+        let mut r = Review::new(project, "unused.json".into());
+        r.new_group();
+        r.select(1);
+        r.merge_into(2);
+        assert_eq!(r.project.groups.len(), 2);
+        r.select(2);
+        r.merge_into(1);
+        assert_eq!(r.project.groups.len(), 1);
+        assert!(r.project.parts.iter().all(|p| p.group == 1));
+        assert_eq!(
+            r.project.parts.iter().map(|p| p.pose).collect::<Vec<_>>(),
+            poses
+        );
+        r.new_group();
+        r.project.parts[0].group = 1;
+        r.remove_empty();
+        assert_eq!(r.project.groups.len(), 1);
+        assert_eq!(r.selected_group, 1);
+        r.project.check_runtime().unwrap();
     }
 }
