@@ -74,6 +74,32 @@ global cache, persisted cooked format or backend interchangeability guarantee.
 A future cache must include source content, backend/version/precision and cooking
 options; `Arc` identity alone is insufficient. No numerical speedup is claimed.
 
+## Implemented concrete physical runtime
+
+`physics::runtime::WorldPhysics` now defines the single interacting Rapier world,
+its construction and immutable integration duration, query priming, solver slices,
+wheel/plant force ordering, prescribed target endpoints, carrier traces and raw
+contact capture. The existing root and `projectile::WorldPhysics` paths re-export
+that exact type. No facade world, second clock, solver trait or plugin scheduler
+is introduced. Implementation remains inside the projectile module family so its
+participant adapters keep private access; separating those adapters is later work.
+
+`WorldPhysics::step_into(prev_ns, frames, contacts)` appends to caller-owned contact
+storage. The owned-output `step` adapter uses that implementation. Neither method
+owns elapsed time: a session or match adapter supplies the starting timestamp and
+owns clock advancement. Existing target validation, projectile retirement, contact
+order and error behavior remain unchanged. In particular, an error is not a
+transactional rollback of earlier query priming or retirement; it appends no new
+contacts. Match rule barriers remain in `Field::step_with_hits`.
+
+`RobotSession::step_into` now writes directly into the same caller buffer across
+ticks, avoiding a temporary returned contact vector per tick. Moving-target callers
+can use `step_with_targets_into` with identical endpoint validation and completed
+stamps to `step_with_targets`. This retains buffer capacity, not every internal
+solver allocation. Reset still reconstructs an initial recipe; callers reset
+sensor/controller histories separately. Runtime IDs, reset epochs, generic body
+models and capability negotiation remain subsequent work.
+
 ## Target ownership
 
 | Layer | Owns | Interaction boundary |
@@ -161,7 +187,7 @@ the current timestamp or by a `RayHit::shape_index`.
    infer trustworthy link inertia or motors from native CAD caches. Indexed surface
    sources and shared Rapier cooking are implemented; body/joint/primitive
    descriptions and cache identities remain subsequent work.
-3. **Runtime composition and identities.** Introduce the minimal stable binding
+3. **Runtime composition and identities — concrete runtime extracted.** Introduce the minimal stable binding
    and epoch/revision contracts required by a second standalone consumer. Adapt
    existing RobotSession/MatchSession paths; preserve one world and exact clocks.
    Expose coarse preparation, buffered commands, query batches, observations and

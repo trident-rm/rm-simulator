@@ -23,14 +23,16 @@ simulator crate except the solver-free `rm-simulator-engine` core.
 | `src/chassis.rs` | Compatibility facade for chassis configuration, commands, snapshots and borrowed telemetry; existing public paths remain unchanged. |
 | `src/chassis/model.rs` | Physical descriptions, presets, validation and evaluated model geometry, including conversion to `WheelModel`; no solver handles or stepping. |
 | `src/chassis/backend/` | Rapier body/collider construction (`construction.rs`), ordered wheel queries and forces (`dynamics.rs`), prescribed folding/gimbal adaptation (`prescribed.rs`), controls and observations (`mod.rs`). |
-| `src/projectile.rs` | `WorldPhysics`, `Shot`, `Caliber`, `Contact`, `TargetFace`, `TargetFrames`, `StaticGeometry` and `ProjectilePolicy`: projectile flight, scoring faces and raw contacts in physical order. |
+| `src/runtime.rs` | `runtime::WorldPhysics`: interacting scene ownership, construction, integration slices, carrier traces and ordered raw contact capture; legacy world paths remain compatible. |
+| `src/projectile.rs` | `Shot`, `Caliber`, `Contact`, `TargetFace`, `TargetFrames`, `StaticGeometry` and `ProjectilePolicy`; participant adapters and compatibility world exports. |
 | `src/queries.rs` | Immutable validated ray batches and capture-local hits, with no public solver handles; callers retain output storage. |
 | `src/geometry.rs` | Shared collision captures and read-only clearance queries consumed by the world facade. |
 | `src/motion.rs` | Prescribed rotor and rail motion (`RotorMotion`, `SinusoidalMotion`, `MechanismState`) and fitted armor geometry; rune pose helpers live under `motion::rune`. |
 
-`lib.rs` also holds the clock contract: `DEFAULT_TICK_NS` and the `const fn`
-`tick_ns()`, plus the FLU `Pose` and `Team`. Time arguments count ticks of
-`tick_ns()`, which is 128 Hz by default (7.8125 ms per tick). Standalone callers can select immutable
+`lib.rs` re-exports the engine clock contract (`DEFAULT_TICK_NS`, `tick_ns()`,
+`StepDuration`) and FLU `Pose`, and retains `Team`. Session step counts use the
+instance duration; low-level runtime step arguments are starting nanoseconds.
+The default is 128 Hz (7.8125 ms per tick). Standalone callers can select immutable
 `StepDuration` values, including 1000 Hz, through `WorldPhysics::with_step_duration`.
 Use the instance duration to advance timestamps; `tick_ns()` returns the default. The step applies no HP, buffs, activation or
 detection intervals; the world crate owns those decisions.
@@ -119,3 +121,9 @@ handles and state stay independent. The owned-buffer `add_static_mesh` path keep
 its existing behavior and does not retain duplicate source data. See the
 [architecture guide](../../docs/engine-architecture.md#implemented-sourcecooked-surface-boundary)
 for scope and remaining model-description work.
+
+`runtime::WorldPhysics` owns the existing scene, construction and integration
+loop; root and `projectile` paths re-export the same type. `step_into` appends
+raw contacts into retained caller storage. `RobotSession::step_into` and
+`step_with_targets_into` use it directly. Sessions/match adapters retain clock,
+reset and rule scheduling ownership; no extra world or scheduler is created.

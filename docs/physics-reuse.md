@@ -19,6 +19,7 @@ This is a reusable RM physical library, not a general physics-engine abstraction
 ## Contents
 
 - [Backend-neutral wheel model](#backend-neutral-wheel-model)
+- [Concrete physical runtime](#concrete-physical-runtime)
 - [Headless use](#headless-use)
 - [Restore and prediction](#restore-and-prediction)
 - [Optional rendering](#optional-rendering)
@@ -84,6 +85,21 @@ platform math tolerance. Independent scalar tests cover suspension, free spin,
 contact slip reaction, direct torques, shared/zero power and buffer reuse, without
 creating a solver world. Existing adapter tests cover defeat, power cuts,
 contact filtering, balance/jump and restore.
+
+## Concrete physical runtime
+
+`physics::runtime::WorldPhysics` owns one interacting Rapier scene. Root and
+`projectile::WorldPhysics` imports remain aliases of the same type. Its explicit
+`step_into(prev_ns, frames, contacts)` appends raw ordered contacts into caller
+storage; `step` retains the owned-output convenience API. The caller supplies
+simulation time and target endpoints. This is the existing concrete runtime,
+not a generic solver interface or an additional scheduler.
+
+Physical sessions use the retained-output path directly, including
+`RobotSession::step_with_targets_into` for moving targets. Match adapters keep
+their existing pre/post integration rule barriers. See the
+[architecture guide](engine-architecture.md#implemented-concrete-physical-runtime)
+for lifecycle, compatibility and error/reset limits.
 
 ## Headless use
 

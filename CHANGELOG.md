@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Extract the concrete physical runtime with compatible world imports and
+  retained-buffer stepping. Bare sessions now collect raw contacts directly
+  across ticks and expose a retained-output moving-target step.
+
 - Separate immutable source triangle surfaces from shared Rapier-cooked meshes;
   allow cooking once and installing into multiple independent worlds while
   preserving the existing owned-buffer mesh APIs and collision policy.

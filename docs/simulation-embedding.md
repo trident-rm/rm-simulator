@@ -22,6 +22,7 @@ runs on bounded workers outside ROS callbacks. Core libraries and multiplayer bu
 | Consumer | Entry point | Includes |
 |---|---|---|
 | Strategy evaluator | `rm-simulator-gameplay::rmuc_2027::match_rules::Match` | Native rules driven by caller observations and nanosecond durations; no physical travel/combat abstraction is invented. |
+| Low-level physical runtime | `rm-simulator-physics::runtime::WorldPhysics` | One concrete Rapier world; explicit starting timestamps, target endpoints and retained contact output. |
 | Robot physical/control test | `rm-simulator-physics::session::RobotSession` | Caller-paced physics, shared commands and sensor access; initial-scenario reset without match rules. |
 | Complete physical match or robotics scenario | `rm-simulator-world::session::MatchSession` | A `Field`, addressed controls, timestamps, checkpoints and explicit reset. |
 | Independent rollout collection | `physics::session::batch::RobotBatch` / `world::session::batch::MatchBatch` | Bounded sequential stepping, reusable observations and transactional selective reset; mixed per-slot durations. |

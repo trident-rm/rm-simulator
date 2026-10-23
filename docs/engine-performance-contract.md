@@ -152,7 +152,7 @@ additional metadata, not a reinterpretation of that ordinal.
 The normative behavior is the current code, especially
 [`Field::step_with_hits`](../crates/rm-simulator-world/src/lib.rs),
 [`advance_2027`](../crates/rm-simulator-world/src/rmuc_2027.rs) and
-[`WorldPhysics::step`](../crates/rm-simulator-physics/src/projectile.rs).
+[`WorldPhysics::step`](../crates/rm-simulator-physics/src/runtime.rs).
 The phases below document existing ordering; they are not independent scheduled
 plugins. Extraction must preserve early exits and error/partial-progress behavior
 as well as successful execution.

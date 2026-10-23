@@ -299,7 +299,7 @@ impl RobotSession {
     ) -> Result<(), &'static str> {
         self.check_advance(steps)?;
         for _ in 0..steps {
-            contacts.extend(self.integrate(None)?);
+            self.integrate_into(None, contacts)?;
         }
         Ok(())
     }
@@ -316,7 +316,11 @@ impl RobotSession {
         Ok(())
     }
 
-    fn integrate(&mut self, end: Option<&[TargetFace]>) -> Result<Vec<Contact>, &'static str> {
+    fn integrate_into(
+        &mut self,
+        end: Option<&[TargetFace]>,
+        contacts: &mut Vec<Contact>,
+    ) -> Result<(), &'static str> {
         if let Some(end) = end {
             validate_faces(end)?;
             self.frames.update(|faces| {
@@ -328,21 +332,45 @@ impl RobotSession {
             self.frames.update(|faces| faces.clone_from(&self.faces))?;
         }
         self.frames.begin(|faces| faces.clone_from(&self.faces))?;
-        let contacts = self.physics.step(self.stamp.time_ns, &self.frames)?;
+        self.physics
+            .step_into(self.stamp.time_ns, &self.frames, contacts)?;
         if let Some(end) = end {
             self.faces.clone_from_slice(end);
         }
         self.stamp.tick += 1;
         self.stamp.time_ns += self.step_duration().as_ns();
-        Ok(contacts)
+        Ok(())
     }
 
     /// Advance one tick interpolating external targets from their last endpoint.
     /// Count, identity order and finite unit poses are checked before integration.
     /// Resolve prescribed mechanisms through [`Self::physics_mut`] before stepping.
     pub fn step_with_targets(&mut self, end: &[TargetFace]) -> Result<Vec<Contact>, &'static str> {
+        let mut contacts = Vec::new();
+        self.step_with_targets_into(end, &mut contacts)?;
+        Ok(contacts)
+    }
+
+    /// Advance one tick with explicit target endpoints, appending raw contacts
+    /// into retained caller storage. Validation and completed stamps match
+    /// [`Self::step_with_targets`]; previous output is never cleared.
+    ///
+    /// ```
+    /// use rm_simulator_physics::{StepDuration, session::{RobotScenario, RobotSession}};
+    /// let mut session = RobotSession::new(RobotScenario::new(vec![], 0.,
+    ///     StepDuration::HZ_1000, |_| Ok(()))?)?;
+    /// let mut contacts = Vec::with_capacity(32);
+    /// session.step_with_targets_into(&[], &mut contacts)?;
+    /// assert_eq!(session.stamp().time_ns, 1_000_000);
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn step_with_targets_into(
+        &mut self,
+        end: &[TargetFace],
+        contacts: &mut Vec<Contact>,
+    ) -> Result<(), &'static str> {
         self.check_advance(1)?;
-        self.integrate(Some(end))
+        self.integrate_into(Some(end), contacts)
     }
 
     /// Run a controller before every physical tick, applying its requests in order.
@@ -364,7 +392,7 @@ impl RobotSession {
                 for request in commands.drain(..) {
                     self.command(request)?;
                 }
-                contacts.extend(self.integrate(None)?);
+                self.integrate_into(None, &mut contacts)?;
             }
             Ok(contacts)
         })();

@@ -41,6 +41,8 @@ pub mod mechanism;
 pub mod motion;
 pub mod projectile;
 pub mod queries;
+/// Single-owner physical runtime, also available through compatibility exports.
+pub use projectile::runtime;
 pub mod sensors;
 pub mod session;
 pub mod wheel_model;
