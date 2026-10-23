@@ -200,7 +200,8 @@ later deployment. No directory is required or running for this feature.
 | [`rm-simulator-gameplay`](crates/rm-simulator-gameplay/README.md) | Standalone match lifecycle and gameplay state, deterministic commands, rule coverage and unsupported-element observations. No physics or renderer; its live resource component is driven by the world referee. |
 | [`rm-simulator-physics`](crates/rm-simulator-physics/README.md) | Reusable Rapier dynamics, chassis, projectiles, raw armor contacts, shared geometry and prescribed armor motion. No gameplay, Bevy, server or CAD-loader dependency. |
 | [`rm-simulator-world`](crates/rm-simulator-world/README.md) | Complete `Field` facade: explicit ticks, activation, detection, damage, referee integration and restore. Coordinates the physics library and preserves existing public world imports. |
-| [`rm-simulator-render`](crates/rm-simulator-render/README.md) | Bevy CAD scenery, lighting, rune and outpost light overlays, projectile spheres, chassis visuals, and pose/visibility/strike synchronization from caller-owned scene state. No world dependency. |
+| [`rm-simulator-presentation`](crates/rm-simulator-presentation/README.md) | Borrowed game snapshots and caller time into render appearances, without hosting, transport or UI ownership. |
+| [`rm-simulator-render`](crates/rm-simulator-render/README.md) | Generic Bevy visual instances plus the default RoboMaster extension. Bevy CAD scenery, lighting, rune and outpost light overlays, projectile spheres, chassis visuals, and pose/visibility/strike synchronization from caller-owned scene state. No world dependency. |
 | [`rm-simulator-server`](crates/rm-simulator-server/README.md) | Bevy-free glue: CAD loading and checksums, collision triangles, field layout, the `Simulation` wrapper, a `Host` worker that owns simulation and command ordering, the GNS UDP transport, the embedded owner's loopback codec link, the HTTP referee panel, and the headless binary. |
 | [`rm-simulator-bench`](crates/rm-simulator-bench/README.md) | Fixed-camera CAD renderer benchmark, independent of physics, world, server and gameplay. |
 | [`rm-simulator-app`](crates/rm-simulator-app/README.md) | The `rm-simulator` binary: window, chassis driving and gimbal camera (or fly camera), gun, HUD, world-to-scene adaptation, and the local or remote session that turns inputs into protocol commands. |
@@ -211,7 +212,18 @@ Use the physical library without a match or server:
 cargo run -p rm-simulator-physics --example moving_armor --locked
 ```
 
-An optional Bevy composition example draws moving armor and projectiles without
+The optional [standalone scenario viewer](docs/scenario-viewer.md) uses the
+same generic renderer and physical runtime without gameplay, world or server
+crates:
+
+```sh
+mbx run --manifest-path integrations/scenario-viewer/Cargo.toml --locked
+```
+
+The game-specific presentation adapter and the generic renderer are described in
+[the rendering split guide](docs/presentation-render-split.md).
+
+An older Bevy composition example draws moving armor and projectiles without
 using `Field`, the referee or server APIs:
 
 ```sh

@@ -9,6 +9,7 @@ members = [
     "crates/rm-simulator-world",
     "crates/rm-simulator-physics",
     "crates/rm-simulator-render",
+    "crates/rm-simulator-presentation",
     "crates/rm-simulator-server",
     "crates/rm-simulator-app",
     "crates/rm-simulator-bench",

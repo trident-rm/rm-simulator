@@ -6066,6 +6066,7 @@ dependencies = [
  "prost",
  "rm-simulator-assets",
  "rm-simulator-physics",
+ "rm-simulator-presentation",
  "rm-simulator-render",
  "rm-simulator-server",
  "rm-simulator-world",
@@ -6129,6 +6130,18 @@ dependencies = [
  "rapier3d-f64",
  "rm-simulator-engine",
  "serde",
+]
+
+[[package]]
+name = "rm-simulator-presentation"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "rm-simulator-render",
+ "rm-simulator-world",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

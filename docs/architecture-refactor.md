@@ -48,7 +48,8 @@ there distinguishes further proposals from the unchanged Rapier backend.
 | Motion stop decisions and resolved mechanism positions | World, supplied to physics |
 | Complete restore and tick orchestration | `Field` facade |
 | Entity lifecycle, transforms and materials | Renderer |
-| Snapshot-to-appearance adaptation and presentation clock | App |
+| Snapshot-to-appearance adaptation | Presentation library |
+| Presentation clock, interpolation selection, controls and UI | App |
 | Roster, command authority and transport delivery | Server host |
 
 The physics library depends on the solver-free engine core and no other
@@ -56,7 +57,10 @@ simulator crate; numerical helpers, serialization and the MID360 pattern remain
 ordinary library dependencies. Its RM-specific caliber
 lookup helpers remain available for source compatibility; physical stepping does
 not apply their damage or detection policy. The renderer depends on neither
-physics nor world. `scripts/check-module-dependencies.py` enforces these boundaries.
+physics nor world. The presentation library bridges borrowed world records into
+renderer appearances; it has no host, transport or session ownership. Generic
+rendering can compile without the default RoboMaster extension. See the
+[presentation/render split](presentation-render-split.md). `scripts/check-module-dependencies.py` enforces these boundaries.
 
 ## Tick order
 

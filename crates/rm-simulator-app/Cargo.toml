@@ -27,6 +27,7 @@ rm-simulator-assets = { version = "0.1.0", path = "../rm-simulator-assets" }
 glam.workspace = true
 rm-simulator-world = { version = "0.1.0", path = "../rm-simulator-world" }
 rm-simulator-render = { version = "0.1.0", path = "../rm-simulator-render" }
+rm-simulator-presentation = { version = "0.1.0", path = "../rm-simulator-presentation" }
 rm-simulator-server = { version = "0.1.0", path = "../rm-simulator-server" }
 anyhow.workspace = true
 bevy = { workspace = true, features = ["bevy_feathers", "bevy_ui_widgets", "serialize"] }

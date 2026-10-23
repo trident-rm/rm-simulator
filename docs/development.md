@@ -90,7 +90,8 @@ and the LFS `field-2027/` package. Clippy remains in `just verify` and CI's full
 2. `cargo fmt --all -- --check`
 3. `cargo check --workspace --all-targets --all-features --locked`
 4. `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
-5. `cargo test --workspace --all-features --locked`
+5. `cargo test --workspace --all-features --locked`, plus generic-only renderer
+   tests with `--no-default-features`
 6. `python3 scripts/check-runtime.py`, current runtime admission and native rules
 7. `python3 scripts/check-module-dependencies.py`
 8. `python3 scripts/check-mpl-compliance.py`

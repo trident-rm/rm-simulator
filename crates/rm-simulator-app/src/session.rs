@@ -25,18 +25,7 @@ struct EmbeddedHost {
     server: Server,
     _http: Option<rm_simulator_server::http::HttpServer>,
 }
-/// Visual settings for the world-to-scene adaptation.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FlashSettings {
-    /// How long a detected armor hit stays lit, in ns. An app setting: the
-    /// rulebook gives no flash duration.
-    pub hit_flash_ns: u64,
-    /// Blink rate of a newly activated rune, in Hz. The rulebook fixes only
-    /// that the arms light up, so the rate is an app setting.
-    pub rune_flash_hz: f64,
-    /// Number of blinks a newly activated rune shows. An app setting.
-    pub rune_flashes: u32,
-}
+pub use rm_simulator_presentation::FlashSettings;
 /// Replay state owned and reset by the session, independent of presentation and transport.
 struct PredictionState {
     worker: Option<crate::prediction::PredictionWorker>,

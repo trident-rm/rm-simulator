@@ -52,6 +52,9 @@ assert "rm-simulator-physics" not in render, render
 assert "rm-simulator-world" not in render, render
 assert "rm-simulator-server" not in render, render
 assert "rm-simulator-gameplay" not in render, render
+presentation = dependencies("rm-simulator-presentation")
+assert {"rm-simulator-world", "rm-simulator-render"} <= presentation, presentation
+assert not ({"rm-simulator-server", "rm-simulator-app", "game-networking-sockets"} & presentation), presentation
 bench = dependencies("rm-simulator-bench")
 assert not ({"rm-simulator-physics", "rm-simulator-world", "rm-simulator-server", "rm-simulator-gameplay", "rm-simulator-app"} & bench), bench
 assert not any(d.startswith("rapier") for d in bench), bench
@@ -61,4 +64,5 @@ print("PASS: engine has no solver, application or simulator dependency; physics'
       "gameplay is independent of physics and the simulator, "
       "assets have no world, networking or renderer, "
       "world and server have no renderer, renderer has no world or server, "
+      "presentation adapts world to render without hosting or transport, "
       "and no sibling simulator crate is imported")

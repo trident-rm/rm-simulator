@@ -45,6 +45,7 @@ verify:
     {{rust}} check --workspace --all-targets --all-features --locked
     {{rust}} clippy --workspace --all-targets --all-features --locked -- -D warnings
     {{rust}} test --workspace --all-features --locked
+    {{rust}} test -p rm-simulator-render --no-default-features --locked
     python3 scripts/check-runtime.py
     python3 scripts/check-module-dependencies.py
     python3 scripts/check-mpl-compliance.py

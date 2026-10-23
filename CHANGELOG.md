@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Separate RoboMaster snapshot-to-appearance adaptation from app orchestration.
+  Add a generic-only renderer configuration with shared-handle visuals and sparse
+  pose/visibility updates, preserving the game's default visual APIs. Include an
+  optional standalone physical scenario viewer using that renderer without a match
+  or server.
+
 - Complete prepared construction for projectiles, scoring targets and carried
   objects over the shared physical runtime. Reuse bounded per-world projectile
   shapes and immutable `PreparedPayload` resources across instances/resets;

@@ -2,17 +2,25 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # rm-simulator-render
 
-`rm-simulator-render` owns the Bevy scene for the RoboMaster field: CAD scenery,
-light overlays, pooled projectiles, chassis visuals, lighting and the
-pose/material synchronization from caller-owned `SceneState`. It is passive, never
-advances rules and never reads a simulation clock; the app and the benchmark crate
-build on it.
+`rm-simulator-render` provides passive generic Bevy visuals and an optional
+RoboMaster extension. `generic` installs shared mesh/imported-scene handles and
+applies sparse caller-owned FLU poses/visibility. The default `robomaster` feature
+adds CAD scenery, equipment, robot visuals and resolved `SceneState` synchronization.
+It never advances rules or reads a simulation clock.
+
+General consumers use `default-features = false`; existing game and benchmark
+imports retain their default behavior. `rm` groups the game-specific modules,
+while their original root paths remain compatible. The standalone
+[scenario viewer](../../docs/scenario-viewer.md) uses the generic-only build.
 
 ## Modules
 
 | File | Owns |
 |---|---|
-| `src/lib.rs` | `RenderingConfig` and `RenderingProfile`, `TeamColor`, `PoseFlu`, `camera_appearance`, and the FLU-to-Bevy conversions `flu_position`, `flu_vector`, `apply_pose` and `pose_from_transform`. |
+| `src/lib.rs` | Feature boundaries, compatibility reexports and RoboMaster `TeamColor`. |
+| `src/generic.rs` | `RenderingConfig`, camera appearance, FLU pose and conversion helpers (also reexported at root). |
+| `src/generic/visuals.rs` | Caller `VisualId`s, shared-handle mesh/scene instances, retained sparse updates and lifecycle. |
+| `src/rm.rs` | Explicit RoboMaster appearance/plugin surface, available with the default `robomaster` feature. |
 | `src/cad.rs` | Extracted RMUC CAD scenery: `CadScenePlugin`, `CadSceneStatus`, and the static and articulated instances with their scene roles. |
 | `src/rune.rs` | Emissive rune overlays: the active target, the activated outline and Big Rune progress lights on each blade. |
 | `src/outpost.rs` | Outpost armor optics overlaid on the imported tower. |
@@ -30,11 +38,13 @@ build on it.
 `bevy`, `serde` and `serde_json`. The crate never depends on
 `rm-simulator-world`, `rm-simulator-server` or `rm-simulator-physics`; a caller
 converts its own world state into `SceneState`. `rm-simulator-app` and
-`rm-simulator-bench` are its consumers.
+`rm-simulator-bench`, `rm-simulator-presentation` and the optional generic scenario
+viewer are consumers. The presentation adapter converts borrowed world records
+into resolved appearances without adding a world dependency to this crate.
 
 ## Testing
 
-`cargo test -p rm-simulator-render --locked` runs headless `App` tests that spawn
+`mbx test -p rm-simulator-render --locked` runs headless `App` tests that spawn
 the sync and visual plugins and inspect components. Coverage includes rendering
 profile validation and camera post-processing, FLU/Bevy pose round trips, armor
 artwork geometry, CAD team paint and joint behaviour, chassis spawn and removal,
@@ -53,3 +63,10 @@ cargo run -p rm-simulator-render --example robots -- out.png healthy
 
 Reference equipment dimensions and limits are in
 [docs/robot-equipment.md](../../docs/robot-equipment.md).
+
+Generic-only checks use `mbx test -p rm-simulator-render --no-default-features
+--locked`. Visual tests verify shared assets, stale/recreated IDs, retained buffers
+and unchanged ECS component ticks. Liveness pruning scans registered roots;
+sparse publication therefore costs O(roots + updates), not only O(updates).
+See [presentation/render boundaries](../../docs/presentation-render-split.md)
+for ownership, performance measurements and limitations.
