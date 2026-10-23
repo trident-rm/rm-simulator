@@ -190,3 +190,132 @@ fn bad_setup_or_drive_requests_are_rejected_without_advancing_the_plant() {
         assert_eq!(f.sample().unwrap(), initial);
     }
 }
+
+#[test]
+fn directional_tread_grip_still_drives_over_the_small_ramp() {
+    for dt in [StepDuration::HZ_128, StepDuration::HZ_1000] {
+        let mut f = Fixture::new(
+            Parameters {
+                roller_friction: Some(0.02),
+                bump_height_m: 0.002,
+                ..Default::default()
+            },
+            dt,
+        )
+        .unwrap();
+        for _ in 0..2_000_000_000 / dt.as_ns() {
+            f.step().unwrap();
+        }
+        f.drive(0.25).unwrap();
+        let mut bump = false;
+        let mut last = f.sample().unwrap();
+        for _ in 0..6_000_000_000 / dt.as_ns() {
+            last = f.step().unwrap();
+            bump |= last.bump_contact;
+            assert_eq!(last.dropped_contacts, 0);
+            assert!(last.suspension.closure_error_m < 0.0002, "{dt:?} {last:?}");
+        }
+        assert!(bump, "{dt:?} {last:?}");
+        assert!(
+            last.wheel.pose.translation_m[0] > fixture::BUMP_END_M + 0.3,
+            "{dt:?} {last:?}"
+        );
+        assert!(
+            (last.chassis_velocity_m_s[0] - 0.25).abs() < 0.03,
+            "{dt:?} {last:?}"
+        );
+        assert!(
+            last.chassis_velocity_m_s[1].abs() < 0.005,
+            "{dt:?} {last:?}"
+        );
+    }
+}
+#[test]
+fn roller_direction_can_move_sideways_while_high_grip_resists_the_same_push() {
+    use rm_sim_physics::runtime::BodyKey;
+    for dt in [StepDuration::HZ_128, StepDuration::HZ_1000] {
+        let mut low = Fixture::new(
+            Parameters {
+                roller_friction: Some(0.02),
+                bump_height_m: 0.,
+                ..Default::default()
+            },
+            dt,
+        )
+        .unwrap();
+        let mut high = Fixture::new(
+            Parameters {
+                roller_friction: Some(0.9),
+                bump_height_m: 0.,
+                ..Default::default()
+            },
+            dt,
+        )
+        .unwrap();
+        for _ in 0..2_000_000_000 / dt.as_ns() {
+            low.step().unwrap();
+            high.step().unwrap();
+        }
+        for f in [&mut low, &mut high] {
+            let root = f.suspension.runtime.body_binding(BodyKey(1)).unwrap();
+            f.suspension
+                .runtime
+                .set_body_wrench(root, [0., 5., 0.], [0.; 3])
+                .unwrap();
+        }
+        let initial = low.sample().unwrap().wheel.pose.translation_m[1];
+        for _ in 0..1_000_000_000 / dt.as_ns() {
+            low.step().unwrap();
+            high.step().unwrap();
+        }
+        let l = low.sample().unwrap();
+        let h = high.sample().unwrap();
+        eprintln!(
+            "lateral {dt:?} low={:?}, high={:?}",
+            l.chassis_velocity_m_s, h.chassis_velocity_m_s
+        );
+        assert!(l.chassis_velocity_m_s[1] > 0.4, "{dt:?} {l:?}");
+        assert!(h.chassis_velocity_m_s[1].abs() < 0.04, "{dt:?} {h:?}");
+        assert!(l.wheel.pose.translation_m[1] > initial + 0.15);
+        assert!(l.chassis_velocity_m_s[0].abs() < 0.005);
+        assert!(l.suspension.closure_error_m < 0.0002);
+        // Recipe reset preserves the law and lateral guide choice, with fresh tokens.
+        let old = low.wheel_binding();
+        low.reset().unwrap();
+        assert!(low.suspension.runtime.body_state(old).is_err());
+        for _ in 0..2_000_000_000 / dt.as_ns() {
+            low.step().unwrap();
+        }
+        assert!(low.sample().unwrap().chassis_velocity_m_s[1].abs() < 0.005);
+    }
+}
+
+#[test]
+fn directional_recipe_replays_identical_contact_and_motor_history() {
+    for dt in [StepDuration::HZ_128, StepDuration::HZ_1000] {
+        let mut f = Fixture::new(
+            Parameters {
+                roller_friction: Some(0.02),
+                bump_height_m: 0.,
+                ..Default::default()
+            },
+            dt,
+        )
+        .unwrap();
+        let run = |f: &mut Fixture| {
+            let mut result = Vec::new();
+            f.drive(0.).unwrap();
+            for tick in 0..3_000_000_000 / dt.as_ns() {
+                if tick == 2_000_000_000 / dt.as_ns() {
+                    f.drive(0.25).unwrap();
+                }
+                result.push(f.step().unwrap());
+            }
+            result
+        };
+        let first = run(&mut f);
+        f.reset().unwrap();
+        let second = run(&mut f);
+        assert_eq!(first, second);
+    }
+}

@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Add an opt-in directional contact approximation for fixed terrain, with separate
+  tread/roller grip and implicit tangential damping. Exercise the suspension wheel
+  with free lateral motion, low/high-drag controls, 2 mm ramp passage and exact
+  reset/replay at 128/1000 Hz. Document the unresolved 5 mm transition stall;
+  retain existing game wheel physics and native default contacts.
+
 - Add a guided wheel-contact fixture using the source-derived suspension,
   a dynamic sprung load and driven wheel in the shared physics scene. Validate
   small-ramp passage against flat/zero-friction controls, and publish explicit

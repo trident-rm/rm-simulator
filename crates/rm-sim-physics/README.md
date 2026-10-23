@@ -25,6 +25,7 @@ simulator crate except the solver-free `rm-sim-engine` core.
 | `src/chassis/backend/` | Rapier body/collider construction (`construction.rs`), ordered wheel queries and forces (`dynamics.rs`), prescribed folding/gimbal adaptation (`prescribed.rs`), controls and observations (`mod.rs`). |
 | `src/cooking.rs` / `src/cooking/` | Shared cooked mesh/body shapes and assembly resources retaining solver-free source descriptions. |
 | `src/runtime/bindings.rs` | Explicit body keys, world-scoped bindings, source/state reads and generic physical control. |
+| `src/runtime/directional.rs` | Opt-in regularized tread/roller friction against fixed terrain, with load-lag and contact-patch limitations documented in the wheel-contact guide. |
 | `src/runtime/observations.rs` | Read-only native participant/collider identities and opt-in bounded physical contact samples, independent of scoring and command bindings. |
 | `src/runtime/joints.rs` | Generic physical joint installation, world-scoped bindings, scalar state, motors and held effort. |
 | `src/runtime/assembly.rs` | Transactional prepared-assembly installation/removal, placement and source-to-live binding maps. |
@@ -250,3 +251,11 @@ The `wheel_contact` example extends that linkage with a guided dynamic frame,
 a driven wheel and floor/ramp contacts in the same runtime. It compares loading,
 traction and obstacle response against flat and zero-friction controls; see
 [guided wheel contact](../../docs/wheel-contact.md) for assumptions and commands.
+
+Directional wheel contact is an experimental standalone option through
+`runtime::DirectionalFriction` and
+`runtime::PhysicalRuntime::set_directional_friction`.
+It retains native normal support and couples bounded tangential damping to the
+native joint solver. See [the wheel-contact guide](../../docs/wheel-contact.md#directional-contact-experiment)
+for coefficients, the free-lateral test stand, reproduction and the unresolved
+5 mm surface-transition stall. It is not enabled in the game.

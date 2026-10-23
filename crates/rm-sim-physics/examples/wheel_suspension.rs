@@ -112,6 +112,7 @@ fn body(
     half: [f64; 3],
     principal: Option<[f64; 3]>,
     guided: bool,
+    lateral_free: bool,
 ) -> Result<CookedRigidBody, &'static str> {
     let kind = if let Some(m) = mass {
         let [x, y, z] = half;
@@ -142,7 +143,7 @@ fn body(
     )?;
     let source = if guided {
         source.with_policy(BodyPolicy {
-            enabled_translations: [true, false, true],
+            enabled_translations: [true, lateral_free, true],
             enabled_rotations: [false; 3],
             can_sleep: false,
             ..Default::default()
@@ -197,6 +198,7 @@ pub struct Fixture {
     bodies: [BodyBinding; 6],
     placement: Pose,
     sprung_mass_kg: Option<f64>,
+    lateral_free: bool,
 }
 impl Fixture {
     /// Prepare and install a closed loop at one explicit immutable rate.
@@ -209,7 +211,14 @@ impl Fixture {
         duration: StepDuration,
         iterations: usize,
     ) -> Result<Self, &'static str> {
-        Self::install(parameters, duration, iterations, Pose::default(), None)
+        Self::install(
+            parameters,
+            duration,
+            iterations,
+            Pose::default(),
+            None,
+            false,
+        )
     }
     /// Install the same linkage on a dynamic frame guided along world X/Z.
     /// The guide locks lateral translation and all frame rotation; vertical
@@ -221,6 +230,25 @@ impl Fixture {
         placement: Pose,
         sprung_mass_kg: f64,
     ) -> Result<Self, &'static str> {
+        Self::guided_mount_with_lateral(
+            parameters,
+            duration,
+            iterations,
+            placement,
+            sprung_mass_kg,
+            false,
+        )
+    }
+    /// Same test stand with optional free lateral frame translation, for omni tests.
+    /// Rotation remains guided; no lateral velocity or position is prescribed.
+    pub fn guided_mount_with_lateral(
+        parameters: Parameters,
+        duration: StepDuration,
+        iterations: usize,
+        placement: Pose,
+        sprung_mass_kg: f64,
+        lateral_free: bool,
+    ) -> Result<Self, &'static str> {
         if !sprung_mass_kg.is_finite() || sprung_mass_kg <= 0. {
             return Err("invalid sprung mass");
         }
@@ -230,6 +258,7 @@ impl Fixture {
             iterations,
             placement,
             Some(sprung_mass_kg),
+            lateral_free,
         )
     }
     fn install(
@@ -238,6 +267,7 @@ impl Fixture {
         iterations: usize,
         placement: Pose,
         sprung_mass_kg: Option<f64>,
+        lateral_free: bool,
     ) -> Result<Self, &'static str> {
         parameters.validate()?;
         let mut runtime = PhysicalRuntime::with_solver_iterations(duration, iterations)?;
@@ -293,6 +323,7 @@ impl Fixture {
                     half[i],
                     (i == 1 || i == 2).then_some(ARM_INERTIA_KG_M2),
                     i == 0 && sprung_mass_kg.is_some(),
+                    lateral_free,
                 )?,
                 BodyState::at(poses[i]),
             )?);
@@ -360,6 +391,7 @@ impl Fixture {
             rod: installed[5],
             placement,
             sprung_mass_kg,
+            lateral_free,
             bodies: installed
                 .as_slice()
                 .try_into()
@@ -408,6 +440,7 @@ impl Fixture {
             self.runtime.solver_iterations(),
             self.placement,
             self.sprung_mass_kg,
+            self.lateral_free,
         )?;
         Ok(())
     }

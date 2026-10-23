@@ -127,3 +127,102 @@ Ignored evidence under `local-assets/wheel-contact-20261023/` includes the three
 CSV runs, `source-wheel.json`, `results.json`, the passive `bind_cad.py` probe,
 GPU captures, source/output hashes and validation logs. None is a runtime asset
 or a new dependency of core simulator crates.
+
+## Directional contact experiment
+
+The standalone fixture now accepts an **opt-in directional law**. Existing default
+runs still use the original native isotropic cylinder and lateral guide. Supplying
+`roller_friction` releases the frame's Y guide while retaining its rotation locks;
+Y motion is then actual dynamics rather than a commanded sideways pose. The CAD
+wheel remains a single visual subtree, with no individual roller bodies.
+
+`runtime::DirectionalFriction` selects a unit collider-local roller axis and
+independent dimensionless tread/roller coefficients. The fixture uses local Y,
+0.9 tread grip and an assumed 0.02 roller coefficient. Its default tangential
+damping is an assumed **500 N s/m**, configurable with `with_slip_damping`.
+These are test choices, not recovered rubber, bearing or hardware measurements.
+The explicit directional coefficients override the combined native material
+friction on supported contacts; the opposite terrain material does not rescale them.
+
+The implementation uses a regularized friction patch:
+
+1. Keep ordinary native normal contacts. For each selected collider contacting
+   fixed scenery, collect the preceding integration slice's solved normal impulses
+   and pressure-weighted contact position/normal into one patch.
+2. Project the collider's actual roller axis into that contact plane. The
+   perpendicular tangent is the tread direction; orientation follows the wheel.
+3. Implicit zero-velocity damping along both tangents supplies resistance up to
+   independent `mu * normal_impulse / slice_dt` force limits. These constraints
+   solve **alongside** the suspension joints and normal contacts. No chassis
+   speed, position or sprung height is prescribed.
+
+The rectangular friction bound differs from native isotropic Coulomb friction's
+circular bound. Below saturation, finite damping permits slip. There is one
+integration slice of load lag (at most 1 ms at the tested rates), so first impact
+has no directional friction until a normal load is available. There is no
+individual roller inertia, distributed twisting resistance or tangent warm start.
+A persistent inertialess fixed body anchors the passive tangential constraints;
+it has no collider and does not create another plant. Patch/joint storage is
+reused for stable contacts. No directional registration retains the ordinary
+native stepping path and allocates no directional storage.
+
+This first version supports **fixed terrain only**. Contacts with dynamic or
+kinematic bodies retain native material friction. A roller axis nearly parallel
+to the contact normal falls back to native isotropic tread friction. Registration
+uses runtime-branded collider tokens, rejects stale/foreign/fixed bodies, and must
+be reapplied by reset recipes. It is not a serialized match/checkpoint feature.
+
+### Reproduce and interpret
+
+Optional arguments after the original output/height/friction/rate arguments are
+`roller_friction`, `lateral_force_n` and `drive_speed_m_s`. The two commands below
+compare low/high lateral resistance under the same 5 N force, applied at the
+sprung-frame COM after two seconds of settling, with the axle commanded to zero:
+
+```sh
+mbx run -p rm-sim-physics --example wheel_contact --locked -- \
+  /path/to/roller-low.csv 0 0.9 1000 0.02 5 0
+mbx run -p rm-sim-physics --example wheel_contact --locked -- \
+  /path/to/roller-high.csv 0 0.9 1000 0.9 5 0
+
+# Forward drive over a smaller 2 mm obstacle.
+mbx run -p rm-sim-physics --example wheel_contact --locked -- \
+  /path/to/directional-ramp.csv 0.002 0.9 1000 0.02
+```
+
+CSV output appends `chassis_y_m` and `chassis_vy_m_s`; existing body-pose columns
+retain their names. At both 128 and 1000 Hz, after one second of the lateral push,
+the low-drag fixture reaches approximately **0.67 m/s**, while the high-grip
+control reaches approximately **0.010 m/s**, consistent with the assumed
+500 N s/m damping under a 5 N push. An independently sliding one-kilogram body verifies
+rotation of the friction axes, monotonic horizontal energy decay, free sideways
+coasting with zero roller coefficient and approximately `mu * 9.81` lateral
+slowing with finite roller coefficient. These checks test the approximation,
+not agreement with measured omni-wheel hardware.
+
+Forward traction and **2 mm ramp passage** pass at both rates, as do exact recipe
+replay, fresh reset tokens, airborne motion and coefficient/admission checks.
+The original isotropic 5 mm ramp tests remain passing.
+
+**Known limitation:** the directional model stalls at the original 5 mm
+floor/ramp transition with the unchanged 1.2 N m drive cap. The isotropic control
+passes it. Changing solve order and using a pressure-centered patch did not
+resolve this. It remains an unresolved contact/constraint-model difference,
+not evidence that the real wheel cannot climb 5 mm, and the motor limit was not
+raised to conceal it. Detailed roller geometry or better coupled contact
+constraints remain necessary before using this approximation for game terrain
+or robot passability claims.
+
+Validation and CPU-only fixture measurements are retained under
+`local-assets/directional-contact-20261024/`. No measured CAD mass, real spring
+stiffness or real lateral wheel data is inferred from this experiment.
+
+A local CPU-only probe used the same free-lateral, flat, seven-body fixture in
+both modes (native isotropic friction versus directional registration). Five
+alternating trials, each after 2000 settling ticks and timing 2048 driven ticks,
+gave median **82.29 µs/tick native / 83.32 µs/tick directional** at 1000 Hz and
+32 solver iterations on Apple M5 Max, development profile with optimization.
+That is approximately 1.3% additional fixture cost in this unpinned run, not a
+whole-game or statistically established throughput result. It includes stepping
+and truth sampling, excludes CSV/rendering/setup, and both cases finish near
+0.247 m/s. The small test does not measure scaling to many registered wheels.

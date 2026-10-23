@@ -16,6 +16,7 @@ use std::collections::HashMap;
 pub(crate) mod assembly;
 #[path = "runtime/bindings.rs"]
 mod bindings;
+mod directional;
 #[path = "runtime/joints.rs"]
 mod joints;
 #[path = "runtime/observations.rs"]
@@ -26,6 +27,7 @@ mod scenery;
 pub use crate::projectile::WorldPhysics;
 pub use assembly::{AssemblyBinding, AssemblyKeys};
 pub use bindings::{BodyBinding, BodyKey, BodyState};
+pub use directional::DirectionalFriction;
 pub use joints::{JointBinding, JointKey};
 pub use observations::{
     ColliderBinding, ColliderState, ContactSide, ParticipantBinding, PhysicalContact,
@@ -55,6 +57,7 @@ pub struct PhysicalRuntime {
     placement_epoch: u64,
     pub(crate) world: PhysicsWorld,
     primed: bool,
+    directional: directional::DirectionalContacts,
     contact_observer: Option<observations::Observer>,
 }
 
@@ -84,6 +87,7 @@ impl PhysicalRuntime {
             step_duration,
             placement_epoch: 0,
             primed: false,
+            directional: Default::default(),
             contact_observer: None,
         }
     }
@@ -256,7 +260,7 @@ impl PhysicalRuntime {
         self.bound_joints.apply_actuation(&mut self.world);
     }
     pub(crate) fn integrate_slice(&mut self) {
-        self.world.step();
+        self.directional.step(&mut self.world);
     }
 }
 

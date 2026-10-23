@@ -17,7 +17,7 @@ use rm_sim_engine::{
 use rm_sim_physics::{
     StepDuration,
     cooking::{CookedRigidBody, CookedTriangleMesh},
-    runtime::{BodyBinding, BodyKey, ColliderBinding, JointBinding, JointKey},
+    runtime::{BodyBinding, BodyKey, ColliderBinding, DirectionalFriction, JointBinding, JointKey},
 };
 
 /// Explicit test parameters, not recovered manufacturer properties.
@@ -33,8 +33,11 @@ pub struct Parameters {
     pub radius_m: f64,
     /// Width, m, rounded from the native approximately 39 mm axial envelope.
     pub width_m: f64,
-    /// Coulomb coefficient on both tyre and ground; zero is a traction control case.
+    /// Native friction, or directional tread coefficient; zero is a traction control case.
     pub friction: f64,
+    /// Optional lateral coefficient for the split directional contact law.
+    /// None preserves native isotropic contacts. Some also releases the Y guide.
+    pub roller_friction: Option<f64>,
     /// Optional ramp/plateau obstacle height, m; zero installs only the flat floor.
     pub bump_height_m: f64,
 }
@@ -47,6 +50,7 @@ impl Default for Parameters {
             radius_m: 0.075,
             width_m: 0.040,
             friction: 0.9,
+            roller_friction: None,
             bump_height_m: 0.005,
         }
     }
@@ -124,7 +128,7 @@ pub struct Fixture {
 }
 impl Fixture {
     /// Build an unpowered module 2 mm above its flat support, with no prescribed
-    /// kinematic endpoint. Frame guide locks lateral motion and rotation only.
+    /// kinematic endpoint. Directional mode frees lateral motion; rotation stays guided.
     pub fn new(parameters: Parameters, duration: StepDuration) -> Result<Self, &'static str> {
         if ![
             parameters.sprung_mass_kg,
@@ -147,6 +151,9 @@ impl Fixture {
         {
             return Err("invalid wheel-contact parameters");
         }
+        if let Some(roller) = parameters.roller_friction {
+            DirectionalFriction::new([0., 1., 0.], parameters.friction, roller)?;
+        }
         // Source-up remains unverified: choose a documented test orientation with
         // rising rockers and adequate bump travel. All recovered relative frames
         // rotate together; no link lengths or mounting offsets are changed.
@@ -159,7 +166,7 @@ impl Fixture {
             parameters.radius_m + 0.002 - (q * (arm + DVec3::from_array(HUB_CARRIER_M))).z,
         );
         let placement = pose(root - q * DVec3::new(0., 0., 0.3), q);
-        let mut module = suspension::Fixture::guided_mount(
+        let mut module = suspension::Fixture::guided_mount_with_lateral(
             suspension::Parameters {
                 load_kg: parameters.carrier_mass_kg,
                 ..Default::default()
@@ -168,6 +175,7 @@ impl Fixture {
             32,
             placement,
             parameters.sprung_mass_kg,
+            parameters.roller_friction.is_some(),
         )?;
         let runtime = &mut module.runtime;
         let carrier = runtime.body_binding(BodyKey(4)).ok_or("missing carrier")?;
@@ -208,6 +216,25 @@ impl Fixture {
             &CookedRigidBody::new(source)?,
             BodyState::at(wheel_pose),
         )?;
+        if let Some(roller) = parameters.roller_friction {
+            let participant = runtime.body_participant(wheel)?;
+            let collider = runtime
+                .colliders()
+                .find(|&c| {
+                    runtime
+                        .collider_state(c)
+                        .is_ok_and(|s| s.participant == Some(participant))
+                })
+                .ok_or("missing tyre collider")?;
+            runtime.set_directional_friction(
+                collider,
+                Some(DirectionalFriction::new(
+                    [0., 1., 0.],
+                    parameters.friction,
+                    roller,
+                )?),
+            )?;
+        }
         let hq = DQuat::from_rotation_arc(DVec3::X, DVec3::Y);
         let axle = runtime.install_joint(
             JointKey(8),
@@ -351,7 +378,7 @@ fn write_sample(csv: &mut impl std::io::Write, s: Sample) -> std::io::Result<()>
         .collect::<String>();
     writeln!(
         csv,
-        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}{}",
+        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}{},{},{}",
         s.suspension.time_s,
         base.translation_m[0],
         base.translation_m[2],
@@ -369,7 +396,9 @@ fn write_sample(csv: &mut impl std::io::Write, s: Sample) -> std::io::Result<()>
         u8::from(s.bump_contact),
         s.minimum_separation_m,
         s.dropped_contacts,
-        state
+        state,
+        base.translation_m[1],
+        s.chassis_velocity_m_s[1]
     )?;
     Ok(())
 }
@@ -385,6 +414,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         p.friction = v.parse()?;
     }
     let hz = args.next().map(|v| v.parse()).transpose()?.unwrap_or(1000);
+    if let Some(v) = args.next() {
+        p.roller_friction = Some(v.parse()?);
+    }
+    let lateral_force_n: f64 = args.next().map(|v| v.parse()).transpose()?.unwrap_or(0.);
+    let drive_speed_m_s: f64 = args.next().map(|v| v.parse()).transpose()?.unwrap_or(0.25);
+    if !lateral_force_n.is_finite()
+        || lateral_force_n.abs() > 20.
+        || !drive_speed_m_s.is_finite()
+        || drive_speed_m_s.abs() > 1.
+    {
+        return Err("invalid fixture command".into());
+    }
     let dt = StepDuration::from_hz(hz)?;
     let mut f = Fixture::new(p, dt)?;
     use std::io::Write;
@@ -394,7 +435,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect::<String>();
     writeln!(
         csv,
-        "time_s,chassis_x_m,chassis_z_m,chassis_vx_m_s,wheel_x_m,wheel_z_m,rolling_m_s,slip_m_s,damper_length_m,loop_error_m,chassis_support_n,floor_contact,bump_contact,separation_m,dropped{poses}"
+        "time_s,chassis_x_m,chassis_z_m,chassis_vx_m_s,wheel_x_m,wheel_z_m,rolling_m_s,slip_m_s,damper_length_m,loop_error_m,chassis_support_n,floor_contact,bump_contact,separation_m,dropped{poses},chassis_y_m,chassis_vy_m_s"
     )?;
     write_sample(&mut csv, f.sample()?)?;
     let ticks = 8_000_000_000 / dt.as_ns();
@@ -402,7 +443,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut last = None;
     for tick in 0..ticks {
         if tick == start {
-            f.drive(0.25)?;
+            f.drive(drive_speed_m_s)?;
+            let frame = f
+                .suspension
+                .runtime
+                .body_binding(BodyKey(1))
+                .ok_or("missing frame")?;
+            f.suspension
+                .runtime
+                .set_body_wrench(frame, [0., lateral_force_n, 0.], [0.; 3])?;
         }
         let s = f.step()?;
         write_sample(&mut csv, s)?;
