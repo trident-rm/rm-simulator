@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Extract passive visuals, FLU conversions, camera appearance and generated-light
+  registration into `sim-render`. Keep RoboMaster visuals in `rm-sim-render` as
+  an extension over that crate, and use `sim-render` directly in the standalone
+  viewer. Preserve existing game imports through re-exports of the same types.
+
 - Rename the solver-free generic core to `sim-engine` (`sim_engine` in Rust),
   including its directory, dependencies and examples. Reserve `sim-*` names for
   generic crates; crates that still contain RoboMaster code keep `rm-sim-*`.

@@ -39,9 +39,10 @@ from remaining gaps. Builds include RMUC 2027 and RMUL 2027 without season featu
 See [the archived runtime guide](docs/seasons.md) for 2026 and shared internals.
 
 Generic crates use `sim-*` package/directory names and `sim_*` Rust imports.
-The solver-free core is `sim-engine` (`sim_engine`). Crates that contain
-RoboMaster code keep `rm-sim-*` names, including physics and rendering until their
-generic and game modules are separated. The application executable remains
+The solver-free core is `sim-engine` (`sim_engine`), and passive generic visuals
+live in `sim-render` (`sim_render`). Crates that contain RoboMaster code keep
+`rm-sim-*` names, including physics and the RM rendering extension.
+The application executable remains
 `rm-simulator`; the headless server is `rm-sim-server`.
 
 A [capability overview](docs/capabilities.md) describes the game, reusable engine,
@@ -218,7 +219,8 @@ later deployment. No directory is required or running for this feature.
 | [`rm-sim-world`](crates/rm-sim-world/README.md) | Complete `Field` facade: explicit ticks, activation, detection, damage, referee integration and restore. Coordinates the physics library and preserves existing public world imports. |
 | [`rm-sim-control`](crates/rm-sim-control/README.md) | Caller-driven navigation and source assembly planning, without a world, host, transport or renderer. |
 | [`rm-sim-presentation`](crates/rm-sim-presentation/README.md) | Borrowed game snapshots and caller time into render appearances, without hosting, transport or UI ownership. |
-| [`rm-sim-render`](crates/rm-sim-render/README.md) | Generic Bevy visual instances plus the default RoboMaster extension. Bevy CAD scenery, lighting, rune and outpost light overlays, projectile spheres, chassis visuals, and pose/visibility/strike synchronization from caller-owned scene state. No world dependency. |
+| [`sim-render`](crates/sim-render/README.md) | Passive generic Bevy visuals, FLU conversions, camera appearance and generated-light material registration. No RoboMaster, physics, world or host dependency. |
+| [`rm-sim-render`](crates/rm-sim-render/README.md) | RoboMaster extension over `sim-render`: CAD scenery, venue lighting, equipment, chassis visuals and match-scene synchronization. No world dependency. |
 | [`rm-sim-server`](crates/rm-sim-server/README.md) | Bevy-free glue: CAD loading and checksums, collision triangles, field layout, the `Simulation` wrapper, a `Host` worker that owns simulation and command ordering, the GNS UDP transport, the embedded owner's loopback codec link, the HTTP referee panel, and the headless binary. |
 | [`rm-sim-bench`](crates/rm-sim-bench/README.md) | Fixed-camera CAD renderer benchmark, independent of physics, world, server and gameplay. |
 | [`rm-sim-app`](crates/rm-sim-app/README.md) | The `rm-simulator` binary: window, chassis driving and gimbal camera (or fly camera), gun, HUD, world-to-scene adaptation, and the local or remote session that turns inputs into protocol commands. |

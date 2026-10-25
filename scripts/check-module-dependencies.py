@@ -54,7 +54,11 @@ server = dependencies("rm-sim-server")
 assert not any(d.startswith("bevy") for d in server), server
 assert "rm-sim-render" not in server, server
 assert "rm-sim-control" in server, server
+generic_render = dependencies("sim-render")
+assert not any(d.startswith("rm-sim-") for d in generic_render), generic_render
+assert not any(d.startswith(("rapier", "parry")) for d in generic_render), generic_render
 render = dependencies("rm-sim-render")
+assert "sim-render" in render, render
 assert "rm-sim-physics" not in render, render
 assert "rm-sim-world" not in render, render
 assert "rm-sim-server" not in render, render

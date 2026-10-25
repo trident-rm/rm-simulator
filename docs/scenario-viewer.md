@@ -163,8 +163,8 @@ GLB with its origin and orientation prepared for this attachment.
 
 ## Ownership and validation
 
-The viewer imports `rm_sim_render::generic` with renderer default features
-disabled. It publishes `PoseFlu` under its own stable `VisualId`s, without an RM
+The viewer depends directly on `sim-render`, without the RM rendering crate.
+It publishes `PoseFlu` under its own stable `VisualId`s, without an RM
 `SceneState`. One unit-cube mesh is shared by every box; the pedestal and floor
 also share a material. GLB instances use the shared source asset handle. Physics
 and rendering share no live handles: body keys are rebound after reconstruction,

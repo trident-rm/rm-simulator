@@ -23,7 +23,8 @@ The guides linked below record exact contracts and measured limitations.
 - **Control:** caller-driven navigation and assembly algorithms, without owning
   a simulation clock, host worker or transport.
 - **Presentation and rendering:** borrowed game state becomes passive render
-  records; generic GPU visuals can be used without gameplay. The optional RXUI
+  records; `sim-render` supplies generic GPU visuals with no RM dependency. The
+  optional RXUI
   viewer supplies panels around the shared GPU viewport.
 - **App, server and optional integrations:** interactive play, authoritative
   multiplayer, ROS adapters and developer tools remain outside the engine.

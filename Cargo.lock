@@ -6156,6 +6156,7 @@ dependencies = [
  "bevy",
  "serde",
  "serde_json",
+ "sim-render",
 ]
 
 [[package]]
@@ -6546,6 +6547,13 @@ dependencies = [
  "glam 0.33.12",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "sim-render"
+version = "0.1.0"
+dependencies = [
+ "bevy",
 ]
 
 [[package]]

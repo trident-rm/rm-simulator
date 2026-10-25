@@ -4,6 +4,7 @@
 resolver = "3"
 members = [
     "crates/sim-engine",
+    "crates/sim-render",
     "crates/rm-sim-assets",
     "crates/rm-sim-control",
     "crates/rm-sim-gameplay",

@@ -25,7 +25,7 @@ enum Update {
 ///
 /// ```
 /// use bevy::prelude::*;
-/// use rm_sim_render::generic::{PoseFlu, VisualId, VisualPlugin, Visuals};
+/// use sim_render::{PoseFlu, VisualId, VisualPlugin, Visuals};
 /// let mut app = App::new();
 /// app.add_plugins(VisualPlugin).add_systems(Startup,
 ///     |mut commands: Commands, mut visuals: ResMut<Visuals>| {

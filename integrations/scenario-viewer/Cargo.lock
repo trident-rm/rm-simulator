@@ -5353,20 +5353,12 @@ dependencies = [
  "clap",
  "nalgebra",
  "png",
- "sim-engine",
  "rm-sim-physics",
- "rm-sim-render",
  "rxui",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "sim-engine"
-version = "0.1.0"
-dependencies = [
- "glam 0.33.12",
- "serde",
+ "sim-engine",
+ "sim-render",
 ]
 
 [[package]]
@@ -5376,17 +5368,8 @@ dependencies = [
  "glam 0.33.12",
  "mid360-sim",
  "rapier3d-f64",
+ "serde",
  "sim-engine",
- "serde",
-]
-
-[[package]]
-name = "rm-sim-render"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -5656,6 +5639,21 @@ checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
 dependencies = [
  "errno",
  "libc",
+]
+
+[[package]]
+name = "sim-engine"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "serde",
+]
+
+[[package]]
+name = "sim-render"
+version = "0.1.0"
+dependencies = [
+ "bevy",
 ]
 
 [[package]]

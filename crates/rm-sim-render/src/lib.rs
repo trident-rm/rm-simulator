@@ -21,7 +21,8 @@ pub mod lighting;
 pub mod outpost;
 #[cfg(feature = "robomaster")]
 pub mod projectile;
-pub mod quality;
+/// Shared generated-light material registration, implemented by the generic renderer.
+pub use sim_render::quality;
 #[cfg(feature = "robomaster")]
 pub mod rune;
 #[cfg(feature = "robomaster")]
@@ -31,8 +32,8 @@ pub mod targets;
 #[cfg(feature = "robomaster")]
 pub mod team_robot;
 
-/// Simulation-independent pose, camera and shared-handle visual installation.
-pub mod generic;
+/// Compatibility path for the independent generic renderer.
+pub use sim_render as generic;
 /// RoboMaster-specific appearance and plugins; existing root paths remain available.
 #[cfg(feature = "robomaster")]
 pub mod rm;

@@ -63,7 +63,8 @@ lookup helpers remain available for source compatibility; physical stepping does
 not apply their damage or detection policy. The renderer depends on neither
 physics nor world. The presentation library bridges borrowed world records into
 renderer appearances; it has no host, transport or session ownership. Generic
-rendering can compile without the default RoboMaster extension. See the
+rendering lives in `sim-render`; `rm-sim-render` depends on it for the RM extension
+and retains compatibility re-exports. See the
 [presentation/render split](presentation-render-split.md). `scripts/check-module-dependencies.py` enforces these boundaries.
 
 ## Tick order

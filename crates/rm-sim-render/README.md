@@ -2,24 +2,23 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # rm-sim-render
 
-`rm-sim-render` provides passive generic Bevy visuals and an optional
-RoboMaster extension. `generic` installs shared mesh/imported-scene handles and
-applies sparse caller-owned FLU poses/visibility. The default `robomaster` feature
-adds CAD scenery, equipment, robot visuals and resolved `SceneState` synchronization.
+`rm-sim-render` provides the RoboMaster extension over `sim-render`. The default
+`robomaster` feature adds CAD scenery, equipment, robot visuals and resolved
+`SceneState` synchronization. `generic` re-exports the independent `sim-render`
+crate's shared mesh/imported-scene handles and sparse caller-owned FLU poses.
 It never advances rules or reads a simulation clock.
 
-General consumers use `default-features = false`; existing game and benchmark
-imports retain their default behavior. `rm` groups the game-specific modules,
-while their original root paths remain compatible. The standalone
-[scenario viewer](../../docs/scenario-viewer.md) uses the generic-only build.
+General consumers depend directly on `sim-render`; existing game and benchmark
+imports retain their behavior. `rm` groups the game-specific modules, while their
+original root paths remain compatible. The standalone
+[scenario viewer](../../docs/scenario-viewer.md) depends on `sim-render` without
+linking this crate. The old no-default-features imports remain compatible.
 
 ## Modules
 
 | File | Owns |
 |---|---|
 | `src/lib.rs` | Feature boundaries, compatibility reexports and RoboMaster `TeamColor`. |
-| `src/generic.rs` | `RenderingConfig`, camera appearance, FLU pose and conversion helpers (also reexported at root). |
-| `src/generic/visuals.rs` | Caller `VisualId`s, shared-handle mesh/scene instances, retained sparse updates and lifecycle. |
 | `src/rm.rs` | Explicit RoboMaster appearance/plugin surface, available with the default `robomaster` feature. |
 | `src/cad.rs` | Extracted RMUC CAD scenery: `CadScenePlugin`, `CadSceneStatus`, and the static and articulated instances with their scene roles. |
 | `src/rune.rs` | Emissive rune overlays: the active target, the activated outline and Big Rune progress lights on each blade. |
@@ -31,15 +30,14 @@ while their original root paths remain compatible. The standalone
 | `src/sync.rs` | `SceneState` in, transforms and materials out: `SceneSyncPlugin`, `SceneSyncSet` and the chassis ingestion components. |
 | `src/lighting.rs` | Ambient light plus a shadowed key and an unshadowed fill. |
 | `src/graphics_settings.rs` | `GraphicsSettings` quality presets shared with the benchmark. |
-| `src/quality.rs` | Runtime adjustment of explicitly registered simulator lights; authored CAD materials stay untouched. |
 
 ## Dependencies
 
-`bevy`, `serde` and `serde_json`. The crate never depends on
+`sim-render`, `bevy`, `serde` and `serde_json`. The crate never depends on
 `rm-sim-world`, `rm-sim-server` or `rm-sim-physics`; a caller
 converts its own world state into `SceneState`. `rm-sim-app` and
-`rm-sim-bench`, `rm-sim-presentation` and the optional generic scenario
-viewer are consumers. The presentation adapter converts borrowed world records
+`rm-sim-bench` and `rm-sim-presentation` are consumers. The presentation adapter
+converts borrowed world records
 into resolved appearances without adding a world dependency to this crate.
 
 ## Testing

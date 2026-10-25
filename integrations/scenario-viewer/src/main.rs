@@ -8,7 +8,7 @@ use bevy::{
     render::view::screenshot::{Screenshot, ScreenshotCaptured},
 };
 use clap::Parser;
-use rm_sim_render::generic::{PoseFlu, VisualId, VisualPlugin, Visuals};
+use sim_render::{PoseFlu, VisualId, VisualPlugin, Visuals};
 use simulation::{HALF_EXTENTS_M, KEYS, Simulation};
 use std::{
     path::PathBuf,

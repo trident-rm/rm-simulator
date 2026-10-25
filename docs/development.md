@@ -90,8 +90,8 @@ and the LFS `field-2027/` package. Clippy remains in `just verify` and CI's full
 2. `cargo fmt --all -- --check`
 3. `cargo check --workspace --all-targets --all-features --locked`
 4. `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
-5. `cargo test --workspace --all-features --locked`, plus generic-only renderer
-   tests with `--no-default-features`
+5. `cargo test --workspace --all-features --locked`, including `sim-render`, plus
+   compatibility renderer tests with `--no-default-features`
 6. `python3 scripts/check-runtime.py`, current runtime admission and native rules
 7. `python3 scripts/check-module-dependencies.py`
 8. `python3 scripts/check-mpl-compliance.py`
@@ -109,9 +109,10 @@ Run it before opening a pull request, after compilation has finished.
 ## Crate naming
 
 Generic packages and directories use `sim-*`; Rust imports use `sim_*`.
-The solver-free `sim-engine` core is the first such crate. Packages containing
+The solver-free `sim-engine` core and passive `sim-render` are separate generic
+crates. Packages containing
 RoboMaster code keep `rm-sim-*` / `rm_sim_*`, including physics, assets, control
-and rendering while their generic and game modules share a crate.
+and the RM rendering extension.
 The main `rm-simulator` executable and GitHub repository keep their names;
 suffixed executables use `rm-sim-server`, `rm-sim-bench` and `rm-sim-ros2`.
 The independent `crates/rm-sim` registry placeholder remains separate from the

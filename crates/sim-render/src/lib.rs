@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Passive, simulation-independent FLU geometry, camera appearance and visual instances.
+#![deny(missing_docs)]
+/// Explicit registration and updates of generated emissive material assets.
+pub mod quality;
 mod visuals;
 pub use visuals::{VisualId, VisualPlugin, VisualUpdateSystems, Visuals};
 
@@ -49,7 +52,7 @@ impl RenderingConfig {
     /// The lit venue profile: HDR, 9 EV100 exposure and a 0.12 bloom intensity.
     ///
     /// ```
-    /// use rm_sim_render::RenderingConfig;
+    /// use sim_render::RenderingConfig;
     ///
     /// let field = RenderingConfig::field();
     /// assert!(field.is_lit());
@@ -143,7 +146,7 @@ fn flu_conversion() -> Quat {
 ///
 /// ```
 /// use bevy::prelude::*;
-/// use rm_sim_render::{PoseFlu, apply_pose, flu_position, pose_from_transform};
+/// use sim_render::{PoseFlu, apply_pose, flu_position, pose_from_transform};
 ///
 /// // The renderer converts FLU metres to Bevy units: forward +x becomes -Z.
 /// assert_eq!(flu_position([1.0, 0.0, 0.0]), Vec3::NEG_Z);

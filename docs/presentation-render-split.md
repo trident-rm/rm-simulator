@@ -15,7 +15,7 @@ The split adds no new clock, networking path or simulation world.
 - `rm-sim-presentation` translates borrowed RoboMaster snapshots, caller
   presentation time and detected hits into renderer appearances. It depends on
   world and render, with no host, transport, input, window or session dependency.
-- `rm-sim-render::generic` owns FLU rendering conversions, camera appearance
+- `sim-render` owns FLU rendering conversions, camera appearance
   and shared-handle mesh/imported-scene instances with sparse pose updates.
 - `rm-sim-render::rm` exposes the RoboMaster visual extension: armor,
   equipment lights, robot visuals and resolved match-scene synchronization.
@@ -23,11 +23,12 @@ The split adds no new clock, networking path or simulation world.
   scheduling, cameras, controls, HUD and menus. It selects actual presented robot
   state and hands resolved appearance to the passive renderer.
 
-The renderer's default `robomaster` feature retains the existing public paths.
-General consumers disable default features and use `generic`; the standalone
-[scenario viewer](scenario-viewer.md) exercises that build without gameplay,
-world, server or the app. These remain modules in one rendering crate rather than
-separate repositories or a new backend abstraction.
+`rm-sim-render` depends on `sim-render` and retains the existing game paths through
+its default `robomaster` feature. Its `generic` and `quality` exports refer to the
+same implementation and types as `sim-render`, without copying records or adding
+another update stage. General consumers depend directly on `sim-render`; the
+standalone [scenario viewer](scenario-viewer.md) no longer depends on the RM
+rendering crate. The generic renderer has no RM dependency or feature.
 
 ## Hot-path contract
 
@@ -73,6 +74,10 @@ split. Any speedup claim requires paired evidence; a new module boundary alone
 establishes neither faster rendering nor lower GPU cost.
 
 ## Measured extraction checks (2026-10-23)
+
+The measurements below predate the separate `sim-render` crate and describe the
+earlier module extraction. They are historical evidence, not measurements of the
+current crate boundary.
 
 On Apple M5 Max, default rendering passes 43 unit tests and eight doctests;
 generic-only rendering passes eight unit tests and four doctests. Both feature

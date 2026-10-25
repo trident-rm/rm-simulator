@@ -12,7 +12,7 @@ use bevy::{
         texture::GpuImage,
     },
 };
-use rm_sim_render::generic::{PoseFlu, VisualId, VisualPlugin, Visuals};
+use sim_render::{PoseFlu, VisualId, VisualPlugin, Visuals};
 use rxui::astrelis::{GraphicsContext, wgpu};
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -210,7 +210,7 @@ impl Viewport {
         proxy: bool,
     ) -> Result<(), String> {
         use rm_sim_physics::{WorldPhysics, cooking::CookedRigidBody, runtime::BodyKey};
-        use rm_sim_render::generic::flu_position;
+        use sim_render::flu_position;
         use sim_engine::model::{
             BodyKind, BodyState, ColliderDescription, ContactMaterial, RigidBodyDescription,
         };

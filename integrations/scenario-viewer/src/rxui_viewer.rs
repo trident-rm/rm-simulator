@@ -793,7 +793,7 @@ mod tests {
     #[ignore = "requires a native GPU and system fonts"]
     fn physical_import_keeps_gpu_resources_and_capture_preserves_tick_budget() {
         use bevy::prelude::{Mesh3d, MeshMaterial3d, StandardMaterial, Transform};
-        use rm_sim_render::generic::{VisualId, Visuals};
+        use sim_render::{VisualId, Visuals};
         let (mut host, graphics) = Host::new(true, Some(2)).unwrap();
         let root = host.ui.entity().clone();
         let mut r = import_ui::Review::new(mechanism::tests::source(), "unused.json".into());
@@ -955,7 +955,7 @@ mod tests {
     #[ignore = "requires a native GPU and system fonts"]
     fn imported_occurrences_share_gpu_meshes_without_sharing_pose_or_color() {
         use bevy::prelude::{Mesh3d, MeshMaterial3d, StandardMaterial, Transform};
-        use rm_sim_render::generic::{VisualId, Visuals};
+        use sim_render::{VisualId, Visuals};
         let (mut host, _) = Host::new(true, None).unwrap();
         let mut project = importer::tests::shared_fixture();
         let mut group = project.groups[0].clone();
