@@ -2,6 +2,7 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Frozen native constructor and prepared-resource regression tests.
 use super::*;
+use sim_physics::backend::{CookedBodyExt, RuntimeExt};
 
 // Frozen 472b1d5 construction: deliberately does not call cooking or shared().
 fn oracle_add(world: &mut WorldPhysics, state: &PayloadSnapshot) {
@@ -18,14 +19,14 @@ fn oracle_add(world: &mut WorldPhysics, state: &PayloadSnapshot) {
             (Pose3::IDENTITY, SharedShape::convex_hull(&points).unwrap())
         })
         .collect();
-    let body = world.physical.world.insert_body(
+    let body = world.physical.world_mut().insert_body(
         RigidBodyBuilder::dynamic()
             .pose(pose(state.pose))
             .linvel(Vector::from_array(state.velocity_m_s))
             .angvel(Vector::from_array(state.angular_velocity_rad_s))
             .ccd_enabled(true),
     );
-    let collider = world.physical.world.insert_collider(
+    let collider = world.physical.world_mut().insert_collider(
         ColliderBuilder::new(SharedShape::compound(hulls))
             .mass(state.shape.mass_kg)
             .friction(0.6)
@@ -58,7 +59,7 @@ fn oracle_motion(
     w: [f64; 3],
 ) {
     let p = world.payloads.iter().find(|p| p.id == id).unwrap();
-    let b = &mut world.physical.world.bodies[p.body];
+    let b = &mut world.physical.world_mut().bodies[p.body];
     let was = b.is_kinematic();
     b.set_body_type(
         if prescribed {
@@ -78,7 +79,7 @@ fn oracle_motion(
         b.set_linvel(Vector::from_array(v), true);
         b.set_angvel(Vector::from_array(w), true);
     }
-    world.physical.world.colliders[p.collider].set_enabled(!prescribed);
+    world.physical.world_mut().colliders[p.collider].set_enabled(!prescribed);
 }
 
 fn fixture(prescribed: bool) -> PayloadSnapshot {
@@ -114,11 +115,11 @@ fn assert_equal(actual: &WorldPhysics, expected: &WorldPhysics) {
     assert_eq!(actual.payload(7), expected.payload(7));
     let a = &actual.payloads[0];
     let e = &expected.payloads[0];
-    let actual_body = &actual.physical.world.bodies[a.body];
-    let expected_body = &expected.physical.world.bodies[e.body];
+    let actual_body = &actual.physical.world().bodies[a.body];
+    let expected_body = &expected.physical.world().bodies[e.body];
     assert_eq!(format!("{actual_body:?}"), format!("{expected_body:?}"));
-    let ca = &actual.physical.world.colliders[a.collider];
-    let ce = &expected.physical.world.colliders[e.collider];
+    let ca = &actual.physical.world().colliders[a.collider];
+    let ce = &expected.physical.world().colliders[e.collider];
     assert_eq!(ca.mass_properties(), ce.mass_properties());
     assert_eq!(ca.is_enabled(), ce.is_enabled());
     assert_eq!(ca.friction(), ce.friction());
@@ -156,8 +157,9 @@ fn prepared_payload_matches_frozen_native_before_after_mass_refresh_and_trajecto
         oracle_add(&mut expected, &initial);
         assert_equal(&actual, &expected);
         for world in [&mut actual, &mut expected] {
-            world.physical.world.bodies[world.payloads[0].body]
-                .recompute_mass_properties_from_colliders(&world.physical.world.colliders);
+            let native = world.physical.world_mut();
+            native.bodies[world.payloads[0].body]
+                .recompute_mass_properties_from_colliders(&native.colliders);
         }
         assert_equal(&actual, &expected);
         let frames = TargetFrames::new(vec![]);
@@ -213,7 +215,7 @@ fn prepared_clone_shares_raw_and_native_shapes_across_instances_worlds_and_reset
         ));
         for payload in world.payloads.iter().chain(&reset.payloads) {
             let scene = if payload.id == 7 { &reset } else { &world };
-            let native = scene.physical.world.colliders[payload.collider].shared_shape();
+            let native = scene.physical.world().colliders[payload.collider].shared_shape();
             assert!(Arc::ptr_eq(&native.0, &prepared.cooked().shapes()[0].0));
         }
     }
@@ -228,8 +230,8 @@ fn payload_preflight_rejects_invalid_resources_identity_and_state_without_mutati
     let prepared = PreparedPayload::new(initial.shape.clone()).unwrap();
     let mut world = WorldPhysics::new(&[], 0.);
     let before = (
-        world.physical.world.bodies.len(),
-        world.physical.world.colliders.len(),
+        world.physical.world().bodies.len(),
+        world.physical.world().colliders.len(),
     );
     let invalid = BodyState::at(Pose::at([f64::NAN, 0., 0.]));
     assert!(
@@ -240,8 +242,8 @@ fn payload_preflight_rejects_invalid_resources_identity_and_state_without_mutati
     assert_eq!(
         before,
         (
-            world.physical.world.bodies.len(),
-            world.physical.world.colliders.len()
+            world.physical.world().bodies.len(),
+            world.physical.world().colliders.len()
         )
     );
     let mut expansion = initial.shape.clone();

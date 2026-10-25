@@ -136,8 +136,8 @@ exposed through the generic joint API.
 Run a centered single-rotor experiment without CAD or contacts:
 
 ```sh
-mbx run -p rm-sim-physics --example servo_response --locked -- response.csv
-mbx test -p rm-sim-physics --test servo_response --locked
+cargo run -p sim-physics --example servo_response --locked -- response.csv
+cargo test -p sim-physics --test servo_response --locked
 ```
 
 The illustrative rotor has 0.02 kg m² principal inertia about each axis, with

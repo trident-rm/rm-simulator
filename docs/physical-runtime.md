@@ -2,18 +2,43 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Standalone physical runtime
 
-`physics::PhysicalRuntime` owns one concrete Rapier scene: bodies, colliders,
+`sim-physics::PhysicalRuntime` owns one concrete Rapier scene: bodies, colliders,
 source-to-live bindings, joints, held commands, query preparation and optional
 physical contact observations. It has no robot team, armor scoring, projectile
 caliber or match authority. It uses the same native scene and integration slices
 as the game; there is no alternate reduced world or solver backend.
 
-`physics::WorldPhysics` is the compatibility composition for RoboMaster physical
+`rm-sim-physics::WorldPhysics` is the composition for RoboMaster physical
 participants. It owns one `PhysicalRuntime` plus the chassis, projectile, payload,
 prescribed mechanism and scoring adapters. Its existing public methods and
 import paths remain available. The facade retains the original per-slice order,
 including pre-impact velocity capture, payload contact damping, folding updates,
 carrier traces, scoring latches and projectile retirement.
+
+Generic consumers depend directly on `sim-physics`. The RM crate re-exports
+generic runtime, cooked-resource and carrier types at their existing paths;
+these are the same Rust types, not copied representations or a second runtime.
+The controller, body-runtime and torque/servo examples now live in `sim-physics`.
+
+## Concrete extension boundary
+
+`rm-sim-physics` opts into `sim-physics`'s `rapier-extension` feature. The public
+`backend` module exposes trusted native scene access through `RuntimeExt`,
+source-order builders through `CookedBodyExt`, and shared shape/capture access.
+This API is explicitly Rapier-specific. The default generic build exposes no
+native backend access and has no RM dependency, including dev dependencies.
+
+RM preserves its existing pre/post integration barriers by calling the explicit
+endpoint, force, joint, integration and contact phases in their original order.
+It owns only its native participant bodies/handles and must preserve generic
+bindings and immutable timing. Ordinary callers use the high-level runtime or
+`PhysicalSession`. This extraction adds no callback scheduler or virtual backend
+dispatch. A future backend must be validated separately before defining shared
+solver-neutral extension operations.
+
+The standalone viewer now uses `sim-engine`, `sim-physics` and `sim-render`
+without any RM crate. Its import proxy view uses generic retained geometry
+triangulation; the RM geometry export delegates to the same implementation.
 
 ## Lifecycle and ownership
 
@@ -80,9 +105,9 @@ Installed native shapes share storage; body handles, wheel state, commands and
 contact history remain independent. The existing `add_chassis` convenience path
 uses the same construction and preserves its validation/ID semantics.
 
-The [body runtime example](../crates/rm-sim-physics/examples/body_runtime.rs)
+The [body runtime example](../crates/sim-physics/examples/body_runtime.rs)
 constructs, steps, observes and reconstructs a bare scene without robot or match
-types. Run it with `mbx run -p rm-sim-physics --example body_runtime --locked`.
+types. Run it with `cargo run -p sim-physics --example body_runtime --locked`.
 
 ## Prepared carried objects and domain construction
 

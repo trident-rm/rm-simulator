@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright (c) 2026 hxyulin <hxyulin@proton.me>
+[package]
+name = "sim-physics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Trusted physical adapters may preserve native construction and slice ordering.
+rapier-extension = []
+# Explicit fault injection for downstream exhaustion regression tests.
+test-support = []
+
+[dependencies]
+sim-engine = { version = "0.1.0", path = "../sim-engine" }
+rapier3d-f64 = "0.35.3"
+glam.workspace = true

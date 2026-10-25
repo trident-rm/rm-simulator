@@ -218,9 +218,9 @@ impl PhysicalRuntime {
     /// ```
     /// use sim_engine::{Pose, model::{BodyKind, BodyState, Inertial,
     ///     RigidBodyDescription, JointDescription, JointKind}};
-    /// use rm_sim_physics::{cooking::CookedRigidBody,
-    ///     runtime::{WorldPhysics, BodyKey, JointKey}};
-    /// let mut world = WorldPhysics::new(&[], -10.);
+    /// use sim_physics::{cooking::CookedRigidBody,
+    ///     runtime::{PhysicalRuntime, BodyKey, JointKey}};
+    /// let mut world = PhysicalRuntime::new(sim_physics::StepDuration::HZ_128);
     /// let fixed = CookedRigidBody::new(RigidBodyDescription::new(BodyKind::Fixed, vec![])?)?;
     /// let dynamic = CookedRigidBody::new(RigidBodyDescription::new(
     ///     BodyKind::Dynamic(Inertial::new(1., [1.; 3], Pose::default())?), vec![])?)?;
@@ -333,7 +333,7 @@ impl PhysicalRuntime {
     /// ```
     /// use sim_engine::{Pose, model::{BodyKind, BodyState, Inertial,
     ///     RigidBodyDescription, JointDescription, JointKind}};
-    /// use rm_sim_physics::{StepDuration, cooking::CookedRigidBody,
+    /// use sim_physics::{StepDuration, cooking::CookedRigidBody,
     ///     runtime::{PhysicalRuntime, BodyKey, JointKey}};
     /// # fn main() -> Result<(), &'static str> {
     /// let mut runtime = PhysicalRuntime::new(StepDuration::HZ_1000);
@@ -567,19 +567,19 @@ mod tests {
             ],
             joints: vec![(AssemblyJointId(1), JointKey(1))],
         };
-        let mut world = WorldPhysics::new(&[], 0.);
-        world.physical.bound_joints.next_generation = u64::MAX;
+        let mut world = PhysicalRuntime::new(crate::StepDuration::HZ_128);
+        world.bound_joints.next_generation = u64::MAX;
         assert!(
             world
                 .install_assembly(&model, Pose::default(), &keys)
                 .is_err()
         );
-        assert_eq!(world.physical.world.bodies.len(), 0);
-        assert_eq!(world.physical.world.colliders.len(), 1);
-        assert_eq!(world.physical.world.impulse_joints.len(), 0);
-        assert_eq!(world.physical.bound_joints.next_generation, u64::MAX);
+        assert_eq!(world.world.bodies.len(), 0);
+        assert_eq!(world.world.colliders.len(), 0);
+        assert_eq!(world.world.impulse_joints.len(), 0);
+        assert_eq!(world.bound_joints.next_generation, u64::MAX);
         assert!(world.body_binding(BodyKey(1)).is_none());
-        world.physical.bound_joints.next_generation = 0;
+        world.bound_joints.next_generation = 0;
         let live = world
             .install_assembly(&model, Pose::default(), &keys)
             .unwrap();

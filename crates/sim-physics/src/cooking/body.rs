@@ -32,7 +32,7 @@ impl CookedRigidBody {
     ///
     /// ```
     /// use sim_engine::model::{BodyKind, RigidBodyDescription};
-    /// use rm_sim_physics::cooking::CookedRigidBody;
+    /// use sim_physics::cooking::CookedRigidBody;
     /// let source = RigidBodyDescription::new(BodyKind::Fixed, vec![])?;
     /// let cooked = CookedRigidBody::new(source)?;
     /// assert!(cooked.source().colliders().is_empty());
@@ -58,7 +58,7 @@ impl CookedRigidBody {
     }
     /// Native construction without installing/registering or refreshing COM.
     /// The caller chooses initial state and preserves participant insertion timing.
-    pub(crate) fn body_builder(&self) -> RigidBodyBuilder {
+    pub(crate) fn native_body_builder(&self) -> RigidBodyBuilder {
         let body = match self.source.kind() {
             BodyKind::Fixed => RigidBodyBuilder::fixed(),
             BodyKind::Kinematic => RigidBodyBuilder::kinematic_position_based(),
@@ -90,7 +90,7 @@ impl CookedRigidBody {
     /// Native colliders in source order; retain stored quaternion bits exactly.
     /// No handles or mass refresh are performed. Explicit mass(0) remains distinct
     /// from density(0), including on massless moving auxiliaries.
-    pub(crate) fn collider_builders(&self) -> impl Iterator<Item = ColliderBuilder> + '_ {
+    pub(crate) fn native_collider_builders(&self) -> impl Iterator<Item = ColliderBuilder> + '_ {
         self.source
             .colliders()
             .iter()
@@ -121,7 +121,7 @@ impl CookedRigidBody {
             })
     }
 
-    pub(crate) fn aggregate_mass_properties(&self) -> Option<&MassProperties> {
+    pub(crate) fn native_aggregate_mass_properties(&self) -> Option<&MassProperties> {
         self.aggregate_mass.as_ref()
     }
 
@@ -145,7 +145,7 @@ impl CookedRigidBody {
             .colliders()
             .iter()
             .zip(self.shapes())
-            .zip(self.collider_builders())
+            .zip(self.native_collider_builders())
         {
             validate_compound_child_mass(shape, description.policy().mass)?;
             let collider = builder.build();
@@ -475,7 +475,7 @@ mod tests {
                     expected_shape.mass_properties(1.)
                 );
             }
-            let builders: Vec<_> = cooked.collider_builders().collect();
+            let builders: Vec<_> = cooked.native_collider_builders().collect();
             assert_eq!(builders.len(), 1);
             let actual = builders.into_iter().next().unwrap().build();
             let [w, x, y, z] = collider.pose().rotation_wxyz;
@@ -491,11 +491,14 @@ mod tests {
             .build();
             assert_eq!(actual.mass_properties(), expected.mass_properties());
             let expected_mass = expected.mass_properties().transform_by(expected.position());
-            assert_eq!(cooked.aggregate_mass_properties(), Some(&expected_mass));
+            assert_eq!(
+                cooked.native_aggregate_mass_properties(),
+                Some(&expected_mass)
+            );
             // Native insertion refreshes body mass once for this one collider.
             let mut bodies = rapier3d_f64::prelude::RigidBodySet::new();
             let mut colliders = rapier3d_f64::prelude::ColliderSet::new();
-            let body = bodies.insert(cooked.body_builder());
+            let body = bodies.insert(cooked.native_body_builder());
             colliders.insert_with_parent(actual, body, &mut bodies);
             let native_body = bodies.insert(RigidBodyBuilder::dynamic());
             colliders.insert_with_parent(expected, native_body, &mut bodies);
@@ -591,7 +594,7 @@ mod tests {
         ] {
             let cooked = CookedRigidBody::new(compound_balls(&radii, policy)).unwrap();
             let native = ColliderBuilder::new(cooked.shapes()[0].clone())
-                .position(cooked.collider_builders().next().unwrap().position);
+                .position(cooked.native_collider_builders().next().unwrap().position);
             let native = match policy {
                 ColliderMass::DensityKgM3(density) => native.density(density),
                 ColliderMass::MassKg(mass) => native.mass(mass),
@@ -599,7 +602,7 @@ mod tests {
             }
             .build();
             let expected = native.mass_properties().transform_by(native.position());
-            assert_eq!(cooked.aggregate_mass_properties(), Some(&expected));
+            assert_eq!(cooked.native_aggregate_mass_properties(), Some(&expected));
         }
         // Extreme mass scaling can underflow a tiny child's inverse inertia or
         // overflow it even when another child leaves a valid-looking aggregate.
@@ -619,18 +622,18 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        assert!(cooked.aggregate_mass_properties().is_none());
-        let collider = cooked.collider_builders().next().unwrap().build();
+        assert!(cooked.native_aggregate_mass_properties().is_none());
+        let collider = cooked.native_collider_builders().next().unwrap().build();
         assert_eq!(collider.mass(), 0.);
         let expected = MassProperties::with_principal_inertia_frame(
             Vector::from_array(inertia.frame().translation_m),
             inertia.mass_kg(),
             Vector::from_array(inertia.principal_inertia_kg_m2()),
-            crate::projectile::pose(inertia.frame()).rotation,
+            crate::runtime::math::pose(inertia.frame()).rotation,
         );
         let mut bodies = rapier3d_f64::prelude::RigidBodySet::new();
         let mut colliders = rapier3d_f64::prelude::ColliderSet::new();
-        let body = bodies.insert(cooked.body_builder());
+        let body = bodies.insert(cooked.native_body_builder());
         colliders.insert_with_parent(collider, body, &mut bodies);
         bodies[body].recompute_mass_properties_from_colliders(&colliders);
         let actual = &bodies[body].mass_properties().local_mprops;
@@ -645,13 +648,13 @@ mod tests {
 
     #[test]
     fn unsupported_composite_children_fail_before_install_and_bad_state_is_atomic() {
-        use crate::runtime::{BodyKey, WorldPhysics};
+        use crate::runtime::{BodyKey, PhysicalRuntime};
         use sim_engine::model::{BodyState, CompoundShape};
         let (source, _) = compound_fixture();
         let triangle = ShapeDescription::TriangleMesh(
             TriangleMesh::new(vec![[0.; 3], [1., 0., 0.], [0., 1., 0.]], vec![[0, 1, 2]]).unwrap(),
         );
-        let mut world = WorldPhysics::new(&[], -10.);
+        let mut world = PhysicalRuntime::new(crate::StepDuration::HZ_128);
         for kind in [BodyKind::Fixed, BodyKind::Kinematic] {
             for child in [source.clone(), triangle.clone()] {
                 let shape = ShapeDescription::Compound(
@@ -687,9 +690,8 @@ mod tests {
         assert!(world.body_binding(BodyKey(99)).is_none());
         assert!(
             world
-                .static_geometry_snapshot(true)
-                .cast_ray([-2., 2., 0.3], [1., 0., 0.], 4.)
-                .unwrap()
+                .geometry_capture()
+                .cast_ray(&crate::queries::RayQuery::new([-2., 2., 0.3], [1., 0., 0.], 4.).unwrap())
                 .is_none()
         );
         let binding = world
@@ -786,10 +788,10 @@ mod tests {
         .unwrap();
         let cooked = CookedRigidBody::new(valid).unwrap();
         assert_eq!(
-            cooked.aggregate_mass_properties().unwrap().mass(),
+            cooked.native_aggregate_mass_properties().unwrap().mass(),
             CookedRigidBody::new(source)
                 .unwrap()
-                .aggregate_mass_properties()
+                .native_aggregate_mass_properties()
                 .unwrap()
                 .mass()
         );
@@ -825,7 +827,7 @@ mod tests {
         )
         .unwrap();
         let cooked = CookedRigidBody::new(source).unwrap();
-        let builders: Vec<_> = cooked.collider_builders().collect();
+        let builders: Vec<_> = cooked.native_collider_builders().collect();
         assert_eq!(
             builders[1].position.rotation.w.to_bits(),
             p.rotation_wxyz[0].to_bits()
@@ -839,7 +841,7 @@ mod tests {
             rapier3d_f64::prelude::ColliderMassProps::Mass(0.)
         ));
         // The builder alone deliberately retains native deferred COM timing.
-        assert_eq!(cooked.body_builder().build().mass(), 0.);
+        assert_eq!(cooked.native_body_builder().build().mass(), 0.);
     }
 
     fn body(points: Vec<[f64; 3]>) -> RigidBodyDescription {

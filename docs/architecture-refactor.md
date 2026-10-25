@@ -7,7 +7,8 @@ records, and scalar wheel laws. Physics re-exports these contracts and retains
 Rapier execution. See [Engine architecture](engine-architecture.md) for the
 implemented split and planned component lifecycle.
 
-Physics and prescribed motion live in `rm-sim-physics`. The complete
+Generic execution lives in `sim-physics`; RM physics and prescribed motion live
+in `rm-sim-physics`, which opts into the generic crate's Rapier extension API. The complete
 `Field` facade in `rm-sim-world` coordinates them with live rules and the
 referee on one explicit clock (128 Hz by default, with configurable in-process
 physical/rule stepping). Rendering consumes caller-owned appearance
@@ -56,8 +57,8 @@ there distinguishes further proposals from the unchanged Rapier backend.
 | Presentation clock, interpolation selection, controls and UI | App |
 | Roster, command authority and transport delivery | Server host |
 
-The physics library depends on the solver-free engine core and no other
-simulator crate; numerical helpers, serialization and the MID360 pattern remain
+The generic physics library depends only on the solver-free engine core among
+simulator crates. RM physics additionally depends on that generic runtime; numerical helpers, serialization and the MID360 pattern remain
 ordinary library dependencies. Its RM-specific caliber
 lookup helpers remain available for source compatibility; physical stepping does
 not apply their damage or detection policy. The renderer depends on neither

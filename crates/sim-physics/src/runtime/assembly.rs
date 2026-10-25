@@ -114,15 +114,15 @@ impl PhysicalRuntime {
     /// ```
     /// use sim_engine::{Pose, model::{AssemblyDescription, AssemblyLink,
     ///     AssemblyLinkId, BodyKind, BodyState, RigidBodyDescription}};
-    /// use rm_sim_physics::{cooking::CookedAssembly,
-    ///     runtime::{WorldPhysics, AssemblyKeys, BodyKey}};
+    /// use sim_physics::{cooking::CookedAssembly,
+    ///     runtime::{PhysicalRuntime, AssemblyKeys, BodyKey}};
     /// let id = AssemblyLinkId(4);
     /// let source = AssemblyDescription::new(id, vec![AssemblyLink::new(id,
     ///     RigidBodyDescription::new(BodyKind::Fixed, vec![])?,
     ///     BodyState::at(Pose::default()))?], vec![])?;
     /// let prepared = CookedAssembly::new(source)?;
     /// let keys = AssemblyKeys { links: vec![(id, BodyKey(20))], joints: vec![] };
-    /// let mut world = WorldPhysics::new(&[], 0.);
+    /// let mut world = PhysicalRuntime::new(sim_physics::StepDuration::HZ_128);
     /// let live = world.install_assembly(&prepared, Pose::at([1., 0., 0.]), &keys)?;
     /// assert_eq!(world.body_state(live.body(id).unwrap())?.pose.translation_m, [1., 0., 0.]);
     /// world.remove_assembly(&live)?;

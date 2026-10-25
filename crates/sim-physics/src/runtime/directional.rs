@@ -24,7 +24,7 @@ impl DirectionalFriction {
     /// regularization rather than a measured tyre property.
     ///
     /// ```
-    /// use rm_sim_physics::runtime::DirectionalFriction;
+    /// use sim_physics::runtime::DirectionalFriction;
     /// let law = DirectionalFriction::new([0., 1., 0.], 0.9, 0.02)?;
     /// assert!(DirectionalFriction::new([0.; 3], 0.9, 0.02).is_err());
     /// # Ok::<(), &'static str>(())
@@ -51,7 +51,7 @@ impl DirectionalFriction {
     /// Higher values approach sticking but can aggravate contact overconstraint.
     ///
     /// ```
-    /// use rm_sim_physics::runtime::DirectionalFriction;
+    /// use sim_physics::runtime::DirectionalFriction;
     /// let law = DirectionalFriction::new([0., 1., 0.], 0.9, 0.02)?;
     /// let compliant = law.with_slip_damping(250.)?;
     /// assert!(law.with_slip_damping(0.).is_err());
@@ -321,9 +321,9 @@ impl PhysicalRuntime {
     /// Reapply during recipe reset. Stale/foreign/non-dynamic bindings fail before mutation.
     ///
     /// ```
-    /// use rm_sim_physics::{StepDuration, runtime::{PhysicalRuntime, BodyKey, DirectionalFriction}};
+    /// use sim_physics::{StepDuration, runtime::{PhysicalRuntime, BodyKey, DirectionalFriction}};
     /// # use sim_engine::{Pose, model::{BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, RigidBodyDescription, ShapeDescription}};
-    /// # use rm_sim_physics::cooking::CookedRigidBody;
+    /// # use sim_physics::cooking::CookedRigidBody;
     /// let mut runtime = PhysicalRuntime::new(StepDuration::HZ_1000);
     /// # let material = ContactMaterial { friction: 0.9, restitution: 0., memberships: 1, filter: 1 };
     /// # let shape = ColliderDescription::new(ShapeDescription::Cuboid { half_extents_m: [0.1; 3] }, Pose::default(), material)?;

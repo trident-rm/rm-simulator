@@ -12,9 +12,10 @@ The guides linked below record exact contracts and measured limitations.
 - **Engine (`sim-engine`):** solver-free physical descriptions, FLU poses,
   immutable timing, surfaces, primitive/convex/compound shapes, explicit inertia,
   joints, assemblies, mounts and scalar wheel laws.
-- **Physical runtime (`rm-sim-physics`):** one Rapier scene for cooked resources,
+- **Physical runtime (`sim-physics`):** one Rapier scene for cooked resources,
   body/joint commands, queries, physical contacts and passive sensor acquisition.
-  RoboMaster-specific chassis, projectile, payload and target adapters share it.
+  `rm-sim-physics` supplies the RoboMaster chassis, projectile, payload, sensor
+  and target adapters over its explicit Rapier extension API.
   A generic `PhysicalSession` supplies caller-paced time and recipe reset; the
   [CPU controller bench](controller-bench.md) exercises a non-RoboMaster robot.
 - **Gameplay and world:** separate deterministic competition authorities, with

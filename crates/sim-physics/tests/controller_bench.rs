@@ -3,7 +3,7 @@
 #[allow(dead_code)]
 #[path = "../examples/controller_bench.rs"]
 mod bench;
-use rm_sim_physics::{PhysicalRuntime, StepDuration, runtime::session::PhysicalSession};
+use sim_physics::{PhysicalRuntime, StepDuration, runtime::session::PhysicalSession};
 
 #[test]
 fn positioning_robot_tracks_both_targets_and_replays_after_reset_at_both_rates() {

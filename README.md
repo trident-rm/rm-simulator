@@ -39,9 +39,9 @@ from remaining gaps. Builds include RMUC 2027 and RMUL 2027 without season featu
 See [the archived runtime guide](docs/seasons.md) for 2026 and shared internals.
 
 Generic crates use `sim-*` package/directory names and `sim_*` Rust imports.
-The solver-free core is `sim-engine` (`sim_engine`), and passive generic visuals
-live in `sim-render` (`sim_render`). Crates that contain RoboMaster code keep
-`rm-sim-*` names, including physics and the RM rendering extension.
+The generic foundation is `sim-engine`, `sim-physics` and `sim-render`
+(`sim_engine`, `sim_physics`, `sim_render` in Rust). RoboMaster extensions keep
+`rm-sim-*` names and depend on those generic interfaces.
 The application executable remains
 `rm-simulator`; the headless server is `rm-sim-server`.
 
@@ -215,7 +215,8 @@ later deployment. No directory is required or running for this feature.
 | Crate | Responsibility |
 |---|---|
 | [`rm-sim-gameplay`](crates/rm-sim-gameplay/README.md) | Standalone match lifecycle and gameplay state, deterministic commands, rule coverage and unsupported-element observations. No physics or renderer; its live resource component is driven by the world referee. |
-| [`rm-sim-physics`](crates/rm-sim-physics/README.md) | Reusable Rapier dynamics, chassis, projectiles, raw armor contacts, shared geometry and prescribed armor motion. No gameplay, Bevy, server or CAD-loader dependency. |
+| [`sim-physics`](crates/sim-physics/README.md) | Generic Rapier bodies/joints, cooked resources, physical sessions, queries and contacts. No RM, renderer or host dependency. |
+| [`rm-sim-physics`](crates/rm-sim-physics/README.md) | RoboMaster physical participants over `sim-physics`: chassis, projectiles, armor, prescribed mechanisms and RM sensor/session adapters. No gameplay, Bevy or server dependency. |
 | [`rm-sim-world`](crates/rm-sim-world/README.md) | Complete `Field` facade: explicit ticks, activation, detection, damage, referee integration and restore. Coordinates the physics library and preserves existing public world imports. |
 | [`rm-sim-control`](crates/rm-sim-control/README.md) | Caller-driven navigation and source assembly planning, without a world, host, transport or renderer. |
 | [`rm-sim-presentation`](crates/rm-sim-presentation/README.md) | Borrowed game snapshots and caller time into render appearances, without hosting, transport or UI ownership. |

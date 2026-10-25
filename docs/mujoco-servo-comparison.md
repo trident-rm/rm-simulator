@@ -61,9 +61,9 @@ Its inline script metadata pins MuJoCo 3.17.0. Use an ignored output directory:
 
 ```sh
 mkdir -p local-assets/mujoco-servo
-mbx run -p rm-sim-physics --example servo_response --locked -- \
+cargo run -p sim-physics --example servo_response --locked -- \
   local-assets/mujoco-servo/rapier-128.csv 128
-mbx run -p rm-sim-physics --example servo_response --locked -- \
+cargo run -p sim-physics --example servo_response --locked -- \
   local-assets/mujoco-servo/rapier-1000.csv 1000
 uv run --script scripts/compare-servo-mujoco.py \
   --rapier-128 local-assets/mujoco-servo/rapier-128.csv \

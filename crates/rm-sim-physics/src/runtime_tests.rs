@@ -4,10 +4,13 @@
 use super::*;
 use crate::cooking::{CookedRigidBody, CookedTriangleMesh, TriangleMesh};
 use crate::queries::RayQuery;
+use crate::{Pose, StepDuration};
 use sim_engine::model::{
     BodyKind, BodyState, CarrierKey, ColliderDescription, ContactMaterial, Inertial,
     JointDescription, JointKind, RigidBodyDescription, ShapeDescription,
 };
+use sim_physics::backend::RuntimeExt;
+use sim_physics::backend::{CookedMeshExt, GeometryExt};
 
 fn material() -> ContactMaterial {
     ContactMaterial {
@@ -255,7 +258,7 @@ fn physical_geometry_retains_floor_shared_shapes_identity_and_capture_local_ray_
     assert_eq!(captures.len(), 3);
     assert!(captures.iter().all(|entry| entry.4));
     assert!(std::ptr::eq(captures[1].3.as_ref(), captures[2].3.as_ref()));
-    assert!(std::ptr::eq(captures[1].3.as_ref(), mesh.shape.as_ref()));
+    assert!(std::ptr::eq(captures[1].3.as_ref(), mesh.shape().as_ref()));
     let downward = RayQuery::new([0., 0., 1.], [0., 0., -1.], 1.).unwrap();
     let across = RayQuery::new([0., 0., 0.5], [1., 0., 0.], 2.).unwrap();
     let floor_hit = capture.cast_ray(&downward).unwrap();
@@ -343,7 +346,7 @@ fn placement_epoch_exhaustion_preserves_native_state_and_never_wraps() {
         )
         .unwrap();
     let snapshot = facade.chassis_snapshot(id).unwrap();
-    facade.physical.placement_epoch = u64::MAX;
+    sim_physics::test_support::set_placement_epoch(&mut facade.physical, u64::MAX);
     assert_eq!(
         facade.physical.mark_placement_discontinuity(),
         Err("physical placement epoch exhausted")
@@ -419,19 +422,19 @@ fn target_epoch_changes_only_for_actual_discontinuous_placement_and_preflights_o
     frames
         .begin(|faces| faces[0].pose.translation_m[1] = 2.)
         .unwrap();
-    facade.physical.placement_epoch = u64::MAX;
+    sim_physics::test_support::set_placement_epoch(&mut facade.physical, u64::MAX);
     let before = facade.body_state(body).unwrap();
     assert_eq!(
         facade.step(10 * duration.as_ns(), &frames),
         Err("physical placement epoch exhausted")
     );
     assert_eq!(facade.body_state(body).unwrap(), before);
-    facade.physical.placement_epoch = 0;
+    sim_physics::test_support::set_placement_epoch(&mut facade.physical, 0);
     facade.step(10 * duration.as_ns(), &frames).unwrap();
     assert_eq!(facade.physical.placement_epoch(), 1);
     // A scene with no active participants does not place targets during step.
     facade.remove_bound_body(body).unwrap();
-    facade.physical.placement_epoch = u64::MAX;
+    sim_physics::test_support::set_placement_epoch(&mut facade.physical, u64::MAX);
     frames
         .begin(|faces| faces[0].pose.translation_m[1] = 4.)
         .unwrap();
@@ -449,12 +452,12 @@ fn standalone_solver_budget_is_bounded_and_preserves_default_timing() {
         assert_eq!(tuned.solver_iterations(), iterations);
         assert_eq!(tuned.step_duration(), default.step_duration());
         assert_eq!(
-            tuned.world.integration_parameters.dt,
-            default.world.integration_parameters.dt
+            tuned.world().integration_parameters.dt,
+            default.world().integration_parameters.dt
         );
         assert_eq!(
-            tuned.world.integration_parameters.max_ccd_substeps,
-            default.world.integration_parameters.max_ccd_substeps
+            tuned.world().integration_parameters.max_ccd_substeps,
+            default.world().integration_parameters.max_ccd_substeps
         );
     }
     for invalid in [0, 65, usize::MAX] {

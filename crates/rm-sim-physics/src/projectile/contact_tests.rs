@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 use super::*;
+use sim_physics::backend::RuntimeExt;
 
 fn face(target: ArmorTarget, x: f64, yaw_rad: f64) -> TargetFace {
     TargetFace {
@@ -31,7 +32,7 @@ fn contact_storage_preserves_order_latches_and_recontact() {
             let id = world
                 .add_chassis(Team::Red, config, Pose::at([0., y, height]))
                 .unwrap();
-            let armor = world.chassis[id as usize].armor_pose(&world.physical.world, 1);
+            let armor = world.chassis[id as usize].armor_pose(world.physical.world(), 1);
             world.add_static_box(Pose::at(armor.translation.to_array()), [0.04; 3]);
             world
                 .command_chassis(
@@ -110,7 +111,7 @@ fn contact_storage_preserves_order_latches_and_recontact() {
                 .flat_map(|&armor| {
                     retained
                         .physical
-                        .world
+                        .world()
                         .contact_pairs_with(armor)
                         .filter_map(move |pair| {
                             let other = if pair.collider1 == armor {

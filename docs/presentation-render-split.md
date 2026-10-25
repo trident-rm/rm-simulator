@@ -9,7 +9,8 @@ The split adds no new clock, networking path or simulation world.
 ## Ownership
 
 - `sim-engine` describes physical models and scalar contracts.
-- `rm-sim-physics` owns physical preparation/runtime and passive sensors.
+- `sim-physics` owns generic physical preparation/runtime; `rm-sim-physics`
+  extends it with RM participants and sensor adapters.
 - `rm-sim-gameplay` owns deterministic competition authorities.
 - `rm-sim-world` composes physical participants with those authorities.
 - `rm-sim-presentation` translates borrowed RoboMaster snapshots, caller

@@ -155,7 +155,8 @@ Native ROS checks run separately; keep the ordinary workspace ROS-free.
 | `crates/rm-sim-gameplay` | Deterministic match engine the world referee runs as its live rules authority (re-exported as `rm_sim_world::gameplay`). No physics, rendering or other simulator-crate dependency. |
 | `crates/rm-sim` | Independent publishing workspace for the `rm-sim` registry entry point; 0.0.0-dev is a documented development placeholder with no runtime dependencies or assets. Not a core workspace member. |
 | `crates/sim-engine` | Solver-free core: FLU poses, exact step durations, immutable query records, source surfaces/convex hulls, primitive/body/inertial/joint descriptions, immutable assembly trees, motor commands, drive requests and scalar wheel laws. Depends only on numerical/serialization libraries; never on Rapier/Parry, other simulator crates, Bevy, networking or a host clock. |
-| `crates/rm-sim-physics` | Bevy-free, gameplay-free Rapier library. `chassis.rs` owns wheel/body dynamics, `mechanism.rs` owns prescribed robot folding geometry, `runtime.rs` owns the interacting scene, construction, stepping and raw contact capture (re-exported at `physics::runtime`); `projectile.rs` retains participant adapters and compatibility types, `geometry.rs` owns shared collision captures and clearance queries, and `motion.rs` owns prescribed rotor/rail motion and fitted armor geometry. `control.rs` owns direct wheel torque request types; `sensors.rs` owns passive caller-stamped ideal LiDAR over geometry captures; `sensors/imu.rs` owns mounted IMU measurements over opt-in substep carrier traces. Its only simulator-crate dependency is the solver-free engine core; existing physics paths re-export shared contracts. |
+| `crates/sim-physics` | Generic concrete Rapier runtime, cooked resources, physical body/joint bindings, optional contacts, physical sessions and carrier/mount pose observations. Depends only on `sim-engine` among simulator crates. No RM dependency, including tests. The opt-in `rapier-extension` backend API serves trusted participant adapters. |
+| `crates/rm-sim-physics` | RoboMaster physical extension over `sim-physics`: chassis, projectile, payload, armor and prescribed mechanism adapters, shared RM geometry, sensor acquisition and `RobotSession`. Uses the explicit Rapier extension API to preserve one native scene and original slice ordering. No gameplay, world, server, networking or Bevy dependency. Compatibility runtime/cooking/carrier paths re-export generic types. |
 | `crates/rm-sim-world` | Complete `Field` facade, rune activation, outpost/base HP, referee integration and `scoring.rs` detection/damage. Coordinates physics on explicit ticks and restores the whole world. `session.rs` exposes trusted `MatchSession` stepping, control, truth, match checkpoints and seeded resets (`Session` remains an alias). `rule_adapters.rs` shares borrowed RFID observations and contact gates with standalone callers, without owning a second clock or authority. Re-exports existing physical types through compatibility modules. |
 | `crates/rm-sim-control` | Shared navigation planning/following and source assembly planning over assets/physics/gameplay descriptions. No world, server, networking, Bevy or rendering dependency; no clock, threads or actuation authority. Server owns bounded workers and world input/output projection. |
 | `crates/rm-sim-presentation` | Borrowed RoboMaster snapshots and caller time into render appearances; no host, transport, input, window or session ownership. |
@@ -179,8 +180,9 @@ not a refactor.
   live rules in world, drawing in render, Bevy-free glue
   and networking in server, the window in app. The world and server crates
   never depend on Bevy; the render crate never depends on the world or
-  server crate, or physics crate. Physics may depend on the solver-free engine
-  core, but never on world, gameplay,
+  server crate, or physics crate. Generic physics depends on the solver-free engine core; RM physics may also
+  depend on generic physics through its explicit Rapier extension API. Neither
+  physics crate depends on world, gameplay,
   server or Bevy. Engine core never depends on a solver, simulator crate, Bevy,
   networking or host time. The app converts world snapshots into render `SceneState`
   and sends every input as a protocol `Command`, whether the simulation is

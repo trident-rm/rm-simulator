@@ -3,6 +3,7 @@
 //! Insert the configured body and colliders in their original Rapier order.
 
 use super::*;
+use sim_physics::backend::CookedBodyExt;
 
 impl Chassis {
     /// Insert the body into `world` at `spawn`. The wheels find the ground on

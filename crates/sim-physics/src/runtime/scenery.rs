@@ -12,6 +12,7 @@ struct CapturedCollider {
     state: ColliderState,
     pose: Pose3,
     shape: SharedShape,
+    #[cfg(feature = "rapier-extension")]
     is_fixed: bool,
 }
 
@@ -26,6 +27,13 @@ pub struct PhysicalGeometry {
     colliders: Vec<CapturedCollider>,
 }
 impl PhysicalGeometry {
+    /// Expand supported captured boundaries into world FLU triangles for diagnostics.
+    /// Triangle surfaces, spheres, boxes and convex polyhedra retain capture order;
+    /// half-spaces and other unsupported shapes are omitted. This allocates mesh
+    /// buffers and should run on explicit load/capture, never in a control loop.
+    pub fn into_triangles(self) -> (Vec<[f64; 3]>, Vec<[u32; 3]>) {
+        crate::triangles::triangulate(self.colliders.into_iter().map(|c| (c.pose, c.shape)))
+    }
     /// Actual originating scene brand, retained after scene removal/reconstruction.
     /// Metadata for continuity checks, not command authority.
     pub fn runtime_identity(&self) -> u64 {
@@ -103,6 +111,7 @@ impl PhysicalGeometry {
         Ok(())
     }
 
+    #[cfg(feature = "rapier-extension")]
     pub(crate) fn sensor_colliders(
         &self,
     ) -> impl ExactSizeIterator<Item = (ColliderBinding, ColliderHandle, Pose3, SharedShape, bool)> + '_
@@ -140,6 +149,7 @@ impl PhysicalRuntime {
                     },
                     pose: *c.position(),
                     shape: c.shared_shape().clone(),
+                    #[cfg(feature = "rapier-extension")]
                     is_fixed: c.parent().is_none_or(|h| self.world.bodies[h].is_fixed()),
                 })
                 .collect(),
@@ -194,7 +204,7 @@ impl PhysicalRuntime {
     ///
     /// ```
     /// use sim_engine::model::ContactMaterial;
-    /// use rm_sim_physics::{StepDuration, runtime::PhysicalRuntime, queries::RayQuery};
+    /// use sim_physics::{StepDuration, runtime::PhysicalRuntime, queries::RayQuery};
     /// let mut runtime = PhysicalRuntime::new(StepDuration::HZ_128);
     /// let floor = runtime.install_catch_floor(0., ContactMaterial {
     ///     friction: 0.4, restitution: 0., memberships: u32::MAX, filter: u32::MAX,

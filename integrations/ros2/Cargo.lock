@@ -1024,14 +1024,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sim-engine"
-version = "0.1.0"
-dependencies = [
- "glam 0.33.12",
- "serde",
-]
-
-[[package]]
 name = "rm-sim-gameplay"
 version = "0.1.0"
 dependencies = [
@@ -1046,8 +1038,9 @@ dependencies = [
  "glam 0.33.12",
  "mid360-sim",
  "rapier3d-f64",
- "sim-engine",
  "serde",
+ "sim-engine",
+ "sim-physics",
 ]
 
 [[package]]
@@ -1205,6 +1198,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7523beb55eece201a2356bee0bbca0d1ab466c14c07703b2e0ee6d42cb0c2c"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "sim-engine"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "serde",
+]
+
+[[package]]
+name = "sim-physics"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "rapier3d-f64",
+ "sim-engine",
 ]
 
 [[package]]

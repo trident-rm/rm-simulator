@@ -12,8 +12,8 @@ use bevy::{
         texture::GpuImage,
     },
 };
-use sim_render::{PoseFlu, VisualId, VisualPlugin, Visuals};
 use rxui::astrelis::{GraphicsContext, wgpu};
+use sim_render::{PoseFlu, VisualId, VisualPlugin, Visuals};
 use std::{collections::BTreeMap, sync::Arc};
 
 pub struct Viewport {
@@ -209,11 +209,13 @@ impl Viewport {
         selected: u64,
         proxy: bool,
     ) -> Result<(), String> {
-        use rm_sim_physics::{WorldPhysics, cooking::CookedRigidBody, runtime::BodyKey};
-        use sim_render::flu_position;
         use sim_engine::model::{
             BodyKind, BodyState, ColliderDescription, ContactMaterial, RigidBodyDescription,
         };
+        use sim_physics::{
+            PhysicalRuntime, StepDuration, cooking::CookedRigidBody, runtime::BodyKey,
+        };
+        use sim_render::flu_position;
         let mut descriptions = Vec::new();
         if proxy {
             for group in &project.groups {
@@ -238,11 +240,11 @@ impl Viewport {
                     RigidBodyDescription::new(BodyKind::Fixed, colliders).map_err(str::to_owned)?,
                 )
                 .map_err(str::to_owned)?;
-                let mut world = WorldPhysics::new(&[], 0.);
+                let mut world = PhysicalRuntime::new(StepDuration::HZ_128);
                 world
                     .install_body(BodyKey(1), &body, BodyState::at(Default::default()))
                     .map_err(str::to_owned)?;
-                let (vertices, triangles) = world.static_geometry_snapshot(false).into_triangles();
+                let (vertices, triangles) = world.geometry_capture().into_triangles();
                 descriptions.push((
                     group.id,
                     group.pose,

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Independent pre-port constructors pin native insertion and all debug properties.
 use super::*;
+use sim_physics::backend::{CookedBodyExt, RuntimeExt};
 
 impl WorldPhysics {
     fn oracle_add_target(&mut self, face: TargetFace) {
@@ -10,13 +11,13 @@ impl WorldPhysics {
             ArmorTarget::Rune { .. } => RUNE_HOUSING_HALF_M,
             ArmorTarget::Chassis { .. } => SMALL_ARMOR_HOUSING_HALF_M,
         };
-        let body = self.physical.world.insert_body(
+        let body = self.physical.world_mut().insert_body(
             RigidBodyBuilder::kinematic_position_based()
                 .pose(pose(face.pose))
                 .can_sleep(false),
         );
         let [x, y, z] = housing_half_m;
-        let collider = self.physical.world.insert_collider(
+        let collider = self.physical.world_mut().insert_collider(
             ColliderBuilder::cuboid(x, y, z)
                 .translation(Vector::new(-x, 0., 0.))
                 .friction(FRICTION)
@@ -54,19 +55,19 @@ impl WorldPhysics {
         if self.projectiles.len() >= MAX_PROJECTILES {
             let oldest = self.projectiles.remove(0);
             self.record_removal(&oldest, time_ns, RemovalReason::Capped);
-            self.physical.world.remove_body(oldest.body);
+            self.physical.world_mut().remove_body(oldest.body);
         }
         let muzzle = pose(muzzle);
         let velocity = muzzle.transform_vector(Vector::new(shot.speed_m_s, 0., 0.));
         let radius = shot.caliber.diameter_m() / 2.;
-        let body = self.physical.world.insert_body(
+        let body = self.physical.world_mut().insert_body(
             RigidBodyBuilder::dynamic()
                 .translation(muzzle.translation)
                 .linvel(velocity)
                 .ccd_enabled(true)
                 .can_sleep(false),
         );
-        let collider = self.physical.world.insert_collider(
+        let collider = self.physical.world_mut().insert_collider(
             ColliderBuilder::ball(radius)
                 .collision_groups(InteractionGroups::new(
                     Group::GROUP_2,
@@ -112,7 +113,7 @@ impl WorldPhysics {
             return Err("too many restored projectiles");
         }
         let radius = state.caliber.diameter_m() / 2.;
-        let body = self.physical.world.insert_body(
+        let body = self.physical.world_mut().insert_body(
             RigidBodyBuilder::dynamic()
                 .translation(vector(state.position_m))
                 .linvel(vector(state.velocity_m_s))
@@ -120,7 +121,7 @@ impl WorldPhysics {
                 .ccd_enabled(true)
                 .can_sleep(false),
         );
-        let collider = self.physical.world.insert_collider(
+        let collider = self.physical.world_mut().insert_collider(
             ColliderBuilder::ball(radius)
                 .collision_groups(InteractionGroups::new(
                     Group::GROUP_2,
@@ -158,12 +159,12 @@ fn oracle_world(faces: &[TargetFace]) -> WorldPhysics {
 
 fn assert_native_equal(actual: &WorldPhysics, expected: &WorldPhysics) {
     assert_eq!(
-        format!("{:?}", actual.physical.world.bodies),
-        format!("{:?}", expected.physical.world.bodies)
+        format!("{:?}", actual.physical.world().bodies),
+        format!("{:?}", expected.physical.world().bodies)
     );
     assert_eq!(
-        format!("{:?}", actual.physical.world.colliders),
-        format!("{:?}", expected.physical.world.colliders)
+        format!("{:?}", actual.physical.world().colliders),
+        format!("{:?}", expected.physical.world().colliders)
     );
     assert_eq!(actual.snapshot(), expected.snapshot());
     assert_eq!(
@@ -241,7 +242,7 @@ fn prepared_cache_reuses_shapes_and_changes_only_new_collider_policy() {
                 .unwrap();
         }
     }
-    let colliders = &world.physical.world.colliders;
+    let colliders = &world.physical.world().colliders;
     for pair in world.projectiles.as_chunks::<2>().0 {
         assert!(Arc::ptr_eq(
             &colliders[pair[0].collider].shared_shape().0,
@@ -267,12 +268,12 @@ fn prepared_cache_reuses_shapes_and_changes_only_new_collider_policy() {
         .unwrap();
     for projectile in &world.projectiles[..4] {
         assert_eq!(
-            world.physical.world.colliders[projectile.collider].restitution(),
+            world.physical.world().colliders[projectile.collider].restitution(),
             0.45
         );
     }
     assert_eq!(
-        world.physical.world.colliders[world.projectiles[4].collider].restitution(),
+        world.physical.world().colliders[world.projectiles[4].collider].restitution(),
         0.1
     );
     world
@@ -293,10 +294,10 @@ fn prepared_cache_reuses_shapes_and_changes_only_new_collider_policy() {
         )
         .unwrap();
     assert!(Arc::ptr_eq(
-        &world.physical.world.colliders[world.projectiles[4].collider]
+        &world.physical.world().colliders[world.projectiles[4].collider]
             .shared_shape()
             .0,
-        &world.physical.world.colliders[world.projectiles[5].collider]
+        &world.physical.world().colliders[world.projectiles[5].collider]
             .shared_shape()
             .0,
     ));

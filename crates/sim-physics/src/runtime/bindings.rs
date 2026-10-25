@@ -120,9 +120,9 @@ impl PhysicalRuntime {
     ///
     /// ```
     /// use sim_engine::{Pose, model::{BodyKind, BodyState, RigidBodyDescription}};
-    /// use rm_sim_physics::{runtime::{WorldPhysics, BodyKey}, cooking::CookedRigidBody};
+    /// use sim_physics::{runtime::{PhysicalRuntime, BodyKey}, cooking::CookedRigidBody};
     /// let anchor = CookedRigidBody::new(RigidBodyDescription::new(BodyKind::Fixed, vec![])?)?;
-    /// let mut world = WorldPhysics::new(&[], 0.);
+    /// let mut world = PhysicalRuntime::new(sim_physics::StepDuration::HZ_128);
     /// let binding = world.install_body(BodyKey(7), &anchor, BodyState::at(Pose::at([0.; 3])))?;
     /// assert_eq!(world.body_binding(BodyKey(7)), Some(binding));
     /// world.remove_bound_body(binding)?;
@@ -155,7 +155,7 @@ impl PhysicalRuntime {
             .source()
             .colliders()
             .iter()
-            .zip(model.collider_builders())
+            .zip(model.native_collider_builders())
         {
             // Retain the generic API's historical normalization, while participant
             // adapters may consume exact stored source rotations from the cooker.
@@ -321,7 +321,7 @@ pub(super) fn prepare_body(
     state: BodyState,
 ) -> Result<RigidBody, &'static str> {
     state.validate()?;
-    let mut body = model.body_builder();
+    let mut body = model.native_body_builder();
     if !matches!(
         model.source().kind(),
         BodyKind::Dynamic(_) | BodyKind::DynamicFromColliders
@@ -340,7 +340,7 @@ pub(super) fn prepare_body(
     let mut body = body.build();
     body.recompute_mass_properties_from_colliders(&ColliderSet::new());
     let aggregate_com_is_finite = model
-        .aggregate_mass_properties()
+        .native_aggregate_mass_properties()
         .is_none_or(|mass| body.position().transform_point(mass.local_com).is_finite());
     if !aggregate_com_is_finite
         || !body.center_of_mass().is_finite()
@@ -357,7 +357,6 @@ pub(super) fn prepare_body(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TargetFrames;
     use sim_engine::model::{ColliderDescription, ContactMaterial, Inertial, ShapeDescription};
     use std::sync::Arc;
 
@@ -407,16 +406,16 @@ mod tests {
             ccd_enabled: true,
         };
         let model = CookedRigidBody::new(aggregate_source().with_policy(policy).unwrap()).unwrap();
-        let mut generic = WorldPhysics::new(&[], -10.);
-        let mut native = WorldPhysics::new(&[], -10.);
+        let mut generic = PhysicalRuntime::new(crate::StepDuration::HZ_128);
+        let mut native = PhysicalRuntime::new(crate::StepDuration::HZ_128);
         let state = BodyState {
             pose: Pose::at([0., 0., 2.]),
             velocity_m_s: [1., 2., 0.],
             angular_velocity_rad_s: [0., 0., 0.5],
         };
         let binding = generic.install_body(BodyKey(1), &model, state).unwrap();
-        let a = generic.physical.bound_bodies.handle(binding).unwrap();
-        let b = native.physical.world.insert_body(
+        let a = generic.bound_bodies.handle(binding).unwrap();
+        let b = native.world.insert_body(
             RigidBodyBuilder::dynamic()
                 .gravity_scale(0.)
                 .enabled_translations(true, true, false)
@@ -434,7 +433,7 @@ mod tests {
             (1., [0.1, 0., 0.5]),
             (0., [0., 0., -0.5]),
         ] {
-            native.physical.world.insert_collider(
+            native.world.insert_collider(
                 ColliderBuilder::cuboid(0.2, 0.2, 0.2)
                     .translation(vector(center))
                     .mass(mass)
@@ -445,50 +444,45 @@ mod tests {
                 Some(b),
             );
         }
-        native.physical.world.bodies[b]
-            .recompute_mass_properties_from_colliders(&native.physical.world.colliders);
+        native.world.bodies[b].recompute_mass_properties_from_colliders(&native.world.colliders);
         assert_eq!(
-            generic.physical.world.bodies[a]
-                .mass_properties()
-                .local_mprops,
-            native.physical.world.bodies[b]
-                .mass_properties()
-                .local_mprops
+            generic.world.bodies[a].mass_properties().local_mprops,
+            native.world.bodies[b].mass_properties().local_mprops
         );
-        assert_eq!(generic.physical.world.bodies[a].mass(), 4.);
+        assert_eq!(generic.world.bodies[a].mass(), 4.);
         assert_eq!(
-            generic.physical.world.bodies[a].locked_axes(),
-            native.physical.world.bodies[b].locked_axes()
+            generic.world.bodies[a].locked_axes(),
+            native.world.bodies[b].locked_axes()
         );
         assert_eq!(
-            generic.physical.world.bodies[a].is_ccd_enabled(),
-            native.physical.world.bodies[b].is_ccd_enabled()
+            generic.world.bodies[a].is_ccd_enabled(),
+            native.world.bodies[b].is_ccd_enabled()
         );
-        for (&ca, &cb) in generic.physical.world.bodies[a]
+        for (&ca, &cb) in generic.world.bodies[a]
             .colliders()
             .iter()
-            .zip(native.physical.world.bodies[b].colliders())
+            .zip(native.world.bodies[b].colliders())
         {
-            let ca = &generic.physical.world.colliders[ca];
-            let cb = &native.physical.world.colliders[cb];
+            let ca = &generic.world.colliders[ca];
+            let cb = &native.world.colliders[cb];
             assert_eq!(ca.mass_properties(), cb.mass_properties());
             assert_eq!(ca.friction_combine_rule(), cb.friction_combine_rule());
             assert_eq!(ca.restitution_combine_rule(), cb.restitution_combine_rule());
         }
         for _ in 0..128 {
-            generic.physical.world.step();
-            native.physical.world.step();
+            generic.world.step();
+            native.world.step();
             assert_eq!(
-                generic.physical.world.bodies[a].position(),
-                native.physical.world.bodies[b].position()
+                generic.world.bodies[a].position(),
+                native.world.bodies[b].position()
             );
             assert_eq!(
-                generic.physical.world.bodies[a].linvel(),
-                native.physical.world.bodies[b].linvel()
+                generic.world.bodies[a].linvel(),
+                native.world.bodies[b].linvel()
             );
             assert_eq!(
-                generic.physical.world.bodies[a].angvel(),
-                native.physical.world.bodies[b].angvel()
+                generic.world.bodies[a].angvel(),
+                native.world.bodies[b].angvel()
             );
         }
     }
@@ -514,14 +508,14 @@ mod tests {
         )
         .unwrap();
         let model = CookedRigidBody::new(source).unwrap();
-        let mut generic = WorldPhysics::new(&[], -10.);
-        let mut native = WorldPhysics::new(&[], -10.);
+        let mut generic = PhysicalRuntime::new(crate::StepDuration::HZ_128);
+        let mut native = PhysicalRuntime::new(crate::StepDuration::HZ_128);
         let initial = Pose::at([0., 0., 2.]);
         let live = generic
             .install_body(BodyKey(1), &model, BodyState::at(initial))
             .unwrap();
-        let a = generic.physical.bound_bodies.handle(live).unwrap();
-        let b = native.physical.world.insert_body(
+        let a = generic.bound_bodies.handle(live).unwrap();
+        let b = native.world.insert_body(
             RigidBodyBuilder::dynamic()
                 .additional_mass_properties(MassProperties::with_principal_inertia_frame(
                     vector([0.1, 0., 0.2]),
@@ -531,45 +525,44 @@ mod tests {
                 ))
                 .pose(pose(initial)),
         );
-        native.physical.world.insert_collider(
+        native.world.insert_collider(
             ColliderBuilder::ball(0.1)
                 .density(0.)
                 .friction(0.4)
                 .restitution(0.2),
             Some(b),
         );
-        native.physical.world.bodies[b]
-            .recompute_mass_properties_from_colliders(&native.physical.world.colliders);
+        native.world.bodies[b].recompute_mass_properties_from_colliders(&native.world.colliders);
         for _ in 0..128 {
             assert_eq!(
-                generic.physical.world.bodies[a].position(),
-                native.physical.world.bodies[b].position()
+                generic.world.bodies[a].position(),
+                native.world.bodies[b].position()
             );
             assert_eq!(
-                generic.physical.world.bodies[a].linvel(),
-                native.physical.world.bodies[b].linvel()
+                generic.world.bodies[a].linvel(),
+                native.world.bodies[b].linvel()
             );
             assert_eq!(
-                generic.physical.world.bodies[a].angvel(),
-                native.physical.world.bodies[b].angvel()
+                generic.world.bodies[a].angvel(),
+                native.world.bodies[b].angvel()
             );
             assert_eq!(
-                generic.physical.world.bodies[a].is_sleeping(),
-                native.physical.world.bodies[b].is_sleeping()
+                generic.world.bodies[a].is_sleeping(),
+                native.world.bodies[b].is_sleeping()
             );
-            generic.physical.world.step();
-            native.physical.world.step();
+            generic.world.step();
+            native.world.step();
         }
     }
 
     #[test]
     fn rejected_aggregate_initial_state_preserves_world_and_generation() {
         let model = CookedRigidBody::new(aggregate_source()).unwrap();
-        let mut world = WorldPhysics::new(&[], -10.);
+        let mut world = PhysicalRuntime::new(crate::StepDuration::HZ_128);
         let before = (
-            world.physical.world.bodies.len(),
-            world.physical.world.colliders.len(),
-            world.physical.bound_bodies.next_generation,
+            world.world.bodies.len(),
+            world.world.colliders.len(),
+            world.bound_bodies.next_generation,
         );
         assert!(
             world
@@ -585,9 +578,9 @@ mod tests {
         );
         assert_eq!(
             (
-                world.physical.world.bodies.len(),
-                world.physical.world.colliders.len(),
-                world.physical.bound_bodies.next_generation
+                world.world.bodies.len(),
+                world.world.colliders.len(),
+                world.bound_bodies.next_generation
             ),
             before
         );
@@ -602,7 +595,7 @@ mod tests {
         );
         assert_eq!(world.body_state(live).unwrap(), state);
         assert_eq!(
-            world.physical.bound_bodies.entry(live).unwrap().force_n,
+            world.bound_bodies.entry(live).unwrap().force_n,
             Vector::ZERO
         );
         assert_eq!(live.generation, 0);
@@ -651,45 +644,36 @@ mod tests {
             links: vec![(AssemblyLinkId(1), BodyKey(1))],
             joints: vec![],
         };
-        let mut world = WorldPhysics::new(&[], 0.);
-        let before = (
-            world.physical.world.bodies.len(),
-            world.physical.world.colliders.len(),
-        );
+        let mut world = PhysicalRuntime::new(crate::StepDuration::HZ_128);
+        let before = (world.world.bodies.len(), world.world.colliders.len());
         assert!(
             world
                 .install_assembly(&prepared, Pose::at([f64::NAN, 0., 0.]), &keys)
                 .is_err()
         );
-        assert_eq!(world.physical.bound_bodies.next_generation, 0);
+        assert_eq!(world.bound_bodies.next_generation, 0);
         assert_eq!(
-            (
-                world.physical.world.bodies.len(),
-                world.physical.world.colliders.len()
-            ),
+            (world.world.bodies.len(), world.world.colliders.len()),
             before
         );
-        world.physical.bound_bodies.next_generation = u64::MAX;
+        world.bound_bodies.next_generation = u64::MAX;
         assert!(
             world
                 .install_assembly(&prepared, Pose::default(), &keys)
                 .is_err()
         );
-        assert_eq!(world.physical.bound_bodies.next_generation, u64::MAX);
+        assert_eq!(world.bound_bodies.next_generation, u64::MAX);
         assert_eq!(
-            (
-                world.physical.world.bodies.len(),
-                world.physical.world.colliders.len()
-            ),
+            (world.world.bodies.len(), world.world.colliders.len()),
             before
         );
-        world.physical.bound_bodies.next_generation = 0;
+        world.bound_bodies.next_generation = 0;
         let live = world
             .install_assembly(&prepared, Pose::default(), &keys)
             .unwrap();
         let binding = live.body(AssemblyLinkId(1)).unwrap();
         assert_eq!(binding.generation, 0);
-        let mut control = WorldPhysics::new(&[], 0.);
+        let mut control = PhysicalRuntime::new(crate::StepDuration::HZ_128);
         let direct = control
             .install_body(
                 BodyKey(1),
@@ -698,8 +682,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            world.physical.bound_bodies.handle(binding).unwrap(),
-            control.physical.bound_bodies.handle(direct).unwrap()
+            world.bound_bodies.handle(binding).unwrap(),
+            control.bound_bodies.handle(direct).unwrap()
         );
     }
 
@@ -712,7 +696,7 @@ mod tests {
             prepared.source().links().as_ptr(),
             shared.source().links().as_ptr()
         );
-        let mut world = WorldPhysics::new(&[], 0.);
+        let mut world = PhysicalRuntime::new(crate::StepDuration::HZ_128);
         let bindings: Vec<_> = [1, 2]
             .into_iter()
             .map(|key| {
@@ -731,17 +715,23 @@ mod tests {
             })
             .collect();
         let shape = |binding| {
-            let handle = world.physical.bound_bodies.handle(binding).unwrap();
-            &world.physical.world.colliders[world.physical.world.bodies[handle].colliders()[0]]
+            let handle = world.bound_bodies.handle(binding).unwrap();
+            &world.world.colliders[world.world.bodies[handle].colliders()[0]]
                 .shared_shape()
                 .0
         };
         assert!(Arc::ptr_eq(shape(bindings[0]), shape(bindings[1])));
-        let retained = world.static_geometry_snapshot(false);
+        let retained = world.geometry_capture();
         for binding in bindings {
             world.remove_bound_body(binding).unwrap();
         }
-        assert!(!retained.sphere_clear([1., 0., 0.], 0.05));
+        assert!(
+            retained
+                .cast_ray(
+                    &crate::queries::RayQuery::new([1., -1., 0.05], [0., 1., 0.], 2.).unwrap()
+                )
+                .is_some()
+        );
     }
     #[test]
     fn installation_uses_explicit_mass_frame_and_shares_shapes() {
@@ -767,26 +757,24 @@ mod tests {
         )
         .unwrap();
         let model = CookedRigidBody::new(source).unwrap();
-        let mut a = WorldPhysics::new(&[], -10.);
-        let mut b = WorldPhysics::new(&[], -10.);
+        let mut a = PhysicalRuntime::new(crate::StepDuration::HZ_128);
+        let mut b = PhysicalRuntime::new(crate::StepDuration::HZ_128);
         let left_binding = a
             .install_body(BodyKey(7), &model, BodyState::at(Pose::at([0.; 3])))
             .unwrap();
         let right_binding = b
             .install_body(BodyKey(7), &model, BodyState::at(Pose::at([0.; 3])))
             .unwrap();
-        let left_handle = a.physical.bound_bodies.entry(left_binding).unwrap().handle;
-        let right_handle = b.physical.bound_bodies.entry(right_binding).unwrap().handle;
-        let ca = &a.physical.world.colliders[a.physical.world.bodies[left_handle].colliders()[0]];
-        let cb = &b.physical.world.colliders[b.physical.world.bodies[right_handle].colliders()[0]];
+        let left_handle = a.bound_bodies.entry(left_binding).unwrap().handle;
+        let right_handle = b.bound_bodies.entry(right_binding).unwrap().handle;
+        let ca = &a.world.colliders[a.world.bodies[left_handle].colliders()[0]];
+        let cb = &b.world.colliders[b.world.bodies[right_handle].colliders()[0]];
         assert!(Arc::ptr_eq(&ca.shared_shape().0, &cb.shared_shape().0));
         assert_eq!(ca.collision_groups().memberships.bits(), 1);
         assert_eq!(ca.collision_groups().filter.bits(), 4);
-        a.step(0, &TargetFrames::new(vec![])).unwrap();
-        let m = &a.physical.world.bodies[left_handle]
-            .mass_properties()
-            .local_mprops;
-        assert_eq!(a.physical.world.bodies[left_handle].mass(), 2.);
+        a.step(0).unwrap();
+        let m = &a.world.bodies[left_handle].mass_properties().local_mprops;
+        assert_eq!(a.world.bodies[left_handle].mass(), 2.);
         assert!((m.local_com - vector(frame.translation_m)).length() < 1e-12);
         assert!((m.inv_principal_inertia - vector([0.5, 1. / 3., 0.25])).length() < 1e-12);
         assert!(

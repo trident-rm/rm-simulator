@@ -19,9 +19,11 @@ check:
 
 lint:
     {{rust}} clippy --workspace --all-targets --all-features --locked -- -D warnings
+    {{rust}} clippy -p sim-physics --no-default-features --all-targets --locked -- -D warnings
 
 test:
     {{rust}} test --workspace --all-features --locked
+    {{rust}} test -p sim-physics --no-default-features --locked
 
 deny:
     cargo deny check advisories bans licenses sources
@@ -44,7 +46,9 @@ verify:
     cargo fmt --all -- --check
     {{rust}} check --workspace --all-targets --all-features --locked
     {{rust}} clippy --workspace --all-targets --all-features --locked -- -D warnings
+    {{rust}} clippy -p sim-physics --no-default-features --all-targets --locked -- -D warnings
     {{rust}} test --workspace --all-features --locked
+    {{rust}} test -p sim-physics --no-default-features --locked
     {{rust}} test -p rm-sim-render --no-default-features --locked
     python3 scripts/check-runtime.py
     python3 scripts/check-module-dependencies.py

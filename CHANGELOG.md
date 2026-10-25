@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Extract generic physics into `sim-physics`, including cooked resources, native
+  runtime, physical sessions, carrier poses and standalone controller/servo
+  examples. Make `rm-sim-physics` an explicit Rapier participant extension over
+  the same scene, retaining game imports and physical ordering. Remove all RM
+  dependencies from the standalone viewer and check generic builds separately.
+
 - Extract passive visuals, FLU conversions, camera appearance and generated-light
   registration into `sim-render`. Keep RoboMaster visuals in `rm-sim-render` as
   an extension over that crate, and use `sim-render` directly in the standalone

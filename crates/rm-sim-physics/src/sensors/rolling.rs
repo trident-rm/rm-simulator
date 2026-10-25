@@ -20,6 +20,7 @@ use rapier3d_f64::parry::partitioning::{Bvh, BvhBuildStrategy, TraversalAction};
 use rapier3d_f64::prelude::{
     Aabb, ColliderHandle, Pose as Pose3, Ray, RayCast, SharedShape, Vector,
 };
+use sim_physics::backend::GeometryExt;
 use std::sync::{Arc, OnceLock};
 
 #[derive(Clone)]

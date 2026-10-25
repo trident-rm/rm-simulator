@@ -37,7 +37,12 @@ assert not any(d.startswith(("bevy", "rapier")) for d in gameplay), gameplay
 assert not any(d.startswith(("rm-sim-", "sim-")) for d in gameplay), gameplay
 physics = dependencies("rm-sim-physics")
 assert not any(d.startswith("bevy") for d in physics), physics
-assert not any(d.startswith(("rm-sim-", "sim-")) and d != "sim-engine" for d in physics), physics
+assert not any(d.startswith(("rm-sim-", "sim-")) and d not in {"sim-engine", "sim-physics"} for d in physics), physics
+assert "sim-physics" in physics, physics
+generic_physics = dependencies("sim-physics")
+assert not any(d.startswith(("rm-sim-", "bevy")) for d in generic_physics), generic_physics
+assert not any(d.startswith("sim-") and d != "sim-engine" for d in generic_physics), generic_physics
+assert not ({"game-networking-sockets", "rclrs", "ros-env", "rosidl_runtime_rs", "r2r"} & generic_physics), generic_physics
 assets = dependencies("rm-sim-assets")
 assert not any(d.startswith("bevy") for d in assets), assets
 assert not ({"rm-sim-world", "rm-sim-server", "rm-sim-render",
@@ -54,6 +59,9 @@ server = dependencies("rm-sim-server")
 assert not any(d.startswith("bevy") for d in server), server
 assert "rm-sim-render" not in server, server
 assert "rm-sim-control" in server, server
+for generic in ("sim-engine", "sim-physics", "sim-render"):
+    assert not any(d.startswith("rm-") for d in dependencies(generic)), generic
+
 generic_render = dependencies("sim-render")
 assert not any(d.startswith("rm-sim-") for d in generic_render), generic_render
 assert not any(d.startswith(("rapier", "parry")) for d in generic_render), generic_render
@@ -71,7 +79,7 @@ assert not ({"rm-sim-physics", "rm-sim-world", "rm-sim-server", "rm-sim-gameplay
 assert not any(d.startswith("rapier") for d in bench), bench
 assert not any(p["name"] in ("rm-sim", "rm-sim-api", "rm-sim-viewer", "rm-vision-world",
                              "rm-vision-runtime", "rm-vision-runner") for p in packages.values())
-print("PASS: engine has no solver, application or simulator dependency; physics' only simulator dependency is engine, "
+print("PASS: engine has no solver, application or simulator dependency; generic physics depends only on engine among simulator crates, RM physics extends it, "
       "gameplay is independent of physics and the simulator, "
       "assets have no world, networking or renderer, "
       "controllers have no match, host, networking or renderer, "

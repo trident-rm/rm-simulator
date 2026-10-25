@@ -6135,6 +6135,7 @@ dependencies = [
  "rapier3d-f64",
  "serde",
  "sim-engine",
+ "sim-physics",
 ]
 
 [[package]]
@@ -6547,6 +6548,15 @@ dependencies = [
  "glam 0.33.12",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "sim-physics"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "rapier3d-f64",
+ "sim-engine",
 ]
 
 [[package]]

@@ -545,7 +545,7 @@ fn main() -> Result<()> {
         }
         importer::write_json(
             output,
-            &serde_json::json!({"schema":"rm-constraint-playback-report-v1","no_gravity":true,"no_contacts":true,"motor_gains":"inertia-scaled diagnostic gains, not robot calibration","frames":frames,"step_duration_ns":rm_sim_physics::StepDuration::HZ_128.as_ns(),"history":history}),
+            &serde_json::json!({"schema":"rm-constraint-playback-report-v1","no_gravity":true,"no_contacts":true,"motor_gains":"inertia-scaled diagnostic gains, not robot calibration","frames":frames,"step_duration_ns":sim_physics::StepDuration::HZ_128.as_ns(),"history":history}),
         )?;
         return Ok(());
     }

@@ -2,7 +2,13 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Reusing physics and armor motion
 
-`rm-sim-physics` depends on Rapier, serde and the standalone MID360 pattern
+Generic body/joint execution, cooked resources and `PhysicalSession` live in
+`sim-physics`, without RM dependencies. The RM crate re-exports existing generic
+paths while retaining chassis, projectile, mechanism, sensor and `RobotSession`
+adapters. New generic callers should use `sim-physics` directly; see
+[physical runtime](physical-runtime.md) for the concrete extension boundary.
+
+`rm-sim-physics` depends on `sim-physics`, `sim-engine`, Rapier, serde and the standalone MID360 pattern
 generator. It contains chassis
 suspension and drive, prescribed gimbals, physical generic joints, projectile
 flight, raw armor contacts, shared collision geometry and analytic armor motion. It does not depend on
@@ -146,7 +152,7 @@ checkpoints and wire codecs do not serialize these new descriptions or bindings.
 Run the complete headless example:
 
 ```sh
-mbx run -p rm-sim-physics --locked --example body_runtime
+cargo run -p sim-physics --locked --example body_runtime
 ```
 
 It cooks an explicitly described cube once, drops it onto the catch floor through

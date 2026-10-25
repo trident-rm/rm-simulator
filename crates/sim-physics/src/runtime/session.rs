@@ -18,7 +18,7 @@ use sim_engine::{StepDuration, time::Stamp};
 /// same integration duration. Its external side effects cannot be rolled back.
 ///
 /// ```
-/// use rm_sim_physics::{PhysicalRuntime, StepDuration,
+/// use sim_physics::{PhysicalRuntime, StepDuration,
 ///     runtime::session::PhysicalSession};
 /// let mut session = PhysicalSession::new(|| {
 ///     Ok(PhysicalRuntime::new(StepDuration::HZ_1000))

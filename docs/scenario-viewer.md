@@ -175,7 +175,7 @@ Prepared `CookedRigidBody` resources are retained once and installed into a fres
 renderer never steps physics. The arm is dynamic, constrained by a revolute
 joint about vertical, with a bounded position motor; its displayed transform is
 read from the actual body. See [Physical runtime](physical-runtime.md) and the
-[`body_runtime.rs`](../crates/rm-sim-physics/examples/body_runtime.rs) and
+[`body_runtime.rs`](../crates/sim-physics/examples/body_runtime.rs) and
 [`jointed_turret.rs`](../crates/rm-sim-physics/examples/jointed_turret.rs)
 examples for the underlying contracts.
 

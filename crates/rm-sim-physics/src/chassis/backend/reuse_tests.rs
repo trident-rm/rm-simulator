@@ -2,6 +2,7 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Verify recipe and installed collider sharing without sharing live robot state.
 use super::*;
+use sim_physics::backend::CookedBodyExt;
 use std::sync::Arc;
 
 #[test]

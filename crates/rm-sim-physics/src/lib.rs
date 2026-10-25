@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! Reusable physical runtime and RoboMaster participant adapters, without match
+//! RoboMaster participant adapters over `sim-physics`, without match
 //! rules, networking, CAD loading, Bevy or host time. Callers supply target endpoint
 //! poses and resolved mechanism state, step once per explicit `tick_ns` tick, then
 //! consume contacts in returned order. See the `moving_armor` example.

@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Generic session timing, runtime parity and transactional reconstruction.
-use rm_sim_physics::{
-    PhysicalRuntime, StepDuration,
-    cooking::CookedRigidBody,
-    runtime::{BodyKey, session::PhysicalSession},
-};
 use sim_engine::{
     Pose,
     model::{BodyKind, BodyState, Inertial, RigidBodyDescription},
     time::Stamp,
+};
+use sim_physics::{
+    PhysicalRuntime, StepDuration,
+    cooking::CookedRigidBody,
+    runtime::{BodyKey, session::PhysicalSession},
 };
 use std::cell::Cell;
 
@@ -55,8 +55,6 @@ fn session_matches_direct_runtime_and_partitioned_stepping_at_both_rates() {
                 time_ns: 64 * duration.as_ns()
             }
         );
-        // Existing session imports continue to name the same solver-free record.
-        let _: rm_sim_physics::session::Stamp = session.stamp();
         let before = session.stamp();
         assert!(session.step(u64::MAX).is_err());
         assert_eq!(session.stamp(), before);

@@ -22,6 +22,7 @@
 use super::*;
 use crate::manipulator_collision::CollisionPart;
 use sim_engine::model::BodyState;
+use sim_physics::backend::{CookedBodyExt, RuntimeExt};
 use std::sync::Arc;
 
 #[path = "payload/preparation.rs"]
@@ -218,11 +219,11 @@ impl WorldPhysics {
         for payload in &self.payloads {
             let touching = self
                 .physical
-                .world
+                .world()
                 .narrow_phase
                 .contact_pairs_with(payload.collider)
                 .any(|p| p.has_any_active_contact());
-            let body = &mut self.physical.world.bodies[payload.body];
+            let body = &mut self.physical.world_mut().bodies[payload.body];
             // Prototype rolling resistance, per second, applied only during
             // contact. Free flight keeps ordinary gravity and no artificial drag.
             let damping = if touching && body.is_dynamic() {
@@ -296,8 +297,11 @@ impl WorldPhysics {
             .next()
             .expect("one payload compound")
             .build();
-        let body = self.physical.world.insert_body(body);
-        let collider = self.physical.world.insert_collider(collider, Some(body));
+        let body = self.physical.world_mut().insert_body(body);
+        let collider = self
+            .physical
+            .world_mut()
+            .insert_collider(collider, Some(body));
         self.payloads.push(Body {
             id,
             body,
@@ -316,7 +320,7 @@ impl WorldPhysics {
     /// Borrow payload hulls and copy motion without allocating; unknown identities return `None`.
     pub fn payload_telemetry(&self, id: u32) -> Option<PayloadTelemetry<'_>> {
         let p = self.payloads.iter().find(|p| p.id == id)?;
-        let body = &self.physical.world.bodies[p.body];
+        let body = &self.physical.world().bodies[p.body];
         let q = body.rotation();
         Some(PayloadTelemetry {
             id,
@@ -333,7 +337,7 @@ impl WorldPhysics {
     /// Current physical state of an installed payload, including resting objects.
     pub fn payload(&self, id: u32) -> Option<PayloadSnapshot> {
         let p = self.payloads.iter().find(|p| p.id == id)?;
-        let body = &self.physical.world.bodies[p.body];
+        let body = &self.physical.world().bodies[p.body];
         let q = body.rotation();
         Some(PayloadSnapshot {
             id,
@@ -369,7 +373,7 @@ impl WorldPhysics {
             .iter()
             .find(|p| p.id == id)
             .ok_or("missing payload")?;
-        let body = &mut self.physical.world.bodies[p.body];
+        let body = &mut self.physical.world_mut().bodies[p.body];
         let was = body.is_kinematic();
         body.set_body_type(
             if prescribed {
@@ -390,7 +394,7 @@ impl WorldPhysics {
             body.set_linvel(Vector::from_array(velocity_m_s), true);
             body.set_angvel(Vector::from_array(angular_velocity_rad_s), true);
         }
-        self.physical.world.colliders[p.collider].set_enabled(!prescribed);
+        self.physical.world_mut().colliders[p.collider].set_enabled(!prescribed);
         Ok(())
     }
 }

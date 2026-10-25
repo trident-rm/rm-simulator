@@ -4,7 +4,7 @@
 
 The first generic consumer is a headless XY positioning robot. It runs on one
 CPU thread, with no CAD, renderer, match, transport or background worker. It uses
-`PhysicalRuntime`, the same concrete Rapier scene composed by RoboMaster's
+`sim-physics::PhysicalRuntime`, the same concrete Rapier scene composed by RoboMaster's
 `WorldPhysics`. No new dependency or solver interface is required.
 
 The resource baseline is the development Mac, CPU only, with one robot. Measure
@@ -15,7 +15,7 @@ sensors, imported robots or the interactive game.
 ## Run
 
 ```sh
-cargo build -p rm-sim-physics --release --example controller_bench --locked
+cargo build -p sim-physics --release --example controller_bench --locked
 ```
 
 In the repository's Nix development shell, run:
@@ -38,6 +38,9 @@ It includes startup, preparation, 128 warmup ticks, one reset and output. The
 internal setup timer includes cooking and installation; the loop timer excludes
 setup, warmup, reset and printing. Repeat the executable after compilation has
 finished and report ranges. There is no sleep or real-time pacing.
+
+The generic example and session now live in `sim-physics`; the measurements
+below predate that crate extraction and are retained with their exact source.
 
 ## Mac baseline, 2026-10-25
 

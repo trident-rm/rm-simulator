@@ -2,18 +2,20 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # rm-sim-physics
 
-`rm-sim-physics` is a reusable, gameplay-free Rapier library: wheel and body
-dynamics, projectile flight, raw armor contacts, shared collision geometry and
-prescribed mechanism motion. It knows no match rules, CAD package, socket, Bevy or
-host clock; callers supply target endpoint poses and resolved mechanism state and
-step it once per explicit tick. It sits under the world crate and depends on no
-simulator crate except the solver-free `sim-engine` core.
+`rm-sim-physics` is the RoboMaster physical extension over `sim-physics`.
+It owns chassis models and wheel dynamics, projectiles and armor contacts,
+prescribed game mechanisms, carried objects, RM-oriented sensors and `RobotSession`.
+It applies no match rules and owns no host clock, renderer or transport.
+
+Generic cooking, runtime, `PhysicalSession`, bindings and carrier observations
+live in `sim-physics`; existing paths re-export those same types. New generic
+consumers should depend directly on `sim-physics`. RM explicitly enables that
+crate's `rapier-extension` API to preserve native construction and slice order.
 
 ## Modules
 
 | File | Owns |
 |---|---|
-| `src/runtime/session.rs` | Generic `PhysicalSession`: explicit time and transactional recipe reset over a bare `PhysicalRuntime`, with typed setup and no participant roles. |
 | `src/session.rs` | Caller-paced `RobotSession` over one `WorldPhysics`, repeatable `RobotScenario` reset, addressed commands, compact truth and explicit sampling schedules. No match authority or arbitrary checkpoint restore. |
 | `src/control.rs` | Validated held drive modes and per-wheel motor torque requests, independent of a transport or controller scheduler. |
 | `src/sensors.rs` | Prepared ideal planar/multi-layer LiDAR, caller-stamped instantaneous acquisition and reusable output buffers over explicit geometry captures. |
@@ -24,13 +26,8 @@ simulator crate except the solver-free `sim-engine` core.
 | `src/chassis.rs` | Compatibility facade for chassis configuration, commands, snapshots and borrowed telemetry; existing public paths remain unchanged. |
 | `src/chassis/model.rs` | Physical descriptions, presets, validation and evaluated model geometry, including conversion to `WheelModel`; no solver handles or stepping. |
 | `src/chassis/backend/` | Rapier body/collider construction (`construction.rs`), ordered wheel queries and forces (`dynamics.rs`), prescribed folding/gimbal adaptation (`prescribed.rs`), controls and observations (`mod.rs`). |
-| `src/cooking.rs` / `src/cooking/` | Shared cooked mesh/body shapes and assembly resources retaining solver-free source descriptions. |
-| `src/runtime/bindings.rs` | Explicit body keys, world-scoped bindings, source/state reads and generic physical control. |
-| `src/runtime/directional.rs` | Opt-in regularized tread/roller friction against fixed terrain, with load-lag and contact-patch limitations documented in the wheel-contact guide. |
-| `src/runtime/observations.rs` | Read-only native participant/collider identities and opt-in bounded physical contact samples, independent of scoring and command bindings. |
-| `src/runtime/joints.rs` | Generic physical joint installation, world-scoped bindings, scalar state, motors and held effort. |
-| `src/runtime/assembly.rs` | Transactional prepared-assembly installation/removal, placement and source-to-live binding maps. |
-| `src/runtime.rs` | `PhysicalRuntime`: generic native scene, bindings, integration slices and physical observations. `projectile::WorldPhysics` composes its RoboMaster participant adapters over that scene. |
+| `src/cooking.rs` | Re-exports of `sim-physics` cooked resources, with RM construction parity regressions. |
+| `src/runtime.rs` | Compatibility exports of `sim-physics` runtime APIs and the RM `WorldPhysics` facade. |
 | `src/projectile.rs` | `Shot`, `Caliber`, `Contact`, `TargetFace`, `TargetFrames`, `StaticGeometry` and `ProjectilePolicy`; participant adapters and compatibility world exports. |
 | `src/queries.rs` | Immutable validated ray batches and capture-local hits, with no public solver handles; callers retain output storage. |
 | `src/geometry.rs` | Shared collision captures and read-only clearance queries consumed by the world facade. |
@@ -46,7 +43,7 @@ detection intervals; the world crate owns those decisions.
 
 ## Dependencies
 
-`sim-engine` (shared contracts and wheel laws), `rapier3d-f64`, `serde`, `glam` for source rig FK (the same locked version as
+`sim-physics` (generic runtime and cooking), `sim-engine` (shared contracts and wheel laws), `rapier3d-f64`, `serde`, `glam` for source rig FK (the same locked version as
 world), and the standalone `mid360-sim` pattern generator. The
 crate never depends on `rm-sim-world`,
 `rm-sim-gameplay`, `rm-sim-server`, `rm-sim-render` or Bevy,
@@ -61,7 +58,7 @@ runtime. The [controller bench](../../docs/controller-bench.md) installs a small
 XY positioning robot, applies caller-side force feedback, steps and resets:
 
 ```sh
-cargo run -p rm-sim-physics --release --example controller_bench --locked -- 1000
+cargo run -p sim-physics --release --example controller_bench --locked -- 1000
 ```
 
 It needs no CAD, display, server or match, and shares the game's physical runtime.
@@ -154,7 +151,7 @@ exposing native handles. Explicit mass/inertia, held world wrenches, dynamic
 velocity and interpolated kinematic endpoints are supported. Bindings reject
 other worlds/removal/reset; reacquire a key after recipe reconstruction. See
 [source-described bodies](../../docs/physics-reuse.md#source-described-bodies-and-bindings)
-and `examples/body_runtime.rs` for usage and current unsupported capabilities.
+and `sim-physics/examples/body_runtime.rs` for usage and current unsupported capabilities.
 
 ## Explicit convex bodies
 

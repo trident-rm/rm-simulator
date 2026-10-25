@@ -24,11 +24,15 @@ timing constants, validated `RayQuery`/`RayHit`, `DriveControl`/`WheelTorques` a
 scalar wheel model/state/integration. It depends only on numerical and
 serialization libraries. It contains no solver, scene loader, team identity,
 match authority, networking, renderer or host clock. It can be built/tested
-without Rapier or a running simulator.
+without Rapier or a running simulator. The generic physics and renderer crates
+have no RM dependencies, including tests; the standalone viewer uses those
+crates directly without any RM crate.
 
-`rm-sim-physics` retains the concrete Rapier world, chassis construction,
-source model fitting, query execution, collision captures, sensors and physical
-sessions. It re-exports the moved contracts, so existing caller paths name the
+`sim-physics` owns the concrete Rapier world, cooking, body/joint bindings,
+query execution, physical captures, carrier observations and generic sessions.
+`rm-sim-physics` owns source-fitted RM chassis, projectiles, prescribed mechanisms,
+RM-oriented sensor/session adapters and scoring. It explicitly enables the
+generic crate's `rapier-extension` API for native construction and slice ordering. It re-exports the moved contracts, so existing caller paths name the
 same Rust types without conversion, model copies or duplicate implementations.
 The chassis-to-wheel-model conversion stays beside the chassis configuration;
 wheel laws and arithmetic remain in core. Query normalization uses the same

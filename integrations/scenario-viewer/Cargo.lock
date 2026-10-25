@@ -4137,11 +4137,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mid360-sim"
-version = "0.1.0"
-source = "git+https://github.com/hxyulin/mid360-sim.git?rev=c832a45bbde4d6cc5ef1e09afb0102b699fdc8d6#c832a45bbde4d6cc5ef1e09afb0102b699fdc8d6"
-
-[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5353,23 +5348,12 @@ dependencies = [
  "clap",
  "nalgebra",
  "png",
- "rm-sim-physics",
  "rxui",
  "serde",
  "serde_json",
  "sim-engine",
+ "sim-physics",
  "sim-render",
-]
-
-[[package]]
-name = "rm-sim-physics"
-version = "0.1.0"
-dependencies = [
- "glam 0.33.12",
- "mid360-sim",
- "rapier3d-f64",
- "serde",
- "sim-engine",
 ]
 
 [[package]]
@@ -5647,6 +5631,15 @@ version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
  "serde",
+]
+
+[[package]]
+name = "sim-physics"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "rapier3d-f64",
+ "sim-engine",
 ]
 
 [[package]]

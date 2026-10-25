@@ -163,7 +163,7 @@ impl PhysicalRuntime {
     ///
     /// ```
     /// use sim_engine::model::{BodyKind, BodyState, CarrierKey, RigidBodyDescription};
-    /// use rm_sim_physics::{Pose, StepDuration, cooking::CookedRigidBody,
+    /// use sim_physics::{Pose, StepDuration, cooking::CookedRigidBody,
     ///     runtime::{BodyKey, PhysicalRuntime}};
     /// let model = CookedRigidBody::new(RigidBodyDescription::new(BodyKind::Fixed, vec![])?)?;
     /// let mut runtime = PhysicalRuntime::new(StepDuration::HZ_1000);
@@ -202,10 +202,10 @@ impl PhysicalRuntime {
     /// returns an error before mutation. No observer is allocated by default.
     ///
     /// ```
-    /// use rm_sim_physics::{WorldPhysics, TargetFrames};
-    /// let mut world = WorldPhysics::new(&[], 0.);
+    /// use sim_physics::PhysicalRuntime;
+    /// let mut world = PhysicalRuntime::new(sim_physics::StepDuration::HZ_128);
     /// world.enable_contact_observations(64)?;
-    /// world.step(0, &TargetFrames::new(vec![]))?;
+    /// world.step(0)?;
     /// let mut retained = Vec::new();
     /// world.drain_physical_contacts(&mut retained);
     /// world.disable_contact_observations();
