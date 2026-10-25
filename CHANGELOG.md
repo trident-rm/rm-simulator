@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Add a caller-paced generic `PhysicalSession` with exact time and transactional
+  recipe reset over the same runtime used by RoboMaster. Include a CPU-only XY
+  positioning robot with external feedback control, repeatable reset tests and
+  setup/reset/stepping measurements, without a match, renderer or new dependency.
+
 - Expose last-slice joint actuator effort and add a torque/servo response bench
   with known-inertia acceleration, opposing loads, saturation and hard-stop
   validation at 128/1000 Hz. Keep actuator output distinct from reaction torque

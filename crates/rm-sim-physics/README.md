@@ -13,6 +13,7 @@ simulator crate except the solver-free `rm-sim-engine` core.
 
 | File | Owns |
 |---|---|
+| `src/runtime/session.rs` | Generic `PhysicalSession`: explicit time and transactional recipe reset over a bare `PhysicalRuntime`, with typed setup and no participant roles. |
 | `src/session.rs` | Caller-paced `RobotSession` over one `WorldPhysics`, repeatable `RobotScenario` reset, addressed commands, compact truth and explicit sampling schedules. No match authority or arbitrary checkpoint restore. |
 | `src/control.rs` | Validated held drive modes and per-wheel motor torque requests, independent of a transport or controller scheduler. |
 | `src/sensors.rs` | Prepared ideal planar/multi-layer LiDAR, caller-stamped instantaneous acquisition and reusable output buffers over explicit geometry captures. |
@@ -54,6 +55,18 @@ without `rm-sim-world`; match composition continues to use the same physical
 plant. `rm-sim-app` also uses it for the `physical_scene` example.
 
 ## Bare robot sessions
+
+For a generic mechanism, use `runtime::session::PhysicalSession` over the bare
+runtime. The [controller bench](../../docs/controller-bench.md) installs a small
+XY positioning robot, applies caller-side force feedback, steps and resets:
+
+```sh
+cargo run -p rm-sim-physics --release --example controller_bench --locked -- 1000
+```
+
+It needs no CAD, display, server or match, and shares the game's physical runtime.
+The recipe retains prepared shapes rather than cooking them again on reset.
+Below, `RobotSession` adds the existing RoboMaster physical participant facade.
 
 ```sh
 cargo run -p rm-sim-physics --release --example robot_session --locked

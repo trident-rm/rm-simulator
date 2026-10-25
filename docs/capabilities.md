@@ -15,6 +15,8 @@ The guides linked below record exact contracts and measured limitations.
 - **Physical runtime (`rm-sim-physics`):** one Rapier scene for cooked resources,
   body/joint commands, queries, physical contacts and passive sensor acquisition.
   RoboMaster-specific chassis, projectile, payload and target adapters share it.
+  A generic `PhysicalSession` supplies caller-paced time and recipe reset; the
+  [CPU controller bench](controller-bench.md) exercises a non-RoboMaster robot.
 - **Gameplay and world:** separate deterministic competition authorities, with
   `Field` and `MatchSession` composing rules and physics. `RobotSession` supports
   standalone physical scenarios without match authority.

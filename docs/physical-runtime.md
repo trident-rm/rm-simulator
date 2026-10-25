@@ -17,6 +17,21 @@ carrier traces, scoring latches and projectile retirement.
 
 ## Lifecycle and ownership
 
+`runtime::session::PhysicalSession` owns a bare runtime, exact completed time and
+a typed initial-scene recipe. Its `step(count)` supplies starting timestamps to
+the ordinary runtime. `reset()` prepares a replacement before swapping and
+rejects a changed integration duration. Failed setup leaves live state intact;
+successful reset invalidates bindings. The shared `engine::time::Stamp` remains
+available through the existing `physics::session::Stamp` import.
+
+Use this session for generic mechanisms without team, armor or gun concepts.
+The [controller bench](controller-bench.md) constructs a three-link XY robot,
+runs external feedback, reads compact state and resets. The caller explicitly
+interleaves commands, `step(1)` and observations. A multi-step call retains only
+the last tick's bounded contact output; consume contacts after each tick when
+needed. Sensor/controller history remains caller-owned. No callback scheduler,
+observation history, thread or boxed recipe is added.
+
 | Stage | API and owner |
 |---|---|
 | Describe | Solver-free engine body, collider, joint and assembly descriptions |

@@ -3,6 +3,16 @@
 //! Exact caller-paced integration time, independent of any solver or host clock.
 use serde::{Deserialize, Serialize};
 
+/// Completed integration steps and elapsed simulation time, without a host clock.
+/// Nanoseconds are authoritative when comparing simulations at different rates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stamp {
+    /// Completed physical integration steps since scenario construction or reset.
+    pub tick: u64,
+    /// Elapsed simulation nanoseconds, independent of host time.
+    pub time_ns: u64,
+}
+
 /// Default simulation step, in exact nanoseconds (128 Hz).
 pub const DEFAULT_TICK_NS: u64 = 7_812_500;
 

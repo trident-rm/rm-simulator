@@ -5,7 +5,8 @@
 Solver-free core for the incrementally separated robotics simulation engine.
 
 - `Pose`: FLU translation in metres and wxyz quaternion storage.
-- `time`: validated exact step durations and the existing 128 Hz default.
+- `time`: completed simulation `Stamp`, validated exact step durations and the
+  existing 128 Hz default. Physics sessions retain their existing timestamp import.
 - `model`: validated immutable triangle surfaces with shared source buffers,
   independent of backend cooking; validated primitive/collider/body descriptions
   retain mounting frames, explicit contact data and dynamic mass/COM/inertia.

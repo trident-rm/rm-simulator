@@ -50,6 +50,10 @@ include a source-derived suspension, free four-wheel chassis, torque/servo
 response tests and an optional numerical comparison with MuJoCo; these do not
 replace the default game chassis or add a MuJoCo runtime dependency.
 
+For a small CPU-only starting point, the [controller bench](docs/controller-bench.md)
+constructs a generic XY positioning robot, runs feedback and resets through the
+shared physical runtime without loading a match, CAD or renderer.
+
 ## Contents
 
 - [Quick start](#quick-start)

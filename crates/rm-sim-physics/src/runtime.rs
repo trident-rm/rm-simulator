@@ -23,6 +23,8 @@ mod joints;
 mod observations;
 #[path = "runtime/scenery.rs"]
 mod scenery;
+/// Caller-paced stepping and recipe reset without RoboMaster participants.
+pub mod session;
 /// Compatibility path for the RoboMaster participant facade.
 pub use crate::projectile::WorldPhysics;
 pub use assembly::{AssemblyBinding, AssemblyKeys};

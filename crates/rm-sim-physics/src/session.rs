@@ -13,21 +13,15 @@
 /// Bounded stepping over independent physical sessions.
 pub mod batch;
 
+/// Shared simulation timestamp; retained here for existing session callers.
+pub use rm_sim_engine::time::Stamp;
+
 use crate::{
     Shot, StepDuration, TargetFace, TargetFrames, WorldPhysics,
     chassis::{ChassisCommand, ChassisSnapshot},
     control::WheelTorques,
     projectile::Contact,
 };
-
-/// Simulation timestamp; nanoseconds are authoritative across integration rates.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stamp {
-    /// Completed physical integration steps since scenario construction.
-    pub tick: u64,
-    /// Elapsed simulation nanoseconds, independent of host time.
-    pub time_ns: u64,
-}
 
 /// An addressed physical request for a trusted in-process controller.
 #[derive(Clone, Debug, PartialEq)]
