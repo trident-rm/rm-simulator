@@ -97,3 +97,26 @@ The viewer test compares its physical poses/time against an independent headless
 episode and exercises reset. The dependency guard rejects RM/render dependencies
 from the example. Isolated validation also compiles it with native extension
 access disabled, so workspace feature unification cannot hide an API dependency.
+
+## Validation and Mac measurements, 2026-10-25
+
+Measured source: `e172f243de0fe0552e2326577d18ea213cce0fd0`. The generic crate
+source was unchanged by this example. `just verify` and viewer Clippy passed.
+The viewer suite passed 29 tests, with 3 GPU-oriented tests ignored. A separate
+1100×760 offscreen Metal capture was rendered and inspected. An eight-second
+CSV run passed acquisition timestamp, actuator limit and target-error checks
+for all 8000 rows; the headless viewer ran the same 8000 physical ticks.
+
+Five separate release processes on Apple M5 Max / macOS 27.0.1 / rustc 1.99.1
+each ran 100 simulated seconds with CSV disabled, after compilation and checks
+had finished. Median loop time was 188.122 ms (187.961–189.275 ms), or 1.881 µs
+per tick. Peak resident memory across the five processes was 2.969 MiB. Median
+setup time was 0.056 ms; isolated cold-start latency was not measured. These
+figures cover this two-body fixture and its actual motor/sensor/controller loop.
+They do not establish a budget for rendering, CAD arenas or other robot models.
+
+Raw timing/validation logs, metadata, the CSV and rendered preview are development
+artifacts in gitignored `local-assets/pendulum-example-20261025/`. Reproduce the
+CPU measurements by building first, then running
+`/usr/bin/time -l target/nix/release/sim-pendulum-example --seconds 100` in the
+Nix development environment, or use your normal Cargo target path.
