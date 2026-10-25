@@ -1229,3 +1229,33 @@ freeze default armor until reselection. Native source detector dimensions drive
 the radius; no asset changes are needed. Earlier statements that adaptive armor
 only records observations are superseded. Radar hardware/wireless integration
 remains unavailable. See [adaptive armor](gameplay.md#rmuc-2027-adaptive-armor).
+
+## Reviewed whole-field replacement
+
+The current bundled package uses the reviewed rm-map-tools whole-field visual
+composition for both drawing and triangle collision. It has 207,921 placed
+triangles in each representation, compared with 355,542 visual and 545,599
+collision triangles in the previous installed package. The runtime boundary adds
+48 collision triangles. Both representations remain triangle meshes; this
+update does not enable the separate native-primitive or heightfield trials.
+
+Six paired asset files retain byte-identical visual/collision geometry. The
+producer preserves the source placements and inserts runtime joint frames without
+moving rest geometry. The Base, Outpost and both Rune banks retain their optical
+selectors. Rune hubs rotate with their arms; the central logos stay fixed. The
+Base retains the existing illustrative 0.25 m cover travel. Dart and Tech Core
+actuation remains unsupported by the match adapter.
+
+`runtime-build.json` records the source definition selections and counts.
+`geometry-verification.json` records the composed-scene comparison. The producer
+is `benchmarks/2026-10-26-reviewed-runtime/package.py` in rm-map-tools. The updated
+inventory remains pinned in `scripts/release-field-2027.json`.
+
+These are reviewed visual approximations used as colliders, including thin
+sheets and marking layers. A deterministic comparison with the previous collision
+meshes found 118 of 111,990 height queries outside 10 mm. None of the old sampled
+surfaces lost all replacement support; some queries hit different heights.
+The largest difference, 2.523 m, is an additional high Dart surface in the new
+mesh rather than a replacement floor gap. This is not collision equivalence or
+a watertight-solid guarantee. Performance measurements use the same simulator
+binary and explicit package paths; geometry quality changes with the package.

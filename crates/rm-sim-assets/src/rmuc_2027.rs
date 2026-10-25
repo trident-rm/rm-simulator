@@ -261,6 +261,10 @@ impl<C> Bindings<C> {
         );
         let mut rune_bodies = std::collections::BTreeSet::new();
         for (index, (motion, arms)) in self.rune_motion.iter().zip(&self.rune_arms).enumerate() {
+            let hub_prefix = format!(
+                "rune/banks/bank-{}/hub-cluster/mesh-",
+                if index == 0 { "a" } else { "b" }
+            );
             let expected = if index == 0 {
                 "rune.red.spin"
             } else {
@@ -276,9 +280,10 @@ impl<C> Bindings<C> {
                             .iter()
                             .any(|body| body.starts_with(&format!("{arm}/mesh-"))))
                     && motion.bodies.iter().all(|body| rune_bodies.insert(body)
-                        && arms
-                            .iter()
-                            .any(|arm| body.starts_with(&format!("{arm}/mesh-")))),
+                        && (body.starts_with(&hub_prefix)
+                            || arms
+                                .iter()
+                                .any(|arm| body.starts_with(&format!("{arm}/mesh-"))))),
                 "duplicate or unowned native Rune source geometry"
             );
         }
@@ -429,5 +434,39 @@ mod tests {
         let mut invalid = valid;
         invalid.outpost_motion[0].bodies = vec!["unknown".into()];
         assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn rune_motion_accepts_its_hub_and_rejects_foreign_or_duplicate_parts() {
+        let mut valid = binding();
+        for (bank, id) in [("a", "rune.red.spin"), ("b", "rune.blue.spin")] {
+            let arms = std::array::from_fn(|i| format!("rune/banks/bank-{bank}/arm-{i}"));
+            let mut bodies: Vec<_> = arms.iter().map(|arm| format!("{arm}/mesh-1")).collect();
+            bodies.push(format!("rune/banks/bank-{bank}/hub-cluster/mesh-2"));
+            valid.rune_arms.push(arms);
+            valid.rune_motion.push(Motion {
+                id: id.into(),
+                bodies,
+                axis: [0., 0., 1.],
+                pivot_m: [0.; 3],
+                limits: None,
+            });
+        }
+        valid.validate_source(1, 2).unwrap();
+        let mut invalid = valid.clone();
+        invalid.rune_motion[0]
+            .bodies
+            .push("rune/banks/bank-b/hub-cluster/mesh-3".into());
+        assert!(invalid.validate_source(1, 2).is_err());
+        let mut invalid = valid.clone();
+        invalid.rune_motion[0]
+            .bodies
+            .push(valid.rune_motion[0].bodies[0].clone());
+        assert!(invalid.validate_source(1, 2).is_err());
+        let mut invalid = valid;
+        invalid.rune_motion[0]
+            .bodies
+            .push("rune/banks/bank-a/fixed-logo/mesh-4".into());
+        assert!(invalid.validate_source(1, 2).is_err());
     }
 }

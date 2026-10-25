@@ -15,8 +15,8 @@ fn reviewed_field_has_live_motion_native_rules_and_restorable_authority() -> any
     let cad = cad_assets::load(&root)?;
     let bindings = cad.rmuc_2027.as_ref().expect("native bindings");
     assert_eq!(bindings.schema_version, 2);
-    assert_eq!(bindings.outpost_motion[0].bodies.len(), 18);
-    assert_eq!(bindings.parts.len(), 386);
+    assert_eq!(bindings.outpost_motion[0].bodies.len(), 13);
+    assert_eq!(bindings.parts.len(), 105);
     assert_eq!(bindings.rune_motion.len(), 2);
     assert_eq!(bindings.rune_arms.len(), 2);
     assert_eq!(bindings.config().terrain_zones.len(), 30);
@@ -41,7 +41,7 @@ fn reviewed_field_has_live_motion_native_rules_and_restorable_authority() -> any
             .sum::<usize>();
     assert_eq!(
         fixed + moving + terrain.boundary.triangles.len(),
-        545_599 + 48
+        207_921 + 48
     );
     let config = layout::field_config(&cad, &layout::LayoutOptions::default());
     let mut field = Field::new(&config)?;
