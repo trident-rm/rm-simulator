@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Use sw-rs as the sole native SolidWorks metadata and mesh reader. Remove the
+  legacy openswx/sldkit CLI flags, require versioned reader output at both stages,
+  and retain existing catalogue, project and review formats.
+
 - Add an independent pendulum example with a voltage/current-limited DC motor,
   a 200 Hz quantized encoder, 100 Hz measured feedback and 1000 Hz physics.
   Exercise complete extension reset and shared headless/viewer model use through

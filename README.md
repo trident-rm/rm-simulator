@@ -847,5 +847,5 @@ controls; the HUD shows referee power limits, buffer and cuts. See the
 [Sentry controls](docs/app-options.md#sentry-rule-controls) and
 [native rules](docs/gameplay.md#sentry-modes-postures-and-interventions).
 
-The offline SolidWorks workbench also accepts the independent sw-rs reader for
+The offline SolidWorks workbench uses the independent sw-rs reader for
 metadata and cached Part meshes; see the [sw-rs workflow](docs/sw-rs-import.md).

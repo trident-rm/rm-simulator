@@ -606,7 +606,7 @@ redistributed by this repository.
 
 ### Offline native metadata extractor
 
-`scripts/extract-solidworks.py` turns `swx_dump` output into a versioned
+`scripts/extract-solidworks.py` turns `sw-dump` output into a versioned
 `rm-solidworks-metadata-v1` JSON catalogue. Use it alongside the checked STEP
 and mesh package, before assigning physical links. It preserves document hashes,
 configuration names/properties, cached physical properties, component names,
@@ -614,23 +614,14 @@ child configuration references, suppression/visibility flags and source matrices
 It follows resolved native references once per document, including cycles and
 suppressed instances, without expanding an exponential occurrence tree.
 
-Build the optional upstream CLI outside the simulator workspace. The tested
-revision is pinned explicitly below; the caller supplies third-party sources.
-The small CMake wrapper builds the upstream parser and CLI, excluding its HTTP
-server. Neither openswx nor its native dependencies enter the Rust dependency
-graph.
+Build the sw-rs CLI outside the simulator workspace. Follow the
+[sw-rs build and import instructions](sw-rs-import.md). The earlier openswx
+probe above records historical evidence; the current extractor uses sw-rs only.
 
 ```sh
-git clone https://github.com/schwitters/openswx local-assets/openswx-source
-git -C local-assets/openswx-source checkout a838a83e267fadbf8f01fd75a288b2ae517c9133
-nix shell nixpkgs#cmake nixpkgs#ninja nixpkgs#pugixml nixpkgs#nlohmann_json nixpkgs#zlib -c \
-  cmake -S scripts/openswx -B local-assets/openswx-build -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DOPENSWX_SOURCE="$PWD/local-assets/openswx-source"
-nix shell nixpkgs#cmake -c cmake --build local-assets/openswx-build -j 4
 python3 scripts/extract-solidworks.py /path/to/source/robot.SLDASM \
   --search-root /path/to/source \
-  --swx-dump local-assets/openswx-build/swx_dump \
-  --openswx-revision a838a83e267fadbf8f01fd75a288b2ae517c9133 \
+  --sw-rs /path/to/sw-rs/target/release/sw-dump \
   --output local-assets/robot-native-metadata.json
 ```
 

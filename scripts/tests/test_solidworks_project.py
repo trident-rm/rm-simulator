@@ -124,17 +124,20 @@ class ProjectPreparationTests(unittest.TestCase):
                 kwargs["stdout"].write(json.dumps(envelope).encode())
                 return subprocess.CompletedProcess(command, 0)
             with patch.object(PROJECT.subprocess, "run", side_effect=run):
-                vertices, triangles, _ = PROJECT.read_sw_rs_geometry(
+                vertices, triangles, _ = PROJECT.read_geometry(
                     source, source, PROJECT.digest(source), "default", 0, 1)
                 self.assertEqual(vertices[1], [0.001, 0., 0.])
                 self.assertEqual(triangles, [[0, 1, 2]])
+                envelope.pop("schema")
+                with self.assertRaisesRegex(ValueError, "schema"):
+                    PROJECT.read_geometry(source, source, PROJECT.digest(source), "default")
                 envelope["schema"] = "future"
                 with self.assertRaisesRegex(ValueError, "schema"):
-                    PROJECT.read_sw_rs_geometry(source, source, PROJECT.digest(source), "default")
+                    PROJECT.read_geometry(source, source, PROJECT.digest(source), "default")
                 envelope["schema"] = "sw-rs-geometry-v1"
                 geometry["source"]["sha256"] = "changed"
                 with self.assertRaisesRegex(ValueError, "hash mismatch"):
-                    PROJECT.read_sw_rs_geometry(source, source, PROJECT.digest(source), "default")
+                    PROJECT.read_geometry(source, source, PROJECT.digest(source), "default")
 
     def test_placeholder_config_name_requires_single_source_and_matching_index(self):
         g={"length_unit":"millimeter","configurations":[{"name":"Config-0","id":"sldprt:model:configuration#partition:0","source_index":0}],"model":{"tessellations":[{"vertices":[[0.,0.,0.],[1.,0.,0.],[0.,1.,0.]],"triangles":[[0,1,2]]}]}}

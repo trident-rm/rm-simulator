@@ -2,15 +2,15 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Native SolidWorks import with sw-rs
 
-The offline SolidWorks workbench accepts the independent `sw-rs` CLI for both
-metadata and cached Part meshes. Build the reader separately, then pass its path
+The offline SolidWorks workbench uses the independent
+[`sw-rs`](https://github.com/hxyulin/sw-rs) CLI for metadata and cached Part meshes. Build the reader separately, then pass its path
 to the two preparation scripts. It adds no dependency to simulator crates and
 never changes the original CAD or the live match runtime.
 
 ## Build and prepare
 
-From the `sw-rs` checkout, build `sw-dump` with `mbx build --release --locked`
-(or Cargo if mbx is unavailable). From rm-simulator:
+From the `sw-rs` checkout, build `sw-dump` with
+`cargo build --release --locked --bin sw-dump`. From rm-simulator:
 
 ```sh
 python3 scripts/extract-solidworks.py /path/to/native/robot.SLDASM \
@@ -25,14 +25,16 @@ python3 scripts/prepare-solidworks-project.py /path/to/robot.catalogue.json \
   --output /path/to/robot.project.json
 ```
 
-`--document` must exactly match the catalogue's relative source path. The source
-reader is selected explicitly. Optional `--reader-revision` on extraction records
-a declared sw-rs revision alongside the binary SHA-256. The project records a
+`--document` must exactly match the catalogue's relative source path. Pass the
+`sw-dump` path explicitly at both stages. Optional `--reader-revision` on extraction
+records a declared sw-rs revision alongside the binary SHA-256. The project records a
 reader identity and binary hash under `provenance.geometry_reader`; it does not
-claim the binary is openswx or sldkit. Legacy `--swx-dump` and `--sldkit` options
-remain available for comparison and unsupported files. They are mutually
-exclusive with `--sw-rs` at each stage. A sw-rs selection requires the versioned
-`sw-rs-metadata-v1` / `sw-rs-geometry-v1` interchange envelope.
+claim the binary is openswx or sldkit. Both stages require the versioned
+`sw-rs-metadata-v1` / `sw-rs-geometry-v1` interchange envelope. The legacy
+`--swx-dump`, `--openswx-revision` and `--sldkit` flags have been removed. Replace
+reader paths with a built `sw-dump` and use `--reader-revision` when recording a
+revision. Existing catalogues and reviewed projects remain readable; reimport
+with sw-rs to produce fresh reader provenance.
 
 Continue through the [reviewed import workbench](solidworks-importer.md).
 Reference omissions require its existing explicit `--omit-missing-references`

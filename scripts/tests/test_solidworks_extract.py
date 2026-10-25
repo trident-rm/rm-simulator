@@ -86,17 +86,17 @@ class SolidworksExtractionTests(unittest.TestCase):
             assembly.write_bytes(b"source assembly")
             part.write_bytes(b"source part")
             docs = {
-                assembly: {"doc_type": "assembly", "configurations": [
+                assembly: {"schema": "sw-rs-metadata-v1", "doc_type": "assembly", "configurations": [
                     {"name": "stowed", "preview_png_base64": "omit", "components": [
                         {"name": "part", "path": "part.SLDPRT", "transform": IDENTITY,
                          "is_suppressed": True, "is_hidden": True},
                         {"path": "missing.SLDPRT", "transform": IDENTITY}]},
                     {"name": "raised", "components": []}]},
-                part: {"doc_type": "part", "configurations": [
+                part: {"schema": "sw-rs-metadata-v1", "doc_type": "part", "configurations": [
                     {"name": "default", "components": [
                         {"path": "root.SLDASM", "transform": IDENTITY}]}]}}
             with patch.object(EXTRACT, "read_document", side_effect=lambda _, p, *_a: (docs[p], None)):
-                catalogue = EXTRACT.extract([assembly], root, root / "swx_dump")
+                catalogue = EXTRACT.extract([assembly], root, root / "sw-dump")
             self.assertEqual(len(catalogue["documents"]), 2)
             document = catalogue["documents"][0]
             self.assertEqual(document["source"]["sha256"], EXTRACT.digest(assembly))
@@ -117,9 +117,9 @@ class SolidworksExtractionTests(unittest.TestCase):
             a, b = root / "a.SLDASM", root / "b.SLDPRT"
             a.touch()
             b.touch()
-            doc = {"configurations": [{"components": [{"path": b.name}]}]}
+            doc = {"schema": "sw-rs-metadata-v1", "configurations": [{"components": [{"path": b.name}]}]}
             with patch.object(EXTRACT, "read_document", return_value=(doc, None)):
-                result = EXTRACT.extract([a], root, root / "swx_dump", max_documents=1)
+                result = EXTRACT.extract([a], root, root / "sw-dump", max_documents=1)
             occurrence = result["documents"][0]["configurations"][0]["occurrences"][0]
             self.assertIsNone(occurrence["resolution"]["document_id"])
             self.assertEqual(occurrence["resolution"]["status"], "not_parsed_document_limit")
@@ -131,7 +131,7 @@ class SolidworksExtractionTests(unittest.TestCase):
             source.touch()
             with patch.object(EXTRACT, "read_document", return_value=(
                     None, {"code": "parser_nonzero_exit", "exit": 2})):
-                result = EXTRACT.extract([source], root, root / "swx_dump")
+                result = EXTRACT.extract([source], root, root / "sw-dump")
             self.assertEqual(result["documents"][0]["status"], "failed")
             self.assertEqual(result["diagnostics"][0]["exit"], 2)
             json.dumps(result, allow_nan=False)
@@ -171,7 +171,7 @@ class SolidworksExtractionTests(unittest.TestCase):
                     "mass_properties": {"mass": 1, "center_of_gravity": {"x": 0, "y": 0, "z": 0}},
                     "components": [{"path": "missing.SLDPRT", "transform": None}]}]}
             with patch.object(EXTRACT, "read_document", return_value=(document, None)):
-                result = EXTRACT.extract([source], root, root / "sw-dump", reader="sw-rs")
+                result = EXTRACT.extract([source], root, root / "sw-dump")
             row = result["documents"][0]
             self.assertNotIn("preview_png", row["metadata"])
             config = row["configurations"][0]
@@ -179,12 +179,17 @@ class SolidworksExtractionTests(unittest.TestCase):
             self.assertEqual(config["physical_properties"]["upstream_declared_units"], "unverified")
             self.assertFalse(config["occurrences"][0]["transform_checks"]["rigid_structure"])
             self.assertEqual(result["diagnostics"][0]["code"], "native_reader_diagnostic")
-            document["schema"] = "future-schema"
+            document.pop("schema")
             with patch.object(EXTRACT, "read_document", return_value=(document, None)):
-                result = EXTRACT.extract([source], root, root / "sw-dump", reader="sw-rs")
+                result = EXTRACT.extract([source], root, root / "sw-dump")
             self.assertEqual(result["documents"][0]["status"], "failed")
             self.assertEqual(result["diagnostics"][0]["code"], "unsupported_reader_schema")
-        self.assertEqual(EXTRACT.matrix_checks(IDENTITY, "sw-rs")["source_presence"], "native_attribute_present")
+            document["schema"] = "future-schema"
+            with patch.object(EXTRACT, "read_document", return_value=(document, None)):
+                result = EXTRACT.extract([source], root, root / "sw-dump")
+            self.assertEqual(result["documents"][0]["status"], "failed")
+            self.assertEqual(result["diagnostics"][0]["code"], "unsupported_reader_schema")
+        self.assertEqual(EXTRACT.matrix_checks(IDENTITY)["source_presence"], "native_attribute_present")
 
     def test_child_configuration_is_resolved_without_defaulting_to_first(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -193,12 +198,12 @@ class SolidworksExtractionTests(unittest.TestCase):
             a.touch()
             b.touch()
             docs = {
-                a: {"configurations": [{"components": [
+                a: {"schema": "sw-rs-metadata-v1", "configurations": [{"components": [
                     {"path": b.name, "ref_config": "second"},
                     {"path": b.name, "ref_config": "missing"}]}]},
-                b: {"configurations": [{"name": "first"}, {"name": "second"}]}}
+                b: {"schema": "sw-rs-metadata-v1", "configurations": [{"name": "first"}, {"name": "second"}]}}
             with patch.object(EXTRACT, "read_document", side_effect=lambda _, p, *_a: (docs[p], None)):
-                result = EXTRACT.extract([a], root, root / "swx_dump")
+                result = EXTRACT.extract([a], root, root / "sw-dump")
             occurrences = result["documents"][0]["configurations"][0]["occurrences"]
             self.assertTrue(occurrences[0]["resolution"]["configuration_id"].endswith("configuration:1"))
             self.assertNotIn("configuration_id", occurrences[1]["resolution"])

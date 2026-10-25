@@ -2,9 +2,8 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Reviewed SolidWorks import workbench
 
-The independent [sw-rs import workflow](sw-rs-import.md) supplies both metadata
-and cached Part meshes. The older openswx/sldkit commands below remain available
-for compatibility and comparison.
+The [sw-rs import workflow](sw-rs-import.md) supplies both metadata and cached
+Part meshes.
 
 The optional RXUI viewer can review native Part occurrences, assign them to rigid
 bodies, fit collision proxies and prepare a physical assembly with explicit mass,
@@ -14,20 +13,23 @@ sidecars. It does not modify a multiplayer robot or install a new game profile.
 
 ## Prepare native geometry
 
-First build an openswx catalogue with the existing
-[native extraction workflow](hardware-models.md#offline-native-metadata-extractor).
-The separate `sldkit-rs geometry` CLI supplies cached native display tessellation;
-neither parser enters the simulator dependency graph. The geometry CLI is from
-[sldkit](https://github.com/monozukuri-ai/sldkit); its binary hash and the catalogue
-hash are recorded in the project, along with per-Part native SHA-256 identities.
-These are provenance records, not a certificate that edited project data still
-matches CAD.
+Build `sw-dump` from [sw-rs](https://github.com/hxyulin/sw-rs) with
+`cargo build --release --locked --bin sw-dump`. It stays outside the simulator
+dependency graph. Extract a metadata catalogue, then prepare the review project.
+Both stages record the reader binary hash; the project also records the catalogue
+hash and per-Part native SHA-256 identities. These records do not certify edited
+project data against CAD.
 
 ```sh
+python3 scripts/extract-solidworks.py /path/to/native-files/robot.SLDASM \
+  --search-root /path/to/native-files \
+  --sw-rs /path/to/sw-rs/target/release/sw-dump \
+  --output /path/to/catalogue.json
+
 python3 scripts/prepare-solidworks-project.py /path/to/catalogue.json \
   --source-root /path/to/native-files \
   --document robot.SLDASM --configuration '默认' \
-  --sldkit /path/to/sldkit-rs \
+  --sw-rs /path/to/sw-rs/target/release/sw-dump \
   --omit-missing-references \
   --output /path/to/robot.project.json
 ```

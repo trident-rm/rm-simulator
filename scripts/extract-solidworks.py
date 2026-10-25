@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-"""Extract a source-linked, unvalidated model catalogue using sw-rs (or a legacy openswx reader).
+"""Extract a source-linked, unvalidated model catalogue using sw-rs.
 
 This offline metadata sidecar complements STEP geometry. It never installs mass
 properties, assumes joints from mates, or converts source transforms into poses.
@@ -29,8 +29,8 @@ def digest(path):
     return result.hexdigest()
 
 
-def matrix_checks(values, reader="openswx"):
-    """Check structure only; an upstream identity fallback can also pass."""
+def matrix_checks(values):
+    """Check decoded native matrix structure without certifying its frame."""
     if (not isinstance(values, list) or len(values) != 16
             or any(isinstance(x, bool) or not isinstance(x, (float, int))
                    or not math.isfinite(x) for x in values)):
@@ -49,10 +49,10 @@ def matrix_checks(values, reader="openswx"):
             "basis_error": error, "homogeneous_error": affine,
             "determinant": determinant,
             "interpretation": "upstream_column_major_parent_relative_unverified",
-            "source_presence": ("native_attribute_present" if reader == "sw-rs" else "unknown_upstream_may_default_to_identity")}
+            "source_presence": "native_attribute_present"}
 
 
-def property_checks(properties, reader="openswx"):
+def property_checks(properties):
     """Retain cache values and flag necessary conditions, without accepting units."""
     flags = []
     mass = properties.get("mass")
@@ -67,7 +67,7 @@ def property_checks(properties, reader="openswx"):
              for i in range(3)):
         flags.append("diagonal_inertia_triangle_inequality")
     return {"status": "cached_unvalidated", "values": properties,
-            "upstream_declared_units": "unverified" if reader == "sw-rs" else "SI",
+            "upstream_declared_units": "unverified",
             "units_verified": False, "frame_verified": False,
             "freshness_verified": False, "necessary_condition_flags": flags}
 
@@ -189,7 +189,7 @@ def valid_document(document):
 
 
 def extract(inputs, root, binary, max_documents=4096, timeout_s=30,
-            max_output_bytes=64 * 1024 * 1024, reader="openswx"):
+            max_output_bytes=64 * 1024 * 1024):
     """Build a bounded document graph, keeping unresolved occurrence evidence."""
     root = root.resolve()
     inventory = sorted({p.resolve() for p in root.rglob("*")
@@ -224,7 +224,7 @@ def extract(inputs, root, binary, max_documents=4096, timeout_s=30,
         if document is None:
             row["status"] = "failed"
             continue
-        if reader == "sw-rs" and document.get("schema") != "sw-rs-metadata-v1":
+        if document.get("schema") != "sw-rs-metadata-v1":
             row["status"] = "failed"
             diagnostics.append({"document": doc_id, "code": "unsupported_reader_schema"})
             continue
@@ -243,12 +243,12 @@ def extract(inputs, root, binary, max_documents=4096, timeout_s=30,
                         if k not in ("components", "preview_png_base64", "preview_png", "mass_properties")},
                     "occurrences": []}
             if config.get("mass_properties") is not None:
-                item["physical_properties"] = property_checks(config["mass_properties"], reader)
+                item["physical_properties"] = property_checks(config["mass_properties"])
             row["configurations"].append(item)
             for index, component in enumerate(config.get("components", [])):
                 occurrence = {"id": f"{config_id}/occurrence:{index}",
                               "source": component,
-                              "transform_checks": matrix_checks(component.get("transform"), reader)}
+                              "transform_checks": matrix_checks(component.get("transform"))}
                 target, resolution, candidates = resolve_reference(
                     component.get("path", ""), path, root, inventory)
                 occurrence["resolution"] = {"method": resolution, "candidates": candidates}
@@ -289,11 +289,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="root native assembly/part, or inventory directory")
     parser.add_argument("--search-root", type=Path)
-    readers = parser.add_mutually_exclusive_group(required=True)
-    readers.add_argument("--sw-rs", type=Path, help="sw-rs sw-dump metadata/geometry CLI")
-    readers.add_argument("--swx-dump", type=Path, help="legacy openswx metadata CLI")
+    parser.add_argument("--sw-rs", type=Path, required=True, help="sw-rs sw-dump metadata/geometry CLI")
     parser.add_argument("--reader-revision", help="declared sw-rs revision, not binary attestation")
-    parser.add_argument("--openswx-revision", help="declared upstream revision, not binary attestation")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--max-documents", type=int, default=4096)
     parser.add_argument("--timeout-s", type=float, default=30)
@@ -308,14 +305,11 @@ def main():
     root = (args.search_root or (source if source.is_dir() else source.parent)).resolve()
     inputs = ([p for p in source.rglob("*") if p.suffix.lower() in NATIVE and p.is_file()]
               if source.is_dir() else [source])
-    reader = "sw-rs" if args.sw_rs else "openswx"
-    if (args.sw_rs and args.openswx_revision) or (args.swx_dump and args.reader_revision):
-        parser.error("revision flag must match the selected reader")
-    binary = (args.sw_rs or args.swx_dump).resolve(strict=True)
+    binary = args.sw_rs.resolve(strict=True)
     result = extract(inputs, root, binary, args.max_documents, args.timeout_s,
-                     args.max_output_mib * 1024 * 1024, reader=reader)
-    result["tool"] = {"name": "sw-rs/sw-dump" if args.sw_rs else "openswx/swx_dump", "binary_sha256": digest(binary),
-                      "declared_revision": args.reader_revision if args.sw_rs else args.openswx_revision}
+                     args.max_output_mib * 1024 * 1024)
+    result["tool"] = {"name": "sw-rs/sw-dump", "binary_sha256": digest(binary),
+                      "declared_revision": args.reader_revision}
     result["summary"] = {
         "documents": len(result["documents"]),
         "failed_documents": sum(d["status"] == "failed" for d in result["documents"]),
