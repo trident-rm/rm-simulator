@@ -77,6 +77,27 @@ the verification log are development artifacts in the gitignored
 the commands above; do not treat this fixture as a comparison with another
 simulator or as a budget for arena/sensor workloads.
 
+## Generic-only extraction check, 2026-10-25
+
+Source `505ea4ed8a966e27ec730cdfbf974e1405f41450` moves the example/session into
+`sim-physics`, without any RM dependency or enabled feature. On the same M5 Max,
+macOS and Rust version above, five release-process samples per rate each ran
+100 simulated seconds after compilation and validation had finished.
+
+At 1000 Hz the feedback/integration loop took a median 330.326 ms
+(328.728–332.438 ms), or 3.303 µs per tick. At 128 Hz it took 338.398 ms
+(338.191–342.238 ms), or 26.437 µs per tick. Peak resident memory across all ten
+processes was 3.047 MiB. Setup medians were 0.042/0.044 ms; the first 1000 Hz
+sample took 1.492 ms, so the median should not be read as a cold-start bound.
+Reset medians were 0.014 ms at both rates.
+
+The full `just verify` gate passed, including the new isolated generic physics
+Clippy/tests with backend access disabled. The standalone viewer passed 28 tests
+with 3 ignored GPU tests, using only the three generic simulator crates. Raw logs
+and metadata are in gitignored `local-assets/sim-split-20261025/`. These sequential
+samples establish the generic-only fixture's cost, not a causal performance
+comparison with the earlier build or a budget for arena/sensor workloads.
+
 ## Model and control
 
 The fixture has a fixed support, a 2 kg X carriage and a 1 kg Y slide, connected
