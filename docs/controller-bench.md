@@ -39,6 +39,41 @@ internal setup timer includes cooking and installation; the loop timer excludes
 setup, warmup, reset and printing. Repeat the executable after compilation has
 finished and report ranges. There is no sleep or real-time pacing.
 
+## Mac baseline, 2026-10-25
+
+Measured source: `b626ce76fca1ceed5ff3b1075ff72d8886422d1d`.
+The machine was an Apple M5 Max with 128 GiB RAM, running macOS 27.0.1.
+The executable used the release profile and rustc 1.99.1
+(`58cf8f9c3`, 2026-10-13). Workspace verification and compilation had finished
+before sampling. Each measurement started a separate process; the OS caches were
+not cleared. Five samples were collected for each rate and simulated duration.
+
+At 1000 Hz, 100 simulated seconds took a median 331.318 ms in the complete
+feedback/integration loop, ranging from 330.388 to 332.593 ms. Mean tick cost was
+3.313 µs, and the median simulation-to-wall-time ratio was 301.82. Setup took a
+median 0.043 ms (0.038–0.051 ms); recipe reset took 0.013 ms (0.012–0.015 ms).
+
+At 128 Hz, the same simulated duration took a median 336.230 ms
+(334.277–338.611 ms). Mean tick cost was 26.268 µs, and the median ratio was
+297.42. The longer tick still performs eight native slices; fewer controller
+calls do not remove the solver work for the same simulated interval.
+
+Maximum resident memory across all twenty processes was 3.047 MiB. The 10-second
+samples ranged from 2.984 to 3.047 MiB, and the 100-second samples ranged from
+2.969 to 3.047 MiB. This showed no increase in the observed peak with the longer
+horizon; it is not an allocation trace or a general memory bound. Whole-process
+elapsed times, reported at 0.01-second resolution, were 0.03 seconds for the
+10-second samples and 0.33–0.34 seconds for the 100-second samples. An isolated
+cold-start latency was not measured.
+
+The full `just verify` gate passed for this implementation, including workspace
+Clippy/tests, native runtime admission, dependency boundaries, field inventory,
+license policy and Python tests (198 run, 39 skipped). Raw timings, metadata and
+the verification log are development artifacts in the gitignored
+`local-assets/controller-bench-20261025/` directory. Reproduce measurements with
+the commands above; do not treat this fixture as a comparison with another
+simulator or as a budget for arena/sensor workloads.
+
 ## Model and control
 
 The fixture has a fixed support, a 2 kg X carriage and a 1 kg Y slide, connected
