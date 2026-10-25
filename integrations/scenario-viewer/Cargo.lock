@@ -5352,6 +5352,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sim-engine",
+ "sim-pendulum-example",
  "sim-physics",
  "sim-render",
 ]
@@ -5631,6 +5632,14 @@ version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
  "serde",
+]
+
+[[package]]
+name = "sim-pendulum-example"
+version = "0.1.0"
+dependencies = [
+ "sim-engine",
+ "sim-physics",
 ]
 
 [[package]]

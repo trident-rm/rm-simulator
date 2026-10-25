@@ -6,6 +6,7 @@ members = [
     "crates/sim-engine",
     "crates/sim-render",
     "crates/sim-physics",
+    "examples/pendulum",
     "crates/rm-sim-assets",
     "crates/rm-sim-control",
     "crates/rm-sim-gameplay",

@@ -55,6 +55,11 @@ For a small CPU-only starting point, the [controller bench](docs/controller-benc
 constructs a generic XY positioning robot, runs feedback and resets through the
 shared physical runtime without loading a match, CAD or renderer.
 
+The [pendulum example](examples/pendulum/README.md) exercises extension-owned motor,
+encoder and feedback state with independent sampling rates and complete reset.
+Run it headlessly or select `--pendulum` in the standalone viewer; both use the
+same physical model and controller through the generic public APIs.
+
 ## Contents
 
 - [Quick start](#quick-start)

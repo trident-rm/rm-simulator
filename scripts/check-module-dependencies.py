@@ -43,6 +43,10 @@ generic_physics = dependencies("sim-physics")
 assert not any(d.startswith(("rm-sim-", "bevy")) for d in generic_physics), generic_physics
 assert not any(d.startswith("sim-") and d != "sim-engine" for d in generic_physics), generic_physics
 assert not ({"game-networking-sockets", "rclrs", "ros-env", "rosidl_runtime_rs", "r2r"} & generic_physics), generic_physics
+pendulum = dependencies("sim-pendulum-example")
+assert {"sim-engine", "sim-physics"} <= pendulum, pendulum
+assert not any(d.startswith(("rm-", "bevy")) for d in pendulum), pendulum
+assert not any(d.startswith("sim-") and d not in {"sim-engine", "sim-physics"} for d in pendulum), pendulum
 assets = dependencies("rm-sim-assets")
 assert not any(d.startswith("bevy") for d in assets), assets
 assert not ({"rm-sim-world", "rm-sim-server", "rm-sim-render",

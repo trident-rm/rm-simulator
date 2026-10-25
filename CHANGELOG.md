@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Add an independent pendulum example with a voltage/current-limited DC motor,
+  a 200 Hz quantized encoder, 100 Hz measured feedback and 1000 Hz physics.
+  Exercise complete extension reset and shared headless/viewer model use through
+  existing generic APIs; add `--pendulum` to the standalone Bevy viewer.
+
 - Extract generic physics into `sim-physics`, including cooked resources, native
   runtime, physical sessions, carrier poses and standalone controller/servo
   examples. Make `rm-sim-physics` an explicit Rapier participant extension over

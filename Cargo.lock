@@ -6551,6 +6551,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sim-pendulum-example"
+version = "0.1.0"
+dependencies = [
+ "sim-engine",
+ "sim-physics",
+]
+
+[[package]]
 name = "sim-physics"
 version = "0.1.0"
 dependencies = [

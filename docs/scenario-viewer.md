@@ -8,6 +8,13 @@ It uses the same `PhysicalRuntime` and generic Bevy renderer as other callers.
 It loads no RoboMaster field, match, server, network transport or ROS environment.
 Dimensions, masses and motor settings are illustrative fixture choices.
 
+Select `--pendulum` in the default Bevy binary to run the independent
+[motor/encoder/controller example](../examples/pendulum/README.md) instead.
+It uses the same headless model and feedback at 1000 Hz, including 200 Hz encoder
+sampling and 100 Hz control. Space/N/R retain their pause/step/reset behavior;
+finite presentations advance four milliseconds rather than four 128 Hz ticks.
+The example has no GLB attachment, so `--pendulum` and `--glb` are mutually exclusive.
+
 ## RXUI panels and shared GPU viewport
 
 The optional RXUI binary is an initial in-process visualization shell. It uses

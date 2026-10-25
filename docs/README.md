@@ -22,6 +22,7 @@ Git history.
 | Physical joint frames, motor/effort control and standalone yaw/pitch fixture | [Jointed mechanisms](jointed-mechanisms.md) |
 | Standalone physical runtime, preparation, commands and reconstruction | [Physical runtime](physical-runtime.md) |
 | Generic CPU controller bench, session reset and resource measurements | [Controller bench](controller-bench.md) |
+| Independent motor/encoder/controller composition and shared viewer | [Pendulum example](../examples/pendulum/README.md) |
 | Physical participant identities, contact observations and scoring ownership | [Physical contacts](physical-contacts.md) |
 | Explicit convex sources, cooking, capture/export and chassis shape parity | [Convex colliders](convex-colliders.md) |
 | Runtime/game split, two session layers and backend migration risks | [Runtime split](runtime-game-split.md) |

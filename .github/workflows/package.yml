@@ -66,7 +66,7 @@ jobs:
         run: cargo test --release --workspace "$TEST_FEATURES" --locked --no-run
       - name: Compile generic physics without native extension access
         if: inputs.validate
-        run: cargo test --release -p sim-physics --no-default-features --locked --no-run
+        run: cargo test --release -p sim-physics -p sim-pendulum-example --no-default-features --locked --no-run
       - name: Check optional Steam code on Windows
         if: inputs.validate && runner.os == 'Windows'
         run: cargo check --release --workspace --all-targets --all-features --locked
@@ -75,7 +75,7 @@ jobs:
         run: cargo clippy --release --workspace --all-targets --all-features --locked -- -D warnings
       - name: Clippy generic physics without native extension access
         if: inputs.validate && runner.os == 'Linux'
-        run: cargo clippy --release -p sim-physics --no-default-features --all-targets --locked -- -D warnings
+        run: cargo clippy --release -p sim-physics -p sim-pendulum-example --no-default-features --all-targets --locked -- -D warnings
       - name: Build field inspector
         run: cargo build --release --locked -p rm-sim-server --example inspect_assets
       - name: Remove rebuildable native cache downloads
@@ -136,7 +136,7 @@ jobs:
         run: cargo test --release --workspace "$TEST_FEATURES" --locked
       - name: Test generic physics without native extension access
         if: inputs.validate
-        run: cargo test --release -p sim-physics --no-default-features --locked
+        run: cargo test --release -p sim-physics -p sim-pendulum-example --no-default-features --locked
       - name: Test current runtime without optional integrations
         if: inputs.validate && runner.os == 'Linux'
         run: python scripts/check-runtime.py

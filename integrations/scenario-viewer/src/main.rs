@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Small standalone physical scenario viewer.
+mod scenes;
 mod simulation;
 use bevy::{
     input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll},
@@ -8,8 +9,8 @@ use bevy::{
     render::view::screenshot::{Screenshot, ScreenshotCaptured},
 };
 use clap::Parser;
+use scenes::Scene;
 use sim_render::{PoseFlu, VisualId, VisualPlugin, Visuals};
-use simulation::{HALF_EXTENTS_M, KEYS, Simulation};
 use std::{
     path::PathBuf,
     time::{Duration, Instant},
@@ -17,16 +18,19 @@ use std::{
 
 #[derive(Parser, Resource, Clone)]
 #[command(
-    about = "Watch a falling cube and a motor-driven arm. Space pauses, N steps, R resets; drag to orbit and scroll to zoom."
+    about = "Watch physical fixtures or --pendulum. Space pauses, N steps, R resets; drag to orbit and scroll to zoom."
 )]
 struct Options {
+    /// Run the independent voltage-controlled pendulum example.
+    #[arg(long, conflicts_with = "glb")]
+    pendulum: bool,
     /// Check the scene without opening a window or using a GPU.
     #[arg(long, conflicts_with_all=["screenshot","glb"])]
     headless: bool,
     /// Save an actual rendered PNG without opening a window, then exit.
     #[arg(long)]
     screenshot: Option<PathBuf>,
-    /// Run this many presentations; each advances four 128 Hz ticks unless paused.
+    /// Run this many presentations; each advances four physical ticks unless paused.
     #[arg(long)]
     frames: Option<u32>,
     /// Start paused.
@@ -45,7 +49,7 @@ impl Options {
     }
 }
 #[derive(Resource)]
-struct Plant(Simulation);
+struct Plant(Scene);
 #[derive(Resource, Default)]
 struct PlaybackClock(Duration);
 impl PlaybackClock {
@@ -148,7 +152,7 @@ fn main() -> AppExit {
     }
     let mut app = App::new();
     app.insert_resource(Plant(
-        Simulation::new(options.paused).expect("prepare scene"),
+        Scene::new(options.paused, options.pendulum).expect("prepare scene"),
     ))
     .insert_resource(options.clone())
     .init_resource::<Stats>()
@@ -170,9 +174,9 @@ fn main() -> AppExit {
         }
         let plant = app.world().resource::<Plant>();
         println!(
-            "headless: {count} presentations, {} ticks, cube z={:.4} m; GPU unused",
-            plant.0.tick,
-            plant.0.pose(simulation::CUBE).translation_m[2]
+            "headless: {count} presentations, {} ticks, {}; GPU unused",
+            plant.0.tick(),
+            plant.0.summary()
         );
         report(&app, began.elapsed());
         return AppExit::Success;
@@ -250,28 +254,24 @@ fn setup_visuals(
     visuals.reserve(5, 4);
     // All cuboids share one unit mesh. Each root keeps its scale through reset.
     let mesh = meshes.add(Cuboid::new(1., 1., 1.));
-    let colors = [
-        Color::srgb(0.98, 0.48, 0.16),
-        Color::srgb(0.16, 0.24, 0.32),
-        Color::srgb(0.12, 0.7, 0.76),
-    ];
     let mut pedestal_material = Handle::default();
-    for i in 0..3 {
+    for part in plant.0.parts() {
+        let [r, g, b] = part.color_srgb;
         let material = materials.add(StandardMaterial {
-            base_color: colors[i],
+            base_color: Color::srgb(r, g, b),
             perceptual_roughness: 0.65,
             ..default()
         });
-        if i == 1 {
+        if part.body == plant.0.support_body() {
             pedestal_material = material.clone();
         }
-        let [x, y, z] = HALF_EXTENTS_M[i];
+        let [x, y, z] = part.half_extents_m;
         visuals.spawn_mesh(
             &mut commands,
-            VisualId(KEYS[i].0),
+            VisualId(part.body.0),
             mesh.clone(),
             material,
-            pose(plant.0.pose(KEYS[i])),
+            pose(plant.0.pose(part.body)),
             Vec3::new(2. * y as f32, 2. * z as f32, 2. * x as f32),
         );
     }
@@ -352,7 +352,7 @@ fn setup_view(
             &mut commands,
             VisualId(20),
             scene,
-            pose(plant.0.pose(simulation::ARM)),
+            pose(plant.0.attachment_pose().expect("GLB attachment scene")),
             Vec3::ONE,
         );
     }
@@ -420,17 +420,19 @@ fn advance(
         } else {
             clock.ticks(
                 time.delta(),
-                Duration::from_nanos(plant.0.runtime.step_duration().as_ns()),
+                Duration::from_nanos(plant.0.step_duration().as_ns()),
             )
         };
         plant.0.advance(ticks).expect("step scene");
     }
     stats.physics += start.elapsed();
     let start = Instant::now();
-    for key in KEYS {
-        visuals.set_pose(VisualId(key.0), pose(plant.0.pose(key)));
+    for part in plant.0.parts() {
+        visuals.set_pose(VisualId(part.body.0), pose(plant.0.pose(part.body)));
     }
-    visuals.set_pose(VisualId(20), pose(plant.0.pose(simulation::ARM)));
+    if let Some(attachment) = plant.0.attachment_pose() {
+        visuals.set_pose(VisualId(20), pose(attachment));
+    }
     stats.publish += start.elapsed();
     stats.frames += 1;
 }
@@ -461,9 +463,10 @@ fn orbit(
 }
 fn update_status(plant: Res<Plant>, mut text: Single<&mut Text, With<Status>>) {
     let next = format!(
-        "SCENARIO VIEWER\n{}  |  {:.2} s\nSpace  pause / resume    N  step    R  reset\nDrag  orbit    Scroll  zoom    Esc  close",
+        "SCENARIO VIEWER\n{}  |  {:.2} s\n{}\nSpace  pause / resume    N  step    R  reset\nDrag  orbit    Scroll  zoom    Esc  close",
         if plant.0.paused { "Paused" } else { "Running" },
-        plant.0.tick as f64 / 128.
+        plant.0.tick() as f64 * plant.0.step_duration().as_secs_f64(),
+        plant.0.summary()
     );
     if text.0 != next {
         text.0 = next;
@@ -562,6 +565,9 @@ fn capture(
 mod tests {
     use super::*;
     fn app() -> App {
+        app_with_scene(false)
+    }
+    fn app_with_scene(pendulum: bool) -> App {
         let mut app = App::new();
         app.insert_resource(Options::parse_from([
             "viewer", "--paused", "--frames", "120",
@@ -570,7 +576,7 @@ mod tests {
         .add_plugins(VisualPlugin)
         .init_resource::<Assets<Mesh>>()
         .init_resource::<Assets<StandardMaterial>>()
-        .insert_resource(Plant(Simulation::new(true).unwrap()))
+        .insert_resource(Plant(Scene::new(true, pendulum).unwrap()))
         .init_resource::<Stats>()
         .init_resource::<PlaybackClock>()
         .init_resource::<ButtonInput<KeyCode>>()
@@ -590,11 +596,11 @@ mod tests {
         for _ in 0..5 {
             app.update();
         }
-        assert_eq!(app.world().resource::<Plant>().0.tick, 4);
+        assert_eq!(app.world().resource::<Plant>().0.tick(), 4);
         assert!(app.world().resource::<Messages<AppExit>>().is_empty());
         app.insert_resource(AttachmentProgress::Ready);
         app.update();
-        assert_eq!(app.world().resource::<Plant>().0.tick, 4);
+        assert_eq!(app.world().resource::<Plant>().0.tick(), 4);
         assert!(matches!(
             app.world_mut()
                 .resource_mut::<Messages<AppExit>>()
@@ -674,56 +680,62 @@ mod tests {
     }
     #[test]
     fn controls_publish_real_poses_and_reset_preserves_visual_assets() {
-        let mut app = app();
-        app.update();
-        let entity = app
-            .world()
-            .resource::<Visuals>()
-            .entity(VisualId(1))
-            .unwrap();
-        let mesh = app.world().get::<Mesh3d>(entity).unwrap().0.clone();
-        let material = app
-            .world()
-            .get::<MeshMaterial3d<StandardMaterial>>(entity)
-            .unwrap()
-            .0
-            .clone();
-        let before = app.world().get::<Transform>(entity).unwrap().translation;
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::KeyN);
-        app.update();
-        assert_eq!(app.world().resource::<Plant>().0.tick, 1);
-        assert!(app.world().get::<Transform>(entity).unwrap().translation.y < before.y);
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .clear();
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::KeyR);
-        app.update();
-        assert_eq!(app.world().resource::<Plant>().0.tick, 0);
-        assert_eq!(
-            app.world().get::<Transform>(entity).unwrap().translation,
-            before
-        );
-        assert_eq!(app.world().get::<Mesh3d>(entity).unwrap().0, mesh);
-        assert_eq!(
-            app.world()
+        for pendulum in [false, true] {
+            let mut app = app_with_scene(pendulum);
+            app.world_mut().resource_mut::<Options>().pendulum = pendulum;
+            app.update();
+            let entity = app
+                .world()
+                .resource::<Visuals>()
+                .entity(VisualId(if pendulum { 2 } else { 1 }))
+                .unwrap();
+            let mesh = app.world().get::<Mesh3d>(entity).unwrap().0.clone();
+            let material = app
+                .world()
                 .get::<MeshMaterial3d<StandardMaterial>>(entity)
                 .unwrap()
-                .0,
-            material
-        );
-        assert_eq!(app.world().resource::<Visuals>().len(), 4);
-        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 1);
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .clear();
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::Space);
-        app.update();
-        assert_eq!(app.world().resource::<Plant>().0.tick, 4);
+                .0
+                .clone();
+            let before = app.world().get::<Transform>(entity).unwrap().translation;
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(KeyCode::KeyN);
+            app.update();
+            assert_eq!(app.world().resource::<Plant>().0.tick(), 1);
+            assert!(app.world().get::<Transform>(entity).unwrap().translation.y < before.y);
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .clear();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(KeyCode::KeyR);
+            app.update();
+            assert_eq!(app.world().resource::<Plant>().0.tick(), 0);
+            assert_eq!(
+                app.world().get::<Transform>(entity).unwrap().translation,
+                before
+            );
+            assert_eq!(app.world().get::<Mesh3d>(entity).unwrap().0, mesh);
+            assert_eq!(
+                app.world()
+                    .get::<MeshMaterial3d<StandardMaterial>>(entity)
+                    .unwrap()
+                    .0,
+                material
+            );
+            assert_eq!(
+                app.world().resource::<Visuals>().len(),
+                if pendulum { 3 } else { 4 }
+            );
+            assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 1);
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .clear();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(KeyCode::Space);
+            app.update();
+            assert_eq!(app.world().resource::<Plant>().0.tick(), 4);
+        }
     }
 }
