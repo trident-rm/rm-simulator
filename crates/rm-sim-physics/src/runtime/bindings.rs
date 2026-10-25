@@ -3,11 +3,11 @@
 //! World-scoped non-reused bindings for source-described physical bodies.
 use super::*;
 use crate::cooking::CookedRigidBody;
-use rm_sim_engine::model::{BodyKind, RigidBodyDescription};
+use sim_engine::model::{BodyKind, RigidBodyDescription};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Solver-free copied body state, also available in engine model descriptions.
-pub use rm_sim_engine::model::BodyState;
+pub use sim_engine::model::BodyState;
 
 /// Caller-selected body identity within a runtime, independent of backend slots.
 /// Scenario recipes may reuse keys after reconstruction; bindings must be reacquired.
@@ -119,7 +119,7 @@ impl PhysicalRuntime {
     /// position-driven kinematic bodies require zero initial velocities.
     ///
     /// ```
-    /// use rm_sim_engine::{Pose, model::{BodyKind, BodyState, RigidBodyDescription}};
+    /// use sim_engine::{Pose, model::{BodyKind, BodyState, RigidBodyDescription}};
     /// use rm_sim_physics::{runtime::{WorldPhysics, BodyKey}, cooking::CookedRigidBody};
     /// let anchor = CookedRigidBody::new(RigidBodyDescription::new(BodyKind::Fixed, vec![])?)?;
     /// let mut world = WorldPhysics::new(&[], 0.);
@@ -358,11 +358,11 @@ pub(super) fn prepare_body(
 mod tests {
     use super::*;
     use crate::TargetFrames;
-    use rm_sim_engine::model::{ColliderDescription, ContactMaterial, Inertial, ShapeDescription};
+    use sim_engine::model::{ColliderDescription, ContactMaterial, Inertial, ShapeDescription};
     use std::sync::Arc;
 
     fn aggregate_source() -> RigidBodyDescription {
-        use rm_sim_engine::model::{CoefficientCombineRule as Rule, ColliderMass, ColliderPolicy};
+        use sim_engine::model::{CoefficientCombineRule as Rule, ColliderMass, ColliderPolicy};
         let colliders = [
             (3., [0., 0., 0.]),
             (1., [0.1, 0., 0.5]),
@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn native_policy_and_ordered_mass_aggregation_match_direct_builders() {
-        use rm_sim_engine::model::BodyPolicy;
+        use sim_engine::model::BodyPolicy;
         let policy = BodyPolicy {
             gravity_scale: 0.,
             enabled_translations: [true, true, false],
@@ -609,7 +609,7 @@ mod tests {
     }
 
     fn prepared_anchor() -> crate::cooking::CookedAssembly {
-        use rm_sim_engine::model::{AssemblyDescription, AssemblyLink, AssemblyLinkId};
+        use sim_engine::model::{AssemblyDescription, AssemblyLink, AssemblyLinkId};
         let source = RigidBodyDescription::new(
             BodyKind::Fixed,
             vec![
@@ -645,7 +645,7 @@ mod tests {
 
     #[test]
     fn assembly_rejection_consumes_no_body_generation_or_native_slots() {
-        use rm_sim_engine::model::AssemblyLinkId;
+        use sim_engine::model::AssemblyLinkId;
         let prepared = prepared_anchor();
         let keys = super::super::AssemblyKeys {
             links: vec![(AssemblyLinkId(1), BodyKey(1))],
@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn assembly_instances_share_source_and_cooked_shapes() {
-        use rm_sim_engine::model::AssemblyLinkId;
+        use sim_engine::model::AssemblyLinkId;
         let prepared = prepared_anchor();
         let shared = prepared.clone();
         assert_eq!(

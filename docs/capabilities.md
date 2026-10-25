@@ -9,7 +9,7 @@ The guides linked below record exact contracts and measured limitations.
 
 ## Layers and ownership
 
-- **Engine (`rm-sim-engine`):** solver-free physical descriptions, FLU poses,
+- **Engine (`sim-engine`):** solver-free physical descriptions, FLU poses,
   immutable timing, surfaces, primitive/convex/compound shapes, explicit inertia,
   joints, assemblies, mounts and scalar wheel laws.
 - **Physical runtime (`rm-sim-physics`):** one Rapier scene for cooked resources,

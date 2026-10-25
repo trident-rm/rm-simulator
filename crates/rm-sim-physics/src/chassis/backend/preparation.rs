@@ -6,7 +6,7 @@
 //! this adapter boundary so existing prescribed mounts retain their exact bits.
 use super::*;
 use crate::cooking::CookedRigidBody;
-use rm_sim_engine::model::{
+use sim_engine::model::{
     BodyKind, BodyPolicy, CoefficientCombineRule as Combine, ColliderDescription, ColliderMass,
     ColliderPolicy, ContactMaterial, ConvexHull, RigidBodyDescription, ShapeDescription,
 };

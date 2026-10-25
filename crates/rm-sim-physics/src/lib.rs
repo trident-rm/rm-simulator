@@ -54,7 +54,7 @@ pub use projectile::{
 use serde::{Deserialize, Serialize};
 
 /// Shared solver-free contracts; existing physical import paths stay compatible.
-pub use rm_sim_engine::{DEFAULT_TICK_NS, Pose, StepDuration, tick_ns};
+pub use sim_engine::{DEFAULT_TICK_NS, Pose, StepDuration, tick_ns};
 
 /// One of the two alliances. [`Team::index`] is the slot a team fills in the
 /// fixed `[_; 2]` arrays that mechanism and geometry state use.

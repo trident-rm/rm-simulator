@@ -23,7 +23,7 @@ impl Pose {
     /// An unrotated pose at `translation_m`.
     ///
     /// ```
-    /// use rm_sim_engine::Pose;
+    /// use sim_engine::Pose;
     ///
     /// let mut pose = Pose::at([1.0, -2.0, 0.5]);
     /// assert_eq!(pose.rotation_wxyz, [1.0, 0.0, 0.0, 0.0]);
@@ -42,7 +42,7 @@ impl Pose {
     /// A pose rotated about world up (yaw) only.
     ///
     /// ```
-    /// use rm_sim_engine::Pose;
+    /// use sim_engine::Pose;
     ///
     /// // Yaw is counter-clockwise about world up, so a quarter turn sends
     /// // forward (+x) to left (+y).

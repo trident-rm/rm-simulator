@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Public-API participant identity, bounded observation and scoring parity tests.
-use rm_sim_engine::model::{
-    BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, RigidBodyDescription,
-    ShapeDescription,
-};
 use rm_sim_physics::{
     ArmorTarget, Caliber, Pose, Shot, StepDuration, TargetFace, TargetFrames,
     cooking::CookedRigidBody,
     runtime::{BodyBinding, BodyKey, WorldPhysics},
     session::{RobotScenario, RobotSession},
+};
+use sim_engine::model::{
+    BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, RigidBodyDescription,
+    ShapeDescription,
 };
 
 fn cube() -> CookedRigidBody {

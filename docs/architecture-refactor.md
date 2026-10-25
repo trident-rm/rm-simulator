@@ -2,7 +2,7 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Simulation architecture
 
-The solver-free `rm-sim-engine` owns shared poses/timing, query and drive
+The solver-free `sim-engine` owns shared poses/timing, query and drive
 records, and scalar wheel laws. Physics re-exports these contracts and retains
 Rapier execution. See [Engine architecture](engine-architecture.md) for the
 implemented split and planned component lifecycle.

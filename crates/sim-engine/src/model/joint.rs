@@ -53,7 +53,7 @@ impl JointLimits {
 /// frame relative to the parent frame about/along parent-frame +X.
 ///
 /// ```
-/// use rm_sim_engine::{Pose, model::{JointDescription, JointKind, JointLimits}};
+/// use sim_engine::{Pose, model::{JointDescription, JointKind, JointLimits}};
 /// let hinge = JointDescription::new(
 ///     JointKind::Revolute, Pose::at([0., 0., 0.2]), Pose::default(),
 ///     Some(JointLimits::new(-0.5, 0.5)?), false,
@@ -149,7 +149,7 @@ pub struct JointState {
 /// against its joint description; it must reject invalid targets, never clamp.
 ///
 /// ```
-/// use rm_sim_engine::model::JointMotor;
+/// use sim_engine::model::JointMotor;
 /// let motor = JointMotor::new(0.2, 0., 10., 1., 5.)?;
 /// assert_eq!(motor.target_position(), 0.2);
 /// assert_eq!(motor.max_force(), 5.);

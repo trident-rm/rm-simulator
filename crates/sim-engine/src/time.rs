@@ -27,7 +27,7 @@ pub const fn tick_ns() -> u64 {
 /// Immutable per world; no host clock is read. Mechanical calibration is separate
 /// from clock precision; a higher step rate does not add missing physical effects.
 /// ```
-/// use rm_sim_engine::StepDuration;
+/// use sim_engine::StepDuration;
 /// assert_eq!(StepDuration::from_ns(1_000_000).unwrap(), StepDuration::HZ_1000);
 /// assert!(StepDuration::from_ns(0).is_err());
 /// assert_eq!(StepDuration::default().as_ns(), 7_812_500);

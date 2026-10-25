@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Caller-owned physical scene; no renderer, match, transport or host clock.
-use rm_sim_engine::{
+use rm_sim_physics::{
+    StepDuration,
+    cooking::CookedRigidBody,
+    runtime::{BodyKey, JointKey, PhysicalRuntime},
+};
+use sim_engine::{
     Pose,
     model::{
         BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, JointDescription,
         JointKind, JointLimits, JointMotor, RigidBodyDescription, ShapeDescription,
     },
-};
-use rm_sim_physics::{
-    StepDuration,
-    cooking::CookedRigidBody,
-    runtime::{BodyKey, JointKey, PhysicalRuntime},
 };
 
 /// Stable viewer key for the falling cube.

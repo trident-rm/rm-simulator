@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Explicit convex fixture, cooked once and installed by a repeatable recipe.
-use rm_sim_engine::{
+use rm_sim_physics::{
+    StepDuration,
+    cooking::CookedAssembly,
+    runtime::{AssemblyKeys, BodyKey},
+    session::{RobotScenario, RobotSession},
+};
+use sim_engine::{
     Pose,
     model::{
         AssemblyDescription, AssemblyLink, AssemblyLinkId, BodyKind, BodyState,
         ColliderDescription, ContactMaterial, ConvexHull, Inertial, RigidBodyDescription,
         ShapeDescription,
     },
-};
-use rm_sim_physics::{
-    StepDuration,
-    cooking::CookedAssembly,
-    runtime::{AssemblyKeys, BodyKey},
-    session::{RobotScenario, RobotSession},
 };
 
 /// Runtime key for the fixture; reacquire its binding after reset.

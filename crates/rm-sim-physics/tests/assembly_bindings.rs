@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Source trees prepare once and install atomically into the ordinary world.
-use rm_sim_engine::{
+use rm_sim_physics::{
+    cooking::CookedAssembly,
+    runtime::{AssemblyKeys, BodyKey, JointKey, WorldPhysics},
+};
+use sim_engine::{
     Pose,
     model::{
         AssemblyDescription, AssemblyJoint, AssemblyJointId, AssemblyLink, AssemblyLinkId,
         BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, JointDescription,
         JointKind, RigidBodyDescription, ShapeDescription,
     },
-};
-use rm_sim_physics::{
-    cooking::CookedAssembly,
-    runtime::{AssemblyKeys, BodyKey, JointKey, WorldPhysics},
 };
 
 fn body(kind: BodyKind) -> RigidBodyDescription {

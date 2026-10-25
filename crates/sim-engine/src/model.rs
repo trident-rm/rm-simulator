@@ -35,7 +35,7 @@ struct MeshData {
 /// whether a surface is cookable is a separate backend decision.
 ///
 /// ```
-/// use rm_sim_engine::model::TriangleMesh;
+/// use sim_engine::model::TriangleMesh;
 /// let mesh = TriangleMesh::new(
 ///     vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]], vec![[0, 1, 2]],
 /// )?;

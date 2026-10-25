@@ -4,10 +4,6 @@
 #[allow(dead_code)]
 #[path = "../examples/jointed_turret.rs"]
 mod fixture;
-use rm_sim_engine::{
-    Pose,
-    model::{CarrierKey, JointMotor},
-};
 use rm_sim_physics::{
     StepDuration, TargetFrames, Team, WorldPhysics,
     chassis::ChassisConfig,
@@ -20,6 +16,10 @@ use rm_sim_physics::{
         rolling::{MountedLidar, RangeEffects, RollingFrame, SceneCapture},
         synchronized::{CarrierConfig, CarrierSynchronized},
     },
+};
+use sim_engine::{
+    Pose,
+    model::{CarrierKey, JointMotor},
 };
 
 fn capture(
@@ -91,7 +91,7 @@ fn actual_articulated_body_motion_mounts_and_self_occlusion_need_no_robot_ids() 
     runtime
         .install_catch_floor(
             0.,
-            rm_sim_engine::model::ContactMaterial {
+            sim_engine::model::ContactMaterial {
                 friction: 0.4,
                 restitution: 0.,
                 memberships: u32::MAX,
@@ -295,7 +295,7 @@ fn generic_geometry_topology_changes_reject_the_bracket_without_modifying_output
     let floor = runtime
         .install_catch_floor(
             0.,
-            rm_sim_engine::model::ContactMaterial {
+            sim_engine::model::ContactMaterial {
                 friction: 0.4,
                 restitution: 0.,
                 memberships: u32::MAX,

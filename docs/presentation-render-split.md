@@ -8,7 +8,7 @@ The split adds no new clock, networking path or simulation world.
 
 ## Ownership
 
-- `rm-sim-engine` describes physical models and scalar contracts.
+- `sim-engine` describes physical models and scalar contracts.
 - `rm-sim-physics` owns physical preparation/runtime and passive sensors.
 - `rm-sim-gameplay` owns deterministic competition authorities.
 - `rm-sim-world` composes physical participants with those authorities.

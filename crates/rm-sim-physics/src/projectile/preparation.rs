@@ -3,7 +3,7 @@
 //! Domain-owned source descriptions; native construction uses shared cooking.
 use super::{Caliber, FRICTION, RESTITUTION};
 use crate::{Pose, cooking::CookedRigidBody};
-use rm_sim_engine::model::{
+use sim_engine::model::{
     BodyKind, BodyPolicy, CoefficientCombineRule, ColliderDescription, ColliderMass,
     ColliderPolicy, ContactMaterial, RigidBodyDescription, ShapeDescription,
 };

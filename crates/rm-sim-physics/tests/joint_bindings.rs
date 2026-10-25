@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Scalar joints constrain ordinary described bodies in the shared scene.
-use rm_sim_engine::{
+use rm_sim_physics::{
+    StepDuration, TargetFrames,
+    cooking::CookedRigidBody,
+    runtime::{BodyBinding, BodyKey, JointBinding, JointKey, WorldPhysics},
+};
+use sim_engine::{
     Pose,
     model::{
         BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, JointDescription,
         JointKind, JointLimits, JointMotor, RigidBodyDescription, ShapeDescription,
     },
-};
-use rm_sim_physics::{
-    StepDuration, TargetFrames,
-    cooking::CookedRigidBody,
-    runtime::{BodyBinding, BodyKey, JointBinding, JointKey, WorldPhysics},
 };
 
 fn world(duration: StepDuration) -> WorldPhysics {

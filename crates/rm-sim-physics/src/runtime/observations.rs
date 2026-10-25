@@ -2,7 +2,7 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Read-only native participant identities and opt-in cached contact observations.
 use super::*;
-use rm_sim_engine::contacts::ContactGeometry;
+use sim_engine::contacts::ContactGeometry;
 
 /// Opaque process-local identity of any native rigid body in one runtime.
 /// Native generations reject removed/reused slots; the runtime brand rejects
@@ -162,7 +162,7 @@ impl PhysicalRuntime {
     /// This is privileged truth, not a measured sensor or command authority.
     ///
     /// ```
-    /// use rm_sim_engine::model::{BodyKind, BodyState, CarrierKey, RigidBodyDescription};
+    /// use sim_engine::model::{BodyKind, BodyState, CarrierKey, RigidBodyDescription};
     /// use rm_sim_physics::{Pose, StepDuration, cooking::CookedRigidBody,
     ///     runtime::{BodyKey, PhysicalRuntime}};
     /// let model = CookedRigidBody::new(RigidBodyDescription::new(BodyKind::Fixed, vec![])?)?;
@@ -177,7 +177,7 @@ impl PhysicalRuntime {
     pub fn observe_carrier(
         &self,
         binding: ParticipantBinding,
-        carrier: rm_sim_engine::model::CarrierKey,
+        carrier: sim_engine::model::CarrierKey,
         discontinuity_revision: u64,
         time_ns: u64,
         interval_s: f64,

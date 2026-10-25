@@ -3,9 +3,9 @@
 #[allow(dead_code)]
 #[path = "../examples/servo_response.rs"]
 mod servo;
-use rm_sim_engine::model::JointMotor;
 use rm_sim_physics::StepDuration;
 use servo::{Fixture, INERTIA_KG_M2};
+use sim_engine::model::JointMotor;
 
 #[test]
 fn direct_torque_matches_inertia_and_opposing_load_at_both_rates() {

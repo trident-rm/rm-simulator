@@ -14,7 +14,7 @@
 pub mod batch;
 
 /// Shared simulation timestamp; retained here for existing session callers.
-pub use rm_sim_engine::time::Stamp;
+pub use sim_engine::time::Stamp;
 
 use crate::{
     Shot, StepDuration, TargetFace, TargetFrames, WorldPhysics,

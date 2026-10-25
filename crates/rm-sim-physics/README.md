@@ -7,7 +7,7 @@ dynamics, projectile flight, raw armor contacts, shared collision geometry and
 prescribed mechanism motion. It knows no match rules, CAD package, socket, Bevy or
 host clock; callers supply target endpoint poses and resolved mechanism state and
 step it once per explicit tick. It sits under the world crate and depends on no
-simulator crate except the solver-free `rm-sim-engine` core.
+simulator crate except the solver-free `sim-engine` core.
 
 ## Modules
 
@@ -46,7 +46,7 @@ detection intervals; the world crate owns those decisions.
 
 ## Dependencies
 
-`rm-sim-engine` (shared contracts and wheel laws), `rapier3d-f64`, `serde`, `glam` for source rig FK (the same locked version as
+`sim-engine` (shared contracts and wheel laws), `rapier3d-f64`, `serde`, `glam` for source rig FK (the same locked version as
 world), and the standalone `mid360-sim` pattern generator. The
 crate never depends on `rm-sim-world`,
 `rm-sim-gameplay`, `rm-sim-server`, `rm-sim-render` or Bevy,

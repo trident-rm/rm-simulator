@@ -84,7 +84,7 @@ impl SceneCapture {
     /// of a privileged caller's asserted carrier binding or placement revision.
     ///
     /// ```
-    /// use rm_sim_engine::model::CarrierKey;
+    /// use sim_engine::model::CarrierKey;
     /// use rm_sim_physics::{Pose, StepDuration, runtime::PhysicalRuntime,
     ///     sensors::{carrier::{CarrierIdentity, StampedCarrierPose}, rolling::SceneCapture}};
     /// let runtime = PhysicalRuntime::new(StepDuration::HZ_1000);
@@ -1378,7 +1378,7 @@ mod tests {
     #[test]
     fn bound_kinematic_geometry_is_interpolated_by_existing_sensor_queries() {
         use crate::{cooking::CookedRigidBody, runtime::BodyKey};
-        use rm_sim_engine::model::{
+        use sim_engine::model::{
             BodyKind, BodyState, ColliderDescription, ContactMaterial, RigidBodyDescription,
             ShapeDescription,
         };

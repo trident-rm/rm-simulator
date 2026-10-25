@@ -15,7 +15,7 @@ use std::sync::Arc;
 /// supplied separately for dynamic bodies; they are never synthesized from points.
 ///
 /// ```
-/// use rm_sim_engine::model::{ConvexHull, ShapeDescription};
+/// use sim_engine::model::{ConvexHull, ShapeDescription};
 /// let hull = ConvexHull::new(vec![
 ///     [0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.],
 /// ])?;

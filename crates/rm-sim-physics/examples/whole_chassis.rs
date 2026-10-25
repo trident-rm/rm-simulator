@@ -10,17 +10,17 @@ use module::{
     RollingWheel,
     suspension::{self, Linkage},
 };
-use rm_sim_engine::{
+use rm_sim_physics::{
+    StepDuration,
+    cooking::{CookedRigidBody, CookedTriangleMesh},
+    runtime::{BodyBinding, BodyKey, PhysicalRuntime},
+};
+use sim_engine::{
     Pose,
     model::{
         BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, RigidBodyDescription,
         ShapeDescription, TriangleMesh,
     },
-};
-use rm_sim_physics::{
-    StepDuration,
-    cooking::{CookedRigidBody, CookedTriangleMesh},
-    runtime::{BodyBinding, BodyKey, PhysicalRuntime},
 };
 
 /// Explicit prototype choices, not recovered complete-robot properties.

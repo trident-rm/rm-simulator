@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Stable serialized records retained during the solver-free core extraction.
-use rm_sim_engine::{
+use sim_engine::{
     Pose, StepDuration,
     control::{DriveControl, WheelTorques},
 };

@@ -3,7 +3,7 @@
 //! Caller-owned time and reconstruction for a generic physical scene.
 
 use super::PhysicalRuntime;
-use rm_sim_engine::{StepDuration, time::Stamp};
+use sim_engine::{StepDuration, time::Stamp};
 
 /// One generic physical runtime, its completed time and a repeatable initial recipe.
 ///

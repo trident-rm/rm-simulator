@@ -2,7 +2,7 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Described impulse joints in the existing runtime, with held scalar actuation.
 use super::*;
-use rm_sim_engine::model::{JointDescription, JointKind, JointMotor, JointState};
+use sim_engine::model::{JointDescription, JointKind, JointMotor, JointState};
 use std::f64::consts::PI;
 
 /// Caller-selected joint identity within one runtime, independent of solver slots.
@@ -216,7 +216,7 @@ impl PhysicalRuntime {
     /// positive child-relative displacement and right-hand angular direction.
     ///
     /// ```
-    /// use rm_sim_engine::{Pose, model::{BodyKind, BodyState, Inertial,
+    /// use sim_engine::{Pose, model::{BodyKind, BodyState, Inertial,
     ///     RigidBodyDescription, JointDescription, JointKind}};
     /// use rm_sim_physics::{cooking::CookedRigidBody,
     ///     runtime::{WorldPhysics, BodyKey, JointKey}};
@@ -331,7 +331,7 @@ impl PhysicalRuntime {
     /// motor estimate. External loads and hard-stop reactions are excluded.
     ///
     /// ```
-    /// use rm_sim_engine::{Pose, model::{BodyKind, BodyState, Inertial,
+    /// use sim_engine::{Pose, model::{BodyKind, BodyState, Inertial,
     ///     RigidBodyDescription, JointDescription, JointKind}};
     /// use rm_sim_physics::{StepDuration, cooking::CookedRigidBody,
     ///     runtime::{PhysicalRuntime, BodyKey, JointKey}};
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn assembly_joint_capacity_failure_precedes_all_body_and_joint_mutations() {
-        use rm_sim_engine::model::{
+        use sim_engine::model::{
             AssemblyDescription, AssemblyJoint, AssemblyJointId, AssemblyLink, AssemblyLinkId,
             BodyKind, Inertial, RigidBodyDescription,
         };

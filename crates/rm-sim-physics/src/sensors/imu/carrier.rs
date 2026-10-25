@@ -3,7 +3,7 @@
 //! Passive inertial measurements for actual body or prescribed carrier frames.
 use super::*;
 use crate::sensors::carrier::{CarrierIdentity, StampedCarrierPose, StampedMountPose};
-use rm_sim_engine::model::MountKey;
+use sim_engine::model::MountKey;
 
 /// Numeric settings for a generic carrier IMU, independent of robot identities.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,7 +34,7 @@ pub struct CarrierImuState {
 /// No runtime, scheduling, body lookup or artificial robot identity is owned.
 ///
 /// ```
-/// use rm_sim_engine::model::CarrierKey;
+/// use sim_engine::model::CarrierKey;
 /// use rm_sim_physics::{Pose, sensors::{carrier::{CarrierIdentity, StampedCarrierPose},
 ///     imu::{CarrierImu, CarrierImuConfig}}};
 /// let mut imu = CarrierImu::new(CarrierImuConfig {
@@ -163,7 +163,7 @@ impl CarrierImu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rm_sim_engine::model::{CarrierKey, MountDescription};
+    use sim_engine::model::{CarrierKey, MountDescription};
     fn identity() -> CarrierIdentity {
         CarrierIdentity {
             carrier: CarrierKey(17),

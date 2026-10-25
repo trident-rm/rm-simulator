@@ -6118,15 +6118,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rm-sim-engine"
-version = "0.1.0"
-dependencies = [
- "glam 0.33.12",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "rm-sim-gameplay"
 version = "0.1.0"
 dependencies = [
@@ -6142,8 +6133,8 @@ dependencies = [
  "glam 0.33.12",
  "mid360-sim",
  "rapier3d-f64",
- "rm-sim-engine",
  "serde",
+ "sim-engine",
 ]
 
 [[package]]
@@ -6547,6 +6538,15 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "sim-engine"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "simba"

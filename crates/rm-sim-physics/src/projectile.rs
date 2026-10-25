@@ -24,11 +24,11 @@ mod preparation;
 mod preparation_tests;
 use crate::cooking::{CookedAssembly, CookedRigidBody};
 use contacts::Scorer;
-use rm_sim_engine::model::{JointDescription, JointMotor, JointState, RigidBodyDescription};
 use runtime::{
     AssemblyBinding, AssemblyKeys, BodyBinding, BodyKey, BodyState, ColliderBinding, ColliderState,
     JointBinding, JointKey, ParticipantBinding, PhysicalContact,
 };
+use sim_engine::model::{JointDescription, JointMotor, JointState, RigidBodyDescription};
 
 pub use crate::geometry::{MovingGeometry, StaticGeometry};
 /// Compatibility path for the generic physical runtime and participant facade.

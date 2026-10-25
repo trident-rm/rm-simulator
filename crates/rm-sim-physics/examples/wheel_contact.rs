@@ -6,18 +6,18 @@
 #[path = "wheel_suspension.rs"]
 pub mod suspension;
 use glam::{DQuat, DVec3};
-use rm_sim_engine::{
+use rm_sim_physics::{
+    StepDuration,
+    cooking::{CookedRigidBody, CookedTriangleMesh},
+    runtime::{BodyBinding, BodyKey, ColliderBinding, DirectionalFriction, JointBinding, JointKey},
+};
+use sim_engine::{
     Pose,
     model::{
         BodyKind, BodyState, ColliderDescription, ContactMaterial, ConvexHull, Inertial,
         JointDescription, JointKind, JointMotor, RigidBodyDescription, ShapeDescription,
         TriangleMesh,
     },
-};
-use rm_sim_physics::{
-    StepDuration,
-    cooking::{CookedRigidBody, CookedTriangleMesh},
-    runtime::{BodyBinding, BodyKey, ColliderBinding, DirectionalFriction, JointBinding, JointKey},
 };
 
 /// Explicit test parameters, not recovered manufacturer properties.

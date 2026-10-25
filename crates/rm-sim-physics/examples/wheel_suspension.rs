@@ -3,18 +3,18 @@
 //! Isolated, contact-free EGA-derived planar suspension bench, not a game model.
 //! CAD dimensions: docs/suspension-recovery.md. Force law and load are provisional.
 use glam::{DMat3, DQuat, DVec3};
-use rm_sim_engine::{
+use rm_sim_physics::{
+    StepDuration,
+    cooking::CookedRigidBody,
+    runtime::{BodyBinding, BodyKey, JointBinding, JointKey, PhysicalRuntime},
+};
+use sim_engine::{
     Pose,
     model::{
         BodyKind, BodyPolicy, BodyState, ColliderDescription, ContactMaterial, Inertial,
         JointDescription, JointKind, JointLimits, JointMotor, RigidBodyDescription,
         ShapeDescription,
     },
-};
-use rm_sim_physics::{
-    StepDuration,
-    cooking::CookedRigidBody,
-    runtime::{BodyBinding, BodyKey, JointBinding, JointKey, PhysicalRuntime},
 };
 
 /// Provisional choices, not a recovered KJ85T33 manufacturer specification.

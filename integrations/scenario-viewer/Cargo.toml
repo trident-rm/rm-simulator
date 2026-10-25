@@ -30,7 +30,7 @@ bevy = { version = "=0.20.0", default-features = false, features = [
     "gltf_animation", "ui", "default_font",
 ] }
 clap = { version = "=4.6.0", features = ["derive"] }
-rm-sim-engine = { version = "0.1.0", path = "../../crates/rm-sim-engine" }
+sim-engine = { version = "0.1.0", path = "../../crates/sim-engine" }
 rm-sim-physics = { version = "0.1.0", path = "../../crates/rm-sim-physics" }
 rm-sim-render = { version = "0.1.0", path = "../../crates/rm-sim-render", default-features = false }
 

@@ -3,7 +3,7 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/rm-sim-engine",
+    "crates/sim-engine",
     "crates/rm-sim-assets",
     "crates/rm-sim-control",
     "crates/rm-sim-gameplay",

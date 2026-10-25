@@ -83,7 +83,7 @@ struct MountData {
 /// consumers can use borrowed slices without searching or allocating.
 ///
 /// ```
-/// use rm_sim_engine::{Pose, model::{CarrierKey, MountKey, MountDescription, MountTable}};
+/// use sim_engine::{Pose, model::{CarrierKey, MountKey, MountDescription, MountTable}};
 /// let carrier = CarrierKey(7);
 /// let mount = MountDescription::new(MountKey(7), carrier, Pose::at([0.1, 0., 0.2]))?;
 /// let table = MountTable::new(vec![carrier], vec![mount])?;

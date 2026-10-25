@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Non-RoboMaster XY positioning robot with caller-owned feedback and CPU timing.
-use rm_sim_engine::{
+use rm_sim_physics::{
+    PhysicalRuntime, StepDuration,
+    cooking::CookedRigidBody,
+    runtime::{BodyKey, JointBinding, JointKey, session::PhysicalSession},
+};
+use sim_engine::{
     Pose,
     model::{
         BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, JointDescription,
         JointKind, JointLimits, JointState, RigidBodyDescription, ShapeDescription,
     },
-};
-use rm_sim_physics::{
-    PhysicalRuntime, StepDuration,
-    cooking::CookedRigidBody,
-    runtime::{BodyKey, JointBinding, JointKey, session::PhysicalSession},
 };
 
 /// Two independent joint keys for the X carriage and its Y slide.

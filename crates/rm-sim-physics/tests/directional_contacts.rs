@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Directional traction, passive slip and installation identity checks.
-use rm_sim_engine::{
+use rm_sim_physics::{
+    StepDuration,
+    cooking::CookedRigidBody,
+    runtime::{BodyBinding, BodyKey, ColliderBinding, DirectionalFriction, PhysicalRuntime},
+};
+use sim_engine::{
     Pose,
     model::{
         BodyKind, BodyPolicy, BodyState, ColliderDescription, ContactMaterial, Inertial,
         RigidBodyDescription, ShapeDescription,
     },
-};
-use rm_sim_physics::{
-    StepDuration,
-    cooking::CookedRigidBody,
-    runtime::{BodyBinding, BodyKey, ColliderBinding, DirectionalFriction, PhysicalRuntime},
 };
 
 fn block(

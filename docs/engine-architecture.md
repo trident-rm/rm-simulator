@@ -19,7 +19,7 @@ joint, robot assembly, participant and sensor work into ordered acceptance gates
 
 ## Current migration: solver-free core
 
-`rm-sim-engine` now owns the existing FLU `Pose`, `StepDuration`/default
+`sim-engine` now owns the existing FLU `Pose`, `StepDuration`/default
 timing constants, validated `RayQuery`/`RayHit`, `DriveControl`/`WheelTorques` and
 scalar wheel model/state/integration. It depends only on numerical and
 serialization libraries. It contains no solver, scene loader, team identity,

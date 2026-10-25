@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Compatibility exports and backend integration tests for solver-free query records.
-pub use rm_sim_engine::queries::{RayHit, RayQuery};
+pub use sim_engine::queries::{RayHit, RayQuery};
 
 #[cfg(test)]
 mod tests {

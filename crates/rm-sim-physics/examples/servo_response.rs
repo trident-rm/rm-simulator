@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Torque-controlled centered rotor: illustrative inertia, no electrical model.
-use rm_sim_engine::{
+use rm_sim_physics::{
+    StepDuration,
+    cooking::CookedRigidBody,
+    runtime::{BodyBinding, BodyKey, JointBinding, JointKey, PhysicalRuntime},
+};
+use sim_engine::{
     Pose,
     model::{
         BodyKind, BodyState, Inertial, JointDescription, JointKind, JointLimits, JointMotor,
         RigidBodyDescription,
     },
-};
-use rm_sim_physics::{
-    StepDuration,
-    cooking::CookedRigidBody,
-    runtime::{BodyBinding, BodyKey, JointBinding, JointKey, PhysicalRuntime},
 };
 
 /// Explicit rotor inertia about every principal axis, kg m² (fixture choice).

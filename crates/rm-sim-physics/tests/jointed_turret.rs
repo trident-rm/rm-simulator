@@ -7,8 +7,8 @@ mod fixture;
 
 use fixture::{BARREL, BASE, PITCH, PITCH_LIMIT_RAD, YAW, YAW_LIMIT_RAD, YOKE, aim, scenario};
 use glam::{DQuat, DVec3};
-use rm_sim_engine::Pose;
 use rm_sim_physics::{runtime::JointKey, session::RobotSession};
+use sim_engine::Pose;
 
 fn joint(session: &RobotSession, key: JointKey) -> (f64, f64) {
     let world = session.ground_truth();

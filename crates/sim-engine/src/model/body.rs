@@ -102,7 +102,7 @@ impl ColliderDescription {
     /// Zero-mass auxiliaries and native shape mass aggregation are opt-in.
     ///
     /// ```
-    /// use rm_sim_engine::{Pose, model::{ColliderDescription, ColliderMass,
+    /// use sim_engine::{Pose, model::{ColliderDescription, ColliderMass,
     ///     ColliderPolicy, ContactMaterial, ShapeDescription}};
     /// let collider = ColliderDescription::new(ShapeDescription::Ball { radius_m: 0.1 },
     ///     Pose::default(), ContactMaterial { friction: 0.4, restitution: 0.,
@@ -215,7 +215,7 @@ struct BodyData {
 /// mass is zero unless opted into.
 ///
 /// ```
-/// use rm_sim_engine::model::{BodyKind, RigidBodyDescription};
+/// use sim_engine::model::{BodyKind, RigidBodyDescription};
 /// let anchor = RigidBodyDescription::new(BodyKind::Fixed, vec![])?;
 /// assert!(anchor.colliders().is_empty());
 /// # Ok::<(), &'static str>(())
@@ -253,7 +253,7 @@ impl RigidBodyDescription {
     /// Clones retain their original immutable description.
     ///
     /// ```
-    /// use rm_sim_engine::model::{BodyKind, BodyPolicy, RigidBodyDescription};
+    /// use sim_engine::model::{BodyKind, BodyPolicy, RigidBodyDescription};
     /// let body = RigidBodyDescription::new(BodyKind::Fixed, vec![])?
     ///     .with_policy(BodyPolicy { ccd_enabled: true, ..Default::default() })?;
     /// assert!(body.policy().ccd_enabled);

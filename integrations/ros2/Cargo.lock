@@ -1024,7 +1024,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rm-sim-engine"
+name = "sim-engine"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
@@ -1046,7 +1046,7 @@ dependencies = [
  "glam 0.33.12",
  "mid360-sim",
  "rapier3d-f64",
- "rm-sim-engine",
+ "sim-engine",
  "serde",
 ]
 

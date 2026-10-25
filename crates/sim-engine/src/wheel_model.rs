@@ -5,7 +5,7 @@
 //! before stepping its solver. No queries, handles, clock or solver are used here.
 //!
 //! ```
-//! use rm_sim_engine::wheel_model::{WheelModel, WheelState, WheelDriveScratch};
+//! use sim_engine::wheel_model::{WheelModel, WheelState, WheelDriveScratch};
 //! // Explicit fitted scalar parameters; no backend chassis or solver is needed.
 //! let model = WheelModel {
 //!     wheel_radius_m: 0.1,
@@ -224,7 +224,7 @@ impl WheelDriveScratch {
 /// motor allocation, and braking must contribute no negative mechanical demand.
 ///
 /// ```
-/// use rm_sim_engine::wheel_model::drive_power_scale;
+/// use sim_engine::wheel_model::drive_power_scale;
 /// let scale = drive_power_scale(10., 10., 15.);
 /// assert!((10. * scale + 10. * scale * scale - 15.).abs() < 1e-12);
 /// assert_eq!(drive_power_scale(10., 10., 0.), 0.);

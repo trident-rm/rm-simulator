@@ -4,7 +4,7 @@
 use super::*;
 use crate::cooking::CookedTriangleMesh;
 use crate::queries::{RayHit, RayQuery};
-use rm_sim_engine::model::ContactMaterial;
+use sim_engine::model::ContactMaterial;
 
 #[derive(Clone)]
 struct CapturedCollider {
@@ -193,7 +193,7 @@ impl PhysicalRuntime {
     /// The material is explicit; invalid height/material requests do not mutate.
     ///
     /// ```
-    /// use rm_sim_engine::model::ContactMaterial;
+    /// use sim_engine::model::ContactMaterial;
     /// use rm_sim_physics::{StepDuration, runtime::PhysicalRuntime, queries::RayQuery};
     /// let mut runtime = PhysicalRuntime::new(StepDuration::HZ_128);
     /// let floor = runtime.install_catch_floor(0., ContactMaterial {

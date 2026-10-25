@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Rename the solver-free generic core to `sim-engine` (`sim_engine` in Rust),
+  including its directory, dependencies and examples. Reserve `sim-*` names for
+  generic crates; crates that still contain RoboMaster code keep `rm-sim-*`.
+
 - Add a caller-paced generic `PhysicalSession` with exact time and transactional
   recipe reset over the same runtime used by RoboMaster. Include a CPU-only XY
   positioning robot with external feedback control, repeatable reset tests and

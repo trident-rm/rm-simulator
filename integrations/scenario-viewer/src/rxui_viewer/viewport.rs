@@ -21,7 +21,7 @@ pub struct Viewport {
     target: Handle<Image>,
     camera: Entity,
     bound_image: Option<(wgpu::TextureView, rxui::Image)>,
-    import_frames: Vec<(VisualId, u64, rm_sim_engine::Pose)>,
+    import_frames: Vec<(VisualId, u64, sim_engine::Pose)>,
     size: [u32; 2],
     center: Vec3,
     radius: f32,
@@ -209,11 +209,11 @@ impl Viewport {
         selected: u64,
         proxy: bool,
     ) -> Result<(), String> {
-        use rm_sim_engine::model::{
-            BodyKind, BodyState, ColliderDescription, ContactMaterial, RigidBodyDescription,
-        };
         use rm_sim_physics::{WorldPhysics, cooking::CookedRigidBody, runtime::BodyKey};
         use rm_sim_render::generic::flu_position;
+        use sim_engine::model::{
+            BodyKind, BodyState, ColliderDescription, ContactMaterial, RigidBodyDescription,
+        };
         let mut descriptions = Vec::new();
         if proxy {
             for group in &project.groups {
@@ -383,7 +383,7 @@ impl Viewport {
     /// Update existing instances from live body frames; never recook meshes.
     pub fn update_import_poses(
         &mut self,
-        poses: &BTreeMap<u64, rm_sim_engine::Pose>,
+        poses: &BTreeMap<u64, sim_engine::Pose>,
     ) -> Result<(), String> {
         for (_, group, _) in &self.import_frames {
             let p = poses.get(group).ok_or("missing playback body pose")?;

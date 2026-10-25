@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
-# rm-sim-engine
+# sim-engine
 
 Solver-free core for the incrementally separated robotics simulation engine.
 
@@ -55,8 +55,8 @@ Rapier-backed physics crate. That crate re-exports these types for compatibility
 There is no implicit world, plugin scheduler or device context.
 
 ```sh
-cargo test -p rm-sim-engine --locked
-cargo tree -p rm-sim-engine --edges normal
+cargo test -p sim-engine --locked
+cargo tree -p sim-engine --edges normal
 ```
 
 See [engine architecture](../../docs/engine-architecture.md) for the implemented

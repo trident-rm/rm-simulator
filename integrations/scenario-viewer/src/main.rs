@@ -125,7 +125,7 @@ struct Orbit {
 }
 #[derive(Component)]
 struct Status;
-fn pose(p: rm_sim_engine::Pose) -> PoseFlu {
+fn pose(p: sim_engine::Pose) -> PoseFlu {
     PoseFlu {
         translation_m: p.translation_m,
         rotation_wxyz: p.rotation_wxyz,

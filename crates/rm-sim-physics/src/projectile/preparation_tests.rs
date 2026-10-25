@@ -363,7 +363,7 @@ fn prepared_flight_ordered_contacts_retirement_caps_and_moving_targets_match_nat
 
 #[test]
 fn fixed_and_kinematic_explicit_mass_is_validated_without_dynamic_inertia_overlap() {
-    use rm_sim_engine::model::{
+    use sim_engine::model::{
         BodyKind, ColliderDescription, ColliderMass, ColliderPolicy, ContactMaterial, Inertial,
         ShapeDescription,
     };

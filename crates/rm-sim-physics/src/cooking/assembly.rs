@@ -2,7 +2,7 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Immutable prepared assembly resources; no caller-world installations.
 use super::CookedRigidBody;
-use rm_sim_engine::model::AssemblyDescription;
+use sim_engine::model::AssemblyDescription;
 use std::{collections::HashMap, sync::Arc};
 
 struct Prepared {

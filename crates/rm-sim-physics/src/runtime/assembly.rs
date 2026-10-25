@@ -3,7 +3,7 @@
 //! Prepare, preflight and commit complete source assembly installations.
 use super::*;
 use crate::cooking::CookedAssembly;
-use rm_sim_engine::model::{AssemblyJointId, AssemblyLinkId};
+use sim_engine::model::{AssemblyJointId, AssemblyLinkId};
 
 /// Complete caller-selected mapping from source IDs to world-local keys.
 /// Link/joint namespaces are separate. Installation rejects missing, extra,
@@ -112,7 +112,7 @@ impl PhysicalRuntime {
     /// state and commits in source order. It introduces no per-tick processing.
     ///
     /// ```
-    /// use rm_sim_engine::{Pose, model::{AssemblyDescription, AssemblyLink,
+    /// use sim_engine::{Pose, model::{AssemblyDescription, AssemblyLink,
     ///     AssemblyLinkId, BodyKind, BodyState, RigidBodyDescription}};
     /// use rm_sim_physics::{cooking::CookedAssembly,
     ///     runtime::{WorldPhysics, AssemblyKeys, BodyKey}};

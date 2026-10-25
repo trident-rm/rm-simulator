@@ -8,7 +8,7 @@
 
 use crate::Pose;
 use glam::{DQuat, DVec3};
-use rm_sim_engine::model::{CarrierKey, MountDescription, MountKey};
+use sim_engine::model::{CarrierKey, MountDescription, MountKey};
 
 /// Caller-stamped identity/continuity evidence for one resolved source carrier.
 /// Equality compares every field. This freely constructible record is not an
@@ -49,7 +49,7 @@ impl StampedCarrierPose {
     /// do not derive it from rounded timestamp differences.
     ///
     /// ```
-    /// use rm_sim_engine::model::CarrierKey;
+    /// use sim_engine::model::CarrierKey;
     /// use rm_sim_physics::{Pose, sensors::carrier::{CarrierIdentity, StampedCarrierPose}};
     /// let identity = CarrierIdentity {
     ///     carrier: CarrierKey(3), world_brand: 8,
@@ -111,7 +111,7 @@ impl StampedCarrierPose {
     /// The result preserves carrier evidence, timestamp and exact interval.
     ///
     /// ```
-    /// use rm_sim_engine::model::{CarrierKey, MountKey, MountDescription};
+    /// use sim_engine::model::{CarrierKey, MountKey, MountDescription};
     /// use rm_sim_physics::{Pose, sensors::carrier::{CarrierIdentity, StampedCarrierPose}};
     /// let identity = CarrierIdentity {
     ///     carrier: CarrierKey(3), world_brand: 8,

@@ -38,11 +38,11 @@ The [2027 rules reference](docs/rules-2027.md) interprets the supplied manuals;
 from remaining gaps. Builds include RMUC 2027 and RMUL 2027 without season feature switches.
 See [the archived runtime guide](docs/seasons.md) for 2026 and shared internals.
 
-Rust packages use the `rm-sim-*` prefix (for example, `rm-sim-engine`,
-`rm-sim-physics` and `rm-sim-render`); Rust imports use `rm_sim_*`.
-The application executable remains `rm-simulator`; the headless server is
-`rm-sim-server`. The generic components keep this namespace until a separate
-use case warrants an independent name.
+Generic crates use `sim-*` package/directory names and `sim_*` Rust imports.
+The solver-free core is `sim-engine` (`sim_engine`). Crates that contain
+RoboMaster code keep `rm-sim-*` names, including physics and rendering until their
+generic and game modules are separated. The application executable remains
+`rm-simulator`; the headless server is `rm-sim-server`.
 
 A [capability overview](docs/capabilities.md) describes the game, reusable engine,
 CAD tools, sensors and current experimental limits. Recent mechanical additions

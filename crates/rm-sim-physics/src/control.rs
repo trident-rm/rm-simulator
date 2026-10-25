@@ -2,4 +2,4 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Compatibility paths for backend-neutral caller-owned drive requests.
 
-pub use rm_sim_engine::control::{DriveControl, WheelTorques};
+pub use sim_engine::control::{DriveControl, WheelTorques};

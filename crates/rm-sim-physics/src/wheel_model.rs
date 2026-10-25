@@ -3,5 +3,5 @@
 //! Compatibility paths for backend-neutral ray-wheel equations and state.
 
 #[cfg(test)]
-pub(crate) use rm_sim_engine::wheel_model::drive_power_scale;
-pub use rm_sim_engine::wheel_model::{WheelContact, WheelDriveScratch, WheelModel, WheelState};
+pub(crate) use sim_engine::wheel_model::drive_power_scale;
+pub use sim_engine::wheel_model::{WheelContact, WheelDriveScratch, WheelModel, WheelState};

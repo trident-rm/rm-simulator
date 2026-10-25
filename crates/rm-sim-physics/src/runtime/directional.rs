@@ -322,7 +322,7 @@ impl PhysicalRuntime {
     ///
     /// ```
     /// use rm_sim_physics::{StepDuration, runtime::{PhysicalRuntime, BodyKey, DirectionalFriction}};
-    /// # use rm_sim_engine::{Pose, model::{BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, RigidBodyDescription, ShapeDescription}};
+    /// # use sim_engine::{Pose, model::{BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, RigidBodyDescription, ShapeDescription}};
     /// # use rm_sim_physics::cooking::CookedRigidBody;
     /// let mut runtime = PhysicalRuntime::new(StepDuration::HZ_1000);
     /// # let material = ContactMaterial { friction: 0.9, restitution: 0., memberships: 1, filter: 1 };

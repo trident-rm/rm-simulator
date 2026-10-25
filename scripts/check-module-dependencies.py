@@ -28,16 +28,16 @@ def dependencies(name):
     return {packages[node]["name"] for node in seen}
 
 
-engine = dependencies("rm-sim-engine")
-assert not any(d.startswith(("bevy", "rapier", "parry", "rm-sim-")) for d in engine), engine
+engine = dependencies("sim-engine")
+assert not any(d.startswith(("bevy", "rapier", "parry", "rm-sim-", "sim-")) for d in engine), engine
 assert not ({"game-networking-sockets", "rclrs", "ros-env", "rosidl_runtime_rs", "r2r"} & engine), engine
 
 gameplay = dependencies("rm-sim-gameplay")
 assert not any(d.startswith(("bevy", "rapier")) for d in gameplay), gameplay
-assert not any(d.startswith("rm-sim-") for d in gameplay), gameplay
+assert not any(d.startswith(("rm-sim-", "sim-")) for d in gameplay), gameplay
 physics = dependencies("rm-sim-physics")
 assert not any(d.startswith("bevy") for d in physics), physics
-assert not any(d.startswith("rm-sim-") and d != "rm-sim-engine" for d in physics), physics
+assert not any(d.startswith(("rm-sim-", "sim-")) and d != "sim-engine" for d in physics), physics
 assets = dependencies("rm-sim-assets")
 assert not any(d.startswith("bevy") for d in assets), assets
 assert not ({"rm-sim-world", "rm-sim-server", "rm-sim-render",

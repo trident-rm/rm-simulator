@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Standalone physical yaw/pitch fixture; no game controller or CAD is involved.
-use rm_sim_engine::{
+use rm_sim_physics::{
+    StepDuration,
+    cooking::CookedAssembly,
+    runtime::{AssemblyKeys, BodyKey, JointKey},
+    session::{RobotScenario, RobotSession},
+};
+use sim_engine::{
     Pose,
     model::{
         AssemblyDescription, AssemblyJoint, AssemblyJointId, AssemblyLink, AssemblyLinkId,
         BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, JointDescription,
         JointKind, JointLimits, JointMotor, RigidBodyDescription, ShapeDescription,
     },
-};
-use rm_sim_physics::{
-    StepDuration,
-    cooking::CookedAssembly,
-    runtime::{AssemblyKeys, BodyKey, JointKey},
-    session::{RobotScenario, RobotSession},
 };
 
 /// Logical pedestal body key; bindings must be reacquired after recipe reset.

@@ -10,7 +10,7 @@
 /// Construction allocates no storage and does not query any scene.
 ///
 /// ```
-/// use rm_sim_engine::queries::RayQuery;
+/// use sim_engine::queries::RayQuery;
 /// let ray = RayQuery::new([0., 0., 1.], [20., 0., 0.], 5.)?;
 /// assert_eq!(ray.direction(), [1., 0., 0.]);
 /// assert_eq!(ray.max_distance_m(), 5.);

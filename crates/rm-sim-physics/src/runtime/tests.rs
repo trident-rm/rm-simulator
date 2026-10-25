@@ -4,7 +4,7 @@
 use super::*;
 use crate::cooking::{CookedRigidBody, CookedTriangleMesh, TriangleMesh};
 use crate::queries::RayQuery;
-use rm_sim_engine::model::{
+use sim_engine::model::{
     BodyKind, BodyState, CarrierKey, ColliderDescription, ContactMaterial, Inertial,
     JointDescription, JointKind, RigidBodyDescription, ShapeDescription,
 };

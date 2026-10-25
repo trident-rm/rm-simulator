@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Standalone source-described rigid body, cooked resources and reset-safe binding.
-use rm_sim_engine::{
+use rm_sim_physics::{
+    StepDuration,
+    cooking::CookedRigidBody,
+    runtime::{BodyKey, PhysicalRuntime},
+};
+use sim_engine::{
     Pose,
     model::{
         BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, RigidBodyDescription,
         ShapeDescription,
     },
-};
-use rm_sim_physics::{
-    StepDuration,
-    cooking::CookedRigidBody,
-    runtime::{BodyKey, PhysicalRuntime},
 };
 fn main() -> Result<(), &'static str> {
     // Explicit uniform 2 kg cube inertia about its centre (0.2 m sides), kg m².

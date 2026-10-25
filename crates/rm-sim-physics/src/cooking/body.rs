@@ -6,7 +6,7 @@ use rapier3d_f64::prelude::{
     CoefficientCombineRule, ColliderBuilder, Group, InteractionGroups, InteractionTestMode,
     MassProperties, Pose as Pose3, RigidBodyBuilder, Rotation,
 };
-use rm_sim_engine::model::{
+use sim_engine::model::{
     BodyKind, ColliderMass, ConvexHull, RigidBodyDescription, ShapeDescription,
 };
 use std::sync::Arc;
@@ -31,7 +31,7 @@ impl CookedRigidBody {
     /// unit-density information cannot be recovered by choosing a smaller mass.
     ///
     /// ```
-    /// use rm_sim_engine::model::{BodyKind, RigidBodyDescription};
+    /// use sim_engine::model::{BodyKind, RigidBodyDescription};
     /// use rm_sim_physics::cooking::CookedRigidBody;
     /// let source = RigidBodyDescription::new(BodyKind::Fixed, vec![])?;
     /// let cooked = CookedRigidBody::new(source)?;
@@ -274,8 +274,8 @@ fn cook_shape(source: &ShapeDescription) -> Result<SharedShape, &'static str> {
     })
 }
 
-fn native_combine(rule: rm_sim_engine::model::CoefficientCombineRule) -> CoefficientCombineRule {
-    use rm_sim_engine::model::CoefficientCombineRule as Source;
+fn native_combine(rule: sim_engine::model::CoefficientCombineRule) -> CoefficientCombineRule {
+    use sim_engine::model::CoefficientCombineRule as Source;
     match rule {
         Source::Average => CoefficientCombineRule::Average,
         Source::Min => CoefficientCombineRule::Min,
@@ -357,13 +357,13 @@ fn cook_convex(source: &ConvexHull) -> Result<SharedShape, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rm_sim_engine::{
+    use sim_engine::{
         Pose,
         model::{BodyKind, ColliderDescription, ContactMaterial, Inertial},
     };
 
     fn compound_fixture() -> (ShapeDescription, SharedShape) {
-        use rm_sim_engine::model::CompoundShape;
+        use sim_engine::model::CompoundShape;
         // Unequal offset, rotated convex leaves expose order, frame and inertia
         // changes that symmetric primitives or identity mounts would conceal.
         let points = [
@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn compound_cooking_matches_native_order_frames_shapes_and_single_collider_mass() {
-        use rm_sim_engine::model::ColliderPolicy;
+        use sim_engine::model::ColliderPolicy;
         let (source, native) = compound_fixture();
         for mass in [ColliderMass::MassKg(3.7), ColliderMass::DensityKgM3(11.)] {
             let collider = compound_collider(source.clone())
@@ -510,7 +510,7 @@ mod tests {
     }
 
     fn compound_balls(radii: &[f64], policy: ColliderMass) -> RigidBodyDescription {
-        use rm_sim_engine::model::{ColliderPolicy, CompoundShape};
+        use sim_engine::model::{ColliderPolicy, CompoundShape};
         let shape = ShapeDescription::Compound(
             CompoundShape::new(
                 radii
@@ -646,7 +646,7 @@ mod tests {
     #[test]
     fn unsupported_composite_children_fail_before_install_and_bad_state_is_atomic() {
         use crate::runtime::{BodyKey, WorldPhysics};
-        use rm_sim_engine::model::{BodyState, CompoundShape};
+        use sim_engine::model::{BodyState, CompoundShape};
         let (source, _) = compound_fixture();
         let triangle = ShapeDescription::TriangleMesh(
             TriangleMesh::new(vec![[0.; 3], [1., 0., 0.], [0., 1., 0.]], vec![[0, 1, 2]]).unwrap(),
@@ -698,8 +698,8 @@ mod tests {
         assert_eq!(world.body_binding(BodyKey(99)), Some(binding));
     }
 
-    fn aggregate(half: [f64; 3], mass: rm_sim_engine::model::ColliderMass) -> RigidBodyDescription {
-        use rm_sim_engine::model::ColliderPolicy;
+    fn aggregate(half: [f64; 3], mass: sim_engine::model::ColliderMass) -> RigidBodyDescription {
+        use sim_engine::model::ColliderPolicy;
         RigidBodyDescription::new(
             BodyKind::DynamicFromColliders,
             vec![
@@ -728,7 +728,7 @@ mod tests {
 
     #[test]
     fn cooked_mass_rejects_overflow_and_underflow_without_silent_mass_loss() {
-        use rm_sim_engine::model::ColliderMass;
+        use sim_engine::model::ColliderMass;
         for (half, mass) in [
             ([1.; 3], ColliderMass::DensityKgM3(f64::MAX)),
             ([1e-150; 3], ColliderMass::DensityKgM3(1.)),
@@ -745,7 +745,7 @@ mod tests {
 
     #[test]
     fn aggregate_mass_overflow_cannot_be_hidden_by_later_contributions() {
-        use rm_sim_engine::model::{ColliderMass, ColliderPolicy};
+        use sim_engine::model::{ColliderMass, ColliderPolicy};
         let source = aggregate([0.5; 3], ColliderMass::MassKg(1e308));
         // Each contribution is representable on its own. Native inverse-mass
         // accumulation can turn the first overflowing pair into zero mass and
@@ -797,7 +797,7 @@ mod tests {
 
     #[test]
     fn native_helpers_preserve_source_rotation_bits_and_mass_mode() {
-        use rm_sim_engine::model::{ColliderMass, ColliderPolicy};
+        use sim_engine::model::{ColliderMass, ColliderPolicy};
         let p = Pose {
             translation_m: [0.1, 0.2, 0.3],
             rotation_wxyz: [1. + f64::EPSILON, 0., 0., 0.],

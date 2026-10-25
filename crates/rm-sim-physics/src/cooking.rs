@@ -8,7 +8,7 @@
 use rapier3d_f64::prelude::{SharedShape, TriMeshFlags, Vector};
 
 /// Compatibility access to the solver-free source mesh type.
-pub use rm_sim_engine::model::TriangleMesh;
+pub use sim_engine::model::TriangleMesh;
 mod body;
 pub use body::CookedRigidBody;
 mod assembly;

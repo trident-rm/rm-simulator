@@ -121,7 +121,7 @@ struct AssemblyData {
 /// validates capabilities and locked frames, including fixed-to-fixed support.
 ///
 /// ```
-/// use rm_sim_engine::{Pose, model::{
+/// use sim_engine::{Pose, model::{
 ///     AssemblyDescription, AssemblyJoint, AssemblyJointId, AssemblyLink,
 ///     AssemblyLinkId, BodyKind, BodyState, JointDescription, JointKind,
 ///     RigidBodyDescription,

@@ -3,13 +3,13 @@
 //! Offline reviewed import model. No native CAD parser or automatic mate solver.
 use bevy::math::{DMat3, DQuat, DVec3};
 use nalgebra::{Matrix3, SymmetricEigen};
-use rm_sim_engine::{Pose, model::*};
 use rm_sim_physics::{
     StepDuration,
     cooking::CookedAssembly,
     runtime::{AssemblyKeys, BodyKey, JointKey, PhysicalRuntime},
 };
 use serde::{Deserialize, Serialize};
+use sim_engine::{Pose, model::*};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,

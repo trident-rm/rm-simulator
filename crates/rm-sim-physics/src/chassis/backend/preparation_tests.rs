@@ -295,7 +295,7 @@ fn prepared_sources_preserve_native_shapes_policies_roles_and_mass_timing() {
             .colliders()
             .iter()
             .filter_map(|c| {
-                if let rm_sim_engine::model::ShapeDescription::ConvexHull(hull) = c.shape() {
+                if let sim_engine::model::ShapeDescription::ConvexHull(hull) = c.shape() {
                     Some(hull.points_m())
                 } else {
                     None

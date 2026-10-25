@@ -21,7 +21,7 @@
 //! ```
 use super::*;
 use crate::manipulator_collision::CollisionPart;
-use rm_sim_engine::model::BodyState;
+use sim_engine::model::BodyState;
 use std::sync::Arc;
 
 #[path = "payload/preparation.rs"]

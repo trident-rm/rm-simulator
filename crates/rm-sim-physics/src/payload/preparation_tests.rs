@@ -185,13 +185,13 @@ fn prepared_clone_shares_raw_and_native_shapes_across_instances_worlds_and_reset
     let prepared = PreparedPayload::new(initial.shape.clone()).unwrap();
     let cloned = prepared.clone();
     assert!(std::ptr::eq(prepared.shape(), cloned.shape()));
-    let rm_sim_engine::model::ShapeDescription::Compound(compound) =
+    let sim_engine::model::ShapeDescription::Compound(compound) =
         prepared.cooked().source().colliders()[0].shape()
     else {
         panic!("single compound required")
     };
     for ((_, child), points) in compound.children().iter().zip(&initial.shape.hulls_m) {
-        let rm_sim_engine::model::ShapeDescription::ConvexHull(hull) = child else {
+        let sim_engine::model::ShapeDescription::ConvexHull(hull) = child else {
             panic!("convex leaf required")
         };
         assert_eq!(hull.points_m(), points);

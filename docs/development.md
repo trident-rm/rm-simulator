@@ -108,13 +108,14 @@ Run it before opening a pull request, after compilation has finished.
 
 ## Crate naming
 
-Workspace packages and directories use `rm-sim-*`; Rust imports use `rm_sim_*`.
-This replaces the former `rm-simulator-*` / `rm_simulator_*` names. The main
-`rm-simulator` executable and GitHub repository keep their names; suffixed
-executables use the new prefix (`rm-sim-server`, `rm-sim-bench`, `rm-sim-ros2`).
+Generic packages and directories use `sim-*`; Rust imports use `sim_*`.
+The solver-free `sim-engine` core is the first such crate. Packages containing
+RoboMaster code keep `rm-sim-*` / `rm_sim_*`, including physics, assets, control
+and rendering while their generic and game modules share a crate.
+The main `rm-simulator` executable and GitHub repository keep their names;
+suffixed executables use `rm-sim-server`, `rm-sim-bench` and `rm-sim-ros2`.
 The independent `crates/rm-sim` registry placeholder remains separate from the
-unpublished runtime workspace. Engine, physics and generic rendering retain
-this namespace until another use case warrants an independent identity.
+unpublished runtime workspace.
 
 Dated performance reports preserve the package names used for their recorded
 revisions. Substitute the new prefix when running their commands on current

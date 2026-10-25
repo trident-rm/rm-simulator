@@ -3,7 +3,7 @@
 //! Immutable payload resources without world handles or attachment state.
 use super::PayloadShape;
 use crate::{Pose, cooking::CookedRigidBody};
-use rm_sim_engine::model::{
+use sim_engine::model::{
     BodyKind, BodyPolicy, ColliderDescription, ColliderMass, ColliderPolicy, CompoundShape,
     ContactMaterial, ConvexHull, RigidBodyDescription, ShapeDescription,
 };
@@ -22,7 +22,7 @@ impl PreparedPayload {
     /// fitting hulls again, or allocating any live world handles.
     ///
     /// ```
-    /// use rm_sim_engine::model::BodyState;
+    /// use sim_engine::model::BodyState;
     /// use rm_sim_physics::{Pose, WorldPhysics, manipulator_collision::CollisionPart,
     ///     projectile::{PayloadShape, PreparedPayload}};
     /// let shape = PayloadShape::from_parts(&[CollisionPart::Box { half_m: [0.03; 3] }], 0.25)?;

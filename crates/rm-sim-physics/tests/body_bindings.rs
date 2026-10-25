@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Described bodies interact in the ordinary scene; bindings are not raw handles.
-use rm_sim_engine::{
-    Pose,
-    model::{
-        BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, RigidBodyDescription,
-        ShapeDescription,
-    },
-};
 use rm_sim_physics::{
     StepDuration, TargetFrames,
     cooking::CookedRigidBody,
     runtime::{BodyKey, WorldPhysics},
     session::{RobotScenario, RobotSession},
+};
+use sim_engine::{
+    Pose,
+    model::{
+        BodyKind, BodyState, ColliderDescription, ContactMaterial, Inertial, RigidBodyDescription,
+        ShapeDescription,
+    },
 };
 fn model(kind: BodyKind, shape: ShapeDescription) -> CookedRigidBody {
     CookedRigidBody::new(

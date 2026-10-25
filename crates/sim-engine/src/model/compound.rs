@@ -25,7 +25,7 @@ struct CompoundData {
 /// or triangle children without flattening, replacing or splitting the source.
 ///
 /// ```
-/// use rm_sim_engine::{Pose, model::{CompoundShape, ShapeDescription}};
+/// use sim_engine::{Pose, model::{CompoundShape, ShapeDescription}};
 /// let shape = CompoundShape::new(vec![
 ///     (Pose::at([1., 0., 0.]), ShapeDescription::Ball { radius_m: 0.1 }),
 /// ])?;

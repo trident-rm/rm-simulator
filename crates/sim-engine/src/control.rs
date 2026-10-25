@@ -15,7 +15,7 @@ impl WheelTorques {
     /// checks that the count matches its nonempty wheel roster.
     ///
     /// ```
-    /// use rm_sim_engine::control::WheelTorques;
+    /// use sim_engine::control::WheelTorques;
     /// let torques = WheelTorques::new(vec![1.0, -1.0, 0.0, 0.0])?;
     /// torques.validate(4)?;
     /// assert_eq!(torques.as_nm()[1], -1.0);
@@ -49,7 +49,7 @@ impl WheelTorques {
 /// requests remain caller-owned; a new high-level command selects `BodyVelocity`.
 ///
 /// ```
-/// use rm_sim_engine::control::{DriveControl, WheelTorques};
+/// use sim_engine::control::{DriveControl, WheelTorques};
 /// let request = DriveControl::WheelTorques(WheelTorques::new(vec![0.; 4])?);
 /// request.validate(4)?;
 /// assert!(request.validate(2).is_err());
