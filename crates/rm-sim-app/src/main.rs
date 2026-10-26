@@ -46,6 +46,7 @@ mod session;
 mod staging;
 #[cfg(feature = "steam")]
 mod steam_support;
+mod supply;
 #[cfg(test)]
 mod test_fixtures;
 mod title;
@@ -193,6 +194,7 @@ fn main() -> AppExit {
         .add_plugins(graphics::GraphicsPlugin)
         .add_plugins(hud::HudPlugin)
         .add_plugins(assembly::AssemblyPlugin)
+        .add_plugins(supply::SupplyPlugin)
         .add_plugins(sentry::SentryPlugin)
         .add_plugins(enemy_intel::EnemyIntelPlugin)
         .add_plugins(debug_panel::DebugPanelPlugin)

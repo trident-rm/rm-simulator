@@ -10,6 +10,8 @@ use glam::{DQuat, DVec3};
 use rm_sim_physics::projectile::{PayloadShape, PayloadSnapshot};
 use serde::{Deserialize, Serialize};
 
+pub mod supply;
+
 // Admission and restore share this bound; Units persist until the field resets.
 const MAX_ENERGY_UNITS: usize = 32;
 fn q(p: Pose) -> DQuat {
@@ -19,6 +21,10 @@ fn q(p: Pose) -> DQuat {
 /// A Unit's current mechanical attachment; gripping is distinct from Core seating.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Attachment {
+    /// Retained by a supply-station fixture without a robot grip.
+    Mounted,
+    /// Gripped by a robot while still constrained to the station's extraction axis.
+    Extracting(u32),
     /// Carried by the named robot's actual wrist.
     Held(u32),
     /// Freely simulated by Rapier; may rest on a robot or terrain.
@@ -29,6 +35,9 @@ pub enum Attachment {
 /// One persistent source Unit. Its physics identity survives release and pickup.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EnergyUnit {
+    /// Source station, force limits and axial state; retained after extraction for provenance.
+    #[serde(default)]
+    pub supply: Option<supply::SupplyMount>,
     /// Rigid-body geometry, world pose, velocities and stable identity.
     pub physical: PayloadSnapshot,
     /// Current carrier or station attachment.
@@ -57,6 +66,12 @@ impl Field {
             .map(|mut u| {
                 if let Some(mut p) = self.physics.payload(u.physical.id) {
                     if u.attachment != Attachment::Free {
+                        // Source endpoints are caller-owned state. Native
+                        // quaternion conversions may change their last bits;
+                        // reading those back makes repeated restores drift.
+                        if u.supply.is_some() {
+                            p.pose = u.physical.pose;
+                        }
                         p.velocity_m_s = u.physical.velocity_m_s;
                         p.angular_velocity_rad_s = u.physical.angular_velocity_rad_s;
                     }
@@ -107,6 +122,7 @@ impl Field {
             .add_payload(&physical)
             .map_err(FieldError::Restore)?;
         self.energy_units.push(EnergyUnit {
+            supply: None,
             physical,
             attachment: Attachment::Held(owner),
             spent: false,
@@ -130,9 +146,16 @@ impl Field {
         if let Some(index) = self
             .energy_units
             .iter()
-            .position(|u| u.attachment == Attachment::Held(owner))
+            .position(|u| matches!(u.attachment, Attachment::Held(id) | Attachment::Extracting(id) if id == owner))
         {
             self.cancel_assembly(owner, "Cancelled by gripper control");
+            if self.energy_units[index].attachment == Attachment::Extracting(owner) {
+                self.release_supply_grip(index);
+                if let Some(arm) = self.arms.iter_mut().find(|a| a.owner == owner) {
+                    arm.jaw_target_rad = std::array::from_fn(|i| arm.model.engineer_jaws[i].open_rad);
+                }
+                return Ok(());
+            }
             let unit = &mut self.energy_units[index];
             unit.physical
                 .release_attachment(&mut self.physics)
@@ -157,7 +180,13 @@ impl Field {
             .energy_units
             .iter()
             .enumerate()
-            .filter(|(_, u)| !u.spent && !matches!(u.attachment, Attachment::Held(_)))
+            .filter(|(_, u)| {
+                !u.spent
+                    && !matches!(
+                        u.attachment,
+                        Attachment::Held(_) | Attachment::Extracting(_)
+                    )
+            })
             .filter_map(|(i, u)| {
                 let physical = self.physics.payload_telemetry(u.physical.id)?;
                 let distance = DVec3::from_array(physical.pose.translation_m)
@@ -186,7 +215,14 @@ impl Field {
             .set_payload_motion(unit.physical.id, true, at, [0.; 3], [0.; 3])
             .map_err(FieldError::Restore)?;
         unit.grasp = grasp;
-        unit.attachment = Attachment::Held(owner);
+        if let Some(mount) = &mut unit.supply {
+            mount.slipped = false;
+        }
+        unit.attachment = if unit.attachment == Attachment::Mounted {
+            Attachment::Extracting(owner)
+        } else {
+            Attachment::Held(owner)
+        };
         unit.physical.refresh_motion(&self.physics).unwrap();
         if let Some(arm) = self.arms.iter_mut().find(|a| a.owner == owner) {
             arm.jaw_target_rad = std::array::from_fn(|i| arm.model.engineer_jaws[i].closed_rad);
@@ -268,6 +304,14 @@ impl Field {
             let grasp = unit.grasp;
             let seated_generation = unit.seated_generation;
             let (at, prescribed) = match attachment {
+                Attachment::Mounted => {
+                    self.return_supply_unit(index);
+                    continue;
+                }
+                Attachment::Extracting(owner) => {
+                    self.advance_supply_grip(index, owner);
+                    continue;
+                }
                 Attachment::Free => continue,
                 Attachment::Seated(owner) => {
                     let Some(run) = self
@@ -338,6 +382,11 @@ impl Field {
         }
     }
     pub(crate) fn release_energy_units(&mut self, owner: u32) {
+        for index in 0..self.energy_units.len() {
+            if self.energy_units[index].attachment == Attachment::Extracting(owner) {
+                self.release_supply_grip(index);
+            }
+        }
         for unit in &mut self.energy_units {
             if unit.attachment == Attachment::Held(owner) {
                 let _ = unit.physical.release_attachment(&mut self.physics);
@@ -351,6 +400,7 @@ impl Field {
             return Err(FieldError::Restore("too many Energy Units"));
         }
         for unit in &self.energy_units {
+            supply::validate_unit(unit)?;
             let g = unit.grasp;
             if g.translation_m
                 .into_iter()
@@ -372,7 +422,7 @@ impl Field {
                     "Unit attachment disagrees with dynamics",
                 ));
             }
-            if let Attachment::Held(owner) = unit.attachment
+            if let Attachment::Held(owner) | Attachment::Extracting(owner) = unit.attachment
                 && self.arms.iter().all(|a| a.owner != owner)
             {
                 return Err(FieldError::Restore("missing Unit holder"));
@@ -380,6 +430,11 @@ impl Field {
             self.physics
                 .add_payload(&unit.physical)
                 .map_err(FieldError::Restore)?;
+            if unit.supply.is_some() {
+                self.physics
+                    .enable_payload_queries(unit.physical.id)
+                    .map_err(FieldError::Restore)?;
+            }
         }
         Ok(())
     }
@@ -389,7 +444,7 @@ impl Field {
 mod tests {
     use super::*;
     use crate::assembly::{ArmState, NEUTRAL_JOINTS_RAD};
-    fn fixture() -> (Field, u32) {
+    pub(super) fn fixture() -> (Field, u32) {
         let (mut field, run) = crate::assembly::tests::fixture();
         let mut model = run.model;
         model.engineer.tool = Pose::at([0., 0., 0.65]);

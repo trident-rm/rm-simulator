@@ -476,12 +476,26 @@ fn update_panel(
         )
     };
     if let Some(restore) = &session.snapshot.restore {
-        let held=restore.energy_units.iter().any(|u|matches!(u.attachment,rm_sim_world::energy_unit::Attachment::Held(owner) if Some(owner)==session.chassis_id));
-        message.push_str(if held {
-            "\nUnit: held"
+        use rm_sim_world::energy_unit::Attachment;
+        if let Some(unit) = restore.energy_units.iter().find(|u| {
+            matches!(u.attachment,
+            Attachment::Extracting(owner) if Some(owner)==session.chassis_id)
+        }) {
+            if let Some(mount) = &unit.supply {
+                message.push_str(&format!(
+                    "\nWithdrawing Unit: {:.1} / {:.0} mm",
+                    mount.pull.travel_m * 1000.,
+                    mount.limits.clearance_m * 1000.
+                ));
+            }
+        } else if restore.energy_units.iter().any(|u| {
+            matches!(u.attachment,
+            Attachment::Held(owner) if Some(owner)==session.chassis_id)
+        }) {
+            message.push_str("\nUnit: held");
         } else {
-            "\nUnit: not held"
-        });
+            message.push_str("\nRetrieve a Unit from the supply station.");
+        }
     }
     if let Some(state) = &session.snapshot.rmuc_2027
         && let Some(robot) = state.game.robots.iter().find(|r| {
@@ -716,6 +730,16 @@ fn visuals(
         }
     }
     for unit in units {
+        // Source station Units keep their original source meshes throughout
+        // pickup, carrying and discharge; supply presentation moves those nodes.
+        if unit
+            .supply
+            .as_ref()
+            .and_then(|s| s.visual_node.as_ref())
+            .is_some()
+        {
+            continue;
+        }
         if !roots
             .iter()
             .any(|(_, r, _)| r.kind == 4 && r.owner == unit.physical.id)

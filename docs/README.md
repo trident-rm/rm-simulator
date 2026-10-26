@@ -63,6 +63,7 @@ Git history.
 | Asset contracts and composition | [Semantic assets](semantic-assets.md) |
 | Reproducible simplification and installation | [Field detail](field-detail.md) |
 | Robot geometry and artwork assumptions | [Robot equipment](robot-equipment.md) |
+| Magnetic supply inventory, force limits and Unit retrieval | [Supply retrieval](supply-retrieval.md) |
 | Cartesian Engineer assembly prototype and boundaries | [Assembly workbench](assembly-workbench.md) |
 | CPU measurements and reproducibility | [Performance](performance.md) |
 | Native rules, physical stepping and query baseline | [2026-10-21 measurements](performance-20261021.md) |

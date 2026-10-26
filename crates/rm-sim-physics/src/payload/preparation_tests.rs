@@ -38,6 +38,7 @@ fn oracle_add(world: &mut WorldPhysics, state: &PayloadSnapshot) {
         body,
         collider,
         shape: Arc::new(state.shape.clone()),
+        query_visible: false,
     });
     oracle_motion(
         world,

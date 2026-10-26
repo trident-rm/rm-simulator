@@ -213,6 +213,7 @@ pub(super) struct Body {
     body: RigidBodyHandle,
     collider: ColliderHandle,
     shape: Arc<PayloadShape>,
+    query_visible: bool,
 }
 impl WorldPhysics {
     pub(super) fn damp_payload_contacts(&mut self) {
@@ -273,25 +274,8 @@ impl WorldPhysics {
         if self.payloads.iter().any(|b| b.id == id) {
             return Err("invalid or duplicate payload");
         }
-        state.validate()?;
-        if !pose_is_valid(state.pose) {
-            return Err("invalid payload motion");
-        }
+        let body = prepared.body_at(state)?;
         let model = prepared.cooked();
-        // Preflight native placement before touching live handles. Keep collider
-        // mass refresh deferred to native insertion/stepping, as before.
-        let body = model
-            .body_builder()
-            .pose(pose(state.pose))
-            .linvel(Vector::from_array(state.velocity_m_s))
-            .angvel(Vector::from_array(state.angular_velocity_rad_s))
-            .build();
-        if model
-            .aggregate_mass_properties()
-            .is_some_and(|mass| !body.position().transform_point(mass.local_com).is_finite())
-        {
-            return Err("nonfinite placed payload mass frame");
-        }
         let collider = model
             .collider_builders()
             .next()
@@ -307,6 +291,7 @@ impl WorldPhysics {
             body,
             collider,
             shape: prepared.shared_shape(),
+            query_visible: false,
         });
         self.set_payload_motion(
             id,
@@ -394,7 +379,30 @@ impl WorldPhysics {
             body.set_linvel(Vector::from_array(velocity_m_s), true);
             body.set_angvel(Vector::from_array(angular_velocity_rad_s), true);
         }
-        self.physical.world_mut().colliders[p.collider].set_enabled(!prescribed);
+        let collider = &mut self.physical.world_mut().colliders[p.collider];
+        collider.set_enabled(!prescribed || p.query_visible);
+        collider.set_sensor(prescribed && p.query_visible);
+        Ok(())
+    }
+
+    /// Keep a prescribed payload visible to geometry and LiDAR queries without
+    /// giving its prescribed motion infinite contact-force authority. Free
+    /// payloads retain ordinary collision response. This policy persists across
+    /// carry/release transitions; the caller reapplies it after checkpoint restore.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown payload identity.
+    pub fn enable_payload_queries(&mut self, id: u32) -> Result<(), &'static str> {
+        let payload = self
+            .payloads
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or("missing payload")?;
+        payload.query_visible = true;
+        let prescribed = self.physical.world().bodies[payload.body].is_kinematic();
+        let collider = &mut self.physical.world_mut().colliders[payload.collider];
+        collider.set_enabled(true);
+        collider.set_sensor(prescribed);
         Ok(())
     }
 }

@@ -120,7 +120,8 @@ use serde::{Deserialize, Serialize};
 /// Version 81 carries the independent native RMUL 2027 match authority.
 /// Version 82 adds leased Sentry head sweep and chassis counter-rotation.
 /// Version 83 identifies the host competition even without a match referee.
-pub const PROTOCOL_VERSION: u32 = 83;
+/// Version 84 carries force-limited supply Unit mounts and withdrawal state.
+pub const PROTOCOL_VERSION: u32 = 84;
 
 /// Explains incompatible host and client wire versions and how to resolve them.
 ///

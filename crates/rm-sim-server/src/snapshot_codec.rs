@@ -1507,6 +1507,7 @@ mod tests {
         )
         .unwrap();
         let unit = EnergyUnit {
+            supply: None,
             physical: PayloadSnapshot {
                 id: 3,
                 shape,
@@ -1524,6 +1525,17 @@ mod tests {
         let bytes = bitpack::to_bytes(&wire).unwrap();
         let decoded: EnergyUnitWire = bitpack::from_bytes(&bytes).unwrap();
         assert_eq!(decoded.into_unit(), unit);
+        let mut retained = unit.clone();
+        retained.attachment = Attachment::Extracting(3);
+        let mut mount = rm_sim_world::energy_unit::supply::SupplyMount::new(retained.physical.pose);
+        mount.limits.mass_kg = retained.physical.shape.mass_kg;
+        mount.pull.travel_m = 0.003;
+        mount.pull.velocity_m_s = 0.02;
+        mount.visual_node = Some("energy-unit/unit/instance-269".into());
+        retained.supply = Some(mount);
+        let bytes = bitpack::to_bytes(&EnergyUnitWire::new(&retained)).unwrap();
+        let decoded: EnergyUnitWire = bitpack::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded.into_unit(), retained);
         let mut moved = unit.clone();
         moved.physical.pose.translation_m[0] += 0.5;
         let moved = EnergyUnitWire::new(&moved);

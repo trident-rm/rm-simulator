@@ -961,6 +961,9 @@ impl Field {
         if self.authority.rmul().is_some() {
             return self.rmul_command(command);
         }
+        if matches!(&command, RefereeCommand::ResetMatch) && self.authority.rmuc().is_some() {
+            self.reset_supply_units()?;
+        }
         if let Some(state) = self.authority.rmuc_mut() {
             use rmuc_2027::match_rules::{Match, Phase};
             match command {

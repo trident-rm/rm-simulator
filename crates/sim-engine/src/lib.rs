@@ -12,6 +12,7 @@ pub mod control;
 pub mod model;
 pub mod pose;
 pub mod queries;
+pub mod retention;
 pub mod time;
 pub mod wheel_model;
 pub use pose::Pose;

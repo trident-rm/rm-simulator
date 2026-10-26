@@ -15,6 +15,8 @@ pub const CATCH_FLOOR_M: f64 = -0.45;
 const FIXED_NODE: &str = "static";
 /// Everything rigid the chassis and projectiles collide with, in FLU metres.
 pub struct Terrain {
+    /// Interactive source Units excluded from static geometry, for caller-owned inventory.
+    pub supply_units: Vec<crate::supply::SourceUnit>,
     /// Separate native terrain installation, replacing matching ground owners.
     pub native_terrain: Option<crate::terrain_collision::TerrainPackage>,
     /// Physical mesh remainder. The full ground is retained for support lookups.
@@ -104,6 +106,37 @@ pub fn load_terrain_with_motions<B>(
         &'a crate::cad_assets::CadAsset,
     ) -> Option<&'a [crate::rmuc_2027::Motion]>,
 ) -> anyhow::Result<Terrain> {
+    load_terrain_inner(cad, source_motions, false)
+}
+
+/// Prepare terrain with source Energy Units removed for caller-owned inventory.
+/// The caller must install the Units returned by [`crate::supply::load`].
+///
+/// # Errors
+/// Rejects incomplete source inventory and the same invalid geometry as ordinary terrain loading.
+pub fn load_terrain_for_supply_with_motions<B>(
+    cad: &CadAssets<B>,
+    source_motions: impl for<'a> Fn(
+        &'a CadAssets<B>,
+        &'a crate::cad_assets::CadAsset,
+    ) -> Option<&'a [crate::rmuc_2027::Motion]>,
+) -> anyhow::Result<Terrain> {
+    load_terrain_inner(cad, source_motions, true)
+}
+
+fn load_terrain_inner<B>(
+    cad: &CadAssets<B>,
+    source_motions: impl for<'a> Fn(
+        &'a CadAssets<B>,
+        &'a crate::cad_assets::CadAsset,
+    ) -> Option<&'a [crate::rmuc_2027::Motion]>,
+    supply: bool,
+) -> anyhow::Result<Terrain> {
+    let supply_units = if supply {
+        crate::supply::load(cad)?
+    } else {
+        Vec::new()
+    };
     let load_component = |cad: &CadAssets<B>, asset: &crate::cad_assets::CadAsset, role| {
         crate::components::load(cad, asset, role, source_motions(cad, asset))
     };
@@ -118,13 +151,20 @@ pub fn load_terrain_with_motions<B>(
         .floor
         .physics_mesh(&cad.root)?
         .into_flu(cad.floor_top_cad_m);
-    let scenery = cad
-        .arena_static
-        .physics_mesh(&cad.root)?
-        .into_flu(cad.floor_top_cad_m);
+    let scenery = if supply {
+        crate::supply::without_units(&cad.arena_static.physics_bytes(&cad.root)?, &supply_units)?
+    } else {
+        cad.arena_static.physics_mesh(&cad.root)?
+    }
+    .into_flu(cad.floor_top_cad_m);
     let source_scenery = if cad.terrain_collision.is_some() {
-        crate::collision_mesh::load_glb(&cad.root.join(&cad.arena_static.file))?
-            .into_flu(cad.floor_top_cad_m)
+        let bytes = std::fs::read(cad.root.join(&cad.arena_static.file))?;
+        if supply {
+            crate::supply::without_units(&bytes, &supply_units)?
+        } else {
+            crate::collision_mesh::load_glb_bytes(&bytes)?
+        }
+        .into_flu(cad.floor_top_cad_m)
     } else {
         scenery.clone()
     };
@@ -235,6 +275,7 @@ pub fn load_terrain_with_motions<B>(
         }
     }
     Ok(Terrain {
+        supply_units,
         native_terrain,
         ground_collision,
         boundary,
@@ -641,6 +682,7 @@ impl PreparedArena {
     /// use rm_sim_assets::{arena::{PreparedArena, Terrain}, collision_mesh::CollisionMesh};
     /// use rm_sim_physics::{StepDuration, session::RobotSession};
     /// let terrain = Terrain {
+    ///     supply_units: vec![],
     ///     boundary: Default::default(), projectile_bounds_m: None, mechanisms: vec![],
     ///     ground: CollisionMesh::default().into(), fixtures: Default::default(), equipment: vec![], endpoint_bakes: vec![], native_shapes: vec![], native_query_meshes: vec![], native_terrain: None, ground_collision: None,
     /// };
@@ -700,6 +742,7 @@ mod tests {
         };
         let bounds = arena_boundary_bounds(&floor, &CollisionMesh::default()).unwrap();
         let terrain = Terrain {
+            supply_units: vec![],
             native_terrain: None,
             ground_collision: None,
             boundary: arena_boundary(bounds),

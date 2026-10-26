@@ -303,9 +303,13 @@ impl Service {
                     ))
                     .is_ok()
             {
-                let result = field.preload_energy_unit(chassis.id, self.unit_shape.clone());
-                if let Err(error) = result {
-                    eprintln!("Could not initialize Energy Unit: {error}");
+                // Source-backed fields start empty-handed. Bare test fixtures
+                // retain deployment preload until explicitly given a station.
+                if !field.energy_units().iter().any(|u| u.supply.is_some()) {
+                    let result = field.preload_energy_unit(chassis.id, self.unit_shape.clone());
+                    if let Err(error) = result {
+                        eprintln!("Could not initialize Energy Unit: {error}");
+                    }
                 }
             }
         }

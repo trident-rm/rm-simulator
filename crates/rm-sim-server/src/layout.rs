@@ -91,7 +91,7 @@ pub use rm_sim_assets::arena::{Terrain, arena_boundary_bounds};
 pub use rm_sim_assets::components::{MechanismMesh, mechanism_joint};
 /// Build terrain through shared assets while retaining native checked bindings.
 pub fn load_terrain(cad: &CadAssets) -> anyhow::Result<Terrain> {
-    rm_sim_assets::arena::load_terrain_with_motions(cad, |cad, asset| {
+    rm_sim_assets::arena::load_terrain_for_supply_with_motions(cad, |cad, asset| {
         cad.rmuc_2027
             .as_ref()
             .map(|bindings| bindings.motions(cad, asset))
@@ -104,6 +104,14 @@ pub fn add_terrain(field: &mut Field, terrain: &Terrain) -> anyhow::Result<()> {
     let geometry =
         rm_sim_assets::arena::prepare_terrain_geometry(terrain).map_err(anyhow::Error::msg)?;
     field.add_prepared_geometry(&geometry)?;
+    for (station, units) in terrain.supply_units.as_chunks::<6>().0.iter().enumerate() {
+        let mounts = std::array::from_fn(|i| {
+            let mut mount = rm_sim_world::energy_unit::supply::SupplyMount::new(units[i].pose);
+            mount.visual_node = Some(units[i].visual_node.clone());
+            (u32::MAX - (station * 6 + i) as u32, mount)
+        });
+        field.add_supply_station(mounts, units[0].shape.clone())?;
+    }
     Ok(())
 }
 
@@ -348,7 +356,13 @@ mod tests {
         let terrain = load_terrain(&native).unwrap();
         let mut field = Field::new(&Default::default()).unwrap();
         add_terrain(&mut field, &terrain).unwrap();
-        let arena = rm_sim_assets::arena::PreparedArena::load(&shared).unwrap();
+        let arena = rm_sim_assets::arena::PreparedArena::from_terrain(
+            rm_sim_assets::arena::load_terrain_for_supply_with_motions(&shared, |cad, asset| {
+                cad.rmuc_2027.as_ref().map(|b| b.motions(cad, asset))
+            })
+            .unwrap(),
+        )
+        .unwrap();
         assert_eq!(terrain.describe(), arena.terrain().describe());
         assert_eq!(
             field.static_geometry_snapshot().into_triangles(),
@@ -549,6 +563,7 @@ mod tests {
     fn chassis_is_set_down_on_the_ground_below_the_spawn_point() {
         let config = ChassisConfig::default();
         let terrain = Terrain {
+            supply_units: vec![],
             native_terrain: None,
             ground_collision: None,
             boundary: CollisionMesh::default(),

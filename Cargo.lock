@@ -6192,6 +6192,7 @@ dependencies = [
  "rm-sim-gameplay",
  "rm-sim-physics",
  "serde",
+ "sim-engine",
  "thiserror 2.0.21",
 ]
 

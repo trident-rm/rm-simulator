@@ -1252,8 +1252,9 @@ manual initial pose. `Completed` means Core recovery/reset has finished. Checkpo
 return suffix and cursor, so restoring midway resumes without a pose jump.
 A blocked return refuses planning rather than executing an unchecked retreat.
 
-The live version starts with a deployment-preloaded Unit at the actual gripper;
-base storage pickup is not implemented. The grasp remains fixed through the loaded
+Source-backed live fields start the Heavy empty-handed. Retrieve a Unit from
+one of the six magnetic mounts at a supply station before assembly; see
+[supply retrieval](supply-retrieval.md). Bare fixtures retain deployment preload. The grasp remains fixed through the loaded
 approach and insertion. It uses the canonical frozen Core pose, with the L3 Q
 target revealed only after the P flip. The same source-preserving arm, Core and
 Unit meshes animate through insertion, lift, P flip and Q alignment.
@@ -1387,11 +1388,13 @@ initial prefixes make them examples, not an average or percentile estimate.
 
 ### Persistent Energy Unit and physical pickup
 
-The host preloads one source Unit at PIE Heavy deployment, with its own stable
-identity and closed jaws. It is visible before opening J, selecting a difficulty,
-Core positioning or worker planning. Starting another assembly requires the
-existing Unit to be held; it never creates or replaces an object. Base storage
-and fetching inventory from the supply station remain future work.
+Source-backed fields install six persistent Units at each magnetic resource
+station. The Heavy deploys empty-handed. J → Grip / release Unit captures a
+nearby aligned Unit; withdrawing it must overcome magnetic resistance and gravity
+within the configured arm/grip limits. Starting assembly requires the extracted
+Unit to be held; it never creates or replaces an object. See
+[supply retrieval](supply-retrieval.md) for source bindings and force-model limits.
+Bare fixtures without station inventory retain the deployment preload.
 
 Released Units are dynamic Rapier bodies in the same scene as chassis,
 projectiles and field collision. They inherit their last carried linear/angular
@@ -1465,8 +1468,8 @@ it cannot retrieve an object that has rolled beyond the stationary arm's workspa
 
 The live console assembly harness runs one selected `--level 1|2|3` per fresh
 Heavy deployment. A successfully assembled Unit is consumed and discharged into
-the collection bay; another attempt requires an unused Unit from future Base
-inventory, not a replacement spawn or reuse of the spent object.
+the collection bay; another attempt requires an unused Unit from the supply station,
+not a replacement spawn or reuse of the spent object.
 
 The recovery fit, rulebook requirements and simulator-only route/timing policies
 are documented in [the 2027 rules digest](rules-2027.md#successful-core-recovery-and-spent-units).

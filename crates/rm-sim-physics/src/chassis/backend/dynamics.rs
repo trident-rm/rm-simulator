@@ -80,14 +80,14 @@ impl Chassis {
         let reach = cfg.wheel_radius_m + cfg.suspension_rest_m;
         // Projectile group 2 must not act as a suspension support. A ray spring
         // resting on a loose 17 mm ball would invent a rigid terrain column.
-        let filter =
-            QueryFilter::default()
-                .exclude_rigid_body(self.body)
-                .groups(InteractionGroups::new(
-                    Group::ALL,
-                    Group::ALL & !Group::GROUP_2,
-                    InteractionTestMode::And,
-                ));
+        let filter = QueryFilter::default()
+            .exclude_sensors()
+            .exclude_rigid_body(self.body)
+            .groups(InteractionGroups::new(
+                Group::ALL,
+                Group::ALL & !Group::GROUP_2,
+                InteractionTestMode::And,
+            ));
         self.forces.clear();
         self.drive_forces.clear();
         self.wheel_drive.contacts.clear();

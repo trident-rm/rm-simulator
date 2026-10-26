@@ -4,8 +4,8 @@
 use super::PayloadShape;
 use crate::{Pose, cooking::CookedRigidBody};
 use sim_engine::model::{
-    BodyKind, BodyPolicy, ColliderDescription, ColliderMass, ColliderPolicy, CompoundShape,
-    ContactMaterial, ConvexHull, RigidBodyDescription, ShapeDescription,
+    BodyKind, BodyPolicy, BodyState, ColliderDescription, ColliderMass, ColliderPolicy,
+    CompoundShape, ContactMaterial, ConvexHull, RigidBodyDescription, ShapeDescription,
 };
 use std::sync::Arc;
 
@@ -38,6 +38,40 @@ impl PreparedPayload {
             shape: Arc::new(shape),
             cooked,
         })
+    }
+    /// Validate motion and placed mass frame without installing a live body.
+    /// Batch callers can preflight every placement before mutating their world.
+    ///
+    /// # Errors
+    /// Rejects invalid motion or a nonfinite transformed mass frame.
+    pub fn validate_placement(&self, state: BodyState) -> Result<(), &'static str> {
+        self.body_at(state).map(|_| ())
+    }
+    pub(super) fn body_at(
+        &self,
+        state: BodyState,
+    ) -> Result<rapier3d_f64::prelude::RigidBody, &'static str> {
+        use rapier3d_f64::prelude::Vector;
+        use sim_physics::backend::CookedBodyExt;
+        state.validate()?;
+        if !super::pose_is_valid(state.pose) {
+            return Err("invalid payload motion");
+        }
+        let body = self
+            .cooked
+            .body_builder()
+            .pose(super::pose(state.pose))
+            .linvel(Vector::from_array(state.velocity_m_s))
+            .angvel(Vector::from_array(state.angular_velocity_rad_s))
+            .build();
+        if self
+            .cooked
+            .aggregate_mass_properties()
+            .is_some_and(|mass| !body.position().transform_point(mass.local_com).is_finite())
+        {
+            return Err("nonfinite placed payload mass frame");
+        }
+        Ok(body)
     }
     /// Original immutable payload envelopes, mass in kilograms and expansion in metres.
     pub fn shape(&self) -> &PayloadShape {

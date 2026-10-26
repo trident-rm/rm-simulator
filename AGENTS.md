@@ -118,14 +118,16 @@ combat XP and continuous Base/Vantage/Highland/Fortress field benefits. Virtual
 assembly supports referee Start/Finish/Cancel, automatic 45-second timeouts,
 shared-core exclusion, income, Infantry caps and permanent defense; Heavy can use an explicitly approximate folding-Hero conversion after launcher
 permission unlocks; direct 42 mm combat is supported, suppression remains deferred. Source PIE Heavy automatic L1–L3
-manipulation carries a persistent deployment-preloaded Unit from the actual gripper through
+manipulation carries a persistent force-extracted supply Unit from the actual gripper through
 approach and insertion, with manually parked chassis and bounded restorable Core positioning
 before host worker planning, and restorable 128 Hz playback from persistent actual joints with 1 rad/s joint/jaw limits and
 T-selectable tunnel/neutral postures; L3 reveals its Q target only after the P
 flip and solves the attached twist separately and follows a validated jaw-release/neutral-return suffix after confirmation, then prescribed Core discharge over the source collection bay and reset; successful Units are spent and cannot be regripped (R60) (`world::assembly`, `server::assembly_rig`,
 `app::assembly`); persistent Energy Unit bodies, proximity grip/release and bounded
 Cartesian jogs live in `world::energy_unit` and `physics::projectile` (`payload.rs`).
-Held/socket-coupled Units remain prescribed; loose Units use source convex proxies
+Source-backed fields install six magnetic Units per supply station and start
+the Heavy empty-handed. Axial retrieval has finite arm/grip forces, magnetic
+resistance and gravity; see `docs/supply-retrieval.md`. Held/socket-coupled Units remain prescribed; loose Units use source convex proxies
 in the shared Rapier scene. See
 `docs/assembly-workbench.md`. Adaptive reinforcement
 uses frozen selection-time areas, inclusive circle boundaries and clipping without

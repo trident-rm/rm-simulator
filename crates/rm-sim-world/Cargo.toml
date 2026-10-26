@@ -11,6 +11,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+sim-engine = { version = "0.1.0", path = "../sim-engine" }
 glam.workspace = true
 rm-sim-gameplay = { version = "0.1.0", path = "../rm-sim-gameplay" }
 rm-sim-physics = { version = "0.1.0", path = "../rm-sim-physics" }

@@ -231,6 +231,16 @@ hollow body of approximately 400 ± 50 g (UC §4.5.1). Detailed shape and placem
 must come from verified drawings/CAD; do not convert perspective illustrations
 into exact collision geometry.
 
+### Resource-station retrieval
+
+UC §4.2.6 (printed p.45), Figures 4-21–4-22, specifies six Units per
+resource station, held magnetically. Withdrawal follows the Unit's rotational
+symmetry axis and needs at most 10 N in addition to overcoming gravity. The
+manual permits angular placement deviations about that axis. It does not give
+a magnetic force-distance curve, gripper capacity, arm force limit or extraction
+stroke. The simulator uses the 10 N upper bound; other mechanical defaults and
+the reduced axial model are documented in [supply retrieval](supply-retrieval.md).
+
 ## UC damage and equipment limits
 
 UC §5.1.1 and Tables 5-1–5-2 (pp.64–65): detection uses the **normal component**

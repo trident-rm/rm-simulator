@@ -42,7 +42,14 @@ fn reviewed_field_has_live_motion_native_rules_and_restorable_authority() -> any
         .sum();
     // Full source ground remains available for support lookups; physical fixtures
     // use the independently reviewed remainder instead.
-    assert_eq!(terrain.collision_ground().triangles.len(), 58_028 + 4);
+    // Twelve authored Units move to persistent inventory, removing their
+    // 2,784 source triangles each from both static contact and support meshes.
+    let unit_triangles = 12 * 2_784;
+    assert_eq!(terrain.supply_units.len(), 12);
+    assert_eq!(
+        terrain.collision_ground().triangles.len(),
+        58_028 + 4 - unit_triangles
+    );
     let fixed = terrain.ground.triangles.len()
         + terrain.fixtures.triangles.len()
         + terrain
@@ -52,11 +59,12 @@ fn reviewed_field_has_live_motion_native_rules_and_restorable_authority() -> any
             .sum::<usize>();
     assert_eq!(
         fixed + moving + terrain.boundary.triangles.len(),
-        134_527 + 1_280 + 48
+        134_527 + 1_280 + 48 - unit_triangles
     );
     let config = layout::field_config(&cad, &layout::LayoutOptions::default());
     let mut field = Field::new(&config)?;
     layout::add_terrain(&mut field, &terrain)?;
+    assert_eq!(field.energy_units().len(), 12);
     assert_eq!(
         field
             .static_geometry_snapshot()

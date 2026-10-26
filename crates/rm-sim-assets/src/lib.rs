@@ -15,6 +15,7 @@ pub mod rmuc_2027;
 pub mod robots;
 pub mod scenarios;
 pub mod semantics;
+pub mod supply;
 
 /// Verified portable terrain collision tiers and native heightfield adapters.
 pub mod terrain_collision;

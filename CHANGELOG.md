@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+- Replace static supply Units with six persistent magnetic mounts per station.
+  Source-backed Heavy deployments start empty-handed. Axial retrieval tests
+  magnetic resistance, gravity, arm saturation and grip failure before ordinary
+  carrying/assembly. Preserve source visuals, query visibility and checkpoints;
+  protocol 84 requires matching hosts and clients.
+
 - Use 54 native Core cylinders for rigid-body and projectile contacts while
   retaining reduced query-only meshes for LiDAR. Preserve selection through
   captures, restore and both mounted sensor paths. Physical meshes now contain
