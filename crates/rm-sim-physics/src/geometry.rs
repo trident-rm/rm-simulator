@@ -42,6 +42,7 @@ pub struct StaticGeometry {
     /// Interaction groups for [`Self::shapes`], index for index.
     pub(crate) collision_groups: Vec<InteractionGroups>,
     /// Articulated parts as shape index, role, team and typed source motion frame.
+    pub(crate) endpoint_bakes: Vec<crate::projectile::endpoint_bakes::CapturedBake>,
     pub(crate) mechanisms: Vec<(
         usize,
         crate::motion::MotionChannel,
@@ -191,6 +192,7 @@ impl StaticGeometry {
                 .filter(|(index, _)| !self.mechanisms.iter().any(|(i, ..)| i == index))
                 .map(|(_, shape)| shape.clone())
                 .collect(),
+            endpoint_bakes: Vec::new(),
             mechanisms: Vec::new(),
         }
     }
@@ -425,6 +427,9 @@ impl StaticGeometry {
             let fraction = state.fraction(*kind, *team);
             result.shapes[*index].0 = pose(offsets.pose(fraction));
         }
+        for bake in &mut result.endpoint_bakes {
+            bake.fraction = state.fraction(bake.kind, bake.team);
+        }
         result
     }
 
@@ -462,11 +467,27 @@ impl StaticGeometry {
 
     /// Interpolate the captured collider transforms across a displayed frame interval.
     pub fn interpolate(&self, next: &Self, fraction: f64) -> Result<Self, &'static str> {
-        if self.shapes.len() != next.shapes.len() || self.mechanisms != next.mechanisms {
+        if self.shapes.len() != next.shapes.len()
+            || self.mechanisms != next.mechanisms
+            || self.endpoint_bakes.len() != next.endpoint_bakes.len()
+            || self
+                .endpoint_bakes
+                .iter()
+                .zip(&next.endpoint_bakes)
+                .any(|(a, b)| {
+                    a.fixed != b.fixed
+                        || a.moving != b.moving
+                        || a.kind != b.kind
+                        || a.team != b.team
+                })
+        {
             return Err("scenery lifecycle changed");
         }
         let mut result = next.clone();
         result.bounds.take();
+        for (a, b) in self.endpoint_bakes.iter().zip(&mut result.endpoint_bakes) {
+            b.fraction = a.fraction + (b.fraction - a.fraction) * fraction;
+        }
         for ((a, _), (b, _)) in self.shapes.iter().zip(&mut result.shapes) {
             b.translation = a.translation.lerp(b.translation, fraction);
             b.rotation = a.rotation.slerp(b.rotation, fraction);

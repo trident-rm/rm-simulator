@@ -101,57 +101,9 @@ pub fn load_terrain(cad: &CadAssets) -> anyhow::Result<Terrain> {
 /// Hand the terrain to the field: the ground, fixtures and equipment as
 /// the same triangles used to draw the CAD.
 pub fn add_terrain(field: &mut Field, terrain: &Terrain) -> anyhow::Result<()> {
-    field.remove_catch_floor();
-    if let Some(bounds) = terrain.projectile_bounds_m {
-        field.set_projectile_bounds(bounds)?;
-    }
-    if !terrain.boundary.triangles.is_empty() {
-        field.add_boundary_mesh(
-            terrain.boundary.vertices_m.clone(),
-            terrain.boundary.triangles.clone(),
-        )?;
-    }
-    for mesh in std::iter::once(terrain.collision_ground())
-        .chain(std::iter::once(&terrain.fixtures))
-        .chain(&terrain.equipment)
-        .filter(|mesh| !mesh.triangles.is_empty())
-    {
-        field.add_static_mesh(mesh.vertices_m.clone(), mesh.triangles.clone())?;
-    }
-    for shapes in &terrain.native_shapes {
-        field.add_static_shapes(shapes)?;
-    }
-    if let Some(package) = &terrain.native_terrain {
-        for part in &package.parts {
-            for pose in &part.placements {
-                field.add_fixed_model(&part.model, *pose)?;
-            }
-        }
-    }
-    for part in &terrain.mechanisms {
-        if !part.mesh.triangles.is_empty() {
-            match part.motion {
-                rm_sim_world::referee::MotionFrame::Translation { offsets_m } => field
-                    .add_mechanism_mesh(
-                        part.mesh.vertices_m.clone(),
-                        part.mesh.triangles.clone(),
-                        part.mechanism,
-                        part.team,
-                        offsets_m,
-                    )?,
-                rm_sim_world::referee::MotionFrame::Rotation { pivot_m, axis } => field
-                    .add_rotating_mesh(
-                        part.mesh.vertices_m.clone(),
-                        part.mesh.triangles.clone(),
-                        part.mechanism,
-                        part.team,
-                        pivot_m,
-                        axis,
-                    )?,
-            }
-        }
-        field.add_mechanism_shapes(&part.native_shapes, part.mechanism, part.team, part.motion)?;
-    }
+    let geometry =
+        rm_sim_assets::arena::prepare_terrain_geometry(terrain).map_err(anyhow::Error::msg)?;
+    field.add_prepared_geometry(&geometry)?;
     Ok(())
 }
 
@@ -614,6 +566,7 @@ mod tests {
             .into(),
             fixtures: CollisionMesh::default(),
             equipment: Vec::new(),
+            endpoint_bakes: vec![],
             native_shapes: Vec::new(),
         };
         let placement = chassis_placement(
@@ -746,6 +699,7 @@ mod tests {
                 .collect(),
             collision: None,
             source_tessellated_collision: false,
+            bake_motion_endpoints: false,
         }
     }
 }

@@ -139,6 +139,9 @@ struct ManifestAsset {
     /// SHA-256 of the hybrid sidecar.
     #[serde(default)]
     collision_shapes_sha256: Option<String>,
+    /// Cook whole-Base closed/open states once and switch to source meshes in travel.
+    #[serde(default)]
+    bake_motion_endpoints: bool,
     /// Producer error records for a simplified pair, keyed `visual` and
     /// `collision`.
     #[serde(default)]
@@ -273,6 +276,8 @@ pub struct CadAsset {
     /// Verified collision contract, including an explicitly opted-in hybrid recipe.
     /// Never inferred from legacy proxies. The field name is retained for callers.
     pub source_tessellated_collision: bool,
+    /// Explicit opt-in to complete Base endpoint baking; source motions remain authoritative.
+    pub bake_motion_endpoints: bool,
 }
 /// One verified CAD package: where it was loaded from, the floor height it
 /// records, and the named assets the layout needs.
@@ -615,7 +620,13 @@ pub fn load_with_bindings<B>(
             !source_tessellated_collision || collision.is_some(),
             "{name} declares source tessellation without a collision file"
         );
+        ensure!(
+            !entry.bake_motion_endpoints
+                || (name == "base" && source_tessellated_collision && collision_shapes.is_none()),
+            "endpoint baking requires reviewed mesh collision on the Base asset"
+        );
         Ok::<_, anyhow::Error>(CadAsset {
+            bake_motion_endpoints: entry.bake_motion_endpoints,
             file,
             semantics,
             placements,
@@ -809,6 +820,7 @@ mod tests {
             placements: Vec::new(),
             collision: Some(root.join("collision.glb")),
             source_tessellated_collision: false,
+            bake_motion_endpoints: false,
         };
         assert_eq!(asset.physics_file(root), root.join("visual.glb"));
         asset.source_tessellated_collision = true;

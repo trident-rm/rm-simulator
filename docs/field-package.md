@@ -87,6 +87,28 @@ built during terrain loading. The index retains the original triangles and
 height tolerances, including stacked surfaces. Wheel suspension continues to
 use Rapier's collision queries.
 
+## Baked Base endpoints
+
+The reviewed Base mesh additionally declares `bake_motion_endpoints: true`.
+The arena adapter cooks complete closed/open triangle meshes once from the
+verified collision source and the existing cover motion frames. At exactly
+fraction 0 or 1, one complete Base collider is enabled. During travel that
+collider is disabled and the fixed body plus three continuously posed cover
+meshes are enabled. Target/scoring bodies are independent. Captures retain
+the source parts, channel state and shared cooked endpoint buffers, so resets
+restore the same switching behavior without cooking again. Debug/sensor geometry
+captures expose the equivalent source partitions for interpolation, not a count
+of the currently enabled physical colliders.
+
+`collision-bakes/` contains checksummed whole-assembly reference GLBs.
+`whole-entity-collision-build.json` pins the producer and records ownership,
+geometry checks and counts. These endpoint GLBs are not passed through the
+ordinary motion loader. The Base still follows the existing illustrative
+0.25 m outward travel; the actual linkage is not calibrated. The Outpost's long
+middle shaft remains fixed; only its carrier slice, three arms and attached
+armor rotate. The new package has 171,299 physical mesh triangles, 34,882 fewer,
+with the two native road heightfields unchanged. Visual assets are unchanged.
+
 ## Parameterized collision shapes
 
 `collision_method: "primitive-shapes-v1"` explicitly selects a hybrid recipe.

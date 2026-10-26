@@ -1838,6 +1838,7 @@ mod tests {
             placements,
             collision: None,
             source_tessellated_collision: false,
+            bake_motion_endpoints: false,
         };
         CadAssets {
             terrain_collision: None,

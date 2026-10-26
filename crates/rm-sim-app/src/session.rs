@@ -1454,6 +1454,7 @@ pub(crate) fn test_cad_assets() -> CadAssets {
         placements: vec![rm_sim_world::Pose::at([10.0, 10.0, 10.0])],
         collision: None,
         source_tessellated_collision: false,
+        bake_motion_endpoints: false,
     };
     CadAssets {
         terrain_collision: None,
@@ -1507,6 +1508,7 @@ pub(crate) fn practice_assets() -> CadAssets {
         placements: vec![],
         collision: None,
         source_tessellated_collision: false,
+        bake_motion_endpoints: false,
     };
     CadAssets {
         terrain_collision: None,

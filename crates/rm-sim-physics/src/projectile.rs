@@ -20,6 +20,7 @@ use sim_physics::backend::{CookedBodyExt, CookedMeshExt, RuntimeExt};
 use std::collections::HashMap;
 
 mod contacts;
+pub(crate) mod endpoint_bakes;
 mod preparation;
 #[cfg(test)]
 mod preparation_tests;
@@ -568,6 +569,7 @@ pub struct WorldPhysics {
     chassis: Vec<Chassis>,
     next_chassis_id: u32,
     targets: Vec<TargetBody>,
+    endpoint_bakes: Vec<endpoint_bakes::EndpointBake>,
     mechanisms: Vec<(
         ColliderHandle,
         crate::motion::MotionChannel,
@@ -646,6 +648,7 @@ impl WorldPhysics {
             chassis: Vec::new(),
             next_chassis_id: 0,
             targets: Vec::new(),
+            endpoint_bakes: Vec::new(),
             mechanisms: Vec::new(),
             synced_ns: None,
             next_id: 0,
@@ -1419,7 +1422,7 @@ impl WorldPhysics {
     /// Whether resolving articulated scenery is necessary for this world.
     #[inline]
     pub fn has_mechanisms(&self) -> bool {
-        !self.mechanisms.is_empty()
+        !self.mechanisms.is_empty() || !self.endpoint_bakes.is_empty()
     }
     /// Only a moved mechanism is written back: marking an unchanged CAD
     /// collider dirty every millisecond rebuilds broad-phase work during replay.
@@ -1434,6 +1437,11 @@ impl WorldPhysics {
             if *collider.position() != position {
                 collider.set_position(position);
             }
+        }
+        for index in 0..self.endpoint_bakes.len() {
+            let bake = &self.endpoint_bakes[index];
+            let (kind, team) = (bake.kind, bake.team);
+            self.sync_endpoint_bakes_for(kind, team, state.fraction(kind, team));
         }
     }
     /// Remove every half-space collider, which turns off the flat catch floor.
@@ -1453,16 +1461,20 @@ impl WorldPhysics {
     /// Retain fixed shapes without copying their triangle buffers.
     /// `include_mechanisms` keeps the articulated parts too, at the transforms
     /// they currently hold.
+    /// Endpoint bakes retain equivalent source partitions plus their cached
+    /// endpoint buffers. Import restores the selected physical representation;
+    /// the capture's shape count is not the enabled collider count.
     pub fn static_geometry_snapshot(&self, include_mechanisms: bool) -> StaticGeometry {
         let colliders: Vec<_> = self
             .physical
             .world()
             .all_colliders()
             .filter(|(handle, collider)| {
-                (collider.parent().is_none()
-                    || collider
-                        .parent()
-                        .is_some_and(|h| self.physical.world().bodies[h].is_fixed()))
+                !self.endpoint_bakes.iter().any(|b| b.cached == *handle)
+                    && (collider.parent().is_none()
+                        || collider
+                            .parent()
+                            .is_some_and(|h| self.physical.world().bodies[h].is_fixed()))
                     && (include_mechanisms || !self.mechanisms.iter().any(|(h, ..)| h == handle))
                     && matches!(
                         collider.shape().as_typed_shape(),
@@ -1492,6 +1504,33 @@ impl WorldPhysics {
                 .iter()
                 .map(|(_, c)| (*c.position(), c.shared_shape().clone()))
                 .collect(),
+            endpoint_bakes: if include_mechanisms {
+                self.endpoint_bakes
+                    .iter()
+                    .map(|b| endpoint_bakes::CapturedBake {
+                        fixed: colliders
+                            .iter()
+                            .position(|(h, _)| *h == b.fixed)
+                            .expect("captured fixed body"),
+                        moving: b
+                            .moving
+                            .iter()
+                            .map(|h| {
+                                colliders
+                                    .iter()
+                                    .position(|(other, _)| other == h)
+                                    .expect("captured moving body")
+                            })
+                            .collect(),
+                        endpoints: b.endpoints.clone(),
+                        kind: b.kind,
+                        team: b.team,
+                        fraction: b.fraction,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
             mechanisms: colliders
                 .iter()
                 .enumerate()
@@ -1512,6 +1551,7 @@ impl WorldPhysics {
             bounds: Default::default(),
             projectile_bounds_m: self.projectile_bounds_m,
             collision_groups: Vec::new(),
+            endpoint_bakes: Vec::new(),
             mechanisms: Vec::new(),
             no_catch_floor: !self
                 .physical
@@ -2174,6 +2214,13 @@ impl WorldPhysics {
             }
         }
 
+        if geometry.endpoint_bakes.iter().any(|incoming| {
+            self.endpoint_bakes
+                .iter()
+                .any(|existing| incoming.kind == existing.kind && incoming.team == existing.team)
+        }) {
+            return Err("overlapping endpoint bake channels");
+        }
         self.projectile_bounds_m = geometry.projectile_bounds_m;
         if geometry.no_catch_floor {
             self.remove_catch_floor();
@@ -2196,6 +2243,29 @@ impl WorldPhysics {
         }
         for (index, channel, offsets) in &geometry.mechanisms {
             self.mechanisms.push((handles[*index], *channel, *offsets));
+        }
+        for b in &geometry.endpoint_bakes {
+            let cached = self.physical.extension_insert_scenery(
+                b.endpoints[0].clone(),
+                Default::default(),
+                FRICTION,
+                RESTITUTION,
+                geometry
+                    .collision_groups
+                    .get(b.fixed)
+                    .copied()
+                    .unwrap_or_default(),
+            );
+            self.endpoint_bakes.push(endpoint_bakes::EndpointBake {
+                fixed: handles[b.fixed],
+                moving: b.moving.iter().map(|i| handles[*i]).collect(),
+                cached,
+                endpoints: b.endpoints.clone(),
+                kind: b.kind,
+                team: b.team,
+                fraction: f64::NAN,
+            });
+            self.sync_endpoint_bakes_for(b.kind, b.team, b.fraction);
         }
         Ok(())
     }

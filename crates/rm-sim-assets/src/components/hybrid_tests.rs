@@ -64,6 +64,7 @@ fn cad(path: PathBuf, part: CylinderPart) -> CadAssets {
             parts: vec![part],
         }),
         source_tessellated_collision: true,
+        bake_motion_endpoints: false,
     };
     CadAssets {
         terrain_collision: None,

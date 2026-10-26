@@ -34,6 +34,7 @@ fn reviewed_field_has_live_motion_native_rules_and_restorable_authority() -> any
     assert_eq!(native.parts.len(), 29);
     assert!(terrain.ground_collision.is_some());
     assert_eq!(terrain.mechanisms.len(), 10);
+    assert_eq!(terrain.endpoint_bakes.len(), 2);
     let moving: usize = terrain
         .mechanisms
         .iter()
@@ -48,7 +49,7 @@ fn reviewed_field_has_live_motion_native_rules_and_restorable_authority() -> any
             .sum::<usize>();
     assert_eq!(
         fixed + moving + terrain.boundary.triangles.len(),
-        207_461 + 48
+        171_299 + 1_280 + 48
     );
     let config = layout::field_config(&cad, &layout::LayoutOptions::default());
     let mut field = Field::new(&config)?;

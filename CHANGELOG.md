@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Deploy reviewed coarse Base and fixed-Outpost collisions, removing 34,882
+  placed mesh triangles while retaining the visual assets and moving Outpost arms.
+- Cache one complete Base collision mesh at either endpoint and use the original
+  moving cover meshes during travel; retain the caches through capture/reset.
+
 - Deploy native heightfields for both reviewed road surfaces and a four-triangle collision floor. Preserve current visuals, static owner partitions, motion and arena reset. Keep full ground support lookups separate from physical mesh remainders.
 
 - Add an opt-in rigid-part collision-profile loader and purpose masks for detailed

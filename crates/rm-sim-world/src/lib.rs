@@ -205,6 +205,17 @@ impl Field {
             .map(|_| ())
             .map_err(FieldError::Mesh)
     }
+    /// Insert shared cooked scenery and its motion/endpoint-cache records.
+    /// The caller prepares collision geometry; this field retains scoring bodies
+    /// and resolves source channels at its current mechanism state without
+    /// advancing time. This uses the same insertion path as checkpoint restore.
+    pub fn add_prepared_geometry(&mut self, geometry: &StaticGeometry) -> Result<(), FieldError> {
+        self.physics
+            .try_insert_geometry(geometry)
+            .map_err(FieldError::Mesh)?;
+        self.sync_mechanisms();
+        Ok(())
+    }
     /// Add fixed native scenery in world-FLU child frames with the same contact
     /// policy as field meshes. Native shapes remain analytic through captures.
     pub fn add_static_shapes(

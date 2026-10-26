@@ -572,6 +572,7 @@ mod tests {
             collision: Some(f.directory.join("source.glb")),
             collision_shapes: Some(shapes.clone()),
             source_tessellated_collision: true,
+            bake_motion_endpoints: false,
         };
         for name in ["source.glb", "shapes.json", "remainder.glb"] {
             std::fs::write(f.directory.join(name), b"replaced after verification").unwrap();

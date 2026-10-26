@@ -39,6 +39,8 @@ pub struct Terrain {
     /// The bases and tech cores at their placements, from their
     /// visual meshes, kept as trimeshes.
     pub equipment: Vec<CollisionMesh>,
+    /// Opt-in whole-Base endpoint caches as equipment mesh index and placed team.
+    pub endpoint_bakes: Vec<(usize, rm_sim_physics::Team)>,
     /// Fixed native children grouped per source placement, preserving local
     /// broad-phase bounds. Poses use world FLU metres and wxyz quaternions.
     pub native_shapes: Vec<Vec<crate::components::NativeShape>>,
@@ -190,10 +192,25 @@ pub fn load_terrain_with_motions<B>(
         }
     }
     let mut equipment = Vec::new();
+    let mut endpoint_bakes = Vec::new();
     for asset in [&cad.base, &cad.tech_core] {
         let model = load_component(cad, asset, crate::components::ComponentRole::Equipment)?;
         mechanisms.extend(model.mechanisms(&asset.placements));
         for placement in &asset.placements {
+            if asset.bake_motion_endpoints {
+                ensure!(
+                    asset.file == cad.base.file && !model.fixed.triangles.is_empty(),
+                    "endpoint baking requires a nonempty Base fixed body"
+                );
+                endpoint_bakes.push((
+                    equipment.len(),
+                    if placement.translation_m[0] >= 0. {
+                        rm_sim_physics::Team::Red
+                    } else {
+                        rm_sim_physics::Team::Blue
+                    },
+                ));
+            }
             equipment.push(model.fixed.placed(placement));
             let shapes = crate::components::place_shapes(&model.native_shapes, placement);
             if !shapes.is_empty() {
@@ -210,6 +227,7 @@ pub fn load_terrain_with_motions<B>(
         ground: ground.into(),
         fixtures,
         equipment,
+        endpoint_bakes,
         native_shapes,
     })
 }
@@ -327,12 +345,19 @@ pub fn install_terrain(field: &mut WorldPhysics, terrain: &Terrain) -> Result<()
             terrain.boundary.triangles.clone(),
         )?;
     }
-    for mesh in std::iter::once(terrain.collision_ground())
+    let mut equipment_handles = vec![None; terrain.equipment.len()];
+    for (index, mesh) in std::iter::once(terrain.collision_ground())
         .chain(std::iter::once(&terrain.fixtures))
         .chain(&terrain.equipment)
-        .filter(|mesh| !mesh.triangles.is_empty())
+        .enumerate()
     {
-        field.add_static_mesh(mesh.vertices_m.clone(), mesh.triangles.clone())?;
+        if mesh.triangles.is_empty() {
+            continue;
+        }
+        let handle = field.add_static_mesh(mesh.vertices_m.clone(), mesh.triangles.clone())?;
+        if index >= 2 {
+            equipment_handles[index - 2] = Some(handle);
+        }
     }
     for shapes in &terrain.native_shapes {
         field.add_static_shapes(shapes)?;
@@ -345,7 +370,23 @@ pub fn install_terrain(field: &mut WorldPhysics, terrain: &Terrain) -> Result<()
     for part in &terrain.mechanisms {
         part.install(field)?;
     }
+    for (index, team) in &terrain.endpoint_bakes {
+        let handle = equipment_handles
+            .get(*index)
+            .copied()
+            .flatten()
+            .ok_or("missing endpoint fixed body")?;
+        field.bake_translation_endpoints(handle, rm_sim_physics::motion::Mechanism::Base, *team)?;
+    }
     Ok(())
+}
+
+/// Cook terrain through the shared installation path, retaining source motion
+/// channels, native shapes and opt-in endpoint caches for insertion or reset.
+pub fn prepare_terrain_geometry(terrain: &Terrain) -> Result<StaticGeometry, &'static str> {
+    let mut physics = WorldPhysics::new(&[], CATCH_FLOOR_M);
+    install_terrain(&mut physics, terrain)?;
+    Ok(physics.static_geometry_snapshot(true))
 }
 
 /// Immutable cooked arena shared by independent physical sessions and resets.
@@ -357,6 +398,116 @@ pub fn install_terrain(field: &mut WorldPhysics, terrain: &Terrain) -> Result<()
 pub struct PreparedArena {
     terrain: Terrain,
     geometry: StaticGeometry,
+}
+
+#[cfg(test)]
+mod whole_bake_package_tests {
+    use super::*;
+    use crate::{cad_assets, collision_mesh, components};
+    use rm_sim_physics::{Team, motion::MechanismState};
+
+    #[test]
+    #[ignore = "requires materialized bundled field GLBs"]
+    fn bundled_whole_base_endpoints_match_reference_and_survive_restore() {
+        let cad = cad_assets::load(&cad_assets::default_cad_assets()).unwrap();
+        assert!(cad.base.bake_motion_endpoints);
+        let terrain = load_terrain(&cad).unwrap();
+        assert_eq!(terrain.endpoint_bakes.len(), 2);
+        let prepared = PreparedArena::from_terrain(terrain).unwrap();
+        // Cooking drops two degenerate faces; heightfield surfaces and boundary are included.
+        assert_eq!(
+            prepared.geometry().clone().into_triangles().1.len(),
+            172_625
+        );
+        let motions = cad.rmuc_2027.as_ref().unwrap().motions(&cad, &cad.base);
+        let model = components::load(
+            &cad,
+            &cad.base,
+            components::ComponentRole::Equipment,
+            Some(motions),
+        )
+        .unwrap();
+        for placement in &cad.base.placements {
+            let mut physics = WorldPhysics::new(&[], CATCH_FLOOR_M);
+            physics.remove_catch_floor();
+            let fixed = model.fixed.placed(placement);
+            let handle = physics
+                .add_static_mesh(fixed.vertices_m, fixed.triangles)
+                .unwrap();
+            let team = if placement.translation_m[0] >= 0. {
+                Team::Red
+            } else {
+                Team::Blue
+            };
+            for part in model.mechanisms(&[*placement]) {
+                part.install(&mut physics).unwrap();
+            }
+            physics
+                .bake_translation_endpoints(handle, rm_sim_physics::motion::Mechanism::Base, team)
+                .unwrap();
+            for (name, fraction) in [("closed", 0.), ("open", 1.)] {
+                let reference = collision_mesh::load_glb(
+                    &cad.root.join(format!("collision-bakes/base-{name}.glb")),
+                )
+                .unwrap()
+                .placed(placement);
+                assert_eq!(reference.triangles.len(), 7_664);
+                let mut state = MechanismState::default();
+                state.base_open_fraction[team.index()] = fraction;
+                physics.sync_mechanisms(&state);
+                let captured = physics.static_geometry_snapshot(true);
+                let captured_triangle_count = captured.clone().into_triangles().1.len();
+                let mut restored = WorldPhysics::new(&[], CATCH_FLOOR_M);
+                restored.try_insert_geometry(&captured).unwrap();
+                restored.sync_mechanisms(&state);
+                let restored = restored.static_geometry_snapshot(true);
+                let mut reference_world = WorldPhysics::new(&[], CATCH_FLOOR_M);
+                reference_world.remove_catch_floor();
+                let mut low = [f64::INFINITY; 3];
+                let mut high = [f64::NEG_INFINITY; 3];
+                for point in &reference.vertices_m {
+                    for i in 0..3 {
+                        low[i] = low[i].min(point[i]);
+                        high[i] = high[i].max(point[i]);
+                    }
+                }
+                reference_world
+                    .add_static_mesh(reference.vertices_m, reference.triangles)
+                    .unwrap();
+                let reference = reference_world.static_geometry_snapshot(true);
+                assert_eq!(
+                    captured_triangle_count,
+                    reference.clone().into_triangles().1.len()
+                );
+                let center = std::array::from_fn::<_, 3, _>(|i| (low[i] + high[i]) / 2.);
+                let radius = (0..3)
+                    .map(|i| (high[i] - low[i]).powi(2))
+                    .sum::<f64>()
+                    .sqrt()
+                    / 2.
+                    + 0.1;
+                for index in 0..96 {
+                    let y = 1. - 2. * (index as f64 + 0.5) / 96.;
+                    let theta = index as f64 * 2.399_963_229_728_653;
+                    let direction = [
+                        (1. - y * y).sqrt() * theta.cos(),
+                        y,
+                        (1. - y * y).sqrt() * theta.sin(),
+                    ];
+                    let origin = std::array::from_fn(|i| center[i] + direction[i] * radius);
+                    let direction = direction.map(|x| -x);
+                    let expected = reference.cast_ray(origin, direction, radius * 2.).unwrap();
+                    for actual in [&captured, &restored] {
+                        let hit = actual.cast_ray(origin, direction, radius * 2.).unwrap();
+                        assert_eq!(hit.is_some(), expected.is_some());
+                        if let (Some(a), Some(b)) = (hit, expected) {
+                            assert!((a.distance_m - b.distance_m).abs() < 1e-5);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 impl PreparedArena {
     /// Load verified package collision meshes and prepare their shared shapes.
@@ -371,7 +522,7 @@ impl PreparedArena {
     /// use rm_sim_physics::{StepDuration, session::RobotSession};
     /// let terrain = Terrain {
     ///     boundary: Default::default(), projectile_bounds_m: None, mechanisms: vec![],
-    ///     ground: CollisionMesh::default().into(), fixtures: Default::default(), equipment: vec![], native_shapes: vec![], native_terrain: None, ground_collision: None,
+    ///     ground: CollisionMesh::default().into(), fixtures: Default::default(), equipment: vec![], endpoint_bakes: vec![], native_shapes: vec![], native_terrain: None, ground_collision: None,
     /// };
     /// let arena = PreparedArena::from_terrain(terrain)?;
     /// let recipe = arena.scenario(vec![], StepDuration::HZ_1000, |_| Ok(()))?;
@@ -382,9 +533,7 @@ impl PreparedArena {
     /// # Ok::<(), &'static str>(())
     /// ```
     pub fn from_terrain(terrain: Terrain) -> Result<Self, &'static str> {
-        let mut physics = WorldPhysics::new(&[], CATCH_FLOOR_M);
-        install_terrain(&mut physics, &terrain)?;
-        let geometry = physics.static_geometry_snapshot(true);
+        let geometry = prepare_terrain_geometry(&terrain)?;
         Ok(Self { terrain, geometry })
     }
 
@@ -439,6 +588,7 @@ mod tests {
             ground: floor.into(),
             fixtures: CollisionMesh::default(),
             equipment: vec![],
+            endpoint_bakes: vec![],
             native_shapes: vec![],
         };
         let mut direct = WorldPhysics::new(&[], CATCH_FLOOR_M);

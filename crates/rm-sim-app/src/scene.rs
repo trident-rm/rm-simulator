@@ -694,6 +694,7 @@ mod tests {
             placements: vec![rm_sim_world::Pose::at([1.0, 2.0, 3.0]); count],
             collision: None,
             source_tessellated_collision: false,
+            bake_motion_endpoints: false,
         };
         let cad = CadAssets {
             terrain_collision: None,
