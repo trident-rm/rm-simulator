@@ -7,9 +7,14 @@
 pub mod arena;
 pub mod cad_assets;
 pub mod collision_mesh;
+pub mod collision_profiles;
+pub mod collision_shapes;
 pub mod components;
 pub mod math;
 pub mod rmuc_2027;
 pub mod robots;
 pub mod scenarios;
 pub mod semantics;
+
+/// Verified portable terrain collision tiers and native heightfield adapters.
+pub mod terrain_collision;

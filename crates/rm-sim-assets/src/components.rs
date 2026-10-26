@@ -14,6 +14,28 @@ use rm_sim_physics::{
     motion::{Mechanism, MotionFrame},
 };
 
+/// Native source child pose and analytic shape. Frames are asset-local before
+/// placement and world FLU afterwards; quaternions use wxyz, cylinders local +Y.
+pub type NativeShape = (Pose, rm_sim_physics::model::ShapeDescription);
+
+pub(crate) fn place_shapes(shapes: &[NativeShape], placement: &Pose) -> Vec<NativeShape> {
+    shapes
+        .iter()
+        .map(|(pose, shape)| {
+            (
+                Pose {
+                    translation_m: math::gltf_point(placement, pose.translation_m),
+                    rotation_wxyz: math::quat_multiply(
+                        math::gltf_rotation(placement),
+                        pose.rotation_wxyz,
+                    ),
+                },
+                shape.clone(),
+            )
+        })
+        .collect()
+}
+
 /// Role used to interpret the existing source motion records and old fixed nodes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComponentRole {
@@ -30,6 +52,8 @@ pub enum ComponentRole {
 pub struct MechanismMesh {
     /// Complete source triangles after one asset placement transform.
     pub mesh: CollisionMesh,
+    /// Native children in world-FLU rest frames, driven by the same channel.
+    pub native_shapes: Vec<NativeShape>,
     /// Caller-controlled mechanism channel; no rule state is owned here.
     pub mechanism: Mechanism,
     /// Existing channel owner, from source face order or placement side.
@@ -46,6 +70,8 @@ enum LocalFrame {
 #[derive(Clone, Debug)]
 struct LocalMotion {
     mesh: CollisionMesh,
+    native_shapes: Vec<NativeShape>,
+    source_node: Option<usize>,
     mechanism: Mechanism,
     owner: Option<Team>,
     frame: LocalFrame,
@@ -57,6 +83,8 @@ struct LocalMotion {
 pub struct ComponentModel {
     /// Fixed triangles in asset-local metres, with internal GLB transforms baked.
     pub fixed: CollisionMesh,
+    /// Fixed native children in the same frame as `fixed`.
+    pub native_shapes: Vec<NativeShape>,
     moving: Vec<LocalMotion>,
 }
 
@@ -65,6 +93,8 @@ pub struct ComponentModel {
 pub struct PlacedComponent {
     /// Fixed triangles in world FLU metres.
     pub fixed: CollisionMesh,
+    /// Fixed native children in the same frame as `fixed`.
+    pub native_shapes: Vec<NativeShape>,
     /// Source moving parts with world FLU frames, in binding order.
     pub moving: Vec<MechanismMesh>,
 }
@@ -73,6 +103,7 @@ impl LocalMotion {
         let q = math::gltf_rotation(placement);
         MechanismMesh {
             mesh: self.mesh.placed(placement),
+            native_shapes: place_shapes(&self.native_shapes, placement),
             mechanism: self.mechanism,
             team: self.owner.unwrap_or(if placement.translation_m[0] >= 0. {
                 Team::Red
@@ -99,6 +130,7 @@ impl ComponentModel {
     pub fn placed(&self, placement: &Pose) -> PlacedComponent {
         PlacedComponent {
             fixed: self.fixed.placed(placement),
+            native_shapes: place_shapes(&self.native_shapes, placement),
             moving: self
                 .moving
                 .iter()
@@ -129,7 +161,7 @@ impl PlacedComponent {
     ///     triangles: vec![[0, 1, 2]],
     /// };
     /// let mut physics = WorldPhysics::new(&[], 0.);
-    /// PlacedComponent { fixed, moving: vec![] }.install(&mut physics)?;
+    /// PlacedComponent { fixed, native_shapes: vec![], moving: vec![] }.install(&mut physics)?;
     /// let scene = physics.static_geometry_snapshot(true);
     /// assert!(scene.cast_ray([0.; 3], [1., 0., 0.], 2.)?.is_some());
     /// # Ok::<(), &'static str>(())
@@ -138,25 +170,42 @@ impl PlacedComponent {
         if !self.fixed.triangles.is_empty() {
             physics.add_static_mesh(self.fixed.vertices_m, self.fixed.triangles)?;
         }
+        physics.add_static_shapes(&self.native_shapes)?;
         for part in self.moving {
-            match part.motion {
+            part.install(physics)?;
+        }
+        Ok(())
+    }
+}
+impl MechanismMesh {
+    /// Install retained triangles and native children on the same source channel.
+    /// Either representation may be empty, but native geometry is never dropped.
+    pub fn install(&self, physics: &mut WorldPhysics) -> Result<(), &'static str> {
+        if !self.mesh.triangles.is_empty() {
+            match self.motion {
                 MotionFrame::Translation { offsets_m } => physics.add_mechanism_mesh(
-                    part.mesh.vertices_m,
-                    part.mesh.triangles,
-                    part.mechanism,
-                    part.team,
+                    self.mesh.vertices_m.clone(),
+                    self.mesh.triangles.clone(),
+                    self.mechanism,
+                    self.team,
                     offsets_m,
                 )?,
                 MotionFrame::Rotation { pivot_m, axis } => physics.add_rotating_mesh(
-                    part.mesh.vertices_m,
-                    part.mesh.triangles,
-                    part.mechanism,
-                    part.team,
+                    self.mesh.vertices_m.clone(),
+                    self.mesh.triangles.clone(),
+                    self.mechanism,
+                    self.team,
                     pivot_m,
                     axis,
                 )?,
             }
         }
+        physics.add_mechanism_shapes(
+            &self.native_shapes,
+            self.mechanism,
+            self.team,
+            self.motion,
+        )?;
         Ok(())
     }
 }
@@ -174,18 +223,108 @@ pub fn load<B>(
     role: ComponentRole,
     source_motions: Option<&[Motion]>,
 ) -> anyhow::Result<ComponentModel> {
-    let path = asset.physics_file(&cad.root);
+    let mut model = load_meshes(cad, asset, role, source_motions)?;
+    if let Some(shapes) = &asset.collision_shapes {
+        for part in &shapes.parts {
+            let shape = (
+                part.pose,
+                rm_sim_physics::model::ShapeDescription::Cylinder {
+                    radius_m: part.radius_m,
+                    half_height_m: part.half_height_m,
+                },
+            );
+            if let Some(motions) = source_motions {
+                let owners: Vec<_> = motions
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, m)| m.bodies.contains(&part.source_node_name))
+                    .map(|(i, _)| i)
+                    .collect();
+                ensure!(
+                    owners.len() <= 1,
+                    "native part belongs to multiple source motions"
+                );
+                if let Some(&index) = owners.first() {
+                    model.moving[index].native_shapes.push(shape);
+                } else {
+                    model.native_shapes.push(shape);
+                }
+            } else if cad.rest_pose_only {
+                model.native_shapes.push(shape);
+            } else if let Some(semantics) = asset.physics_semantics() {
+                let owners: Vec<_> = semantics
+                    .joints
+                    .iter()
+                    .filter(|j| {
+                        mechanism_joint(j).is_some()
+                            && part.ancestor_nodes_root_first.contains(&j.motion_node)
+                    })
+                    .collect();
+                ensure!(
+                    owners.len() <= 1,
+                    "native part has overlapping semantic motion owners"
+                );
+                if let Some(joint) = owners.first() {
+                    model
+                        .moving
+                        .iter_mut()
+                        .find(|m| m.source_node == Some(joint.motion_node))
+                        .context("missing native semantic channel")?
+                        .native_shapes
+                        .push(shape);
+                } else {
+                    ensure!(
+                        role == ComponentRole::Equipment
+                            || semantics
+                                .fixed_primitives
+                                .iter()
+                                .any(|p| p.0 == part.source_node_index),
+                        "native part lacks fixed/moving classification"
+                    );
+                    model.native_shapes.push(shape);
+                }
+            } else {
+                ensure!(
+                    role == ComponentRole::Equipment || part.source_node_name == "static",
+                    "native part requires explicit source motion ownership"
+                );
+                model.native_shapes.push(shape);
+            }
+        }
+    }
+    Ok(model)
+}
+
+fn load_meshes<B>(
+    cad: &CadAssets<B>,
+    asset: &CadAsset,
+    role: ComponentRole,
+    source_motions: Option<&[Motion]>,
+) -> anyhow::Result<ComponentModel> {
+    let bytes = asset.physics_bytes(&cad.root)?;
     if let Some(motions) = source_motions {
-        return from_source_parts(collision_mesh::load_glb_parts(&path)?, role, motions);
+        let mut parts = collision_mesh::load_glb_parts_bytes(&bytes)?;
+        if let Some(shapes) = &asset.collision_shapes {
+            for part in &shapes.parts {
+                if !parts.iter().any(|p| p.name == part.source_node_name) {
+                    parts.push(CollisionPart {
+                        name: part.source_node_name.clone(),
+                        mesh: CollisionMesh::default(),
+                    });
+                }
+            }
+        }
+        return from_source_parts(parts, role, motions);
     }
     if cad.rest_pose_only {
         return Ok(ComponentModel {
-            fixed: collision_mesh::load_glb(&path)?,
+            fixed: collision_mesh::load_glb_bytes(&bytes)?,
+            native_shapes: vec![],
             moving: vec![],
         });
     }
     let Some(semantics) = asset.physics_semantics() else {
-        let parts = collision_mesh::load_glb_parts(&path)?;
+        let parts = collision_mesh::load_glb_parts_bytes(&bytes)?;
         let fixed = if role == ComponentRole::Equipment {
             combine(parts)
         } else {
@@ -193,6 +332,7 @@ pub fn load<B>(
         };
         return Ok(ComponentModel {
             fixed,
+            native_shapes: vec![],
             moving: vec![],
         });
     };
@@ -203,19 +343,30 @@ pub fn load<B>(
         .collect();
     let fixed = if role == ComponentRole::Equipment {
         let excluded: Vec<_> = joints.iter().map(|(j, _)| j.motion_node).collect();
-        collision_mesh::load_glb_filtered(&path, &semantics.collision_primitives, &excluded, None)?
+        collision_mesh::load_glb_filtered_bytes(
+            &bytes,
+            &semantics.collision_primitives,
+            &excluded,
+            None,
+        )?
     } else {
-        collision_mesh::load_glb_selected(&path, &semantics.fixed_primitives)?
+        collision_mesh::load_glb_selected_bytes(&bytes, &semantics.fixed_primitives)?
     };
     let mut moving = Vec::new();
     for (joint, mechanism) in joints {
-        let mesh = collision_mesh::load_glb_filtered(
-            &path,
+        let mesh = collision_mesh::load_glb_filtered_bytes(
+            &bytes,
             &semantics.collision_primitives,
             &[],
             Some(joint.motion_node),
         )?;
-        if mesh.triangles.is_empty() {
+        if mesh.triangles.is_empty()
+            && !asset.collision_shapes.as_ref().is_some_and(|s| {
+                s.parts
+                    .iter()
+                    .any(|p| p.ancestor_nodes_root_first.contains(&joint.motion_node))
+            })
+        {
             continue;
         }
         let axis = math::rotate(
@@ -229,6 +380,8 @@ pub fn load<B>(
         );
         moving.push(LocalMotion {
             mesh,
+            native_shapes: vec![],
+            source_node: Some(joint.motion_node),
             mechanism,
             owner: None,
             frame: LocalFrame::Translation {
@@ -237,7 +390,11 @@ pub fn load<B>(
             },
         });
     }
-    Ok(ComponentModel { fixed, moving })
+    Ok(ComponentModel {
+        fixed,
+        native_shapes: vec![],
+        moving,
+    })
 }
 
 fn fixed_parts(parts: Vec<CollisionPart>) -> CollisionMesh {
@@ -289,6 +446,8 @@ fn from_source_parts(
         };
         moving.push(LocalMotion {
             mesh,
+            native_shapes: vec![],
+            source_node: None,
             mechanism,
             frame,
             owner: (role == ComponentRole::Rune).then(|| Team::BOTH[index]),
@@ -299,7 +458,11 @@ fn from_source_parts(
             .into_iter()
             .filter(|part| !motions.iter().any(|m| m.bodies.contains(&part.name))),
     );
-    Ok(ComponentModel { fixed, moving })
+    Ok(ComponentModel {
+        fixed,
+        native_shapes: vec![],
+        moving,
+    })
 }
 
 /// Existing semantic prismatic channels supported by caller-prescribed physics.
@@ -465,3 +628,7 @@ mod tests {
         assert!(fixed_parts(Vec::new()).triangles.is_empty());
     }
 }
+
+#[cfg(test)]
+#[path = "components/hybrid_tests.rs"]
+mod hybrid_tests;

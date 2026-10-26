@@ -36,6 +36,8 @@ pub use crate::geometry::{MovingGeometry, StaticGeometry};
 pub use crate::runtime;
 #[path = "payload.rs"]
 mod payload;
+#[path = "primitive_scenery.rs"]
+mod primitive_scenery;
 pub use payload::{PayloadShape, PayloadSnapshot, PayloadTelemetry, PreparedPayload};
 
 fn outside_projectile_bounds(bounds: Option<[[f64; 3]; 2]>, point: Vector, radius_m: f64) -> bool {
@@ -654,6 +656,16 @@ impl WorldPhysics {
         }
         ballistics
     }
+    /// Add a validated fixed model to the existing shared physical scene.
+    /// Native heightfields remain native for wheel/projectile queries and captures.
+    pub fn add_fixed_model(
+        &mut self,
+        model: &crate::cooking::CookedRigidBody,
+        placement: Pose,
+    ) -> Result<Vec<runtime::ColliderBinding>, &'static str> {
+        self.physical.install_fixed_model(model, placement)
+    }
+
     /// Borrow the sole physical scene for generic truth, geometry and observation access.
     /// Integration remains owned by this facade's participant slice schedule.
     pub fn physical_runtime(&self) -> &runtime::PhysicalRuntime {
@@ -1455,6 +1467,9 @@ impl WorldPhysics {
                     && matches!(
                         collider.shape().as_typed_shape(),
                         TypedShape::TriMesh(_)
+                            | TypedShape::HeightField(_)
+                            | TypedShape::Cylinder(_)
+                            | TypedShape::Compound(_)
                             | TypedShape::Cuboid(_)
                             | TypedShape::Ball(_)
                             | TypedShape::ConvexPolyhedron(_)

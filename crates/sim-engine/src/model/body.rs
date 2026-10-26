@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Validated source collider and rigid-body descriptions; no runtime handles.
-use super::{BodyPolicy, ColliderPolicy, CompoundShape, ConvexHull, TriangleMesh};
+use super::{BodyPolicy, ColliderPolicy, CompoundShape, ConvexHull, HeightField, TriangleMesh};
 use crate::Pose;
 use std::sync::Arc;
 
@@ -14,6 +14,14 @@ pub enum ShapeDescription {
         /// Radius in metres.
         radius_m: f64,
     },
+    /// Cylinder centred at the local origin with its axis along local +Y.
+    /// Mounting poses rotate this native axis into the body's FLU frame.
+    Cylinder {
+        /// Finite, strictly positive radius in metres.
+        radius_m: f64,
+        /// Finite, strictly positive half length along local Y in metres.
+        half_height_m: f64,
+    },
     /// Box with strictly positive local x/y/z half extents in metres.
     Cuboid {
         /// Half extents in metres.
@@ -21,6 +29,8 @@ pub enum ShapeDescription {
     },
     /// Indexed surface, retaining its source vertices and winding.
     TriangleMesh(TriangleMesh),
+    /// Finite regular surface with local +Y elevations; fixed/kinematic only.
+    HeightField(HeightField),
     /// Explicit convex envelope of source points, filling concavities. Backend
     /// cooking may reject degenerate or unrepresentable point clouds; no
     /// tessellation inference, point perturbation or fallback shape is implied.
@@ -33,6 +43,12 @@ impl ShapeDescription {
     pub(super) fn validate(&self) -> Result<(), &'static str> {
         match self {
             Self::Ball { radius_m } if !positive(*radius_m) => Err("invalid sphere radius"),
+            Self::Cylinder {
+                radius_m,
+                half_height_m,
+            } if !positive(*radius_m) || !positive(*half_height_m) => {
+                Err("invalid cylinder radius or half height")
+            }
             Self::Cuboid { half_extents_m } if !half_extents_m.iter().copied().all(positive) => {
                 Err("invalid box half extents")
             }
@@ -42,7 +58,7 @@ impl ShapeDescription {
 
     pub(super) fn contains_triangle_surface(&self) -> bool {
         match self {
-            Self::TriangleMesh(_) => true,
+            Self::TriangleMesh(_) | Self::HeightField(_) => true,
             Self::Compound(compound) => compound.contains_triangle_surface(),
             _ => false,
         }
@@ -437,6 +453,19 @@ mod tests {
                 )
                 .is_err()
             );
+            for (radius_m, half_height_m) in [(x, 1.), (1., x)] {
+                assert!(
+                    ColliderDescription::new(
+                        ShapeDescription::Cylinder {
+                            radius_m,
+                            half_height_m
+                        },
+                        Pose::default(),
+                        material(),
+                    )
+                    .is_err()
+                );
+            }
             assert!(Inertial::new(x, [1.; 3], Pose::at([0.; 3])).is_err());
             assert!(Inertial::new(1., [1., x, 1.], Pose::at([0.; 3])).is_err());
         }

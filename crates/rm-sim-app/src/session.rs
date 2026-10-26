@@ -1448,6 +1448,7 @@ fn test_session_mode(paused: bool, predict: bool, time: TimeSource) -> Session {
 pub(crate) fn test_cad_assets() -> CadAssets {
     use rm_sim_server::cad_assets::CadAsset;
     let asset = CadAsset {
+        collision_shapes: None,
         file: "unused.glb".into(),
         semantics: None,
         placements: vec![rm_sim_world::Pose::at([10.0, 10.0, 10.0])],
@@ -1455,6 +1456,7 @@ pub(crate) fn test_cad_assets() -> CadAssets {
         source_tessellated_collision: false,
     };
     CadAssets {
+        terrain_collision: None,
         rmuc_2027: None,
         season: rm_sim_world::season::Season::Rm2027,
         rest_pose_only: true,
@@ -1499,6 +1501,7 @@ pub(crate) fn wait_for_session(session: &mut Session, done: impl Fn(&Session) ->
 pub(crate) fn practice_assets() -> CadAssets {
     use rm_sim_server::cad_assets::CadAsset;
     let asset = CadAsset {
+        collision_shapes: None,
         file: String::new(),
         semantics: None,
         placements: vec![],
@@ -1506,6 +1509,7 @@ pub(crate) fn practice_assets() -> CadAssets {
         source_tessellated_collision: false,
     };
     CadAssets {
+        terrain_collision: None,
         rmuc_2027: None,
         season: rm_sim_world::season::Season::Rm2027,
         rest_pose_only: true,

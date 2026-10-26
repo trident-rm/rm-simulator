@@ -1233,13 +1233,19 @@ remains unavailable. See [adaptive armor](gameplay.md#rmuc-2027-adaptive-armor).
 ## Reviewed whole-field replacement
 
 The current bundled package uses the reviewed rm-map-tools whole-field visual
-composition for both drawing and triangle collision. It has 207,921 placed
-triangles in each representation, compared with 355,542 visual and 545,599
-collision triangles in the previous installed package. The runtime boundary adds
-48 collision triangles. Both representations remain triangle meshes; this
-update does not enable the separate native-primitive or heightfield trials.
+composition for drawing, with 207,921 placed visual triangles, compared with
+355,542 in the previous package. Collision now uses 206,181 mesh triangles plus
+two native road heightfields representing another 1,280 triangles. The separate
+runtime boundary adds 48 triangles. The collision floor uses four triangles;
+visual floor markings remain unchanged. The former deployed collision count was
+545,599 before the reviewed whole-field replacement.
 
-Six paired asset files retain byte-identical visual/collision geometry. The
+Four paired equipment files retain byte-identical visual/collision geometry.
+The floor and arena collision files now differ from their visuals.
+`terrain/manifest.json` is selected by the checksummed top-level
+`terrain_collision` descriptor; `native-terrain-remainder-v1` marks the arena
+collision file as the complementary mesh remainder. Full ground geometry remains
+available for support lookups and is not installed alongside the replacements. The
 producer preserves the source placements and inserts runtime joint frames without
 moving rest geometry. The Base, Outpost and both Rune banks retain their optical
 selectors. Rune hubs rotate with their arms; the central logos stay fixed. The
@@ -1249,7 +1255,9 @@ actuation remains unsupported by the match adapter.
 `runtime-build.json` records the source definition selections and counts.
 `geometry-verification.json` records the composed-scene comparison. The producer
 is `benchmarks/2026-10-26-reviewed-runtime/package.py` in rm-map-tools. The updated
-inventory remains pinned in `scripts/release-field-2027.json`.
+inventory remains pinned in `scripts/release-field-2027.json`. Native terrain
+is packaged by `python/package_native_terrain.py` in rm-map-tools, with selected
+owner IDs and array preservation recorded in `native-terrain-build.json`.
 
 These are reviewed visual approximations used as colliders, including thin
 sheets and marking layers. A deterministic comparison with the previous collision

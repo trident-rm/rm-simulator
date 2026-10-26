@@ -28,7 +28,8 @@ pub struct PhysicalGeometry {
 }
 impl PhysicalGeometry {
     /// Expand supported captured boundaries into world FLU triangles for diagnostics.
-    /// Triangle surfaces, spheres, boxes and convex polyhedra retain capture order;
+    /// Triangle surfaces, heightfields, spheres, cylinders, boxes, convex polyhedra
+    /// and compound children retain capture order;
     /// half-spaces and other unsupported shapes are omitted. This allocates mesh
     /// buffers and should run on explicit load/capture, never in a control loop.
     pub fn into_triangles(self) -> (Vec<[f64; 3]>, Vec<[u32; 3]>) {
@@ -197,6 +198,47 @@ impl PhysicalRuntime {
             runtime: self.runtime_identity(),
             handle,
         })
+    }
+
+    /// Install all colliders of a fixed cooked model as parentless scenery.
+    /// Materials, filters and local mounts remain source-owned. No body keys are
+    /// allocated; captures and ordinary scene queries retain the native shapes.
+    ///
+    /// ```
+    /// use sim_engine::model::{BodyKind, RigidBodyDescription};
+    /// use sim_physics::{PhysicalRuntime, Pose, StepDuration, cooking::CookedRigidBody};
+    /// let source = RigidBodyDescription::new(BodyKind::Fixed, vec![])?;
+    /// let model = CookedRigidBody::new(source)?;
+    /// let mut scene = PhysicalRuntime::new(StepDuration::HZ_1000);
+    /// assert!(scene.install_fixed_model(&model, Pose::default())?.is_empty());
+    /// # Ok::<(), &'static str>(())
+    /// ```
+    pub fn install_fixed_model(
+        &mut self,
+        model: &crate::cooking::CookedRigidBody,
+        placement: Pose,
+    ) -> Result<Vec<ColliderBinding>, &'static str> {
+        if !pose_is_valid(placement)
+            || !matches!(model.source().kind(), sim_engine::model::BodyKind::Fixed)
+        {
+            return Err("fixed scenery requires a fixed model and valid pose");
+        }
+        let parent = pose(placement);
+        let mut bindings = Vec::new();
+        for (builder, description) in model
+            .native_collider_builders()
+            .zip(model.source().colliders())
+        {
+            let handle = self
+                .world
+                .insert_collider(builder.position(parent * pose(description.pose())), None);
+            bindings.push(ColliderBinding {
+                runtime: self.runtime_identity(),
+                handle,
+            });
+        }
+        self.primed = false;
+        Ok(bindings)
     }
 
     /// Install a catch half-space below the finite world FLU Z height in metres.

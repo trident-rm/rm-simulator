@@ -73,6 +73,10 @@ pub fn cad_point_to_flu(point: [f64; 3], floor_top_cad_m: f64) -> [f64; 3] {
 #[derive(Deserialize)]
 struct Manifest {
     #[serde(default)]
+    source_sha256: Option<String>,
+    #[serde(default)]
+    terrain_collision: Option<BindingFile>,
+    #[serde(default)]
     rmuc2027_bindings: Option<BindingFile>,
     /// Manifest schema version; only 1 is accepted.
     schema_version: u32,
@@ -129,6 +133,12 @@ struct ManifestAsset {
     /// or an independently reviewed `reviewed-cad-proxy-v1` approximation.
     #[serde(default)]
     collision_method: Option<String>,
+    /// Opt-in hybrid sidecar path, relative to the manifest directory.
+    #[serde(default)]
+    collision_shapes: Option<String>,
+    /// SHA-256 of the hybrid sidecar.
+    #[serde(default)]
+    collision_shapes_sha256: Option<String>,
     /// Producer error records for a simplified pair, keyed `visual` and
     /// `collision`.
     #[serde(default)]
@@ -181,8 +191,21 @@ struct MeshSimplification {
 /// usable.
 fn verified_collision(entry: &ManifestAsset) -> anyhow::Result<bool> {
     match entry.collision_method.as_deref() {
+        Some("primitive-shapes-v1") => {
+            ensure!(
+                entry.collision.is_some()
+                    && entry.collision_sha256.is_some()
+                    && entry.collision_shapes.is_some()
+                    && entry.collision_shapes_sha256.is_some(),
+                "primitive-shapes-v1 requires source collision and shapes paths/checksums"
+            );
+            Ok(true)
+        }
         Some(
-            "source-tessellation-v1" | "opaque-panel-reconstruction-v1" | "reviewed-cad-proxy-v1",
+            "source-tessellation-v1"
+            | "opaque-panel-reconstruction-v1"
+            | "reviewed-cad-proxy-v1"
+            | "native-terrain-remainder-v1",
         ) => Ok(true),
         Some(method @ ("meshopt-simplification-v1" | "meshopt-boundary-simplification-v1")) => {
             let records = entry
@@ -245,7 +268,9 @@ pub struct CadAsset {
     pub placements: Vec<Pose>,
     /// Verified collision proxy (`*-collision.glb`), when the manifest lists one.
     pub collision: Option<PathBuf>,
-    /// Approved source tessellation or error-limited simplification contract.
+    /// Verified opt-in hybrid recipe; the collision path above remains the original source.
+    pub collision_shapes: Option<crate::collision_shapes::CollisionShapes>,
+    /// Verified collision contract, including an explicitly opted-in hybrid recipe.
     /// Never inferred from legacy proxies. The field name is retained for callers.
     pub source_tessellated_collision: bool,
 }
@@ -253,6 +278,8 @@ pub struct CadAsset {
 /// records, and the named assets the layout needs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CadAssets<B = crate::rmuc_2027::Bindings> {
+    /// Optional verified static terrain replacement, separate from visual meshes.
+    pub terrain_collision: Option<crate::terrain_collision::VerifiedTerrain>,
     /// Verified optional RMUC 2027 V1.0.0 source detector/motion bindings.
     pub rmuc_2027: Option<B>,
     /// Season of the source CAD, independent of match engine availability.
@@ -288,8 +315,9 @@ impl CadAsset {
     pub fn visual_semantics(&self) -> Option<&crate::semantics::FileSemantics> {
         self.semantics.as_ref()?.files.get("visual")
     }
-    /// Sidecar bindings for the GLB the physics reads: the collision file when
-    /// the asset declares a source tessellation, otherwise the visual file.
+    /// Source bindings for physics: the original collision file for a verified
+    /// collision contract (including a hybrid recipe), otherwise the visual file.
+    /// Hybrid remainder node indices and motion names retain this source authority.
     pub fn physics_semantics(&self) -> Option<&crate::semantics::FileSemantics> {
         self.semantics
             .as_ref()?
@@ -300,8 +328,29 @@ impl CadAsset {
                 "visual"
             })
     }
-    /// Use a verified collider pipeline when declared; legacy assets keep visual geometry.
+    /// Immutable verified remainder for hybrid assets; read the selected file for legacy meshes.
+    /// Hybrid collision consumers must use these bytes rather than reopening the provenance path.
+    pub fn physics_bytes<'a>(&'a self, root: &Path) -> anyhow::Result<std::borrow::Cow<'a, [u8]>> {
+        if let Some(shapes) = &self.collision_shapes {
+            return Ok(std::borrow::Cow::Borrowed(&shapes.remainder_bytes));
+        }
+        Ok(std::borrow::Cow::Owned(std::fs::read(
+            self.physics_file(root),
+        )?))
+    }
+    /// Decode selected physics geometry, retaining the verified hybrid snapshot.
+    pub fn physics_mesh(
+        &self,
+        root: &Path,
+    ) -> anyhow::Result<crate::collision_mesh::CollisionMesh> {
+        crate::collision_mesh::load_glb_bytes(&self.physics_bytes(root)?)
+    }
+    /// Provenance path for the selected physics file. Hybrid consumers must use
+    /// [`Self::physics_bytes`] or [`Self::physics_mesh`] to retain verified data.
     pub fn physics_file(&self, root: &Path) -> PathBuf {
+        if let Some(shapes) = &self.collision_shapes {
+            return shapes.remainder_file.clone();
+        }
         if self.source_tessellated_collision
             && let Some(path) = &self.collision
         {
@@ -391,6 +440,28 @@ pub fn load_with_bindings<B>(
         .transpose()?
         .unwrap_or_default();
     let floor_top_cad_m = arena.floor_top_source_z_m.unwrap_or(FLOOR_TOP_CAD_M);
+    ensure!(
+        arena.terrain_collision.is_some()
+            == arena.assets.get("arena-static").is_some_and(
+                |a| a.collision_method.as_deref() == Some("native-terrain-remainder-v1")
+            ),
+        "native terrain requires its verified remainder contract"
+    );
+    let terrain_collision = arena
+        .terrain_collision
+        .as_ref()
+        .map(|f| {
+            crate::terrain_collision::VerifiedTerrain::read(
+                root,
+                &f.file,
+                &f.sha256,
+                arena
+                    .source_sha256
+                    .as_deref()
+                    .context("native terrain requires source checksum")?,
+            )
+        })
+        .transpose()?;
     ensure!(
         (-3.0..=0.0).contains(&floor_top_cad_m),
         "manifest floor_top_source_z_m {floor_top_cad_m} is outside the arena"
@@ -501,6 +572,35 @@ pub fn load_with_bindings<B>(
                 Ok::<_, anyhow::Error>(path)
             })
             .transpose()?;
+        let collision_shapes = if entry.collision_method.as_deref() == Some("primitive-shapes-v1") {
+            let directory = root.join(prefix);
+            let sidecar = crate::collision_shapes::local_file(
+                &directory,
+                entry
+                    .collision_shapes
+                    .as_deref()
+                    .ok_or_else(|| anyhow!("missing collision shapes path"))?,
+            )?;
+            Some(
+                crate::collision_shapes::load_verified(
+                    collision
+                        .as_deref()
+                        .ok_or_else(|| anyhow!("missing source collision GLB"))?,
+                    entry
+                        .collision_sha256
+                        .as_deref()
+                        .ok_or_else(|| anyhow!("missing source collision checksum"))?,
+                    &sidecar,
+                    entry
+                        .collision_shapes_sha256
+                        .as_deref()
+                        .ok_or_else(|| anyhow!("missing collision shapes checksum"))?,
+                )
+                .with_context(|| format!("{name}: verifying hybrid collision recipe"))?,
+            )
+        } else {
+            None
+        };
         ensure!(
             entry.placements_in_source_arena_frame.len() == expected,
             "{name} has {} placements, expected {expected}",
@@ -520,6 +620,7 @@ pub fn load_with_bindings<B>(
             semantics,
             placements,
             collision,
+            collision_shapes,
             source_tessellated_collision,
         })
     };
@@ -563,6 +664,7 @@ pub fn load_with_bindings<B>(
         })
         .transpose()?;
     Ok(CadAssets {
+        terrain_collision,
         rmuc_2027,
         season,
         rest_pose_only: arena.rest_pose_only,
@@ -604,7 +706,7 @@ fn read_manifest(path: &Path) -> anyhow::Result<Manifest> {
 /// Check a file against the checksum its manifest records. The file is read
 /// whole and hashed; a missing or unreadable file is an error, and so is any
 /// mismatch, with both digests in the message.
-pub(crate) fn verify_sha256(path: &Path, expected: &str) -> anyhow::Result<()> {
+pub(crate) fn read_verified_bytes(path: &Path, expected: &str) -> anyhow::Result<Vec<u8>> {
     let bytes =
         std::fs::read(path).with_context(|| format!("reading CAD asset {}", path.display()))?;
     let actual = format!("{:x}", Sha256::digest(&bytes));
@@ -613,7 +715,12 @@ pub(crate) fn verify_sha256(path: &Path, expected: &str) -> anyhow::Result<()> {
         "{} does not match the manifest checksum (expected {expected}, found {actual})",
         path.display()
     );
-    Ok(())
+    Ok(bytes)
+}
+
+/// Verify the bytes read from a file against the manifest checksum.
+pub(crate) fn verify_sha256(path: &Path, expected: &str) -> anyhow::Result<()> {
+    read_verified_bytes(path, expected).map(|_| ())
 }
 
 /// A manifest placement (asset canonical frame into the CAD arena frame) as a
@@ -696,6 +803,7 @@ mod tests {
     fn only_explicit_source_tessellation_selects_a_collision_file() {
         let root = Path::new("/assets");
         let mut asset = CadAsset {
+            collision_shapes: None,
             semantics: None,
             file: "visual.glb".into(),
             placements: Vec::new(),
@@ -705,6 +813,44 @@ mod tests {
         assert_eq!(asset.physics_file(root), root.join("visual.glb"));
         asset.source_tessellated_collision = true;
         assert_eq!(asset.physics_file(root), root.join("collision.glb"));
+        asset.collision_shapes = Some(crate::collision_shapes::CollisionShapes {
+            remainder_file: root.join("remainder.glb"),
+            remainder_bytes: Default::default(),
+            parts: Vec::new(),
+        });
+        assert_eq!(asset.physics_file(root), root.join("remainder.glb"));
+        assert_eq!(
+            asset.collision.as_deref(),
+            Some(root.join("collision.glb").as_path())
+        );
+    }
+
+    #[test]
+    fn hybrid_manifest_contract_is_explicit_and_requires_all_provenance() {
+        let complete = serde_json::json!({
+            "visual": "visual.glb", "visual_sha256": "unused",
+            "collision": "source.glb", "collision_sha256": "unused",
+            "collision_method": "primitive-shapes-v1",
+            "collision_shapes": "shapes.json", "collision_shapes_sha256": "unused"
+        });
+        let check =
+            |value| verified_collision(&serde_json::from_value::<ManifestAsset>(value).unwrap());
+        assert!(check(complete.clone()).unwrap());
+        for key in [
+            "collision",
+            "collision_sha256",
+            "collision_shapes",
+            "collision_shapes_sha256",
+        ] {
+            let mut incomplete = complete.clone();
+            incomplete.as_object_mut().unwrap().remove(key);
+            assert!(check(incomplete).is_err(), "accepted absent {key}");
+        }
+        let mut legacy = complete;
+        legacy.as_object_mut().unwrap().remove("collision_method");
+        assert!(!check(legacy.clone()).unwrap());
+        legacy["collision_method"] = "unknown-method".into();
+        assert!(!check(legacy).unwrap());
     }
 
     #[test]

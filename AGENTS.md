@@ -101,6 +101,10 @@ verified against SHA-256 in both manifests. The manifest's
 files and intermediate exports outside Git; only approved packages belong in
 LFS. Record runtime package updates in `scripts/release-field-2027.json` and
 verify with `inspect_assets`.
+The opt-in `primitive-shapes-v1` contract combines a source-verified retained
+GLB with native cylinder descriptions, preserving part ownership and motion.
+Floor/arena ground remains mesh-backed for support-height queries. See
+`docs/field-package.md`; loader support does not approve approximate trial shapes.
 Never bake geometry into code beyond the fitted physics and world constants.
 See `docs/field-package.md` for composition, collision contracts and deployment.
 

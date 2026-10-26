@@ -158,6 +158,18 @@ mod tests {
             );
         }
         for bad in [0., -1., f64::NAN, f64::INFINITY] {
+            for (radius_m, half_height_m) in [(bad, 1.), (1., bad)] {
+                assert!(
+                    CompoundShape::new(vec![(
+                        Pose::default(),
+                        ShapeDescription::Cylinder {
+                            radius_m,
+                            half_height_m
+                        },
+                    )])
+                    .is_err()
+                );
+            }
             for axis in 0..3 {
                 let mut half_extents_m = [1.; 3];
                 half_extents_m[axis] = bad;

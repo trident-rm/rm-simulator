@@ -7,6 +7,8 @@ mod body;
 mod compound;
 mod convex;
 pub use compound::CompoundShape;
+mod heightfield;
+pub use heightfield::HeightField;
 mod joint;
 mod mount;
 pub use mount::{CarrierKey, MountDescription, MountKey, MountTable};

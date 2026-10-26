@@ -80,8 +80,10 @@ fn moving(kind: Mechanism, team: Team) -> ComponentDefinition {
     ComponentDefinition::new(
         PlacedComponent {
             fixed: CollisionMesh::default(),
+            native_shapes: vec![],
             moving: vec![MechanismMesh {
                 mesh: mesh(),
+                native_shapes: vec![],
                 mechanism: kind,
                 team,
                 motion,
@@ -604,6 +606,7 @@ fn raw_projectile_contacts_keep_explicit_physical_and_source_identity_maps() {
     let source = ComponentDefinition::new(
         PlacedComponent {
             fixed: CollisionMesh::default(),
+            native_shapes: vec![],
             moving: vec![],
         },
         vec![ScenarioTarget {
@@ -765,4 +768,54 @@ fn checked_source_runes_have_independent_banks_and_reset() {
         reset.motion_channels().collect::<Vec<_>>()
     );
     assert_eq!(initial.into_triangles(), reset.into_triangles());
+}
+
+#[test]
+fn native_cylinder_is_analytic_after_composition_and_reset() {
+    let shape = (
+        Pose::at([2., 0., 1.]),
+        rm_sim_physics::model::ShapeDescription::Cylinder {
+            radius_m: 0.2,
+            half_height_m: 0.5,
+        },
+    );
+    let component = ComponentDefinition::new(
+        PlacedComponent {
+            fixed: CollisionMesh::default(),
+            native_shapes: vec![shape],
+            moving: vec![],
+        },
+        vec![],
+        None,
+    )
+    .unwrap();
+    let definition = Composition {
+        components: vec![ComponentInstance {
+            id: InstanceId(14),
+            source: component,
+            placement: Pose::at([3., 0., 0.]),
+            targets: vec![],
+        }],
+        ..Default::default()
+    }
+    .prepare()
+    .unwrap();
+    let mut session = definition
+        .session(StepDuration::HZ_1000, Default::default())
+        .unwrap();
+    let angle = std::f64::consts::PI / 64.;
+    let radial = [angle.cos(), 0., angle.sin()];
+    let origin = [5. + radial[0] * 0.3, 0., 1. + radial[2] * 0.3];
+    for _ in 0..2 {
+        let capture = session.ground_truth().static_geometry_snapshot(true);
+        let hit = capture
+            .cast_ray(origin, radial.map(|v| -v), 0.2)
+            .unwrap()
+            .unwrap();
+        assert!(
+            (hit.distance_m - 0.1).abs() < 1e-9,
+            "composition tessellated the cylinder"
+        );
+        session.reset().unwrap();
+    }
 }

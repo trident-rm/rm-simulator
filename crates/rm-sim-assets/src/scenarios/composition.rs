@@ -5,7 +5,9 @@
 //! Each instance receives structural physical motion IDs; competition roles remain
 //! inspectable source metadata and never implicitly drive repeated equipment.
 use super::*;
-use crate::{collision_mesh::CollisionMesh, components::PlacedComponent, math};
+#[cfg(test)]
+use crate::collision_mesh::CollisionMesh;
+use crate::{components::PlacedComponent, math};
 use rm_sim_physics::{
     arena::ZoneFootprint,
     motion::{MotionChannel, MotionFrame, MotionId, MotionUpdate},
@@ -228,7 +230,7 @@ pub struct ComposedScenario {
 
 impl Composition {
     /// Validate identities, poses and cardinality, allocate instance channels, then cook.
-    /// Preparation expands source shapes into triangles and rebuilds their BVHs;
+    /// Preparation reuses native shapes and transforms retained mesh vertices once;
     /// it is deliberately outside session creation/reset and stepping.
     ///
     /// ```
@@ -340,15 +342,10 @@ impl Composition {
                     },
                 });
             }
-            let fixed = transformed_mesh(instance.source.geometry.fixed_only(), instance.placement);
-            PlacedComponent {
-                fixed,
-                moving: vec![],
-            }
-            .install(&mut physics)
-            .map_err(anyhow::Error::msg)?;
+            physics
+                .add_fixed_geometry(&instance.source.geometry.fixed_only(), instance.placement)
+                .map_err(anyhow::Error::msg)?;
             for part in parts {
-                let mesh = transformed_mesh(part.geometry, instance.placement);
                 let frame = match part.motion {
                     MotionFrame::Rotation { pivot_m, axis } => MotionFrame::Rotation {
                         pivot_m: transform_point(instance.placement, pivot_m),
@@ -360,9 +357,9 @@ impl Composition {
                     },
                 };
                 physics
-                    .add_motion_mesh(
-                        mesh.vertices_m,
-                        mesh.triangles,
+                    .add_motion_geometry(
+                        &part.geometry,
+                        instance.placement,
                         physical_motion_id(instance.id, part.kind, part.team),
                         frame,
                     )
@@ -375,12 +372,9 @@ impl Composition {
                 terrain.geometry.motion_parts().is_empty(),
                 "terrain contains moving channels"
             );
-            PlacedComponent {
-                fixed: transformed_mesh(terrain.geometry.clone(), terrain.placement),
-                moving: vec![],
-            }
-            .install(&mut physics)
-            .map_err(anyhow::Error::msg)?;
+            physics
+                .add_fixed_geometry(&terrain.geometry, terrain.placement)
+                .map_err(anyhow::Error::msg)?;
         }
         for volume in &self.rfid {
             validate_rfid(volume)?;
@@ -703,16 +697,6 @@ fn transform_pose(placement: Pose, pose: Pose) -> Pose {
     Pose {
         translation_m: transform_point(placement, pose.translation_m),
         rotation_wxyz: math::quat_multiply(placement.rotation_wxyz, pose.rotation_wxyz),
-    }
-}
-fn transformed_mesh(geometry: StaticGeometry, placement: Pose) -> CollisionMesh {
-    let (vertices, triangles) = geometry.into_triangles();
-    CollisionMesh {
-        vertices_m: vertices
-            .into_iter()
-            .map(|v| transform_point(placement, v))
-            .collect(),
-        triangles,
     }
 }
 fn validate_rfid(volume: &RfidVolume) -> anyhow::Result<()> {

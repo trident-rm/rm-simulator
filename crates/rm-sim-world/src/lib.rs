@@ -183,6 +183,17 @@ impl Field {
             state.faces(faces);
         }
     }
+    /// Install a cooked fixed model at an ordinary FLU pose, preserving native grids.
+    pub fn add_fixed_model(
+        &mut self,
+        model: &rm_sim_physics::cooking::CookedRigidBody,
+        placement: Pose,
+    ) -> Result<(), FieldError> {
+        self.physics
+            .add_fixed_model(model, placement)
+            .map(|_| ())
+            .map_err(FieldError::Mesh)
+    }
     /// Add a fixed collision mesh (world FLU metres), for example the field CAD.
     pub fn add_static_mesh(
         &mut self,
@@ -192,6 +203,30 @@ impl Field {
         self.physics
             .add_static_mesh(vertices_m, triangles)
             .map(|_| ())
+            .map_err(FieldError::Mesh)
+    }
+    /// Add fixed native scenery in world-FLU child frames with the same contact
+    /// policy as field meshes. Native shapes remain analytic through captures.
+    pub fn add_static_shapes(
+        &mut self,
+        shapes: &[(Pose, rm_sim_physics::model::ShapeDescription)],
+    ) -> Result<(), FieldError> {
+        self.physics
+            .add_static_shapes(shapes)
+            .map_err(FieldError::Mesh)
+    }
+    /// Add native children to a prescribed source scenery channel at rest.
+    /// Translations are metres; rotor axes are unit FLU vectors. Shape children
+    /// retain their rest frames and follow the supplied mesh channel's motion.
+    pub fn add_mechanism_shapes(
+        &mut self,
+        shapes: &[(Pose, rm_sim_physics::model::ShapeDescription)],
+        mechanism: referee::Mechanism,
+        team: Team,
+        frame: referee::MotionFrame,
+    ) -> Result<(), FieldError> {
+        self.physics
+            .add_mechanism_shapes(shapes, mechanism, team, frame)
             .map_err(FieldError::Mesh)
     }
     /// Register an operator-driven mesh at its exported rest pose, with world

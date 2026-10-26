@@ -31,6 +31,7 @@
 pub mod arena;
 pub mod assembly_model;
 pub mod chassis;
+pub mod collision_profiles;
 pub mod control;
 pub mod cooking;
 pub mod geometry;
@@ -53,6 +54,8 @@ pub use projectile::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Solver-free source geometry, body and collider descriptions.
+pub use sim_engine::model;
 /// Shared solver-free contracts; existing physical import paths stay compatible.
 pub use sim_engine::{DEFAULT_TICK_NS, Pose, StepDuration, tick_ns};
 

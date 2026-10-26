@@ -236,6 +236,12 @@ impl StaticGeometry {
                     motion: *frame,
                     geometry: Self {
                         shapes: vec![(position, shape)],
+                        collision_groups: vec![
+                            self.collision_groups
+                                .get(*index)
+                                .copied()
+                                .unwrap_or_default(),
+                        ],
                         ..Self::default()
                     },
                 }
@@ -467,7 +473,11 @@ impl StaticGeometry {
         }
         Ok(result)
     }
-    /// Expand the captured shapes into world FLU triangles. This may be expensive.
+    /// Expand the captured shapes and compound children into world FLU triangles.
+    /// Cylinders use a deterministic 32-segment diagnostic boundary mesh; balls
+    /// use 12 longitudinal and 8 latitudinal subdivisions. Only this export is
+    /// tessellated: captured native shapes still serve contacts, rays and sweeps.
+    /// This may be expensive.
     pub fn into_triangles(self) -> (Vec<[f64; 3]>, Vec<[u32; 3]>) {
         sim_physics::backend::triangulate_shapes(self.shapes)
     }
@@ -476,6 +486,146 @@ impl StaticGeometry {
 #[cfg(test)]
 mod clearance_tests {
     use crate::{Pose, WorldPhysics};
+    fn cylinder_capture(compound: bool) -> super::StaticGeometry {
+        use sim_engine::model::{
+            BodyKind, BodyState, ColliderDescription, CompoundShape, ContactMaterial,
+            RigidBodyDescription, ShapeDescription,
+        };
+        let cylinder = ShapeDescription::Cylinder {
+            radius_m: 0.75,
+            half_height_m: 0.5,
+        };
+        let child_pose = Pose {
+            translation_m: [0.5, -1., 0.25],
+            rotation_wxyz: [0.5, 0.5, 0.5, 0.5],
+        };
+        let shape = if compound {
+            ShapeDescription::Compound(
+                CompoundShape::new(vec![
+                    (child_pose, cylinder),
+                    (
+                        Pose::at([-2., 0., 0.]),
+                        ShapeDescription::Cuboid {
+                            half_extents_m: [0.1, 0.2, 0.3],
+                        },
+                    ),
+                ])
+                .unwrap(),
+            )
+        } else {
+            cylinder
+        };
+        let angle = std::f64::consts::FRAC_PI_4;
+        let collider = ColliderDescription::new(
+            shape,
+            Pose {
+                translation_m: [1., 2., 3.],
+                rotation_wxyz: [angle.cos(), angle.sin(), 0., 0.],
+            },
+            ContactMaterial {
+                friction: 0.4,
+                restitution: 0.,
+                memberships: u32::MAX,
+                filter: u32::MAX,
+            },
+        )
+        .unwrap();
+        let cooked = crate::cooking::CookedRigidBody::new(
+            RigidBodyDescription::new(BodyKind::Fixed, vec![collider]).unwrap(),
+        )
+        .unwrap();
+        let mut world = WorldPhysics::new(&[], -10.);
+        world
+            .install_body(
+                crate::runtime::BodyKey(1),
+                &cooked,
+                BodyState::at(Pose::at([2., 2., 2.])),
+            )
+            .unwrap();
+        world.static_geometry_snapshot(true)
+    }
+
+    #[test]
+    fn rotated_native_cylinder_snapshot_queries_caps_sides_and_clearances() {
+        let geometry = cylinder_capture(false);
+        assert!(geometry.shapes[0].1.as_cylinder().is_some());
+        for (origin, direction, distance, normal) in [
+            ([3., 4., 8.], [0., 0., -1.], 2.5, [0., 0., 1.]),
+            ([6., 4., 5.], [-1., 0., 0.], 2.25, [1., 0., 0.]),
+        ] {
+            let hit = geometry.cast_ray(origin, direction, 4.).unwrap().unwrap();
+            assert!((hit.distance_m - distance).abs() < 1e-10);
+            for (actual, expected) in hit.normal.into_iter().zip(normal) {
+                assert!((actual - expected).abs() < 1e-10);
+            }
+        }
+        assert!(!geometry.sphere_clear([3.8, 4., 5.], 0.1));
+        assert!(geometry.sphere_clear([4., 4., 5.], 0.1));
+        assert!(!geometry.cylinder_sweep_clear([1., 4., 5.], [5., 4., 5.], 0.1, 0.1));
+        assert!(geometry.cylinder_sweep_clear([1., 5., 5.], [5., 5., 5.], 0.1, 0.1));
+        let (vertices, triangles) = geometry.into_triangles();
+        assert!(!triangles.is_empty());
+        for axis in 0..3 {
+            let extent = if axis == 2 { 0.5 } else { 0.75 };
+            let center = [3., 4., 5.][axis];
+            let min = vertices
+                .iter()
+                .map(|v| v[axis])
+                .fold(f64::INFINITY, f64::min);
+            let max = vertices
+                .iter()
+                .map(|v| v[axis])
+                .fold(f64::NEG_INFINITY, f64::max);
+            assert!((min - (center - extent)).abs() < 1e-10);
+            assert!((max - (center + extent)).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn compound_export_includes_cylinder_and_box_with_all_mounts() {
+        use rapier3d_f64::prelude::*;
+        let geometry = cylinder_capture(true);
+        let (mount, shape) = &geometry.shapes[0];
+        let children = shape.as_compound().unwrap().shapes();
+        let cylinder_pose = *mount * children[0].0;
+        let origin = cylinder_pose.transform_point(Vector::new(0., 2., 0.));
+        let direction = cylinder_pose.rotation * Vector::NEG_Y;
+        let hit = geometry
+            .cast_ray(origin.to_array(), direction.to_array(), 3.)
+            .unwrap()
+            .unwrap();
+        assert!((hit.distance_m - 1.5).abs() < 1e-10);
+        assert!(!geometry.sphere_clear(cylinder_pose.translation.to_array(), 0.1));
+        let mut expected_vertices = Vec::new();
+        let mut expected_triangles = Vec::new();
+        for (child_pose, shape) in children {
+            let (vertices, triangles) = match shape.as_typed_shape() {
+                TypedShape::Cylinder(cylinder) => cylinder.to_trimesh(32),
+                TypedShape::Cuboid(cuboid) => cuboid.to_trimesh(),
+                _ => panic!("unexpected child"),
+            };
+            let base = expected_vertices.len() as u32;
+            expected_vertices.extend(vertices.into_iter().map(|v| {
+                mount
+                    .transform_point(child_pose.transform_point(v))
+                    .to_array()
+            }));
+            expected_triangles.extend(triangles.into_iter().map(|t| t.map(|i| i + base)));
+        }
+        let (vertices, triangles) = geometry.clone().into_triangles();
+        assert_eq!(triangles, expected_triangles);
+        assert!(!triangles.is_empty());
+        assert_eq!(vertices.len(), expected_vertices.len());
+        for (actual, expected) in vertices
+            .iter()
+            .flatten()
+            .zip(expected_vertices.iter().flatten())
+        {
+            assert!((actual - expected).abs() < 1e-10);
+        }
+        assert_eq!((vertices, triangles), geometry.into_triangles());
+    }
+
     #[test]
     fn nearest_ray_is_metric_bounded_and_not_shape_order_dependent() {
         let mut world = WorldPhysics::new(&[], 0.);

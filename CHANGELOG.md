@@ -4,6 +4,16 @@
 
 ## Unreleased
 
+- Deploy native heightfields for both reviewed road surfaces and a four-triangle collision floor. Preserve current visuals, static owner partitions, motion and arena reset. Keep full ground support lookups separate from physical mesh remainders.
+
+- Add an opt-in rigid-part collision-profile loader and purpose masks for detailed
+  rigid contacts, approximate projectiles and query-only LiDAR. Preserve immutable
+  verified payloads and keep coarse geometry out of rigid-body profiles.
+
+- Consolidate opt-in cylinder and terrain collisions on the generic engine and
+  physics crates. Retain verified hybrid mesh bytes through deferred loading,
+  so changed on-disk files cannot replace the checked collision geometry.
+
 - Use sw-rs as the sole native SolidWorks metadata and mesh reader. Remove the
   legacy openswx/sldkit CLI flags, require versioned reader output at both stages,
   and retain existing catalogue, project and review formats.
@@ -32,6 +42,10 @@
   recipe reset over the same runtime used by RoboMaster. Include a CPU-only XY
   positioning robot with external feedback control, repeatable reset tests and
   setup/reset/stepping measurements, without a match, renderer or new dependency.
+- Add opt-in verified portable terrain collision tiers with finite native
+  heightfields, atomic mesh remainders and same-quality mesh fallback. Keep
+  native grids in shared physics/captures; add a standalone geometry/contact
+  benchmark without changing installed field assets or default match loading.
 
 - Expose last-slice joint actuator effort and add a torque/servo response bench
   with known-inertia acceleration, opposing loads, saturation and hard-stop
@@ -97,6 +111,11 @@
   cancellation. Keep bounded workers, permissions and actuation in the server.
   The assembly workbench uses the public controller API without including server
   implementation files; add a bare-physics navigation example and boundary tests.
+- Add explicit hybrid field collision recipes: verified retained GLB meshes plus
+  native solid cylinders, with source ownership, placements and moving channels
+  preserved. Keep native shapes through prepared scenes/resets, ray and clearance
+  queries, and tessellate only for diagnostic wireframes. Existing field assets
+  and default mesh collision contracts remain unchanged.
 
 - Rename workspace crates and Rust imports from `rm-simulator-*` /
   `rm_simulator_*` to `rm-sim-*` / `rm_sim_*`, including crate directories,

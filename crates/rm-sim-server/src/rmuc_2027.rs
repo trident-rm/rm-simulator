@@ -156,7 +156,7 @@ pub fn fit_zone_heights(config: &mut Config, ground: &crate::collision_mesh::Gro
 /// Load only fixed source bodies, leaving driven bodies for their own colliders.
 pub fn fixed_collision(cad: &CadAssets, asset: &CadAsset) -> anyhow::Result<CollisionMesh> {
     if cad.rmuc_2027.is_none() {
-        return crate::collision_mesh::load_glb(&asset.physics_file(&cad.root));
+        return asset.physics_mesh(&cad.root);
     }
     Ok(component(cad, asset)?.fixed)
 }

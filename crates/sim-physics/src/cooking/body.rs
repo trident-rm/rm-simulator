@@ -245,14 +245,40 @@ fn validate_compound_child_mass(
 fn cook_shape(source: &ShapeDescription) -> Result<SharedShape, &'static str> {
     Ok(match source {
         ShapeDescription::Ball { radius_m } => SharedShape::ball(*radius_m),
+        ShapeDescription::Cylinder {
+            radius_m,
+            half_height_m,
+        } => SharedShape::cylinder(*half_height_m, *radius_m),
         ShapeDescription::Cuboid { half_extents_m: h } => SharedShape::cuboid(h[0], h[1], h[2]),
         ShapeDescription::TriangleMesh(mesh) => cook_surface(mesh)?,
+        ShapeDescription::HeightField(grid) => {
+            use rapier3d_f64::parry::{
+                shape::{HeightField, HeightFieldCellStatus},
+                utils::Array2,
+            };
+            let rows = grid.heights_m().len();
+            let cols = grid.heights_m()[0].len();
+            let heights = Array2::from_fn(rows, cols, |r, c| grid.heights_m()[r][c]);
+            let mut native =
+                HeightField::new(heights, Vector::new(grid.size_x_m(), 1., grid.size_z_m()));
+            for r in 0..rows - 1 {
+                for c in 0..cols - 1 {
+                    native.set_cell_status(r, c, HeightFieldCellStatus::ZIGZAG_SUBDIVISION);
+                }
+            }
+            SharedShape::new(native)
+        }
         ShapeDescription::ConvexHull(hull) => cook_convex(hull)?,
         ShapeDescription::Compound(compound) => {
             let children = compound
                 .children()
                 .iter()
                 .map(|(pose, shape)| {
+                    if matches!(shape, ShapeDescription::HeightField(_)) {
+                        return Err(
+                            "backend policy does not support heightfield children in compounds",
+                        );
+                    }
                     let shape = cook_shape(shape)?;
                     // Parry panics for composite children (including triangle meshes).
                     // Reject before native construction; never flatten or split them.
@@ -361,6 +387,81 @@ mod tests {
         Pose,
         model::{BodyKind, ColliderDescription, ContactMaterial, Inertial},
     };
+
+    #[test]
+    fn cylinders_keep_native_geometry_and_mass_alone_and_in_compounds() {
+        use sim_engine::model::{ColliderPolicy, CompoundShape};
+        let cylinder = ShapeDescription::Cylinder {
+            radius_m: 0.7,
+            half_height_m: 1.3,
+        };
+        let child_pose = Pose {
+            translation_m: [0.2, -0.4, 0.6],
+            rotation_wxyz: [0.5, 0.5, 0.5, 0.5],
+        };
+        for compound in [false, true] {
+            let source = if compound {
+                ShapeDescription::Compound(
+                    CompoundShape::new(vec![(child_pose, cylinder.clone())]).unwrap(),
+                )
+            } else {
+                cylinder.clone()
+            };
+            let native = if compound {
+                SharedShape::compound(vec![(
+                    crate::runtime::math::pose(child_pose),
+                    SharedShape::cylinder(1.3, 0.7),
+                )])
+            } else {
+                SharedShape::cylinder(1.3, 0.7)
+            };
+            for mass in [ColliderMass::DensityKgM3(11.), ColliderMass::MassKg(3.7)] {
+                let collider = compound_collider(source.clone())
+                    .with_policy(ColliderPolicy {
+                        mass,
+                        ..Default::default()
+                    })
+                    .unwrap();
+                let cooked = CookedRigidBody::new(
+                    RigidBodyDescription::new(
+                        BodyKind::DynamicFromColliders,
+                        vec![collider.clone()],
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+                let leaf = if compound {
+                    &cooked.shapes()[0].as_compound().unwrap().shapes()[0].1
+                } else {
+                    &cooked.shapes()[0]
+                };
+                let actual = leaf.as_cylinder().expect("native cylinder, never a mesh");
+                assert_eq!((actual.radius, actual.half_height), (0.7, 1.3));
+                assert_eq!(cooked.source().colliders()[0].shape(), &source);
+                let expected = ColliderBuilder::new(native.clone())
+                    .position(crate::runtime::math::pose(collider.pose()));
+                let expected = match mass {
+                    ColliderMass::DensityKgM3(density) => expected.density(density),
+                    ColliderMass::MassKg(mass) => expected.mass(mass),
+                    _ => unreachable!(),
+                }
+                .build();
+                assert_eq!(
+                    cooked
+                        .native_collider_builders()
+                        .next()
+                        .unwrap()
+                        .build()
+                        .mass_properties(),
+                    expected.mass_properties()
+                );
+                assert_eq!(
+                    cooked.native_aggregate_mass_properties(),
+                    Some(&expected.mass_properties().transform_by(expected.position()))
+                );
+            }
+        }
+    }
 
     fn compound_fixture() -> (ShapeDescription, SharedShape) {
         use sim_engine::model::CompoundShape;
@@ -905,5 +1006,88 @@ mod tests {
         };
         assert_eq!(hull.points_m(), points);
         assert!((cooked.shapes()[0].mass_properties(1.).mass() - 1. / 6.).abs() < 1e-12);
+    }
+}
+
+#[cfg(test)]
+mod heightfield_contact_tests {
+    use super::*;
+    use crate::{PhysicalRuntime, Pose, StepDuration, runtime::BodyKey};
+    use sim_engine::model::{
+        BodyPolicy, BodyState, ColliderDescription, ContactMaterial, HeightField, Inertial,
+    };
+    #[test]
+    fn balls_do_not_pass_through_heightfields_from_either_side() {
+        for direction in [-1., 1.] {
+            for native in [false, true] {
+                let material = ContactMaterial {
+                    friction: 0.,
+                    restitution: 1.,
+                    memberships: u32::MAX,
+                    filter: u32::MAX,
+                };
+                let grid = HeightField::new(vec![vec![0.; 2]; 2], 2., 2.).unwrap();
+                let shape = if native {
+                    ShapeDescription::HeightField(grid)
+                } else {
+                    ShapeDescription::TriangleMesh(grid.to_triangle_mesh())
+                };
+                let model = CookedRigidBody::new(
+                    RigidBodyDescription::new(
+                        BodyKind::Fixed,
+                        vec![ColliderDescription::new(shape, Pose::default(), material).unwrap()],
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+                let mut runtime = PhysicalRuntime::new(StepDuration::HZ_1000);
+                runtime
+                    .install_fixed_model(
+                        &model,
+                        Pose {
+                            translation_m: [0.; 3],
+                            rotation_wxyz: [
+                                std::f64::consts::FRAC_1_SQRT_2,
+                                std::f64::consts::FRAC_1_SQRT_2,
+                                0.,
+                                0.,
+                            ],
+                        },
+                    )
+                    .unwrap();
+                let ball = CookedRigidBody::new(
+                    RigidBodyDescription::new(
+                        BodyKind::Dynamic(Inertial::new(1., [0.001; 3], Pose::default()).unwrap()),
+                        vec![
+                            ColliderDescription::new(
+                                ShapeDescription::Ball { radius_m: 0.03 },
+                                Pose::default(),
+                                material,
+                            )
+                            .unwrap(),
+                        ],
+                    )
+                    .unwrap()
+                    .with_policy(BodyPolicy {
+                        gravity_scale: 0.,
+                        ..Default::default()
+                    })
+                    .unwrap(),
+                )
+                .unwrap();
+                let mut state = BodyState::at(Pose::at([0., 0., -direction * 0.4]));
+                state.velocity_m_s = [0., 0., direction * 2.];
+                let binding = runtime.install_body(BodyKey(1), &ball, state).unwrap();
+                for tick in 0..400 {
+                    runtime.step(tick * 1_000_000).unwrap();
+                }
+                let state = runtime.body_state(binding).unwrap();
+                assert!(
+                    state.pose.translation_m[2] * direction < 0.,
+                    "native={native} direction={direction} z={}",
+                    state.pose.translation_m[2]
+                );
+            }
+        }
     }
 }

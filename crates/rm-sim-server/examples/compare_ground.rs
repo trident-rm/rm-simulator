@@ -46,7 +46,7 @@ fn main() -> anyhow::Result<()> {
     for (label, path) in [("before", &args[0]), ("after", &args[1])] {
         let cad = cad_assets::load(std::path::Path::new(path))?;
         for asset in &cad.static_assets {
-            for part in collision_mesh::load_glb_parts(&asset.physics_file(&cad.root))? {
+            for part in collision_mesh::load_glb_parts_bytes(&asset.physics_bytes(&cad.root)?)? {
                 for pose in &asset.placements {
                     if let Some(z) = part
                         .mesh

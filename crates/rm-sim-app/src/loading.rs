@@ -259,14 +259,14 @@ fn start(world: &mut World) {
                 let bounds = if practice {
                     args.host.competition.practice_bounds()
                 } else {
-                    let floor = rm_sim_server::collision_mesh::load_glb(
-                        &cad.floor.physics_file(&cad.root),
-                    )?
-                    .into_flu(cad.floor_top_cad_m);
-                    let scenery = rm_sim_server::collision_mesh::load_glb(
-                        &cad.arena_static.physics_file(&cad.root),
-                    )?
-                    .into_flu(cad.floor_top_cad_m);
+                    let floor = cad
+                        .floor
+                        .physics_mesh(&cad.root)?
+                        .into_flu(cad.floor_top_cad_m);
+                    let scenery = cad
+                        .arena_static
+                        .physics_mesh(&cad.root)?
+                        .into_flu(cad.floor_top_cad_m);
                     rm_sim_server::layout::arena_boundary_bounds(&floor, &scenery)?
                 };
                 Ok((cad, opened, args, yaw, minimap, bounds))

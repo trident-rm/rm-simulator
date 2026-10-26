@@ -77,3 +77,102 @@ mod tests {
         assert!(world.static_geometry_snapshot(true).shapes.is_empty());
     }
 }
+
+#[cfg(test)]
+mod heightfield_tests {
+    use crate::cooking::CookedRigidBody;
+    use crate::{Pose, WorldPhysics};
+    use sim_engine::model::{BodyKind, RigidBodyDescription, ShapeDescription};
+    use sim_engine::model::{ColliderDescription, ContactMaterial, HeightField};
+    fn material() -> ContactMaterial {
+        ContactMaterial {
+            friction: 0.5,
+            restitution: 0.,
+            memberships: 3,
+            filter: 7,
+        }
+    }
+    #[test]
+    fn finite_heightfield_queries_capture_and_diagonal_match_the_mesh() {
+        let grid = HeightField::new(vec![vec![0., 0.1, 0.], vec![0.2, 0., 0.3]], 2., 1.).unwrap();
+        let mounted = Pose {
+            translation_m: [1., 2., 0.4],
+            rotation_wxyz: [
+                std::f64::consts::FRAC_1_SQRT_2,
+                std::f64::consts::FRAC_1_SQRT_2,
+                0.,
+                0.,
+            ],
+        };
+        let mut worlds = Vec::new();
+        for shape in [
+            ShapeDescription::HeightField(grid.clone()),
+            ShapeDescription::TriangleMesh(grid.to_triangle_mesh()),
+        ] {
+            let model = CookedRigidBody::new(
+                RigidBodyDescription::new(
+                    BodyKind::Fixed,
+                    vec![ColliderDescription::new(shape, Pose::default(), material()).unwrap()],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            let mut w = WorldPhysics::new(&[], -10.);
+            w.remove_catch_floor();
+            w.add_fixed_model(&model, mounted).unwrap();
+            worlds.push(w);
+        }
+        let native = worlds[0].static_geometry_snapshot(true);
+        let mesh = worlds[1].static_geometry_snapshot(true);
+        assert_eq!(native.clone().into_triangles().1.len(), 4);
+        for x in [0.1, 0.7, 1.1, 1.8] {
+            for y in [1.6, 1.9, 2.3] {
+                for (z, dir) in [(3., -1.), (-1., 1.)] {
+                    let a = native
+                        .cast_ray([x, y, z], [0., 0., dir], 6.)
+                        .unwrap()
+                        .unwrap();
+                    let b = mesh
+                        .cast_ray([x, y, z], [0., 0., dir], 6.)
+                        .unwrap()
+                        .unwrap();
+                    assert!((a.distance_m - b.distance_m).abs() < 1e-10);
+                }
+            }
+        }
+        assert!(
+            native
+                .cast_ray([4., 2., 3.], [0., 0., -1.], 6.)
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            native.shapes[0].1.as_typed_shape(),
+            rapier3d_f64::prelude::TypedShape::HeightField(_)
+        ));
+        assert_eq!(native.collision_groups, mesh.collision_groups);
+    }
+    #[test]
+    fn heightfields_reject_dynamic_and_compound_surface_models_without_panics() {
+        use sim_engine::model::CompoundShape;
+        let shape =
+            ShapeDescription::HeightField(HeightField::new(vec![vec![0.; 2]; 2], 2., 2.).unwrap());
+        let collider =
+            ColliderDescription::new(shape.clone(), Pose::default(), material()).unwrap();
+        assert!(RigidBodyDescription::new(BodyKind::DynamicFromColliders, vec![collider]).is_err());
+        let compound = CompoundShape::new(vec![(Pose::default(), shape)]).unwrap();
+        let source = RigidBodyDescription::new(
+            BodyKind::Fixed,
+            vec![
+                ColliderDescription::new(
+                    ShapeDescription::Compound(compound),
+                    Pose::default(),
+                    material(),
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        assert!(CookedRigidBody::new(source).is_err());
+    }
+}

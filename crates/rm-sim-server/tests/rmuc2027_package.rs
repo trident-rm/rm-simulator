@@ -26,6 +26,13 @@ fn reviewed_field_has_live_motion_native_rules_and_restorable_authority() -> any
         .push("source_body_99999999".into());
     assert!(invalid.validate().is_err());
     let terrain = layout::load_terrain(&cad)?;
+    let native = terrain
+        .native_terrain
+        .as_ref()
+        .expect("native terrain deployment");
+    assert_eq!(native.native_heightfields, 2);
+    assert_eq!(native.parts.len(), 29);
+    assert!(terrain.ground_collision.is_some());
     assert_eq!(terrain.mechanisms.len(), 10);
     let moving: usize = terrain
         .mechanisms
@@ -41,7 +48,7 @@ fn reviewed_field_has_live_motion_native_rules_and_restorable_authority() -> any
             .sum::<usize>();
     assert_eq!(
         fixed + moving + terrain.boundary.triangles.len(),
-        207_921 + 48
+        207_461 + 48
     );
     let config = layout::field_config(&cad, &layout::LayoutOptions::default());
     let mut field = Field::new(&config)?;

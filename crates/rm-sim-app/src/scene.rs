@@ -688,6 +688,7 @@ mod tests {
     #[test]
     fn additional_static_assets_are_drawn_once_per_placement() {
         let asset = |file: &str, count: usize| rm_sim_server::cad_assets::CadAsset {
+            collision_shapes: None,
             semantics: None,
             file: file.to_owned(),
             placements: vec![rm_sim_world::Pose::at([1.0, 2.0, 3.0]); count],
@@ -695,6 +696,7 @@ mod tests {
             source_tessellated_collision: false,
         };
         let cad = CadAssets {
+            terrain_collision: None,
             rmuc_2027: None,
             season: rm_sim_world::season::Season::Rm2026,
             rest_pose_only: false,

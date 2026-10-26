@@ -111,33 +111,46 @@ pub fn add_terrain(field: &mut Field, terrain: &Terrain) -> anyhow::Result<()> {
             terrain.boundary.triangles.clone(),
         )?;
     }
-    for mesh in std::iter::once(&*terrain.ground)
+    for mesh in std::iter::once(terrain.collision_ground())
         .chain(std::iter::once(&terrain.fixtures))
         .chain(&terrain.equipment)
         .filter(|mesh| !mesh.triangles.is_empty())
     {
         field.add_static_mesh(mesh.vertices_m.clone(), mesh.triangles.clone())?;
     }
-    for part in &terrain.mechanisms {
-        match part.motion {
-            rm_sim_world::referee::MotionFrame::Translation { offsets_m } => field
-                .add_mechanism_mesh(
-                    part.mesh.vertices_m.clone(),
-                    part.mesh.triangles.clone(),
-                    part.mechanism,
-                    part.team,
-                    offsets_m,
-                )?,
-            rm_sim_world::referee::MotionFrame::Rotation { pivot_m, axis } => field
-                .add_rotating_mesh(
-                    part.mesh.vertices_m.clone(),
-                    part.mesh.triangles.clone(),
-                    part.mechanism,
-                    part.team,
-                    pivot_m,
-                    axis,
-                )?,
+    for shapes in &terrain.native_shapes {
+        field.add_static_shapes(shapes)?;
+    }
+    if let Some(package) = &terrain.native_terrain {
+        for part in &package.parts {
+            for pose in &part.placements {
+                field.add_fixed_model(&part.model, *pose)?;
+            }
         }
+    }
+    for part in &terrain.mechanisms {
+        if !part.mesh.triangles.is_empty() {
+            match part.motion {
+                rm_sim_world::referee::MotionFrame::Translation { offsets_m } => field
+                    .add_mechanism_mesh(
+                        part.mesh.vertices_m.clone(),
+                        part.mesh.triangles.clone(),
+                        part.mechanism,
+                        part.team,
+                        offsets_m,
+                    )?,
+                rm_sim_world::referee::MotionFrame::Rotation { pivot_m, axis } => field
+                    .add_rotating_mesh(
+                        part.mesh.vertices_m.clone(),
+                        part.mesh.triangles.clone(),
+                        part.mechanism,
+                        part.team,
+                        pivot_m,
+                        axis,
+                    )?,
+            }
+        }
+        field.add_mechanism_shapes(&part.native_shapes, part.mechanism, part.team, part.motion)?;
     }
     Ok(())
 }
@@ -584,6 +597,8 @@ mod tests {
     fn chassis_is_set_down_on_the_ground_below_the_spawn_point() {
         let config = ChassisConfig::default();
         let terrain = Terrain {
+            native_terrain: None,
+            ground_collision: None,
             boundary: CollisionMesh::default(),
             projectile_bounds_m: None,
             mechanisms: Vec::new(),
@@ -599,6 +614,7 @@ mod tests {
             .into(),
             fixtures: CollisionMesh::default(),
             equipment: Vec::new(),
+            native_shapes: Vec::new(),
         };
         let placement = chassis_placement(
             config.clone(),
@@ -662,6 +678,7 @@ mod tests {
     #[test]
     fn layout_options_place_runes_outposts_and_the_referee() {
         let cad = CadAssets {
+            terrain_collision: None,
             rmuc_2027: None,
             season: rm_sim_world::season::Season::Rm2026,
             rest_pose_only: false,
@@ -721,6 +738,7 @@ mod tests {
 
     fn asset(placements: usize) -> CadAsset {
         CadAsset {
+            collision_shapes: None,
             semantics: None,
             file: "x.glb".into(),
             placements: (0..placements)

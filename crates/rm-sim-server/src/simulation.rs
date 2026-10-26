@@ -1832,6 +1832,7 @@ mod tests {
 
     fn cad_without_files() -> CadAssets {
         let asset = |placements| crate::cad_assets::CadAsset {
+            collision_shapes: None,
             semantics: None,
             file: "missing-builder-test.glb".into(),
             placements,
@@ -1839,6 +1840,7 @@ mod tests {
             source_tessellated_collision: false,
         };
         CadAssets {
+            terrain_collision: None,
             rmuc_2027: None,
             season: rm_sim_world::season::Season::Rm2026,
             rest_pose_only: false,

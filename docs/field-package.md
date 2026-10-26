@@ -87,6 +87,93 @@ built during terrain loading. The index retains the original triangles and
 height tolerances, including stacked surfaces. Wheel suspension continues to
 use Rapier's collision queries.
 
+## Parameterized collision shapes
+
+`collision_method: "primitive-shapes-v1"` explicitly selects a hybrid recipe.
+The asset keeps its original `collision` GLB and `collision_sha256` as the
+provenance source and adds two fields, relative to the containing manifest:
+
+```json
+{
+  "collision_method": "primitive-shapes-v1",
+  "collision_shapes": "primitive-collision/tech-core/collision-shapes.json",
+  "collision_shapes_sha256": "<sha256 of the sidecar>"
+}
+```
+
+The initial adapter accepts `rm-map-tools.collision-shapes.prototype-1`: metres,
+`source_glb_active_scene` coordinates, xyzw poses and local +Z solid cylinders
+with full lengths. It verifies source/remainder hashes, active-scene node names,
+indices, ancestry and component ownership, exact selected mesh removal, unchanged
+retained geometry/metadata, and positive finite dimensions. Axis vectors must
+agree with the pose. It rejects malformed recognized recipes and unsupported
+shape kinds rather than silently falling back to a visual mesh. Other contracts
+retain their existing behavior. Producer prototype/review notes are informational;
+using the contract is an explicit package selection, not contact-fidelity approval.
+
+The loader reads each recipe, source GLB and remainder once, then hashes and
+parses those same bytes. `CadAsset::physics_bytes` and `physics_mesh` retain the
+verified remainder through deferred component loading and reset. `physics_file`
+is a provenance path for hybrid assets, not permission to reopen mutable input.
+Changing or deleting the files after preparation cannot change retained collision.
+
+`remainder.glb` retains all mesh occurrences except the selected replacements.
+Multiple cylinder parts may replace one selected node, but that source node is
+removed exactly once. The original source collision remains available for
+provenance and binding validation; it is not also installed as a collider.
+Remainder references must stay within the sidecar directory. All runtime paths
+are package-relative; no sibling exporter or CAD source is a runtime dependency.
+
+At loading, +Z/full length/xyzw becomes native +Y/half-height/wxyz. Source GLB
+node transforms are already baked into exported cylinder poses and are not
+applied again. The usual checked asset root placement and floor conversion then
+place both meshes and primitives in world FLU. Source body bindings and semantic
+joint ancestry assign each native part to one fixed or moving owner; ambiguous
+motion ownership fails. Native-only moving parts are retained even when their
+mesh becomes empty. Child poses are baked into source rest coordinates before
+prescribed translation/rotation, matching the existing mesh motion contract.
+
+Native children share compounds of at most 255 parts per source placement or
+motion owner. Retained triangle surfaces remain separate colliders; they are
+not nested into primitive compounds. The solver, direct rays, sweeps, LiDAR
+captures, prepared scenes, composed instances and resets keep native shapes.
+Collision wireframes alone use deterministic 32-segment cylinder tessellation,
+including compound child transforms. Extracted moving captures retain collision
+filter masks. This does not guarantee a speedup; benchmark the actual workload.
+
+The floor and `arena-static` remain mesh-backed in this first field adapter,
+since chassis spawn/support-height queries use their triangle footprints. Native
+recipes there are rejected explicitly. Fixed equipment, additional placed
+scenery and supported moving equipment channels may use cylinders. Existing
+visual files, detector definitions and installed field manifests are unchanged.
+
+Stage a candidate in a **new** directory, then inspect it:
+
+```sh
+python3 scripts/stage-primitive-collision.py field-2027 \
+  --bundle /path/to/exported/native-cylinder-bundle \
+  --out local-assets/native-core-trial
+mbx run -p rm-sim-assets --example inspect_primitive_shapes --locked -- \
+  local-assets/native-core-trial
+just run --cad-assets local-assets/native-core-trial
+```
+
+The staging helper copies the source package, checks the bundle source/remainder
+hashes, updates only the chosen asset's collision descriptor, and refuses an
+existing output directory. The simulator loader performs full shape and retained
+geometry verification. The inspector exercises terrain preparation and each
+placed cylinder's side/cap ray queries; diagnostic triangle export also includes
+the new shapes. No installed package is replaced. The current three-cylinder
+Tech Core joint trial loads **539,225 asset mesh triangles plus six native
+cylinders in two placement groups**, excluding the separate 48-triangle boundary.
+That is 6,374 fewer mesh triangles than the installed 545,599 reference; collision
+shape adoption and performance measurements remain separate work.
+
+The exporter currently writes JSON/GLB and an SDF rest-pose model. SDF is an
+interchange artifact, not an input to this runtime loader. The JSON prototype's
+other future primitive kinds are not accepted implicitly; cylinders are the
+supported analytic shape in this initial field contract.
+
 ## Terrain
 
 The V1.2.0 floor slab is flat at height zero and the
@@ -170,3 +257,9 @@ window’s physical resolution. It waits for GPU pipeline compilation and
 three settled frames, retries blank readbacks up to three captures, and fails
 if capture has not finished within two minutes of gameplay readiness.
 GPU mesh uploads still happen through Bevy.
+
+## Opt-in portable terrain collisions
+
+The separate [terrain collision API](terrain-collisions.md) supports explicit
+quality tiers, native finite heightfields and atomic mesh remainders. It does
+not replace this installed field manifest or default loading path.

@@ -25,6 +25,7 @@ Git history.
 | Independent motor/encoder/controller composition and shared viewer | [Pendulum example](../examples/pendulum/README.md) |
 | Physical participant identities, contact observations and scoring ownership | [Physical contacts](physical-contacts.md) |
 | Explicit convex sources, cooking, capture/export and chassis shape parity | [Convex colliders](convex-colliders.md) |
+| Portable terrain tiers, native heightfields and matched-mesh benchmarks | [Terrain collisions](terrain-collisions.md) |
 | Runtime/game split, two session layers and backend migration risks | [Runtime split](runtime-game-split.md) |
 | Batch boundaries, resource lifetimes, identities and performance acceptance | [Engine performance contract](engine-performance-contract.md) |
 | Standalone physics and optional rendering | [Physics reuse](physics-reuse.md) |

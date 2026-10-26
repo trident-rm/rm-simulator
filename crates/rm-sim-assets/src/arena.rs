@@ -3,7 +3,7 @@
 //! Complete verified arena collision preparation without a match, server or renderer.
 use crate::{
     cad_assets::CadAssets,
-    collision_mesh::{self, CollisionMesh, GroundMesh},
+    collision_mesh::{CollisionMesh, GroundMesh},
 };
 use anyhow::ensure;
 use rm_sim_physics::{
@@ -15,6 +15,10 @@ pub const CATCH_FLOOR_M: f64 = -0.45;
 const FIXED_NODE: &str = "static";
 /// Everything rigid the chassis and projectiles collide with, in FLU metres.
 pub struct Terrain {
+    /// Separate native terrain installation, replacing matching ground owners.
+    pub native_terrain: Option<crate::terrain_collision::TerrainPackage>,
+    /// Physical mesh remainder. The full ground is retained for support lookups.
+    pub ground_collision: Option<CollisionMesh>,
     /// The perimeter walls that keep chassis inside the arena, in FLU metres.
     /// Projectile collision ignores them.
     pub boundary: CollisionMesh,
@@ -35,21 +39,34 @@ pub struct Terrain {
     /// The bases and tech cores at their placements, from their
     /// visual meshes, kept as trimeshes.
     pub equipment: Vec<CollisionMesh>,
+    /// Fixed native children grouped per source placement, preserving local
+    /// broad-phase bounds. Poses use world FLU metres and wxyz quaternions.
+    pub native_shapes: Vec<Vec<crate::components::NativeShape>>,
 }
 /// Shared equipment composition records and semantic channel classification.
 pub use crate::components::{MechanismMesh, mechanism_joint};
 
 impl Terrain {
+    /// Mesh installed for physical contacts, excluding separately installed terrain.
+    pub fn collision_ground(&self) -> &CollisionMesh {
+        self.ground_collision.as_ref().unwrap_or(&self.ground)
+    }
     /// One line for the start-up log.
     pub fn describe(&self) -> String {
         format!(
-            "field collision: {} ground triangles, {} fixture triangles, {} equipment triangles (source tessellations or CAD visual meshes)",
-            self.ground.triangles.len(),
+            "field collision: {} ground triangles, {} fixture triangles, {} equipment triangles, {} native primitives (source tessellations, reviewed meshes or declared shapes)",
+            self.collision_ground().triangles.len(),
             self.fixtures.triangles.len() + self.boundary.triangles.len(),
             self.equipment
                 .iter()
                 .map(|m| m.triangles.len())
-                .sum::<usize>()
+                .sum::<usize>(),
+            self.native_shapes.iter().map(Vec::len).sum::<usize>()
+                + self
+                    .mechanisms
+                    .iter()
+                    .map(|p| p.native_shapes.len())
+                    .sum::<usize>()
         )
     }
 }
@@ -82,19 +99,73 @@ pub fn load_terrain_with_motions<B>(
     let load_component = |cad: &CadAssets<B>, asset: &crate::cad_assets::CadAsset, role| {
         crate::components::load(cad, asset, role, source_motions(cad, asset))
     };
+    ensure!(
+        cad.floor.collision_shapes.is_none() && cad.arena_static.collision_shapes.is_none(),
+        "floor and arena ground require mesh collision for ground-height queries"
+    );
+    let mut native_shapes = Vec::new();
     let mut mechanisms = Vec::new();
-    let mut ground =
-        collision_mesh::load_glb(&cad.floor.physics_file(&cad.root))?.into_flu(cad.floor_top_cad_m);
-    let scenery = collision_mesh::load_glb(&cad.arena_static.physics_file(&cad.root))?
+    let mut ground = cad
+        .floor
+        .physics_mesh(&cad.root)?
         .into_flu(cad.floor_top_cad_m);
-    let projectile_bounds_m = arena_boundary_bounds(&ground, &scenery)?;
+    let scenery = cad
+        .arena_static
+        .physics_mesh(&cad.root)?
+        .into_flu(cad.floor_top_cad_m);
+    let source_scenery = if cad.terrain_collision.is_some() {
+        crate::collision_mesh::load_glb(&cad.root.join(&cad.arena_static.file))?
+            .into_flu(cad.floor_top_cad_m)
+    } else {
+        scenery.clone()
+    };
+    let projectile_bounds_m = arena_boundary_bounds(&ground, &source_scenery)?;
     let boundary = arena_boundary(projectile_bounds_m);
-    ground.append(scenery);
+    let mut ground_collision = cad.terrain_collision.as_ref().map(|_| {
+        let mut g = ground.clone();
+        g.append(scenery);
+        g
+    });
+    ground.append(source_scenery);
+    let native_terrain = cad
+        .terrain_collision
+        .as_ref()
+        .map(|source| {
+            source.prepare(
+                rm_sim_physics::Pose {
+                    translation_m: [0., -crate::cad_assets::CENTER_CAD_Y_M, -cad.floor_top_cad_m],
+                    rotation_wxyz: crate::math::quat_axis_angle(
+                        [1., 0., 0.],
+                        std::f64::consts::FRAC_PI_2,
+                    ),
+                },
+                sim_engine::model::ContactMaterial {
+                    friction: 0.4,
+                    restitution: 0.45,
+                    memberships: u32::MAX,
+                    filter: u32::MAX,
+                },
+            )
+        })
+        .transpose()?;
+    if let Some(package) = &native_terrain {
+        ensure!(
+            !package.parts.iter().any(|p| p.id == "floor/two-quads"),
+            "native terrain must not duplicate the separately loaded floor"
+        );
+    }
     for asset in &cad.static_assets {
         let model = load_component(cad, asset, crate::components::ComponentRole::Equipment)?;
         mechanisms.extend(model.mechanisms(&asset.placements));
         for placement in &asset.placements {
             ground.append(model.fixed.placed(placement));
+            if let Some(g) = &mut ground_collision {
+                g.append(model.fixed.placed(placement));
+            }
+            let shapes = crate::components::place_shapes(&model.native_shapes, placement);
+            if !shapes.is_empty() {
+                native_shapes.push(shapes);
+            }
         }
     }
     let mut fixtures = CollisionMesh::default();
@@ -106,12 +177,16 @@ pub fn load_terrain_with_motions<B>(
         };
         let model = load_component(cad, asset, role)?;
         ensure!(
-            !model.fixed.triangles.is_empty(),
+            !model.fixed.triangles.is_empty() || !model.native_shapes.is_empty(),
             "{name} visual mesh has no `{FIXED_NODE}` node"
         );
         mechanisms.extend(model.mechanisms(&asset.placements));
         for placement in &asset.placements {
             fixtures.append(model.fixed.placed(placement));
+            let shapes = crate::components::place_shapes(&model.native_shapes, placement);
+            if !shapes.is_empty() {
+                native_shapes.push(shapes);
+            }
         }
     }
     let mut equipment = Vec::new();
@@ -120,15 +195,22 @@ pub fn load_terrain_with_motions<B>(
         mechanisms.extend(model.mechanisms(&asset.placements));
         for placement in &asset.placements {
             equipment.push(model.fixed.placed(placement));
+            let shapes = crate::components::place_shapes(&model.native_shapes, placement);
+            if !shapes.is_empty() {
+                native_shapes.push(shapes);
+            }
         }
     }
     Ok(Terrain {
+        native_terrain,
+        ground_collision,
         boundary,
         projectile_bounds_m: Some(projectile_bounds_m),
         mechanisms,
         ground: ground.into(),
         fixtures,
         equipment,
+        native_shapes,
     })
 }
 
@@ -245,33 +327,23 @@ pub fn install_terrain(field: &mut WorldPhysics, terrain: &Terrain) -> Result<()
             terrain.boundary.triangles.clone(),
         )?;
     }
-    for mesh in std::iter::once(&*terrain.ground)
+    for mesh in std::iter::once(terrain.collision_ground())
         .chain(std::iter::once(&terrain.fixtures))
         .chain(&terrain.equipment)
         .filter(|mesh| !mesh.triangles.is_empty())
     {
         field.add_static_mesh(mesh.vertices_m.clone(), mesh.triangles.clone())?;
     }
+    for shapes in &terrain.native_shapes {
+        field.add_static_shapes(shapes)?;
+    }
+    if let Some(package) = &terrain.native_terrain {
+        package
+            .install_in_world(field)
+            .map_err(|_| "native terrain installation failed")?;
+    }
     for part in &terrain.mechanisms {
-        match part.motion {
-            rm_sim_physics::motion::MotionFrame::Translation { offsets_m } => field
-                .add_mechanism_mesh(
-                    part.mesh.vertices_m.clone(),
-                    part.mesh.triangles.clone(),
-                    part.mechanism,
-                    part.team,
-                    offsets_m,
-                )?,
-            rm_sim_physics::motion::MotionFrame::Rotation { pivot_m, axis } => field
-                .add_rotating_mesh(
-                    part.mesh.vertices_m.clone(),
-                    part.mesh.triangles.clone(),
-                    part.mechanism,
-                    part.team,
-                    pivot_m,
-                    axis,
-                )?,
-        }
+        part.install(field)?;
     }
     Ok(())
 }
@@ -299,7 +371,7 @@ impl PreparedArena {
     /// use rm_sim_physics::{StepDuration, session::RobotSession};
     /// let terrain = Terrain {
     ///     boundary: Default::default(), projectile_bounds_m: None, mechanisms: vec![],
-    ///     ground: CollisionMesh::default().into(), fixtures: Default::default(), equipment: vec![],
+    ///     ground: CollisionMesh::default().into(), fixtures: Default::default(), equipment: vec![], native_shapes: vec![], native_terrain: None, ground_collision: None,
     /// };
     /// let arena = PreparedArena::from_terrain(terrain)?;
     /// let recipe = arena.scenario(vec![], StepDuration::HZ_1000, |_| Ok(()))?;
@@ -359,12 +431,15 @@ mod tests {
         };
         let bounds = arena_boundary_bounds(&floor, &CollisionMesh::default()).unwrap();
         let terrain = Terrain {
+            native_terrain: None,
+            ground_collision: None,
             boundary: arena_boundary(bounds),
             projectile_bounds_m: Some(bounds),
             mechanisms: vec![],
             ground: floor.into(),
             fixtures: CollisionMesh::default(),
             equipment: vec![],
+            native_shapes: vec![],
         };
         let mut direct = WorldPhysics::new(&[], CATCH_FLOOR_M);
         install_terrain(&mut direct, &terrain).unwrap();

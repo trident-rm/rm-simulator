@@ -449,8 +449,14 @@ pub struct CollisionPart {
 
 /// Read a GLB collision proxy as one soup; points stay in the file's own frame.
 pub fn load_glb(path: &Path) -> anyhow::Result<CollisionMesh> {
+    let bytes = std::fs::read(path)?;
+    load_glb_bytes(&bytes)
+}
+
+/// Consume an already verified immutable byte snapshot without re-reading paths.
+pub fn load_glb_bytes(bytes: &[u8]) -> anyhow::Result<CollisionMesh> {
     let mut mesh = CollisionMesh::default();
-    for part in load_glb_parts(path)? {
+    for part in parse_glb(bytes)? {
         mesh.append(part.mesh);
     }
     Ok(mesh)
@@ -461,7 +467,13 @@ pub fn load_glb(path: &Path) -> anyhow::Result<CollisionMesh> {
 pub fn load_glb_parts(path: &Path) -> anyhow::Result<Vec<CollisionPart>> {
     let bytes = std::fs::read(path)
         .with_context(|| format!("reading collision proxy {}", path.display()))?;
-    parse_glb(&bytes).with_context(|| format!("parsing collision proxy {}", path.display()))
+    load_glb_parts_bytes(&bytes)
+        .with_context(|| format!("parsing collision proxy {}", path.display()))
+}
+
+/// Decode mesh parts from a retained immutable GLB snapshot.
+pub fn load_glb_parts_bytes(bytes: &[u8]) -> anyhow::Result<Vec<CollisionPart>> {
+    parse_glb(bytes)
 }
 
 /// Reads the little-endian u32 at `offset`, or an error when the file ends
@@ -484,8 +496,15 @@ pub fn load_glb_selected(
     selected: &std::collections::BTreeSet<(usize, usize)>,
 ) -> anyhow::Result<CollisionMesh> {
     let bytes = std::fs::read(path)?;
+    load_glb_selected_bytes(&bytes, selected)
+}
+/// Decode exact primitive selectors from an immutable GLB snapshot.
+pub(crate) fn load_glb_selected_bytes(
+    bytes: &[u8],
+    selected: &std::collections::BTreeSet<(usize, usize)>,
+) -> anyhow::Result<CollisionMesh> {
     let mut mesh = CollisionMesh::default();
-    for part in parse_glb_selected(&bytes, Some(selected))? {
+    for part in parse_glb_selected(bytes, Some(selected))? {
         mesh.append(part.mesh);
     }
     Ok(mesh)
@@ -505,8 +524,17 @@ pub fn load_glb_filtered(
     excluded: &[usize],
     subtree: Option<usize>,
 ) -> anyhow::Result<CollisionMesh> {
+    load_glb_filtered_bytes(&std::fs::read(path)?, selected, excluded, subtree)
+}
+/// Decode selected collision triangles from one immutable snapshot.
+pub(crate) fn load_glb_filtered_bytes(
+    bytes: &[u8],
+    selected: &std::collections::BTreeSet<(usize, usize)>,
+    excluded: &[usize],
+    subtree: Option<usize>,
+) -> anyhow::Result<CollisionMesh> {
     let mut mesh = CollisionMesh::default();
-    for part in parse_glb_filtered(&std::fs::read(path)?, Some(selected), excluded, subtree)? {
+    for part in parse_glb_filtered(bytes, Some(selected), excluded, subtree)? {
         mesh.append(part.mesh);
     }
     Ok(mesh)

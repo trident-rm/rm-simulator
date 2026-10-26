@@ -11,9 +11,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+sim-engine = { version = "0.1.0", path = "../sim-engine" }
 rm-sim-physics = { version = "0.1.0", path = "../rm-sim-physics" }
 rm-sim-gameplay = { version = "0.1.0", path = "../rm-sim-gameplay" }
 anyhow.workspace = true
+glam.workspace = true
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2.workspace = true
