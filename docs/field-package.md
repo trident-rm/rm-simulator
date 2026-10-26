@@ -331,3 +331,24 @@ claimed for the simplified visual bracket. Its reviewed maximum sampled
 surface change is 1.198 mm. Isolated and posed assembled ray checks lost no hits
 and gained 18 around filled bores; live projectile CCD and speedups remain
 unmeasured. Sixteen optical name/RGB bindings match in the produced package.
+
+### Coarse Core head collision
+
+The approved Core collision fills grille panels and internal screen openings,
+combines a layered rear cover, and simplifies the open support frame. Its three
+large support openings remain. Core collision changes from 8,288 to 5,340
+triangles per unit, saving 5,896 across both placements. Visual assets, native
+terrain, source hierarchy, motion and optical bindings remain unchanged.
+
+`core-collision-build.json` records exact source pins, producer hashes, generated
+stage recipes and sampled review measurements. The producer is
+`rm-map-tools/python/package_core_coarse_collision.py` at commit `f4baf6b`, using
+the materialized package at simulator `07117e5`. Generated study outputs are not
+build inputs. The full package now contains 206,557 visual and 147,639 physical
+mesh triangles, excluding native road heightfields and runtime boundary.
+
+Filled openings deliberately change impacts. The final cover/support check used
+20,172 assembled-head rays, with zero lost hits and 110 added hits. Maximum
+matched first-hit shift was 30.233 mm. These samples do not establish live CCD,
+contact equivalence or runtime speedups. The separate screen texture experiment
+has not been installed; all visual payloads remain exact to the prior package.

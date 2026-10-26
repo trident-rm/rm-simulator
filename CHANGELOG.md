@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Simplify Core head collision panels, internal screens, rear cover and support,
+  saving 5,896 placed mesh triangles. Preserve visual assets, lights, motion
+  bindings and the support's three large openings.
+
 - Simplify the blue Rune hub bracket for both rendering and collision, saving
   1,364 triangles in each. Preserve its gray material, shaft openings, rotor
   owner, target lights and stationary center logos.

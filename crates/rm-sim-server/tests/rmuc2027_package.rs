@@ -52,7 +52,7 @@ fn reviewed_field_has_live_motion_native_rules_and_restorable_authority() -> any
             .sum::<usize>();
     assert_eq!(
         fixed + moving + terrain.boundary.triangles.len(),
-        169_935 + 1_280 + 48
+        164_039 + 1_280 + 48
     );
     let config = layout::field_config(&cad, &layout::LayoutOptions::default());
     let mut field = Field::new(&config)?;
