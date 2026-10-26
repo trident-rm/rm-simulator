@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Replace Core screen visual detail with sharp flat colored geometry, saving
+  2,150 placed triangles. Preserve its five openings and source colors without
+  adding textures or render primitives; collision remains unchanged.
+
 - Simplify Core head collision panels, internal screens, rear cover and support,
   saving 5,896 placed mesh triangles. Preserve visual assets, lights, motion
   bindings and the support's three large openings.

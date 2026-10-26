@@ -351,4 +351,21 @@ Filled openings deliberately change impacts. The final cover/support check used
 20,172 assembled-head rays, with zero lost hits and 110 added hits. Maximum
 matched first-hit shift was 30.233 mm. These samples do not establish live CCD,
 contact equivalence or runtime speedups. The separate screen texture experiment
-has not been installed; all visual payloads remain exact to the prior package.
+was not installed by the collision update.
+
+### Sharp Core screen visual
+
+The accepted screen visual uses flat colored regions, with 20 triangles for its
+rectangular/L-shaped pattern and 129 for the surrounding frame and five openings.
+This replaces 1,224 triangles per Core with 149, saving 2,150 placed triangles.
+The two original materials and two rendering primitives are reused; no texture
+or overlay is added. Adjacent color regions meet edge-to-edge, and a 0.2 mm
+offset clears the existing cover lip. All 68 other Core mesh owners stay exact.
+
+`core-screen-visual-build.json` records pins, recipes and preservation checks.
+The producer is `rm-map-tools/python/package_core_screen_vector.py` at commit
+`608783c`, using the materialized package at simulator `59450e4`. The new totals
+are 204,407 placed visual and 147,639 physical mesh triangles. Every collision
+payload, motion binding and optical binding remains unchanged. The review used
+offline material-colored rendering and geometric overlap checks; renderer
+performance and depth-buffer behavior at every camera range are unmeasured.
