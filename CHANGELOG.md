@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- Simplify the three rotating Outpost target housings, saving 5,408 placed
+  collision triangles. Retain the carrier, connecting mounts, lights and visuals.
+
 - Simplify thirty moving Rune trim collision profiles, saving 8,454 triangles.
   Keep large openings, separate rotor ownership and every visual unchanged.
 
