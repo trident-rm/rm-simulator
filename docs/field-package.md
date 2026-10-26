@@ -307,3 +307,27 @@ The approved study measured up to 30.142 mm of sampled surface change, excluding
 removed sheets. Its 10,086 exterior rays lost no hits and gained 16. First impacts
 can move 536.94 mm earlier where filled openings used to expose farther scenery.
 Those checks do not establish live CCD, rigid-contact or performance equivalence.
+
+### Folded Rune hub bracket
+
+The reviewed blue-bank bracket (source unit 228756, node 1113) uses the same
+676-triangle mesh for rendering and collision, down from 2,040. Four 1.2 mm
+sheets and small corner blocks retain the shaft and larger mounting openings;
+small screw bores fill. Its neutral gray material and original PBR factors remain
+exact. Explicit face normals support the planar visual surfaces. The fixed
+logos, target lights, rotor owner and all 159 other Rune mesh nodes stay exact.
+
+`rune-bracket-build.json` records source pins, producer hashes, optical checks
+and measured differences. The producer is `rm-map-tools/python/package_rune_bracket.py`
+at commit `38caf88`, using the materialized field at simulator commit `bb96e29`.
+Generated study outputs are not build inputs. The full package now contains
+206,557 placed visual triangles and 153,535 physical mesh triangles, including
+separate terrain meshes. Native road heightfields and boundary diagnostics are
+additional. The accepted but uninstalled Resource study is excluded.
+
+Historical full-composition equality measurements remain under
+`geometry-verification.json`'s `prior_visual_composition`, rather than being
+claimed for the simplified visual bracket. Its reviewed maximum sampled
+surface change is 1.198 mm. Isolated and posed assembled ray checks lost no hits
+and gained 18 around filled bores; live projectile CCD and speedups remain
+unmeasured. Sixteen optical name/RGB bindings match in the produced package.

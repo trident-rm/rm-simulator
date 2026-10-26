@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Simplify the blue Rune hub bracket for both rendering and collision, saving
+  1,364 triangles in each. Preserve its gray material, shaft openings, rotor
+  owner, target lights and stationary center logos.
+
 - Deploy the reviewed coarse Dart station collision mesh, saving 16,400 placed
   triangles. Keep visuals, native terrain, Base endpoint bakes and motion bindings
   unchanged; fill the approved small windows and ring interiors.
