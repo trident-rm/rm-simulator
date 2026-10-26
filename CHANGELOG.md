@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Simplify the stationary Rune logo housings, saving 3,844 visual and 4,240
+  collision triangles. Keep sharp red/blue logo faces, fixed ownership and all
+  rotating geometry; add no textures or render primitives.
+
 - Replace Core screen visual detail with sharp flat colored geometry, saving
   2,150 placed triangles. Preserve its five openings and source colors without
   adding textures or render primitives; collision remains unchanged.

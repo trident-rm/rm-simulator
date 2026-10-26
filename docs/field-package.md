@@ -369,3 +369,29 @@ are 204,407 placed visual and 147,639 physical mesh triangles. Every collision
 payload, motion binding and optical binding remains unchanged. The review used
 offline material-colored rendering and geometric overlap checks; renderer
 performance and depth-buffer behavior at every camera range are unmeasured.
+
+### Fixed Rune logo housings
+
+The two stationary logo housings use 16-sided cylinder meshes for collision,
+60 triangles each instead of 2,180. Their visuals use the same simple bodies
+plus the existing sharp black and red/blue logo faces, 258 triangles each.
+The visible logos remain fixed; all 158 other Rune mesh owners, rotating arms,
+lights and motion bindings stay exact. Source materials are reused, without
+textures or extra render primitives.
+
+The logo faces have 0.2 mm clearance from their base caps, and the colored letter
+sits 0.05 mm farther forward to clear tiny source overlaps. Geometry checks pass
+between logo regions, bodies and neighboring owners. Isolated and posed assembly
+collision grids total 36,048 rays, with zero lost hits, 144 added hits and an
+8.939 mm maximum matched impact shift. These are samples, not live CCD/contact
+equivalence or continuous-clearance guarantees.
+
+`rune-logo-housing-build.json` records source pins, producer hashes, fit recipes,
+retained arrays and all 16 optical bindings. The producer is
+`rm-map-tools/python/package_rune_logo_housing.py` at commit `769e810`, using the
+materialized field at simulator `301c924`. It rebuilds directly from source;
+generated study outputs are not build inputs. The texture comparison is excluded.
+The package now contains 200,563 visual and 143,399 physical mesh triangles,
+excluding native road heightfields and the runtime boundary. Runtime collision
+uses portable meshes here, not native cylinders. Renderer performance and
+all-camera depth-buffer behavior remain unmeasured.
