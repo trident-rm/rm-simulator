@@ -417,7 +417,7 @@ mod whole_bake_package_tests {
         // Cooking drops two degenerate faces; heightfield surfaces and boundary are included.
         assert_eq!(
             prepared.geometry().clone().into_triangles().1.len(),
-            121_477
+            120_341
         );
         let motions = cad.rmuc_2027.as_ref().unwrap().motions(&cad, &cad.base);
         let model = components::load(
@@ -451,7 +451,7 @@ mod whole_bake_package_tests {
                 )
                 .unwrap()
                 .placed(placement);
-                assert_eq!(reference.triangles.len(), 7_664);
+                assert_eq!(reference.triangles.len(), 7_096);
                 let mut state = MechanismState::default();
                 state.base_open_fraction[team.index()] = fraction;
                 physics.sync_mechanisms(&state);

@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- Simplify two Base fitting collisions and refresh complete closed/open and
+  fixed transition bakes, saving 1,136 placed triangles. Keep covers and visuals.
+
 - Refactor generic APIs to typed validation, cooking, binding, carrier and session
   errors while retaining diagnostic text at legacy RM boundaries. Share explicit
   pose admission rules without changing their tolerances or restore normalization.
