@@ -285,3 +285,25 @@ GPU mesh uploads still happen through Bevy.
 The separate [terrain collision API](terrain-collisions.md) supports explicit
 quality tiers, native finite heightfields and atomic mesh remainders. It does
 not replace this installed field manifest or default loading path.
+
+### Coarse Dart station fixtures
+
+The reviewed portable Dart collision mesh uses broad folded sheets and solid
+octagonal disks. Both stations total 1,016 triangles, down from 17,416. Large
+edge notches and the central passage remain; smaller windows and ring interiors
+are deliberately filled. Four small zero-depth sheets contribute no collision.
+Visuals, native road payloads, Base caches and optical/motion bindings are
+unchanged. Source owners remain separate; this does not add Dart animation.
+
+`dart-collision-build.json` records producer commit, file hashes, source pins,
+owner changes and prior geometric checks. The producer is
+`rm-map-tools/python/package_dart_collision.py` at commit `a0b8a57`. It rebuilds
+from the materialized package at simulator commit `30cb64a`, without generated
+study inputs. Full physical meshes now total 154,899 triangles, including
+16,187 separate terrain triangles; native heightfield diagnostics and boundary
+are additional. Study native-hull recipes are not installed runtime shapes.
+
+The approved study measured up to 30.142 mm of sampled surface change, excluding
+removed sheets. Its 10,086 exterior rays lost no hits and gained 16. First impacts
+can move 536.94 mm earlier where filled openings used to expose farther scenery.
+Those checks do not establish live CCD, rigid-contact or performance equivalence.

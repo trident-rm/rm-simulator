@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Deploy the reviewed coarse Dart station collision mesh, saving 16,400 placed
+  triangles. Keep visuals, native terrain, Base endpoint bakes and motion bindings
+  unchanged; fill the approved small windows and ring interiors.
+
 - Deploy reviewed coarse Base and fixed-Outpost collisions, removing 34,882
   placed mesh triangles while retaining the visual assets and moving Outpost arms.
 - Cache one complete Base collision mesh at either endpoint and use the original
