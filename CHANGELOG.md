@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- Rebuild ten Rune backing-frame collisions as profile extrusions, saving
+  1,392 triangles. Preserve large windows, rotor ownership, targets and visuals.
+
 - Simplify the fixed Outpost casing behind the rectangular armor panel, saving
   3,546 placed collision triangles. Retain its exact face and forward edge.
 
