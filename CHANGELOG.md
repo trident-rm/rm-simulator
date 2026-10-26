@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- Reduce eight hollow Resource fitting visuals by 4,448 triangles. Preserve
+  sockets, end profiles, original materials and existing collision geometry.
+
 - Replace static supply Units with six persistent magnetic mounts per station.
   Source-backed Heavy deployments start empty-handed. Axial retrieval tests
   magnetic resistance, gravity, arm saturation and grip failure before ordinary
