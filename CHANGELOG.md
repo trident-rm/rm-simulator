@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- Simplify the fixed Outpost casing behind the rectangular armor panel, saving
+  3,546 placed collision triangles. Retain its exact face and forward edge.
+
 - Simplify the three rotating Outpost target housings, saving 5,408 placed
   collision triangles. Retain the carrier, connecting mounts, lights and visuals.
 

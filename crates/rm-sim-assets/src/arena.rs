@@ -417,7 +417,7 @@ mod whole_bake_package_tests {
         // Cooking drops two degenerate faces; heightfield surfaces and boundary are included.
         assert_eq!(
             prepared.geometry().clone().into_triangles().1.len(),
-            126_415
+            122_869
         );
         let motions = cad.rmuc_2027.as_ref().unwrap().motions(&cad, &cad.base);
         let model = components::load(
