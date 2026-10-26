@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Replace eight Resource end-fitting collisions with hollow stepped profiles,
+  saving 4,448 triangles. Preserve bores, blind bottoms, every projecting rod,
+  complete main housing and all visuals.
+
 - Simplify the stationary Rune logo housings, saving 3,844 visual and 4,240
   collision triangles. Keep sharp red/blue logo faces, fixed ownership and all
   rotating geometry; add no textures or render primitives.

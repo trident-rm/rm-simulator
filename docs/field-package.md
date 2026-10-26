@@ -395,3 +395,25 @@ The package now contains 200,563 visual and 143,399 physical mesh triangles,
 excluding native road heightfields and the runtime boundary. Runtime collision
 uses portable meshes here, not native cylinders. Renderer performance and
 all-camera depth-buffer behavior remain unmeasured.
+
+### Hollow Resource fitting collision
+
+Eight dense end fittings use 12-segment stepped cup meshes, changing from 724
+to 168 triangles each. Their 7.5 mm minimum bore radius, 12 mm blind depth,
+beveled ends and source axial stations remain. Polygonal openings can widen
+slightly between facets. All projecting rods, complete main housings, front lip,
+center contacts and all 236 other mesh owners remain exact. Visuals are unchanged.
+
+`resource-fitting-collision-build.json` records source pins, profile recipes,
+retained arrays and review evidence. The producer is
+`rm-map-tools/python/package_resource_fitting_profile.py` at commit `e94106a`,
+using the materialized field at simulator `5d3784c`. It rebuilds without generated
+study inputs. Earlier overlapping Resource cleanup trials are excluded.
+
+All 392 bore probes remain clear before their blind bottoms and hit afterward.
+Isolated/assembled grids total 101,856 rays, with zero lost hits, 112 added hits
+and a 1.211 mm maximum matched first-hit shift. Maximum sampled surface change
+is 0.425 mm. These samples do not establish continuous CCD/contact equivalence
+or runtime speedups. The package now contains 200,563 visual and 138,951 physical
+mesh triangles, excluding native roads and runtime boundary. Shapes remain
+portable meshes; all motion and optical bindings are unchanged.

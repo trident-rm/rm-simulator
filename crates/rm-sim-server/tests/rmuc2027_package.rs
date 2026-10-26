@@ -42,7 +42,7 @@ fn reviewed_field_has_live_motion_native_rules_and_restorable_authority() -> any
         .sum();
     // Full source ground remains available for support lookups; physical fixtures
     // use the independently reviewed remainder instead.
-    assert_eq!(terrain.collision_ground().triangles.len(), 62_476 + 4);
+    assert_eq!(terrain.collision_ground().triangles.len(), 58_028 + 4);
     let fixed = terrain.ground.triangles.len()
         + terrain.fixtures.triangles.len()
         + terrain
