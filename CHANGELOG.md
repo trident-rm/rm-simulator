@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- Simplify thirty moving Rune trim collision profiles, saving 8,454 triangles.
+  Keep large openings, separate rotor ownership and every visual unchanged.
+
 - Replace eight Resource end-fitting collisions with hollow stepped profiles,
   saving 4,448 triangles. Preserve bores, blind bottoms, every projecting rod,
   complete main housing and all visuals.
