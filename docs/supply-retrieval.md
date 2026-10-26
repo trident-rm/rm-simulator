@@ -22,10 +22,16 @@ The current source CAD supplies the initial clocking, not a randomized tolerance
 | Magnetic resistance | 10 N | Rulebook upper bound; not a measured magnet |
 | Unit mass | 0.4 kg | Rulebook nominal mass |
 | Guide clearance | 20 mm | Simulator assumption |
-| Grasp stiffness | 500 N/m | Simulator assumption |
+| Grasp stiffness | 5000 N/m | Simulator assumption; limits nominal upward-load deflection to about 2.8 mm |
 | Grasp damping | 10 Ns/m | Simulator assumption |
 | Arm resultant-force limit | 20 N | Simulator assumption |
 | Grip resultant-force limit | 25 N | Simulator assumption |
+
+The stiffness keeps nominal upward-pull deflection near 2.8 mm, within the
+tested wrist/cap clearance. It is not measured donor compliance. Jog collision
+guards distinguish a retained grasp from carried cargo: jaws may contact the
+gripped Unit, while its measured station-constrained pose and all other link
+collisions remain checked.
 
 The solver computes spring/damping force from the actual wrist displacement,
 caps its resultant at the arm limit, and tests that transmitted force against
@@ -100,3 +106,44 @@ One local CPU-only Mac probe measured 0.235 s startup and 22.05 ms for 128 ticks
 Units in the full source field. Peak resident memory was 78.5 MiB, including
 the checkpoint/restore comparison worlds. Compilation, the source arm planner
 and rendering are excluded. This is one sample, not a timing distribution.
+
+## Record a live retrieval
+
+Start the embedded source Heavy with a loopback listener:
+
+```sh
+cargo run -p rm-sim-app --bin rm-simulator -- \
+  --listen 127.0.0.1:7700 --robot engineer --team red \
+  --cad-assets field-2027 \
+  --robot-assets local-assets/robot-cad-survey/bound-tunnel-heavy \
+  --assembly-assets local-assets/assembly-cad/package \
+  --assembly-area local-assets/assembly-cad/area \
+  --console --start-paused --window-mode headless --graphics-preset low
+```
+
+Start a second app for the free spectator camera, using the same source assets:
+
+```sh
+cargo run -p rm-sim-app --bin rm-simulator -- \
+  --connect 127.0.0.1:7700 --fly --console 127.0.0.1:7791 \
+  --robot-assets local-assets/robot-cad-survey/bound-tunnel-heavy \
+  --assembly-assets local-assets/assembly-cad/package \
+  --assembly-area local-assets/assembly-cad/area \
+  --window-mode headless --graphics-preset low
+python3 scripts/render-supply-retrieval-video.py --park \
+  --out local-assets/supply-retrieval-video/retrieval.mp4
+```
+
+The script uses operator placement before recording and a fixed side-entry path
+to the red station's top Unit. It is a recording fixture, not a general retrieval
+planner. The open forks enter around the 64.6 mm body from the side; the 95 mm
+caps cannot pass through that opening. Ordinary bounded Cartesian jogs, jaw
+actuation and force-limited withdrawal produce the motion. Pull jogs are 1.5 mm
+so collision validation can use the latest actual constrained Unit pose.
+The script never assigns Unit poses, attachments or force parameters.
+
+Screenshots come from the real app renderer and advance on explicit 128 Hz ticks.
+FFmpeg encodes 1280×720 H.264 at 30 fps with phase/limit captions. The adjacent
+JSON retains the selected identity, mount/limits, actual joint/jaw samples,
+withdrawal travel and final attachment. The runner checks the 1 rad/s actuator
+limits. `--dry-run` skips the spectator, screenshots and encoding.

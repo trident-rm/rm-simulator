@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Host-side conversions for caller-driven assembly planning.
-use rm_sim_control::assembly::{ArmPose, PayloadObservation, PlaybackFrame};
+use rm_sim_control::assembly::{ArmPose, PayloadAttachment, PayloadObservation, PlaybackFrame};
 pub(crate) use rm_sim_control::assembly::{Rig, Signal, compose};
 
 pub(crate) fn arm_pose(arm: &rm_sim_world::assembly::ArmState) -> ArmPose {
@@ -17,7 +17,15 @@ pub(crate) fn payload(
     PayloadObservation {
         pose: unit.physical.pose,
         grasp: unit.grasp,
-        held: unit.attachment == rm_sim_world::energy_unit::Attachment::Held(owner),
+        attachment: match unit.attachment {
+            rm_sim_world::energy_unit::Attachment::Held(id) if id == owner => {
+                PayloadAttachment::Carried
+            }
+            rm_sim_world::energy_unit::Attachment::Extracting(id) if id == owner => {
+                PayloadAttachment::Retained
+            }
+            _ => PayloadAttachment::Free,
+        },
     }
 }
 pub(crate) fn playback(frame: PlaybackFrame) -> rm_sim_world::assembly::Frame {

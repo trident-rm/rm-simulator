@@ -73,8 +73,10 @@ state. The controller does not serialize worker requests or enter match restore.
 
 `assembly::Rig` owns copied kinematics, shared collision resources and bounded
 planning hints. `ArmPose` contains actual joint/jaw angles; `PayloadObservation`
-contains the caller-resolved physical pose, rigid grasp and whether that payload
-is held by the selected arm. These inputs contain no player/team ownership or
+contains the caller-resolved physical pose, rigid grasp and `PayloadAttachment`:
+Free, Retained or Carried. Retained allows the selected gripper's jaw contacts
+while preserving the measured station-constrained Unit pose. Carried derives
+payload motion from the wrist. Other link and scenery contacts stay checked. These inputs contain no player/team ownership or
 live `Field` reference. The host resolves that authority before projection.
 
 The same rig is used by the in-game automatic assembly worker and the standalone

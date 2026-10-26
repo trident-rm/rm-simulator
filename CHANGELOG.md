@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Record source-station retrieval through live Cartesian jog and grip commands.
+  Preserve measured retained Unit poses during collision checks and allow only
+  the owner's jaw contacts. Use 5000 N/m provisional grasp stiffness and small
+  withdrawal jogs; arm/grip force caps remain 20 N / 25 N.
+
 - Reduce eight hollow Resource fitting visuals by 4,448 triangles. Preserve
   sockets, end profiles, original materials and existing collision geometry.
 

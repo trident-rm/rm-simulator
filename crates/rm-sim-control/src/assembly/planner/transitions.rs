@@ -31,6 +31,7 @@ fn same_guard_state(a: &Rig, b: &Rig) -> bool {
         && a.q_rad == b.q_rad
         && a.jaw_angles == b.jaw_angles
         && a.gripped == b.gripped
+        && a.retained_grip == b.retained_grip
         && a.grip_requested == b.grip_requested
         && a.grasp_roll_rad == b.grasp_roll_rad
         && a.grasp_axial_m == b.grasp_axial_m

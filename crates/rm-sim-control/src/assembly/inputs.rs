@@ -23,13 +23,23 @@ impl ArmPose {
         }
     }
 }
+/// How the observed payload couples to the selected gripper.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PayloadAttachment {
+    /// No grasp by this arm; the observed payload remains an obstacle.
+    Free,
+    /// A real grasp exists, but a station still constrains the payload pose.
+    Retained,
+    /// The payload follows the arm's fixed grasp transform.
+    Carried,
+}
 /// Caller-resolved payload pose and attachment relative to the selected arm.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PayloadObservation {
     /// Current world FLU pose, metres and wxyz quaternion.
     pub pose: Pose,
-    /// Whether this payload is held by the observed arm; resolved by the owner.
-    pub held: bool,
+    /// Actual grasp and station constraint, resolved by the owner.
+    pub attachment: PayloadAttachment,
     /// Fixed tool-to-payload attachment transform, metres and wxyz quaternion.
     pub grasp: Pose,
 }

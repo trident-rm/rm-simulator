@@ -9,7 +9,7 @@ mod area;
 mod inputs;
 mod planner;
 use glam::DQuat;
-pub use inputs::{ArmPose, PayloadObservation, PlaybackFrame};
+pub use inputs::{ArmPose, PayloadAttachment, PayloadObservation, PlaybackFrame};
 pub use planner::Signal;
 pub use planner::{
     ChassisRoute, Failure as PlanningFailure, Frame as Keyframe, Plan as AssemblyPlan, Stage,
@@ -71,6 +71,7 @@ pub struct Rig {
     q_rad: f64,
     jaw_angles: Vec<f64>,
     gripped: bool,
+    retained_grip: bool,
     grasp_roll_rad: f64,
     rod_spin_rad: f64,
     grasp_axial_m: f64,
@@ -305,6 +306,7 @@ impl Rig {
             preferred_spin_deltas_rad: None,
             unit_pose: Pose::default(),
             gripped: false,
+            retained_grip: false,
             grasp_roll_rad: GRASP_ROLL_RAD,
             rod_spin_rad: 0.,
             grasp_axial_m: 0.,
@@ -391,6 +393,7 @@ impl Rig {
             quaternion(target).angle_between(quaternion(self.unit_pose)) <= 5f64.to_radians()
         };
         if self.gripped
+            || self.retained_grip
             || (self.grip_requested || self.live_parking)
                 && position(target).distance(position(self.unit_pose))
                     <= if self.live_parking { 0.008 } else { 0.005 }
@@ -920,13 +923,10 @@ impl Rig {
         from.jaw_angles = arm.jaws_rad.to_vec();
         from.tool = compose(body, from.config.engineer.tool_pose(from.engineer_q));
         from.gripped = false;
+        from.retained_grip = false;
         from.unit_pose = Pose::at([100.; 3]);
         if let Some(unit) = unit {
-            from.unit_pose = compose(inverse(world_from_rig), unit.pose);
-            from.gripped = unit.held;
-            if from.gripped {
-                from.held_grasp = Some(unit.grasp);
-            }
+            from.observe_payload(unit, world_from_rig);
         }
         if let Some(station) = station {
             from.core_q = station.core_q;
@@ -941,6 +941,12 @@ impl Rig {
             next.unit_pose = next.tool_unit_pose();
         }
         from.accept_candidate(next)
+    }
+    fn observe_payload(&mut self, unit: &PayloadObservation, world_from_rig: Pose) {
+        self.unit_pose = compose(inverse(world_from_rig), unit.pose);
+        self.gripped = unit.attachment == PayloadAttachment::Carried;
+        self.retained_grip = unit.attachment == PayloadAttachment::Retained;
+        self.held_grasp = self.gripped.then_some(unit.grasp);
     }
     /// Retain the caller-resolved fixed tool-to-payload grasp for subsequent planning.
     pub fn use_held_unit(&mut self, unit: &PayloadObservation) {
@@ -963,6 +969,7 @@ impl Rig {
         );
         carried.unit_pose = carried.tool_unit_pose();
         carried.gripped = true;
+        carried.retained_grip = false;
         carried.grip_requested = true;
         carried
     }
@@ -1135,6 +1142,7 @@ mod tests {
             q_rad: 0.,
             jaw_angles: vec![],
             gripped: false,
+            retained_grip: false,
             grasp_roll_rad: GRASP_ROLL_RAD,
             rod_spin_rad: 0.,
             grasp_axial_m: 0.,
@@ -1143,6 +1151,113 @@ mod tests {
             collision: None,
             last_collision: None,
         }
+    }
+    #[test]
+    fn retained_grasp_allows_jaw_contact_without_carrying_the_unit_or_ignoring_other_links() {
+        use rm_sim_physics::{
+            assembly_model::Jaw,
+            manipulator_collision::{CollisionBody, CollisionPart},
+        };
+        let mut rig = mechanism_fixture();
+        rig.live_parking = true;
+        let left = Jaw {
+            name: "jaw-left".into(),
+            origin_m: [0.; 3],
+            axis: [0., 0., 1.],
+            open_rad: -0.5,
+            closed_rad: 0.,
+        };
+        rig.config.engineer_jaws = vec![
+            left.clone(),
+            Jaw {
+                name: "jaw-right".into(),
+                origin_m: [0., 0.2, 0.],
+                ..left
+            },
+        ];
+        rig.jaw_angles = vec![0.; 2];
+        let bodies = vec![
+            CollisionBody {
+                frame: "unit/unit".into(),
+                parts: vec![CollisionPart::Box { half_m: [0.05; 3] }],
+            },
+            CollisionBody {
+                frame: "engineer/jaw-left".into(),
+                parts: vec![CollisionPart::Box { half_m: [0.01; 3] }],
+            },
+        ];
+        rig.collision = Some(std::sync::Arc::new(
+            CollisionScene::new(CollisionAsset {
+                schema: 1,
+                bodies: bodies.clone(),
+                excluded_pairs: vec![],
+            })
+            .unwrap(),
+        ));
+        let observed = PayloadObservation {
+            pose: Pose::at([0.03, 0., 0.]),
+            attachment: PayloadAttachment::Retained,
+            grasp: Pose::at([0.03, 0., 0.]),
+        };
+        rig.observe_payload(&observed, Pose::default());
+        let arm = ArmPose {
+            joints_rad: [0.; 6],
+            jaws_rad: [0.; 2],
+        };
+        let mut target = arm.joints_rad;
+        target[0] = 0.1;
+        assert!(
+            rig.validate_live_jog(
+                Pose::default(),
+                &arm,
+                target,
+                Some(&observed),
+                Pose::default(),
+                None
+            )
+            .is_ok()
+        );
+        assert_eq!(rig.world_frames()["unit/unit"], observed.pose);
+        assert!(!rig.gripped, "retained stock must not follow the wrist");
+        let free = PayloadObservation {
+            attachment: PayloadAttachment::Free,
+            ..observed
+        };
+        assert!(
+            rig.validate_live_jog(
+                Pose::default(),
+                &arm,
+                target,
+                Some(&free),
+                Pose::default(),
+                None
+            )
+            .is_err()
+        );
+        let mut obstructed = bodies;
+        obstructed.push(CollisionBody {
+            frame: "engineer/j6".into(),
+            parts: vec![CollisionPart::Box { half_m: [0.01; 3] }],
+        });
+        rig.collision = Some(std::sync::Arc::new(
+            CollisionScene::new(CollisionAsset {
+                schema: 1,
+                bodies: obstructed,
+                excluded_pairs: vec![],
+            })
+            .unwrap(),
+        ));
+        assert!(
+            rig.validate_live_jog(
+                Pose::default(),
+                &arm,
+                target,
+                Some(&observed),
+                Pose::default(),
+                None
+            )
+            .is_err()
+        );
     }
     #[test]
     fn recorded_twist_preference_accepts_legacy_fields_and_rejects_bad_metadata() {

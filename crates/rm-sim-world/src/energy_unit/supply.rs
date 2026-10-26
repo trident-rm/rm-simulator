@@ -24,7 +24,7 @@ pub struct SupplyMount {
 }
 impl SupplyMount {
     /// Prepare a mounted nominal 400 g Unit. Uses the 10 N rulebook upper bound.
-    /// The 20 mm guide clearance, 500 N/m stiffness, 10 Ns/m damping,
+    /// The 20 mm guide clearance, 5000 N/m stiffness, 10 Ns/m damping,
     /// 20 N arm limit and 25 N grip capacity are explicit simulator assumptions.
     pub fn new(pose: Pose) -> Self {
         Self {
@@ -34,7 +34,7 @@ impl SupplyMount {
                 mass_kg: 0.4,
                 retention_n: MAX_RETENTION_N,
                 clearance_m: 0.02,
-                stiffness_n_m: 500.,
+                stiffness_n_m: 5000.,
                 damping_n_s_m: 10.,
                 arm_force_n: 20.,
                 grip_force_n: 25.,
