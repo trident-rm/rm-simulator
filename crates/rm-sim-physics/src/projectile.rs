@@ -1492,6 +1492,7 @@ impl WorldPhysics {
             })
             .collect();
         StaticGeometry {
+            query_purpose: None,
             bounds: Default::default(),
             projectile_bounds_m: self.projectile_bounds_m,
             no_catch_floor: !self
@@ -1551,6 +1552,7 @@ impl WorldPhysics {
     /// static mesh.
     pub fn dynamic_geometry_snapshot(&self) -> StaticGeometry {
         StaticGeometry {
+            query_purpose: None,
             bounds: Default::default(),
             projectile_bounds_m: self.projectile_bounds_m,
             collision_groups: Vec::new(),
@@ -1592,12 +1594,13 @@ impl WorldPhysics {
             .ok_or("unknown LiDAR robot")?;
         let mut fixed = Vec::new();
         let mut moving = Vec::new();
-        for (handle, collider) in self
-            .physical
-            .world()
-            .all_colliders()
-            .filter(|(_, c)| c.is_enabled())
-        {
+        for (handle, collider) in self.physical.world().all_colliders().filter(|(_, c)| {
+            c.is_enabled()
+                && crate::collision_profiles::visible_to(
+                    c.collision_groups(),
+                    crate::collision_profiles::CollisionPurpose::Lidar,
+                )
+        }) {
             let sample = SensorCollider {
                 handle,
                 pose: *collider.position(),

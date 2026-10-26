@@ -568,6 +568,7 @@ mod tests {
             equipment: Vec::new(),
             endpoint_bakes: vec![],
             native_shapes: Vec::new(),
+            native_query_meshes: Vec::new(),
         };
         let placement = chassis_placement(
             config.clone(),

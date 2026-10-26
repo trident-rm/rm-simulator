@@ -81,6 +81,8 @@ struct LocalMotion {
 /// Load once, then place independently. No HP, timer, rules or live body handles.
 #[derive(Clone, Debug)]
 pub struct ComponentModel {
+    /// Optional fixed sensor-query surface for the native owners; never adds contacts.
+    pub query_mesh: Option<CollisionMesh>,
     /// Fixed triangles in asset-local metres, with internal GLB transforms baked.
     pub fixed: CollisionMesh,
     /// Fixed native children in the same frame as `fixed`.
@@ -91,6 +93,8 @@ pub struct ComponentModel {
 /// One placed equipment instance, independent of arena ground and match setup.
 #[derive(Clone, Debug)]
 pub struct PlacedComponent {
+    /// Optional fixed sensor-query surface, placed once in world FLU.
+    pub query_mesh: Option<CollisionMesh>,
     /// Fixed triangles in world FLU metres.
     pub fixed: CollisionMesh,
     /// Fixed native children in the same frame as `fixed`.
@@ -129,6 +133,7 @@ impl ComponentModel {
     /// Placement must be finite with a unit quaternion, as verified by the loader.
     pub fn placed(&self, placement: &Pose) -> PlacedComponent {
         PlacedComponent {
+            query_mesh: self.query_mesh.as_ref().map(|mesh| mesh.placed(placement)),
             fixed: self.fixed.placed(placement),
             native_shapes: place_shapes(&self.native_shapes, placement),
             moving: self
@@ -161,7 +166,7 @@ impl PlacedComponent {
     ///     triangles: vec![[0, 1, 2]],
     /// };
     /// let mut physics = WorldPhysics::new(&[], 0.);
-    /// PlacedComponent { fixed, native_shapes: vec![], moving: vec![] }.install(&mut physics)?;
+    /// PlacedComponent { fixed, query_mesh: None, native_shapes: vec![], moving: vec![] }.install(&mut physics)?;
     /// let scene = physics.static_geometry_snapshot(true);
     /// assert!(scene.cast_ray([0.; 3], [1., 0., 0.], 2.)?.is_some());
     /// # Ok::<(), &'static str>(())
@@ -170,7 +175,15 @@ impl PlacedComponent {
         if !self.fixed.triangles.is_empty() {
             physics.add_static_mesh(self.fixed.vertices_m, self.fixed.triangles)?;
         }
-        physics.add_static_shapes(&self.native_shapes)?;
+        if let Some(query) = self.query_mesh {
+            physics.add_static_shapes_with_queries(
+                &self.native_shapes,
+                query.vertices_m,
+                query.triangles,
+            )?;
+        } else {
+            physics.add_static_shapes(&self.native_shapes)?;
+        }
         for part in self.moving {
             part.install(physics)?;
         }
@@ -292,6 +305,19 @@ pub fn load<B>(
             }
         }
     }
+    ensure!(
+        asset
+            .collision_shapes
+            .as_ref()
+            .is_none_or(|s| s.query_mesh.is_none())
+            || model.moving.iter().all(|m| m.native_shapes.is_empty()),
+        "query mesh profiles currently require fixed native owners"
+    );
+    model.query_mesh = asset
+        .collision_shapes
+        .as_ref()
+        .and_then(|s| s.query_mesh.as_deref())
+        .cloned();
     Ok(model)
 }
 
@@ -318,6 +344,7 @@ fn load_meshes<B>(
     }
     if cad.rest_pose_only {
         return Ok(ComponentModel {
+            query_mesh: None,
             fixed: collision_mesh::load_glb_bytes(&bytes)?,
             native_shapes: vec![],
             moving: vec![],
@@ -331,6 +358,7 @@ fn load_meshes<B>(
             fixed_parts(parts)
         };
         return Ok(ComponentModel {
+            query_mesh: None,
             fixed,
             native_shapes: vec![],
             moving: vec![],
@@ -391,6 +419,7 @@ fn load_meshes<B>(
         });
     }
     Ok(ComponentModel {
+        query_mesh: None,
         fixed,
         native_shapes: vec![],
         moving,
@@ -459,6 +488,7 @@ fn from_source_parts(
             .filter(|part| !motions.iter().any(|m| m.bodies.contains(&part.name))),
     );
     Ok(ComponentModel {
+        query_mesh: None,
         fixed,
         native_shapes: vec![],
         moving,

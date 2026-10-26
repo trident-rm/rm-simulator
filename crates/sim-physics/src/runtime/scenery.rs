@@ -14,6 +14,8 @@ struct CapturedCollider {
     shape: SharedShape,
     #[cfg(feature = "rapier-extension")]
     is_fixed: bool,
+    #[cfg(feature = "rapier-extension")]
+    groups: InteractionGroups,
 }
 
 /// Immutable enabled geometry in native collider order, including half-spaces.
@@ -118,6 +120,31 @@ impl PhysicalGeometry {
     }
 
     #[cfg(feature = "rapier-extension")]
+    pub(crate) fn sensor_colliders_with_groups(
+        &self,
+    ) -> impl ExactSizeIterator<
+        Item = (
+            ColliderBinding,
+            ColliderHandle,
+            Pose3,
+            SharedShape,
+            bool,
+            InteractionGroups,
+        ),
+    > + '_ {
+        self.colliders.iter().map(|c| {
+            (
+                c.binding,
+                c.binding.handle,
+                c.pose,
+                c.shape.clone(),
+                c.is_fixed,
+                c.groups,
+            )
+        })
+    }
+
+    #[cfg(feature = "rapier-extension")]
     pub(crate) fn sensor_colliders(
         &self,
     ) -> impl ExactSizeIterator<Item = (ColliderBinding, ColliderHandle, Pose3, SharedShape, bool)> + '_
@@ -157,6 +184,8 @@ impl PhysicalRuntime {
                     shape: c.shared_shape().clone(),
                     #[cfg(feature = "rapier-extension")]
                     is_fixed: c.parent().is_none_or(|h| self.world.bodies[h].is_fixed()),
+                    #[cfg(feature = "rapier-extension")]
+                    groups: c.collision_groups(),
                 })
                 .collect(),
         }

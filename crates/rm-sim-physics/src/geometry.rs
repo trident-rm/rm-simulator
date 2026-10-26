@@ -28,6 +28,8 @@ use rapier3d_f64::prelude::*;
 /// ```
 #[derive(Clone, Default)]
 pub struct StaticGeometry {
+    /// Explicit query profile; default rays use LiDAR and clearance uses rigid geometry.
+    pub(crate) query_purpose: Option<crate::collision_profiles::CollisionPurpose>,
     /// True when the capture was taken from a world whose catch half-space had
     /// already been removed.
     pub(crate) no_catch_floor: bool,
@@ -77,6 +79,16 @@ pub struct AddressedMovingGeometry {
 pub use crate::queries::{RayHit, RayQuery};
 
 impl StaticGeometry {
+    fn visible(&self, index: usize, default: crate::collision_profiles::CollisionPurpose) -> bool {
+        crate::collision_profiles::visible_to(
+            self.collision_groups
+                .get(index)
+                .copied()
+                .unwrap_or_default(),
+            self.query_purpose.unwrap_or(default),
+        )
+    }
+
     /// Return the nearest hit up to an inclusive metric range, or a valid miss.
     /// Direction is normalized internally; its scale does not change the range.
     /// Invalid/non-finite inputs return an error, unlike a valid `Ok(None)` miss.
@@ -155,7 +167,9 @@ impl StaticGeometry {
         let mut closest: Option<RayHit> = None;
         let mut limit = max_distance_m;
         for (index, ((pose, shape), bounds)) in self.shapes.iter().zip(bounds.iter()).enumerate() {
-            if bounds.cast_local_ray(ray, limit, true).is_none() {
+            if !self.visible(index, crate::collision_profiles::CollisionPurpose::Lidar)
+                || bounds.cast_local_ray(ray, limit, true).is_none()
+            {
                 continue;
             }
             if let Some(hit) = shape.cast_ray_and_get_normal(pose, ray, limit, true)
@@ -175,6 +189,7 @@ impl StaticGeometry {
     /// Separate articulated scenery from fixed geometry for debug drawing.
     pub fn fixed_only(&self) -> Self {
         Self {
+            query_purpose: self.query_purpose,
             no_catch_floor: self.no_catch_floor,
             projectile_bounds_m: self.projectile_bounds_m,
             bounds: Default::default(),
@@ -237,6 +252,7 @@ impl StaticGeometry {
                     channel: *channel,
                     motion: *frame,
                     geometry: Self {
+                        query_purpose: self.query_purpose,
                         shapes: vec![(position, shape)],
                         collision_groups: vec![
                             self.collision_groups
@@ -267,7 +283,14 @@ impl StaticGeometry {
         self.shapes
             .iter()
             .zip(bounds.iter())
-            .all(|((pose, shape), bounds)| {
+            .enumerate()
+            .all(|(index, ((pose, shape), bounds))| {
+                if !self.visible(
+                    index,
+                    crate::collision_profiles::CollisionPurpose::RigidBody,
+                ) {
+                    return true;
+                }
                 if (0..3).any(|axis| {
                     center_m[axis] + radius_m < bounds.mins[axis]
                         || center_m[axis] - radius_m > bounds.maxs[axis]
@@ -360,7 +383,14 @@ impl StaticGeometry {
         self.shapes
             .iter()
             .zip(bounds.iter())
-            .all(|((p, s), bounds)| {
+            .enumerate()
+            .all(|(index, ((p, s), bounds))| {
+                if !self.visible(
+                    index,
+                    crate::collision_profiles::CollisionPurpose::RigidBody,
+                ) {
+                    return true;
+                }
                 if (0..3).any(|i| swept.maxs[i] < bounds.mins[i] || swept.mins[i] > bounds.maxs[i])
                 {
                     return true;
@@ -468,6 +498,8 @@ impl StaticGeometry {
     /// Interpolate the captured collider transforms across a displayed frame interval.
     pub fn interpolate(&self, next: &Self, fraction: f64) -> Result<Self, &'static str> {
         if self.shapes.len() != next.shapes.len()
+            || self.query_purpose != next.query_purpose
+            || self.collision_groups != next.collision_groups
             || self.mechanisms != next.mechanisms
             || self.endpoint_bakes.len() != next.endpoint_bakes.len()
             || self
@@ -498,9 +530,18 @@ impl StaticGeometry {
     /// Cylinders use a deterministic 32-segment diagnostic boundary mesh; balls
     /// use 12 longitudinal and 8 latitudinal subdivisions. Only this export is
     /// tessellated: captured native shapes still serve contacts, rays and sweeps.
-    /// This may be expensive.
+    /// The default wireframe omits query-only meshes; an explicitly selected purpose
+    /// exports that view instead. This may be expensive.
     pub fn into_triangles(self) -> (Vec<[f64; 3]>, Vec<[u32; 3]>) {
-        sim_physics::backend::triangulate_shapes(self.shapes)
+        sim_physics::backend::triangulate_shapes(
+            self.shapes
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| {
+                    self.visible(*i, crate::collision_profiles::CollisionPurpose::RigidBody)
+                })
+                .map(|(_, shape)| shape.clone()),
+        )
     }
 }
 

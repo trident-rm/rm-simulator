@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Use 54 native Core cylinders for rigid-body and projectile contacts while
+  retaining reduced query-only meshes for LiDAR. Preserve selection through
+  captures, restore and both mounted sensor paths. Physical meshes now contain
+  113,679 triangles; visual assets remain unchanged.
+
 - Simplify two Base fitting collisions and refresh complete closed/open and
   fixed transition bakes, saving 1,136 placed triangles. Keep covers and visuals.
 

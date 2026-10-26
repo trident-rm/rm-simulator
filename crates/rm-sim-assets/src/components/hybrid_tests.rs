@@ -59,6 +59,7 @@ fn cad(path: PathBuf, part: CylinderPart) -> CadAssets {
         placements: vec![],
         collision: Some(path.clone()),
         collision_shapes: Some(CollisionShapes {
+            query_mesh: None,
             remainder_bytes: std::fs::read(&path).unwrap().into(),
             remainder_file: path,
             parts: vec![part],
@@ -194,5 +195,62 @@ fn native_only_semantic_joint_is_not_skipped_with_empty_mesh() {
         .install(&mut world)
         .unwrap();
     assert!(world.has_mechanisms());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn fixed_query_mesh_is_placed_and_installed_but_moving_owners_are_rejected() {
+    let path = source_mesh();
+    let mut cad = cad(path.clone(), cylinder("moving"));
+    let query = CollisionMesh {
+        vertices_m: vec![[1., -3., -2.], [1., 3., -2.], [1., 0., 4.]],
+        triangles: vec![[0, 1, 2]],
+    };
+    cad.tech_core.collision_shapes.as_mut().unwrap().query_mesh = Some(std::sync::Arc::new(query));
+    let model = load(&cad, &cad.tech_core, ComponentRole::Equipment, Some(&[])).unwrap();
+    let placed = model.placed(&math::gltf_root_pose([0.; 3], [1., 0., 0., 0.]));
+    assert!(placed.query_mesh.is_some());
+    let mut world = WorldPhysics::new(&[], 0.);
+    world.remove_catch_floor();
+    placed.install(&mut world).unwrap();
+    let geometry = world.static_geometry_snapshot(true);
+    assert!(
+        (geometry
+            .cast_ray([0., 0., 1.], [1., 0., 0.], 5.)
+            .unwrap()
+            .unwrap()
+            .distance_m
+            - 1.)
+            .abs()
+            < 1e-10
+    );
+    let physical = geometry
+        .for_collision_purpose(rm_sim_physics::collision_profiles::CollisionPurpose::RigidBody);
+    assert!(
+        (physical
+            .cast_ray([0., 0., 1.], [1., 0., 0.], 5.)
+            .unwrap()
+            .unwrap()
+            .distance_m
+            - 1.8)
+            .abs()
+            < 1e-8
+    );
+    let moving = [Motion {
+        id: "slide".into(),
+        bodies: vec!["moving".into()],
+        pivot_m: [0.; 3],
+        axis: [1., 0., 0.],
+        limits: Some([0., 1.]),
+    }];
+    assert!(
+        load(
+            &cad,
+            &cad.tech_core,
+            ComponentRole::Equipment,
+            Some(&moving)
+        )
+        .is_err()
+    );
     std::fs::remove_file(path).unwrap();
 }

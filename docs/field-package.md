@@ -123,7 +123,8 @@ provenance source and adds two fields, relative to the containing manifest:
 }
 ```
 
-The initial adapter accepts `rm-map-tools.collision-shapes.prototype-1`: metres,
+The adapter accepts legacy `rm-map-tools.collision-shapes.prototype-1` and the
+selective `prototype-2` contract described below: metres,
 `source_glb_active_scene` coordinates, xyzw poses and local +Z solid cylinders
 with full lengths. It verifies source/remainder hashes, active-scene node names,
 indices, ancestry and component ownership, exact selected mesh removal, unchanged
@@ -162,6 +163,21 @@ captures, prepared scenes, composed instances and resets keep native shapes.
 Collision wireframes alone use deterministic 32-segment cylinder tessellation,
 including compound child transforms. Extracted moving captures retain collision
 filter masks. This does not guarantee a speedup; benchmark the actual workload.
+
+The deployed Core uses `rm-map-tools.collision-shapes.prototype-2`. It requires a
+`query_mesh` entry with package-local file, SHA-256 and triangle count. Older
+loaders reject this schema. The loader verifies that the query payload contains
+exactly the replaced source owners and preserves source node/scene metadata.
+Its immutable parsed mesh survives file mutation. This extension currently
+accepts fixed native owners only; a moving native/query combination fails.
+
+There are 54 native cylinders in two Core compounds. Their selected reduced
+meshes contain 4,856 placed query-only triangles; common retained Core surfaces
+are shared. Native groups provide physical contacts, while query meshes have
+zero contact filters. Raw RM rays/visibility and mounted LiDAR select mesh
+profiles; clearance defaults to physical shapes. Explicit purpose views remain
+available. Captures and restores retain groups and both payloads; physical
+wireframes omit the query-only meshes. Visual meshes remain unchanged.
 
 The floor and `arena-static` remain mesh-backed in this first field adapter,
 since chassis spawn/support-height queries use their triangle footprints. Native

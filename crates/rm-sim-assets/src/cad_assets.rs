@@ -827,6 +827,7 @@ mod tests {
         asset.source_tessellated_collision = true;
         assert_eq!(asset.physics_file(root), root.join("collision.glb"));
         asset.collision_shapes = Some(crate::collision_shapes::CollisionShapes {
+            query_mesh: None,
             remainder_file: root.join("remainder.glb"),
             remainder_bytes: Default::default(),
             parts: Vec::new(),

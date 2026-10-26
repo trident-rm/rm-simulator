@@ -44,6 +44,8 @@ pub struct Terrain {
     /// Fixed native children grouped per source placement, preserving local
     /// broad-phase bounds. Poses use world FLU metres and wxyz quaternions.
     pub native_shapes: Vec<Vec<crate::components::NativeShape>>,
+    /// Query-only mesh by fixed native group index. These surfaces never add contact forces.
+    pub native_query_meshes: Vec<(usize, CollisionMesh)>,
 }
 /// Shared equipment composition records and semantic channel classification.
 pub use crate::components::{MechanismMesh, mechanism_joint};
@@ -56,7 +58,7 @@ impl Terrain {
     /// One line for the start-up log.
     pub fn describe(&self) -> String {
         format!(
-            "field collision: {} ground triangles, {} fixture triangles, {} equipment triangles, {} native primitives (source tessellations, reviewed meshes or declared shapes)",
+            "field collision: {} ground triangles, {} fixture triangles, {} equipment triangles, {} native primitives, {} query-only triangles (source tessellations, reviewed meshes or declared shapes)",
             self.collision_ground().triangles.len(),
             self.fixtures.triangles.len() + self.boundary.triangles.len(),
             self.equipment
@@ -68,7 +70,11 @@ impl Terrain {
                     .mechanisms
                     .iter()
                     .map(|p| p.native_shapes.len())
-                    .sum::<usize>()
+                    .sum::<usize>(),
+            self.native_query_meshes
+                .iter()
+                .map(|(_, mesh)| mesh.triangles.len())
+                .sum::<usize>()
         )
     }
 }
@@ -106,6 +112,7 @@ pub fn load_terrain_with_motions<B>(
         "floor and arena ground require mesh collision for ground-height queries"
     );
     let mut native_shapes = Vec::new();
+    let mut native_query_meshes = Vec::new();
     let mut mechanisms = Vec::new();
     let mut ground = cad
         .floor
@@ -166,6 +173,9 @@ pub fn load_terrain_with_motions<B>(
             }
             let shapes = crate::components::place_shapes(&model.native_shapes, placement);
             if !shapes.is_empty() {
+                if let Some(query) = model.query_mesh.as_ref() {
+                    native_query_meshes.push((native_shapes.len(), query.placed(placement)));
+                }
                 native_shapes.push(shapes);
             }
         }
@@ -187,6 +197,9 @@ pub fn load_terrain_with_motions<B>(
             fixtures.append(model.fixed.placed(placement));
             let shapes = crate::components::place_shapes(&model.native_shapes, placement);
             if !shapes.is_empty() {
+                if let Some(query) = model.query_mesh.as_ref() {
+                    native_query_meshes.push((native_shapes.len(), query.placed(placement)));
+                }
                 native_shapes.push(shapes);
             }
         }
@@ -214,6 +227,9 @@ pub fn load_terrain_with_motions<B>(
             equipment.push(model.fixed.placed(placement));
             let shapes = crate::components::place_shapes(&model.native_shapes, placement);
             if !shapes.is_empty() {
+                if let Some(query) = model.query_mesh.as_ref() {
+                    native_query_meshes.push((native_shapes.len(), query.placed(placement)));
+                }
                 native_shapes.push(shapes);
             }
         }
@@ -229,6 +245,7 @@ pub fn load_terrain_with_motions<B>(
         equipment,
         endpoint_bakes,
         native_shapes,
+        native_query_meshes,
     })
 }
 
@@ -329,6 +346,15 @@ pub fn arena_boundary([low, high]: [[f64; 3]; 2]) -> CollisionMesh {
 /// Hand the terrain to the field: the ground, fixtures and equipment as
 /// the same triangles used to draw the CAD.
 pub fn install_terrain(field: &mut WorldPhysics, terrain: &Terrain) -> Result<(), &'static str> {
+    let mut query_groups = std::collections::BTreeSet::new();
+    for (index, query) in &terrain.native_query_meshes {
+        if !query_groups.insert(*index)
+            || terrain.native_shapes.get(*index).is_none_or(Vec::is_empty)
+            || query.triangles.is_empty()
+        {
+            return Err("query mesh must reference one nonempty fixed native group exactly once");
+        }
+    }
     if let Some(bounds) = terrain.projectile_bounds_m
         && (!bounds.iter().flatten().all(|v| v.is_finite())
             || (0..2).any(|i| bounds[0][i] >= bounds[1][i]))
@@ -359,8 +385,20 @@ pub fn install_terrain(field: &mut WorldPhysics, terrain: &Terrain) -> Result<()
             equipment_handles[index - 2] = Some(handle);
         }
     }
-    for shapes in &terrain.native_shapes {
-        field.add_static_shapes(shapes)?;
+    for (index, shapes) in terrain.native_shapes.iter().enumerate() {
+        if let Some((_, query)) = terrain
+            .native_query_meshes
+            .iter()
+            .find(|(i, _)| *i == index)
+        {
+            field.add_static_shapes_with_queries(
+                shapes,
+                query.vertices_m.clone(),
+                query.triangles.clone(),
+            )?;
+        } else {
+            field.add_static_shapes(shapes)?;
+        }
     }
     if let Some(package) = &terrain.native_terrain {
         package
@@ -408,6 +446,88 @@ mod whole_bake_package_tests {
 
     #[test]
     #[ignore = "requires materialized bundled field GLBs"]
+    fn bundled_core_native_contacts_and_mesh_queries_survive_restore() {
+        let cad = cad_assets::load(&cad_assets::default_cad_assets()).unwrap();
+        let terrain = load_terrain(&cad).unwrap();
+        assert_eq!(
+            terrain.native_shapes.iter().map(Vec::len).sum::<usize>(),
+            54
+        );
+        assert_eq!(terrain.native_query_meshes.len(), 2);
+        let model = components::load(
+            &cad,
+            &cad.tech_core,
+            components::ComponentRole::Equipment,
+            Some(&[]),
+        )
+        .unwrap();
+        let mut physics = WorldPhysics::new(&[], 0.);
+        physics.remove_catch_floor();
+        let mut reference = WorldPhysics::new(&[], 0.);
+        reference.remove_catch_floor();
+        for placement in &cad.tech_core.placements {
+            model.placed(placement).install(&mut physics).unwrap();
+            let mut mesh = model.fixed.clone();
+            mesh.append(model.query_mesh.as_ref().unwrap().clone());
+            let mesh = mesh.placed(placement);
+            reference
+                .add_static_mesh(mesh.vertices_m, mesh.triangles)
+                .unwrap();
+        }
+        let capture = physics.static_geometry_snapshot(true);
+        let reference = reference.static_geometry_snapshot(true);
+        let mut restored = WorldPhysics::new(&[], 0.);
+        restored.try_insert_geometry(&capture).unwrap();
+        let restored = restored.static_geometry_snapshot(true);
+        let mut checked = 0;
+        for placement in &cad.tech_core.placements {
+            for (pose, shape) in model.placed(placement).native_shapes {
+                let rm_sim_physics::model::ShapeDescription::Cylinder {
+                    radius_m,
+                    half_height_m,
+                } = shape
+                else {
+                    panic!("expected native cylinder")
+                };
+                for (point, direction, length) in [
+                    ([radius_m + 0.1, 0., 0.], [-1., 0., 0.], 2. * radius_m + 0.2),
+                    (
+                        [0., half_height_m + 0.1, 0.],
+                        [0., -1., 0.],
+                        2. * half_height_m + 0.2,
+                    ),
+                ] {
+                    let origin = crate::math::add(
+                        pose.translation_m,
+                        crate::math::rotate(pose.rotation_wxyz, point),
+                    );
+                    let direction = crate::math::rotate(pose.rotation_wxyz, direction);
+                    let expected = reference
+                        .cast_ray(origin, direction, length)
+                        .unwrap()
+                        .map(|h| h.distance_m);
+                    for scene in [&capture, &restored] {
+                        let hit = scene
+                            .cast_ray(origin, direction, length)
+                            .unwrap()
+                            .map(|h| h.distance_m);
+                        assert_eq!(hit.is_some(), expected.is_some());
+                        if let (Some(hit), Some(expected)) = (hit, expected) {
+                            assert!(
+                                (hit - expected).abs() < 1e-10,
+                                "mesh lidar range changed: {hit} vs {expected}"
+                            );
+                        }
+                    }
+                    checked += 1;
+                }
+            }
+        }
+        assert_eq!(checked, 108);
+    }
+
+    #[test]
+    #[ignore = "requires materialized bundled field GLBs"]
     fn bundled_whole_base_endpoints_match_reference_and_survive_restore() {
         let cad = cad_assets::load(&cad_assets::default_cad_assets()).unwrap();
         assert!(cad.base.bake_motion_endpoints);
@@ -417,7 +537,7 @@ mod whole_bake_package_tests {
         // Cooking drops two degenerate faces; heightfield surfaces and boundary are included.
         assert_eq!(
             prepared.geometry().clone().into_triangles().1.len(),
-            120_341
+            121_701
         );
         let motions = cad.rmuc_2027.as_ref().unwrap().motions(&cad, &cad.base);
         let model = components::load(
@@ -522,7 +642,7 @@ impl PreparedArena {
     /// use rm_sim_physics::{StepDuration, session::RobotSession};
     /// let terrain = Terrain {
     ///     boundary: Default::default(), projectile_bounds_m: None, mechanisms: vec![],
-    ///     ground: CollisionMesh::default().into(), fixtures: Default::default(), equipment: vec![], endpoint_bakes: vec![], native_shapes: vec![], native_terrain: None, ground_collision: None,
+    ///     ground: CollisionMesh::default().into(), fixtures: Default::default(), equipment: vec![], endpoint_bakes: vec![], native_shapes: vec![], native_query_meshes: vec![], native_terrain: None, ground_collision: None,
     /// };
     /// let arena = PreparedArena::from_terrain(terrain)?;
     /// let recipe = arena.scenario(vec![], StepDuration::HZ_1000, |_| Ok(()))?;
@@ -590,6 +710,7 @@ mod tests {
             equipment: vec![],
             endpoint_bakes: vec![],
             native_shapes: vec![],
+            native_query_meshes: vec![],
         };
         let mut direct = WorldPhysics::new(&[], CATCH_FLOOR_M);
         install_terrain(&mut direct, &terrain).unwrap();

@@ -79,6 +79,7 @@ fn moving(kind: Mechanism, team: Team) -> ComponentDefinition {
     };
     ComponentDefinition::new(
         PlacedComponent {
+            query_mesh: None,
             fixed: CollisionMesh::default(),
             native_shapes: vec![],
             moving: vec![MechanismMesh {
@@ -605,6 +606,7 @@ fn raw_projectile_contacts_keep_explicit_physical_and_source_identity_maps() {
     };
     let source = ComponentDefinition::new(
         PlacedComponent {
+            query_mesh: None,
             fixed: CollisionMesh::default(),
             native_shapes: vec![],
             moving: vec![],
@@ -781,6 +783,7 @@ fn native_cylinder_is_analytic_after_composition_and_reset() {
     );
     let component = ComponentDefinition::new(
         PlacedComponent {
+            query_mesh: None,
             fixed: CollisionMesh::default(),
             native_shapes: vec![shape],
             moving: vec![],

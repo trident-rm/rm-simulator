@@ -2,6 +2,7 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Opt-in collision-purpose policies. Legacy worlds keep their existing groups.
 use crate::StaticGeometry;
+use rapier3d_f64::prelude::{Group, InteractionGroups, InteractionTestMode};
 use sim_engine::model::ContactMaterial;
 
 const RIGID_ACTOR: u32 = 1;
@@ -75,14 +76,38 @@ impl CollisionPurpose {
         })
     }
 }
+pub(crate) fn visible_to(
+    groups: rapier3d_f64::prelude::InteractionGroups,
+    purpose: CollisionPurpose,
+) -> bool {
+    let profiled = RIGID_SURFACE | PROJECTILE_SURFACE | LIDAR_SURFACE;
+    let bits = groups.memberships.bits();
+    bits & profiled == 0 || bits & !profiled != 0 || bits & purpose.surface() != 0
+}
+
+pub(crate) fn physical_groups() -> rapier3d_f64::prelude::InteractionGroups {
+    InteractionGroups::new(
+        Group::from_bits_retain(RIGID_SURFACE | PROJECTILE_SURFACE),
+        Group::ALL,
+        InteractionTestMode::And,
+    )
+}
+pub(crate) fn query_groups() -> rapier3d_f64::prelude::InteractionGroups {
+    InteractionGroups::new(
+        Group::from_bits_retain(LIDAR_SURFACE),
+        Group::NONE,
+        InteractionTestMode::And,
+    )
+}
+
 impl StaticGeometry {
     /// Select one purpose's profiled shapes for rays, sweeps and clearance tests.
     /// Unprofiled legacy shapes remain a common fallback. Buffers are shared,
     /// motion indices are remapped, and transforms retain their captured values.
     /// The returned capture cannot double-query another purpose's surface.
     pub fn for_collision_purpose(&self, purpose: CollisionPurpose) -> Self {
-        let profiled = RIGID_SURFACE | PROJECTILE_SURFACE | LIDAR_SURFACE;
         let mut out = Self {
+            query_purpose: Some(purpose),
             no_catch_floor: self.no_catch_floor,
             projectile_bounds_m: self.projectile_bounds_m,
             ..Self::default()
@@ -93,10 +118,8 @@ impl StaticGeometry {
                 .get(index)
                 .copied()
                 .unwrap_or_default();
-            let bits = groups.memberships.bits();
-            // Only exact profile memberships are classified. Legacy ALL groups
-            // and unrelated custom group policies remain common geometry.
-            if bits & profiled != 0 && bits & !profiled == 0 && bits & purpose.surface() == 0 {
+            // Legacy ALL groups and unrelated policies remain common geometry.
+            if !visible_to(groups, purpose) {
                 continue;
             }
             let next = out.shapes.len();

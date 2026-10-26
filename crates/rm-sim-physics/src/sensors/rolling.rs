@@ -75,7 +75,8 @@ impl SceneCapture {
     }
     /// Combine an immutable generic runtime capture with an actual resolved
     /// carrier pose. The stamp supplies simulation time; no clock is consulted.
-    /// All enabled geometry, including the carrier's own colliders, occludes.
+    /// Enabled LiDAR geometry, including the carrier's own colliders, occludes.
+    /// Profiled physics-only alternatives are excluded from this sensor view.
     /// The capture retains the runtime's scene-wide placement epoch so a
     /// discontinuous placement of any obstacle invalidates interpolation, even
     /// when the sensor carrier's own identity and placement remain unchanged.
@@ -106,7 +107,13 @@ impl SceneCapture {
             return Err("carrier stamp belongs to another physical runtime");
         }
         let (mut fixed, mut moving) = (Vec::new(), Vec::new());
-        for (_, handle, pose, shape, is_fixed) in geometry.sensor_colliders() {
+        for (_, handle, pose, shape, is_fixed, groups) in geometry.sensor_colliders_with_groups() {
+            if !crate::collision_profiles::visible_to(
+                groups,
+                crate::collision_profiles::CollisionPurpose::Lidar,
+            ) {
+                continue;
+            }
             let collider = SensorCollider {
                 handle,
                 motion_channel: None,
@@ -594,6 +601,42 @@ impl<'a> SceneBracket<'a> {
 mod tests {
     use super::*;
     use crate::{Team, WorldPhysics, chassis::ChassisConfig};
+    #[test]
+    fn legacy_and_generic_sensor_captures_select_query_mesh_only() {
+        let mut world = WorldPhysics::new(&[], 0.);
+        world.remove_catch_floor();
+        world
+            .add_static_shapes_with_queries(
+                &[(
+                    Pose::at([3., 0., 1.]),
+                    crate::model::ShapeDescription::Cylinder {
+                        radius_m: 0.5,
+                        half_height_m: 1.,
+                    },
+                )],
+                vec![[1., -3., -2.], [1., 3., -2.], [1., 0., 4.]],
+                vec![[0, 1, 2]],
+            )
+            .unwrap();
+        let robot = world
+            .add_chassis(Team::Red, ChassisConfig::default(), Pose::at([0., 0., 0.3]))
+            .unwrap();
+        let legacy = world.lidar_scene_capture(robot, 0).unwrap();
+        assert_eq!(legacy.fixed.len(), 1);
+        assert!(legacy.fixed[0].shape.as_trimesh().is_some());
+        let geometry = world.physical.geometry_capture();
+        let identity = CarrierIdentity {
+            carrier: sim_engine::model::CarrierKey(3),
+            world_brand: geometry.runtime_identity(),
+            installation_generation: 1,
+            discontinuity_revision: 0,
+        };
+        let carrier = StampedCarrierPose::new(identity, 0, 0.001, Pose::default()).unwrap();
+        let generic = SceneCapture::from_physical_geometry(&geometry, carrier).unwrap();
+        assert_eq!(generic.fixed.len(), 1);
+        assert!(generic.fixed[0].shape.as_trimesh().is_some());
+    }
+
     fn rig() -> (WorldPhysics, u32) {
         let mut world = WorldPhysics::new(&[], 0.);
         let robot = world

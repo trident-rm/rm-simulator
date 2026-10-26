@@ -82,6 +82,36 @@ impl WorldPhysics {
         Ok(())
     }
 
+    /// Install fixed native physics and a separate query-only mesh atomically.
+    /// The mesh has a zero contact filter. Captures retain both representations;
+    /// LiDAR selects the mesh, while contacts and clearance select native shapes.
+    pub fn add_static_shapes_with_queries(
+        &mut self,
+        shapes: &[(Pose, ShapeDescription)],
+        vertices_m: Vec<[f64; 3]>,
+        triangles: Vec<[u32; 3]>,
+    ) -> Result<(), &'static str> {
+        let native = prepare_shapes(shapes)?;
+        let query = crate::cooking::cook_buffers(vertices_m, triangles)?;
+        for shape in native {
+            self.physical.extension_insert_scenery(
+                shape,
+                Pose3::IDENTITY,
+                FRICTION,
+                RESTITUTION,
+                crate::collision_profiles::physical_groups(),
+            );
+        }
+        self.physical.extension_insert_scenery(
+            query,
+            Pose3::IDENTITY,
+            FRICTION,
+            RESTITUTION,
+            crate::collision_profiles::query_groups(),
+        );
+        Ok(())
+    }
+
     /// Install native scenery at its world-FLU rest frames on a legacy prescribed
     /// mechanism. Motion is applied to the whole compound from the same rest
     /// coordinates as mesh channels; source joint ownership remains with callers.
@@ -492,6 +522,93 @@ mod capture_tests {
                 .map(|(_, s)| s.as_compound().unwrap().shapes().len())
                 .sum::<usize>(),
             256
+        );
+    }
+}
+
+#[cfg(test)]
+mod selective_query_tests {
+    use super::*;
+    #[test]
+    fn query_mesh_does_not_stop_ccd_and_survives_capture_restore() {
+        let mut world = WorldPhysics::new(&[], 0.);
+        world.remove_catch_floor();
+        world
+            .add_static_shapes_with_queries(
+                &[(
+                    Pose::at([3., 0., 1.]),
+                    ShapeDescription::Cylinder {
+                        radius_m: 0.5,
+                        half_height_m: 1.,
+                    },
+                )],
+                vec![[1., -3., -2.], [1., 3., -2.], [1., 0., 4.]],
+                vec![[0, 1, 2]],
+            )
+            .unwrap();
+        let capture = world.static_geometry_snapshot(true);
+        for scene in [&capture, &capture.fixed_only()] {
+            assert!(
+                (scene
+                    .cast_ray([0., 0., 1.], [1., 0., 0.], 5.)
+                    .unwrap()
+                    .unwrap()
+                    .distance_m
+                    - 1.)
+                    .abs()
+                    < 1e-10
+            );
+            let rigid =
+                scene.for_collision_purpose(crate::collision_profiles::CollisionPurpose::RigidBody);
+            assert!(
+                (rigid
+                    .cast_ray([0., 0., 1.], [1., 0., 0.], 5.)
+                    .unwrap()
+                    .unwrap()
+                    .distance_m
+                    - 2.5)
+                    .abs()
+                    < 1e-8
+            );
+            assert_eq!(
+                scene.clone().into_triangles().1.len(),
+                124,
+                "query surface leaked into physics wireframe"
+            );
+        }
+        let mut restored = WorldPhysics::new(&[], 0.);
+        restored.try_insert_geometry(&capture).unwrap();
+        let again = restored.static_geometry_snapshot(true);
+        assert_eq!(capture.collision_groups, again.collision_groups);
+        assert_eq!(
+            capture.cast_ray([0., 0., 1.], [1., 0., 0.], 5.).unwrap(),
+            again.cast_ray([0., 0., 1.], [1., 0., 0.], 5.).unwrap()
+        );
+        restored
+            .fire(
+                0,
+                Pose::at([0., 0., 1.]),
+                Shot {
+                    caliber: Caliber::Mm17,
+                    speed_m_s: 20.,
+                },
+                None,
+            )
+            .unwrap();
+        let frames = TargetFrames::new(vec![]);
+        let mut passed_query = false;
+        let mut rebound = false;
+        for tick in 0..32 {
+            restored.step(tick * crate::tick_ns(), &frames).unwrap();
+            if let Some(ball) = restored.snapshot().first() {
+                passed_query |= ball.position_m[0] > 1.5;
+                rebound |= ball.velocity_m_s[0] < 0.;
+                assert!(ball.position_m[0] < 2.6, "CCD ball crossed native cylinder");
+            }
+        }
+        assert!(
+            passed_query && rebound,
+            "query mesh added a contact or native collision was lost"
         );
     }
 }

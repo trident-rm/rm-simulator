@@ -226,6 +226,20 @@ impl CookedMeshExt for CookedTriangleMesh {
 /// Backend geometry data for sensor adapters; retained poses/shapes belong to
 /// the capture, and native collider handles are meaningful only in its runtime.
 pub trait GeometryExt {
+    /// Capture-order sensor shapes with their original native collision groups.
+    /// Policy adapters may choose query representations without changing contacts.
+    fn sensor_colliders_with_groups(
+        &self,
+    ) -> impl ExactSizeIterator<
+        Item = (
+            crate::runtime::ColliderBinding,
+            ColliderHandle,
+            Pose3,
+            SharedShape,
+            bool,
+            InteractionGroups,
+        ),
+    > + '_;
     /// Capture-order identities, native handles, poses, shared shapes and fixed flags.
     fn sensor_colliders(
         &self,
@@ -240,6 +254,21 @@ pub trait GeometryExt {
     > + '_;
 }
 impl GeometryExt for PhysicalGeometry {
+    #[inline]
+    fn sensor_colliders_with_groups(
+        &self,
+    ) -> impl ExactSizeIterator<
+        Item = (
+            crate::runtime::ColliderBinding,
+            ColliderHandle,
+            Pose3,
+            SharedShape,
+            bool,
+            InteractionGroups,
+        ),
+    > + '_ {
+        self.sensor_colliders_with_groups()
+    }
     #[inline]
     fn sensor_colliders(
         &self,

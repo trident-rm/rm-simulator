@@ -20,6 +20,8 @@ pub struct CollisionShapes {
     pub(crate) remainder_bytes: std::sync::Arc<[u8]>,
     /// Native solid cylinders, retaining their original motion ownership.
     pub parts: Vec<CylinderPart>,
+    /// Optional verified mesh of replaced fixed owners, used only for sensor queries.
+    pub(crate) query_mesh: Option<std::sync::Arc<crate::collision_mesh::CollisionMesh>>,
 }
 
 /// A cylinder in the original active GLB scene, before placement or CAD-to-FLU conversion.
@@ -51,6 +53,8 @@ struct Recipe {
     quaternion_order: String,
     source: FileHash,
     retained_mesh: RetainedMesh,
+    #[serde(default)]
+    query_mesh: Option<RetainedMesh>,
     replaced_node_indices: Vec<usize>,
     removed_mesh_triangles: usize,
     native_parts: Vec<NativePart>,
@@ -131,7 +135,10 @@ pub fn load_verified(
     let recipe: Recipe =
         serde_json::from_slice(&sidecar_bytes).context("collision shapes prototype contract")?;
     ensure!(
-        recipe.schema == "rm-map-tools.collision-shapes.prototype-1"
+        ((recipe.schema == "rm-map-tools.collision-shapes.prototype-1"
+            && recipe.query_mesh.is_none())
+            || (recipe.schema == "rm-map-tools.collision-shapes.prototype-2"
+                && recipe.query_mesh.is_some()))
             && recipe.units == "m"
             && recipe.coordinate_frame == "source_glb_active_scene"
             && recipe.cylinder_local_axis == "+Z"
@@ -285,7 +292,50 @@ pub fn load_verified(
                 == recipe.removed_mesh_triangles,
         "remainder/removed triangle counts differ"
     );
+    let query_mesh = recipe
+        .query_mesh
+        .map(|query| -> anyhow::Result<_> {
+            check_hash(&query.sha256)?;
+            let path = local_file(
+                sidecar_file.parent().context("sidecar has no directory")?,
+                &query.file,
+            )?;
+            let bytes = read_verified_bytes(&path, &query.sha256)?;
+            let mut doc = document(&bytes)?;
+            ensure!(
+                active_ancestry(&doc)? == ancestry,
+                "query mesh changed source ancestry"
+            );
+            let owners: BTreeSet<_> = ancestry
+                .keys()
+                .copied()
+                .filter(|i| doc["nodes"][*i].get("mesh").is_some())
+                .collect();
+            ensure!(
+                owners == replaced,
+                "query mesh must contain exactly the replaced owners"
+            );
+            let mesh = load_glb_bytes(&bytes)?;
+            ensure!(
+                query.triangles > 0 && mesh.triangles.len() == query.triangles,
+                "query mesh triangle count differs"
+            );
+            for node in doc["nodes"].as_array_mut().context("missing query nodes")? {
+                node.as_object_mut()
+                    .context("invalid query node")?
+                    .remove("mesh");
+            }
+            let all_nodes = (0..source["nodes"]
+                .as_array()
+                .context("missing source nodes")?
+                .len())
+                .collect();
+            verify_remainder(&source, &doc, &all_nodes)?;
+            Ok(std::sync::Arc::new(mesh))
+        })
+        .transpose()?;
     Ok(CollisionShapes {
+        query_mesh,
         remainder_file,
         remainder_bytes: remainder_bytes.into(),
         parts,
@@ -559,6 +609,38 @@ mod tests {
             std::fs::remove_dir_all(&self.directory).unwrap();
         }
     }
+    #[test]
+    fn query_mesh_is_source_owned_verified_once_and_cannot_add_other_owners() {
+        let mut f = Fixture::new();
+        let path = f.directory.join("query.glb");
+        let mut query = f.source.clone();
+        query["nodes"][2].as_object_mut().unwrap().remove("mesh");
+        write_glb(&path, &query);
+        f.recipe["schema"] = json!("rm-map-tools.collision-shapes.prototype-2");
+        f.recipe["query_mesh"] = json!({"file":"query.glb","sha256":hash(&path),"triangles":1});
+        let loaded = f.load().unwrap();
+        let recipe = f.recipe.clone();
+        f.recipe["schema"] = json!("rm-map-tools.collision-shapes.prototype-1");
+        assert!(
+            f.load().is_err(),
+            "query payload was accepted under the legacy contract"
+        );
+        f.recipe = recipe;
+        assert_eq!(loaded.query_mesh.as_ref().unwrap().triangles.len(), 1);
+        std::fs::write(&path, b"replaced after loading").unwrap();
+        assert_eq!(loaded.query_mesh.as_ref().unwrap().triangles.len(), 1);
+        assert!(f.load().is_err(), "changed query bytes were accepted");
+        query["nodes"][2]["mesh"] = json!(0);
+        write_glb(&path, &query);
+        f.recipe["query_mesh"]["sha256"] = hash(&path).into();
+        assert!(f.load().is_err(), "unselected owner was added to queries");
+        query["nodes"][2].as_object_mut().unwrap().remove("mesh");
+        query["nodes"][1]["translation"] = json!([1., 0., 0.]);
+        write_glb(&path, &query);
+        f.recipe["query_mesh"]["sha256"] = hash(&path).into();
+        assert!(f.load().is_err(), "query owner transform changed");
+    }
+
     #[test]
     fn verified_remainder_survives_source_sidecar_and_file_replacement() {
         let f = Fixture::new();
