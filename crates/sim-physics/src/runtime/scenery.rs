@@ -98,13 +98,18 @@ impl PhysicalGeometry {
 
     /// Query prepared metric rays into equally sized caller storage.
     /// A length mismatch fails before modifying output; valid misses write `None`.
+    ///
+    /// # Errors
+    /// Rejects an output slice whose length differs from the request slice.
     pub fn cast_rays_into(
         &self,
         rays: &[RayQuery],
         hits: &mut [Option<RayHit>],
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), RuntimeError> {
         if rays.len() != hits.len() {
-            return Err("ray batch output length must match request length");
+            return Err(RuntimeError::from(
+                "ray batch output length must match request length",
+            ));
         }
         for (query, hit) in rays.iter().zip(hits) {
             *hit = self.cast_ray(query);
@@ -176,14 +181,17 @@ impl PhysicalRuntime {
 
     /// Install shared cooked fixed scenery at a validated world FLU pose.
     /// Explicit friction, restitution and filtering introduce no participant roles.
+    ///
+    /// # Errors
+    /// Rejects invalid placement or friction/restitution before inserting scenery.
     pub fn install_fixed_mesh(
         &mut self,
         mesh: &CookedTriangleMesh,
         placement: Pose,
         material: ContactMaterial,
-    ) -> Result<ColliderBinding, &'static str> {
+    ) -> Result<ColliderBinding, RuntimeError> {
         if !pose_is_valid(placement) {
-            return Err("invalid fixed scenery pose");
+            return Err(RuntimeError::from("invalid fixed scenery pose"));
         }
         validate_material(material)?;
         let handle = self.insert_scenery(
@@ -213,15 +221,20 @@ impl PhysicalRuntime {
     /// assert!(scene.install_fixed_model(&model, Pose::default())?.is_empty());
     /// # Ok::<(), &'static str>(())
     /// ```
+    ///
+    /// # Errors
+    /// Rejects nonfixed models and invalid placements before inserting scenery.
     pub fn install_fixed_model(
         &mut self,
         model: &crate::cooking::CookedRigidBody,
         placement: Pose,
-    ) -> Result<Vec<ColliderBinding>, &'static str> {
+    ) -> Result<Vec<ColliderBinding>, RuntimeError> {
         if !pose_is_valid(placement)
             || !matches!(model.source().kind(), sim_engine::model::BodyKind::Fixed)
         {
-            return Err("fixed scenery requires a fixed model and valid pose");
+            return Err(RuntimeError::from(
+                "fixed scenery requires a fixed model and valid pose",
+            ));
         }
         let parent = pose(placement);
         let mut bindings = Vec::new();
@@ -265,9 +278,9 @@ impl PhysicalRuntime {
         &mut self,
         floor_height_m: f64,
         material: ContactMaterial,
-    ) -> Result<ColliderBinding, &'static str> {
+    ) -> Result<ColliderBinding, RuntimeError> {
         if !floor_height_m.is_finite() {
-            return Err("floor height must be finite");
+            return Err(RuntimeError::from("floor height must be finite"));
         }
         validate_material(material)?;
         let handle = self.insert_scenery(
@@ -286,10 +299,13 @@ impl PhysicalRuntime {
 
     /// Remove live parentless scenery, invalidating its collider token.
     /// Foreign/stale bindings and body-attached colliders fail before mutation.
-    pub fn remove_fixed_collider(&mut self, binding: ColliderBinding) -> Result<(), &'static str> {
+    ///
+    /// # Errors
+    /// Rejects foreign/stale tokens and colliders attached to a body.
+    pub fn remove_fixed_collider(&mut self, binding: ColliderBinding) -> Result<(), RuntimeError> {
         self.collider_state(binding)?;
         if self.world.colliders[binding.handle].parent().is_some() {
-            return Err("scenery collider is body-attached");
+            return Err(RuntimeError::from("scenery collider is body-attached"));
         }
         self.world.remove_collider(binding.handle);
         self.primed = false;
@@ -297,13 +313,13 @@ impl PhysicalRuntime {
     }
 }
 
-fn validate_material(material: ContactMaterial) -> Result<(), &'static str> {
+fn validate_material(material: ContactMaterial) -> Result<(), RuntimeError> {
     if !material.friction.is_finite()
         || material.friction < 0.
         || !material.restitution.is_finite()
         || !(0. ..=1.).contains(&material.restitution)
     {
-        return Err("invalid scenery contact material");
+        return Err(RuntimeError::from("invalid scenery contact material"));
     }
     Ok(())
 }

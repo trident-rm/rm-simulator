@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Bounded, immutable compound geometry without backend or mass semantics.
+use super::ModelError;
 use super::{ShapeDescription, body::validate_pose};
 use crate::Pose;
 use std::sync::Arc;
@@ -41,14 +42,17 @@ impl CompoundShape {
     /// Retain nonempty ordered children after validating finite unit-quaternion
     /// mounts, primitive dimensions and the eight-level/256-node source bounds.
     /// No pose normalization, geometry cooking or mass inference is performed.
-    pub fn new(children: Vec<(Pose, ShapeDescription)>) -> Result<Self, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects empty, oversized or overly nested compounds and invalid child poses or dimensions.
+    pub fn new(children: Vec<(Pose, ShapeDescription)>) -> Result<Self, ModelError> {
         if children.is_empty() {
-            return Err("compound requires at least one child");
+            return Err(ModelError::EmptyCompound);
         }
         // Each direct child counts at least once; reject before inspecting a
         // caller's arbitrarily large vector. Shared descendants count per use.
         if children.len() >= 256 {
-            return Err("compound exceeds 256 expanded shape nodes");
+            return Err(ModelError::TooManyCompoundNodes);
         }
         let mut depth = 1;
         let mut nodes = 1;
@@ -63,7 +67,7 @@ impl CompoundShape {
             depth = depth.max(1 + child_depth);
             nodes += child_nodes;
             if depth > 8 || nodes > 256 {
-                return Err("compound exceeds eight levels or 256 expanded shape nodes");
+                return Err(ModelError::CompoundDepthOrSize);
             }
             contains_triangle_surface |= shape.contains_triangle_surface();
         }
@@ -250,7 +254,8 @@ mod tests {
                 BodyKind::Dynamic(Inertial::new(2., [1.; 3], Pose::default()).unwrap()),
                 vec![collider.clone()]
             )
-            .unwrap_err(),
+            .unwrap_err()
+            .as_str(),
             "dynamic triangle surfaces are unsupported"
         );
         let massive = collider
@@ -260,7 +265,9 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            RigidBodyDescription::new(BodyKind::DynamicFromColliders, vec![massive]).unwrap_err(),
+            RigidBodyDescription::new(BodyKind::DynamicFromColliders, vec![massive])
+                .unwrap_err()
+                .as_str(),
             "dynamic triangle surfaces are unsupported"
         );
     }

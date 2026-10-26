@@ -270,10 +270,10 @@ impl crate::Field {
     /// assert!(field.rmuc_2027().is_none());
     /// ```
     pub fn rmuc_2027(&self) -> Option<&State> {
-        self.rmuc_2027.as_ref()
+        self.authority.rmuc()
     }
     pub(crate) fn advance_2027(&mut self, duration_ns: u64) {
-        let Some(state) = &mut self.rmuc_2027 else {
+        let Some(state) = self.authority.rmuc_mut() else {
             return;
         };
         crate::rule_adapters::RfidLayout::from(&state.config).observe(
@@ -599,7 +599,7 @@ mod tests {
         assert!(f.convert_heavy_to_hero(id).is_err());
         f.referee_command(RefereeCommand::StartMatch).unwrap();
         // Advance only rules here: physics parking remains fixed for the conversion check.
-        let g = &mut f.rmuc_2027.as_mut().unwrap().game;
+        let g = &mut f.authority.rmuc_mut().unwrap().game;
         g.advance_ns(COUNTDOWN_NS + 299_000_000_000);
         assert!(!g.heavy_unlocked(crate::gameplay::Team::Red));
         g.advance_ns(1_000_000_000);
@@ -624,7 +624,11 @@ mod tests {
             .is_err()
         );
         f.buy_ammo(id, Caliber::Mm42).unwrap(); // ten remote shells
-        f.rmuc_2027.as_mut().unwrap().game.advance_ns(6_000_000_000);
+        f.authority
+            .rmuc_mut()
+            .unwrap()
+            .game
+            .advance_ns(6_000_000_000);
         f.fire(
             Pose::at([0., 0., 2.]),
             Shot {
@@ -634,7 +638,7 @@ mod tests {
             Some(id),
         )
         .unwrap();
-        let game = &mut f.rmuc_2027.as_mut().unwrap().game;
+        let game = &mut f.authority.rmuc_mut().unwrap().game;
         assert_eq!(game.robots[0].combat.allowance, 9);
         assert_eq!(game.robots[0].combat.heat_tenths, 1000);
         assert_eq!(
@@ -948,7 +952,7 @@ mod tests {
         };
         use crate::gameplay::{Target, Team as GTeam};
         let mut f = field();
-        let g = &mut f.rmuc_2027.as_mut().unwrap().game;
+        let g = &mut f.authority.rmuc_mut().unwrap().game;
         g.add_robot(1, GTeam::Red, GroundRole::Infantry);
         g.add_robot(2, GTeam::Blue, GroundRole::Infantry);
         g.start(1);
@@ -1013,7 +1017,7 @@ mod tests {
     #[test]
     fn source_detector_rectangle_and_flat_damage_survive_physical_hits() {
         let mut f = field();
-        f.rmuc_2027.as_mut().unwrap().game.phase = match_rules::Phase::Running;
+        f.authority.rmuc_mut().unwrap().game.phase = match_rules::Phase::Running;
         let shot = |y| Pose::yawed([3.15, y, 1.], std::f64::consts::PI);
         f.fire(shot(0.), Shot::at_limit(Caliber::Mm17), None)
             .unwrap();

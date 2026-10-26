@@ -9,6 +9,7 @@ use rm_sim_physics::{
     runtime::{ColliderBinding, PhysicalRuntime},
 };
 use serde::Deserialize;
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use sim_engine::model::{
     BodyKind, ColliderDescription, ContactMaterial, HeightField, RigidBodyDescription,
@@ -368,21 +369,15 @@ fn verify_file(root: &Path, file: &FileHash) -> Result<Vec<u8>> {
         !Path::new(&file.path).is_absolute(),
         "absolute terrain payload path"
     );
-    let path = root
-        .join(&file.path)
-        .canonicalize()
-        .context("missing selected terrain payload")?;
+    let path = crate::verified::confined_path(root, Path::new(&file.path))
+        .context("missing or outside-root terrain payload")?;
+    let snapshot = crate::verified::Snapshot::read(&path)?;
     ensure!(
-        path.starts_with(root),
-        "terrain payload escapes package root"
-    );
-    let bytes = std::fs::read(&path)?;
-    ensure!(
-        format!("{:x}", Sha256::digest(&bytes)) == file.sha256,
+        snapshot.sha256 == file.sha256,
         "terrain payload checksum mismatch: {}",
         file.path
     );
-    Ok(bytes)
+    Ok(snapshot.bytes)
 }
 fn mesh_collider(bytes: &[u8], material: ContactMaterial) -> Result<ColliderDescription> {
     let mesh = crate::collision_mesh::load_glb_bytes(bytes)?

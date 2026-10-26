@@ -53,7 +53,10 @@ impl CollisionMesh {
     /// # Ok::<(), &'static str>(())
     /// ```
     pub fn into_description(self) -> Result<rm_sim_physics::cooking::TriangleMesh, &'static str> {
-        rm_sim_physics::cooking::TriangleMesh::new(self.vertices_m, self.triangles)
+        Ok(sim_engine::model::TriangleMesh::new(
+            self.vertices_m,
+            self.triangles,
+        )?)
     }
 
     /// Move CAD arena-frame points into world FLU metres, with the floor top

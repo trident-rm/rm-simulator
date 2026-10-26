@@ -21,7 +21,7 @@ impl Field {
     /// assert!(field.rmuc_2027().is_none());
     /// ```
     pub fn rmul_2027(&self) -> Option<&Match> {
-        self.rmul_2027.as_ref()
+        self.authority.rmul()
     }
 
     pub(crate) fn rmul_role(kind: RobotKind) -> Result<Role, FieldError> {
@@ -74,7 +74,7 @@ impl Field {
     }
 
     pub(crate) fn rmul_command(&mut self, command: RefereeCommand) -> Result<(), FieldError> {
-        let game = self.rmul_2027.as_mut().unwrap();
+        let game = self.authority.rmul_mut().unwrap();
         match command {
             RefereeCommand::StartMatch => {
                 if game.phase != Phase::Idle {
@@ -162,7 +162,7 @@ impl Field {
     }
 
     pub(crate) fn convert_rmul_heavy(&mut self, id: u32) -> Result<(), FieldError> {
-        let game = self.rmul_2027.as_ref().unwrap();
+        let game = self.authority.rmul().unwrap();
         let robot = game
             .robots
             .iter()
@@ -205,8 +205,8 @@ impl Field {
         }
         // UL §3.3.6: the install action is virtual; the referee-confirmed shot
         // remains necessary for upgraded HP/heat. This is a practice body proxy.
-        self.rmul_2027
-            .as_mut()
+        self.authority
+            .rmul_mut()
             .unwrap()
             .set_heavy_installed(id, true)
             .map_err(FieldError::Referee)?;
@@ -223,7 +223,7 @@ impl Field {
     }
 
     pub(crate) fn advance_rmul(&mut self, duration_ns: u64) {
-        if let Some(game) = &mut self.rmul_2027 {
+        if let Some(game) = self.authority.rmul_mut() {
             for r in game.robots.clone() {
                 let p = self.physics.chassis_position_m(r.id);
                 let sign = if r.team == crate::gameplay::Team::Red {

@@ -45,7 +45,7 @@ fn model(half: [f64; 3], mass: Option<f64>) -> Result<CookedRigidBody, &'static 
     } else {
         BodyKind::Fixed
     };
-    CookedRigidBody::new(RigidBodyDescription::new(
+    Ok(CookedRigidBody::new(RigidBodyDescription::new(
         kind,
         vec![ColliderDescription::new(
             ShapeDescription::Cuboid {
@@ -54,7 +54,7 @@ fn model(half: [f64; 3], mass: Option<f64>) -> Result<CookedRigidBody, &'static 
             Pose::default(),
             material(),
         )?],
-    )?)
+    )?)?)
 }
 
 /// Prepared resources survive resets; all live bindings are reacquired by key.
@@ -84,31 +84,38 @@ impl Simulation {
         })
     }
     fn install(models: &[CookedRigidBody; 3]) -> Result<PhysicalRuntime, &'static str> {
-        PhysicalRuntime::from_recipe(StepDuration::default(), |runtime| {
-            runtime.install_catch_floor(0., material())?;
-            for i in 0..3 {
-                runtime.install_body(KEYS[i], &models[i], BodyState::at(Pose::at(INITIAL[i])))?;
-            }
-            let h = std::f64::consts::FRAC_1_SQRT_2;
-            let frame = |translation_m| Pose {
-                translation_m,
-                rotation_wxyz: [h, 0., -h, 0.],
-            };
-            let description = JointDescription::new(
-                JointKind::Revolute,
-                frame([0., 0., 0.5]),
-                frame([0.; 3]),
-                Some(JointLimits::new(-1., 1.)?),
-                false,
-            )?;
-            runtime.install_joint(
-                YAW,
-                runtime.body_binding(BASE).unwrap(),
-                runtime.body_binding(ARM).unwrap(),
-                &description,
-            )?;
-            Ok(())
-        })
+        Ok(PhysicalRuntime::from_recipe(
+            StepDuration::default(),
+            |runtime| {
+                runtime.install_catch_floor(0., material())?;
+                for i in 0..3 {
+                    runtime.install_body(
+                        KEYS[i],
+                        &models[i],
+                        BodyState::at(Pose::at(INITIAL[i])),
+                    )?;
+                }
+                let h = std::f64::consts::FRAC_1_SQRT_2;
+                let frame = |translation_m| Pose {
+                    translation_m,
+                    rotation_wxyz: [h, 0., -h, 0.],
+                };
+                let description = JointDescription::new(
+                    JointKind::Revolute,
+                    frame([0., 0., 0.5]),
+                    frame([0.; 3]),
+                    Some(JointLimits::new(-1., 1.)?),
+                    false,
+                )?;
+                runtime.install_joint(
+                    YAW,
+                    runtime.body_binding(BASE).unwrap(),
+                    runtime.body_binding(ARM).unwrap(),
+                    &description,
+                )?;
+                Ok(())
+            },
+        )?)
     }
     /// Read a privileged world FLU pose, rebinding the logical key each time.
     pub fn pose(&self, key: BodyKey) -> Pose {

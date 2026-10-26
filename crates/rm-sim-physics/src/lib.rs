@@ -37,7 +37,6 @@ pub mod cooking;
 pub mod geometry;
 pub mod manipulator;
 pub mod manipulator_collision;
-pub mod manipulator_plan;
 pub mod mechanism;
 pub mod motion;
 pub mod projectile;

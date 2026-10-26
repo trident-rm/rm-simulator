@@ -135,3 +135,12 @@ fingerprints are retained in ignored `local-assets/controller-extraction/`.
 Sentry targeting/intelligence policy, external-control authority and match task
 state remain host/world responsibilities. Portable full robot packages, generic
 checkpoint continuation and another solver are not supplied by this extraction.
+
+## Arm search and assembly modules
+
+`rm_sim_control::manipulator_plan` owns bounded joint-space search and IK candidate
+selection. It consumes the physical arm model and caller collision checks without
+stepping a runtime. `PlanError` implements the standard error traits. The assembly
+planner retains search/caches, with exact certificate matching in
+`assembly/planner/transitions.rs` and guarded replay/retiming in
+`assembly/planner/playback.rs`. Existing `Rig` method paths remain unchanged.

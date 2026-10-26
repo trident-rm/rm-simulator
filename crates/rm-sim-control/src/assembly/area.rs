@@ -135,7 +135,7 @@ impl Rig {
                     inverse(trial.engineer_body),
                     trial.target([0.09, 0.2, 0.6], [0.; 3]),
                 );
-                for q in rm_sim_physics::manipulator_plan::ik_candidates(
+                for q in crate::manipulator_plan::ik_candidates(
                     &trial.config.engineer,
                     target,
                     std::iter::once(trial.engineer_q)

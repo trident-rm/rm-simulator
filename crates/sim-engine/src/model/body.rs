@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Validated source collider and rigid-body descriptions; no runtime handles.
+use super::ModelError;
 use super::{BodyPolicy, ColliderPolicy, CompoundShape, ConvexHull, HeightField, TriangleMesh};
 use crate::Pose;
 use std::sync::Arc;
@@ -40,17 +41,17 @@ pub enum ShapeDescription {
     Compound(CompoundShape),
 }
 impl ShapeDescription {
-    pub(super) fn validate(&self) -> Result<(), &'static str> {
+    pub(super) fn validate(&self) -> Result<(), ModelError> {
         match self {
-            Self::Ball { radius_m } if !positive(*radius_m) => Err("invalid sphere radius"),
+            Self::Ball { radius_m } if !positive(*radius_m) => Err(ModelError::InvalidSphereRadius),
             Self::Cylinder {
                 radius_m,
                 half_height_m,
             } if !positive(*radius_m) || !positive(*half_height_m) => {
-                Err("invalid cylinder radius or half height")
+                Err(ModelError::InvalidCylinderRadiusOrHalfHeight)
             }
             Self::Cuboid { half_extents_m } if !half_extents_m.iter().copied().all(positive) => {
-                Err("invalid box half extents")
+                Err(ModelError::InvalidBoxHalfExtents)
             }
             _ => Ok(()),
         }
@@ -93,11 +94,14 @@ impl ColliderDescription {
     /// Validate geometry, a finite unit-quaternion mounting pose and contact data.
     /// Empty triangle meshes and degenerate convex point clouds remain source
     /// descriptions; a backend may reject cooking.
+    ///
+    /// # Errors
+    /// Rejects invalid shape dimensions, mounting poses or friction/restitution coefficients.
     pub fn new(
         shape: ShapeDescription,
         pose: Pose,
         material: ContactMaterial,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, ModelError> {
         shape.validate()?;
         validate_pose(pose)?;
         if !material.friction.is_finite()
@@ -105,7 +109,7 @@ impl ColliderDescription {
             || !material.restitution.is_finite()
             || !(0. ..=1.).contains(&material.restitution)
         {
-            return Err("invalid contact material");
+            return Err(ModelError::InvalidContactMaterial);
         }
         Ok(Self {
             shape,
@@ -127,7 +131,10 @@ impl ColliderDescription {
     /// assert_eq!(collider.policy().mass, ColliderMass::MassKg(2.));
     /// # Ok::<(), &'static str>(())
     /// ```
-    pub fn with_policy(mut self, policy: ColliderPolicy) -> Result<Self, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects nonfinite or negative mass/density, damping or gravity parameters.
+    pub fn with_policy(mut self, policy: ColliderPolicy) -> Result<Self, ModelError> {
         policy.mass.validate()?;
         self.policy = policy;
         Ok(self)
@@ -162,11 +169,14 @@ pub struct Inertial {
 impl Inertial {
     /// Require finite positive mass/moments, finite reciprocals, a unit frame and
     /// realizable principal moments (each no greater than the sum of the others).
+    ///
+    /// # Errors
+    /// Rejects nonpositive/nonfinite mass or inertia, unrealizable principal moments, or an invalid COM frame.
     pub fn new(
         mass_kg: f64,
         principal_inertia_kg_m2: [f64; 3],
         frame: Pose,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, ModelError> {
         validate_pose(frame)?;
         if !positive(mass_kg)
             || !mass_kg.recip().is_finite()
@@ -175,12 +185,12 @@ impl Inertial {
                 .copied()
                 .all(|x| positive(x) && x.recip().is_finite())
         {
-            return Err("invalid mass or principal inertia");
+            return Err(ModelError::InvalidMassOrPrincipalInertia);
         }
         let scale = principal_inertia_kg_m2.into_iter().fold(0., f64::max);
         let i = principal_inertia_kg_m2.map(|x| x / scale);
         if (0..3).any(|axis| i[axis] > i[(axis + 1) % 3] + i[(axis + 2) % 3]) {
-            return Err("unrealizable principal inertia");
+            return Err(ModelError::UnrealizablePrincipalInertia);
         }
         Ok(Self {
             mass_kg,
@@ -244,20 +254,23 @@ impl RigidBodyDescription {
     /// and collider-derived mass are exclusive for dynamic bodies. Fixed and kinematic
     /// bodies may retain explicit collider masses; [`BodyKind::DynamicFromColliders`]
     /// requires at least one positive contribution.
-    pub fn new(kind: BodyKind, colliders: Vec<ColliderDescription>) -> Result<Self, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects dynamic triangle surfaces or collider mass incompatible with the selected body mode.
+    pub fn new(kind: BodyKind, colliders: Vec<ColliderDescription>) -> Result<Self, ModelError> {
         if matches!(kind, BodyKind::Dynamic(_) | BodyKind::DynamicFromColliders)
             && colliders
                 .iter()
                 .any(|c| c.shape().contains_triangle_surface())
         {
-            return Err("dynamic triangle surfaces are unsupported");
+            return Err(ModelError::DynamicSurface);
         }
         let contributes = colliders.iter().any(|c| c.policy().mass.contributes());
         if matches!(kind, BodyKind::DynamicFromColliders) && !contributes {
-            return Err("collider-derived dynamic body requires a positive mass contribution");
+            return Err(ModelError::MissingColliderMass);
         }
         if matches!(kind, BodyKind::Dynamic(_)) && contributes {
-            return Err("collider mass requires explicit collider-derived dynamic body mode");
+            return Err(ModelError::UnexpectedColliderMass);
         }
         Ok(Self(Arc::new(BodyData {
             kind,
@@ -275,7 +288,10 @@ impl RigidBodyDescription {
     /// assert!(body.policy().ccd_enabled);
     /// # Ok::<(), &'static str>(())
     /// ```
-    pub fn with_policy(mut self, policy: BodyPolicy) -> Result<Self, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects nonfinite or negative mass/density, damping or gravity parameters.
+    pub fn with_policy(mut self, policy: BodyPolicy) -> Result<Self, ModelError> {
         policy.validate()?;
         Arc::make_mut(&mut self.0).policy = policy;
         Ok(self)
@@ -316,7 +332,10 @@ impl BodyState {
         }
     }
     /// Validate a finite pose with unit rotation and finite world velocities.
-    pub fn validate(self) -> Result<(), &'static str> {
+    ///
+    /// # Errors
+    /// Rejects inconsistent body velocities, wheel counts or nonfinite actuation parameters.
+    pub fn validate(self) -> Result<(), ModelError> {
         validate_pose(self.pose)?;
         if !self
             .velocity_m_s
@@ -324,7 +343,7 @@ impl BodyState {
             .chain(self.angular_velocity_rad_s)
             .all(f64::is_finite)
         {
-            return Err("nonfinite body velocity");
+            return Err(ModelError::NonfiniteBodyVelocity);
         }
         Ok(())
     }
@@ -333,15 +352,9 @@ impl BodyState {
 fn positive(x: f64) -> bool {
     x.is_finite() && x > 0.
 }
-pub(super) fn validate_pose(pose: Pose) -> Result<(), &'static str> {
-    let norm = pose.rotation_wxyz.iter().map(|x| x * x).sum::<f64>();
-    if !pose.translation_m.into_iter().all(f64::is_finite)
-        || !norm.is_finite()
-        || (norm - 1.).abs() > 1e-6
-    {
-        return Err("invalid body or collider pose");
-    }
-    Ok(())
+pub(super) fn validate_pose(pose: Pose) -> Result<(), ModelError> {
+    pose.validate_with(crate::pose::PoseTolerance::Model)
+        .map_err(|_| ModelError::InvalidPose)
 }
 
 #[cfg(test)]

@@ -4,6 +4,14 @@
 
 ## Unreleased
 
+- Refactor generic APIs to typed validation, cooking, binding, carrier and session
+  errors while retaining diagnostic text at legacy RM boundaries. Share explicit
+  pose admission rules without changing their tolerances or restore normalization.
+- Consolidate chassis-owned host records and native competition authority without
+  changing checkpoint fields or shot ordering. Share verified file snapshots across
+  asset loaders. Move bounded arm search to `rm-sim-control` and separate assembly
+  transition certificates and playback from search.
+
 - Rebuild ten Rune backing-frame collisions as profile extrusions, saving
   1,392 triangles. Preserve large windows, rotor ownership, targets and visuals.
 

@@ -4,7 +4,11 @@
 /// Compatibility path for RoboMaster physical participants.
 pub use crate::projectile::WorldPhysics;
 pub(crate) use sim_physics::backend::{math, substep_count};
-pub use sim_physics::runtime::*;
+pub use sim_physics::runtime::{
+    AssemblyBinding, AssemblyKeys, BindingError, BodyBinding, BodyKey, BodyState, ColliderBinding,
+    ColliderState, ContactSide, DirectionalFriction, JointBinding, JointKey, ParticipantBinding,
+    PhysicalContact, PhysicalGeometry, PhysicalRuntime, RuntimeError, session,
+};
 /// Native integration slice ceiling, in nanoseconds.
 pub const SUBSTEP_MAX_NS: u64 = sim_physics::backend::SUBSTEP_MAX_NS;
 #[cfg(test)]

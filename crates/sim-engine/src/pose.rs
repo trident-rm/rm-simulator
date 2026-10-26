@@ -60,3 +60,110 @@ impl Pose {
         }
     }
 }
+
+/// The established admission rule for a pose, independent of backend conversion.
+/// Tolerances are explicit because source, runtime and asset contracts differ.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoseTolerance {
+    /// Squared quaternion norm error at most 1e-6, for source models and mounts.
+    Model,
+    /// Squared quaternion norm error strictly below 1e-6, for live runtime input.
+    Runtime,
+    /// Quaternion length error at most 1e-6, for composed asset placements.
+    Asset,
+    /// Squared quaternion norm error at most 1e-8, for recorded IK input.
+    IkHint,
+}
+
+/// A pose cannot represent a finite rigid transform under its admission policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoseError {
+    /// At least one translation component is not finite.
+    NonfiniteTranslation,
+    /// Quaternion norm is nonfinite or outside the selected unit-length tolerance.
+    NonunitRotation,
+}
+impl std::fmt::Display for PoseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NonfiniteTranslation => "pose translation must be finite",
+            Self::NonunitRotation => "pose rotation must have unit length",
+        })
+    }
+}
+impl std::error::Error for PoseError {}
+impl Pose {
+    /// Check finite translation and the selected quaternion norm rule without repair.
+    ///
+    /// # Errors
+    /// Returns a translation or rotation error; normalization is never implicit.
+    ///
+    /// ```
+    /// use sim_engine::{Pose, pose::PoseTolerance};
+    /// Pose::default().validate_with(PoseTolerance::Model)?;
+    /// # Ok::<(), sim_engine::pose::PoseError>(())
+    /// ```
+    pub fn validate_with(self, tolerance: PoseTolerance) -> Result<(), PoseError> {
+        if !self.translation_m.into_iter().all(f64::is_finite) {
+            return Err(PoseError::NonfiniteTranslation);
+        }
+        let norm_squared = self.rotation_wxyz.iter().map(|x| x * x).sum::<f64>();
+        let accepted = norm_squared.is_finite()
+            && match tolerance {
+                PoseTolerance::Model => (norm_squared - 1.).abs() <= 1e-6,
+                PoseTolerance::Runtime => (norm_squared - 1.).abs() < 1e-6,
+                PoseTolerance::Asset => (norm_squared.sqrt() - 1.).abs() <= 1e-6,
+                PoseTolerance::IkHint => (norm_squared - 1.).abs() <= 1e-8,
+            };
+        if !accepted {
+            return Err(PoseError::NonunitRotation);
+        }
+        Ok(())
+    }
+}
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+    #[test]
+    fn policies_preserve_historical_acceptance_without_normalization() {
+        for w in [
+            0.,
+            -1.,
+            1.,
+            f64::NAN,
+            f64::INFINITY,
+            1. + 0.75e-6,
+            1. + 1e-8,
+        ] {
+            let p = Pose {
+                rotation_wxyz: [w, 0., 0., 0.],
+                ..Pose::default()
+            };
+            let n = w * w;
+            for (policy, expected) in [
+                (
+                    PoseTolerance::Model,
+                    n.is_finite() && (n - 1.).abs() <= 1e-6,
+                ),
+                (
+                    PoseTolerance::Runtime,
+                    n.is_finite() && (n - 1.).abs() < 1e-6,
+                ),
+                (
+                    PoseTolerance::Asset,
+                    n.is_finite() && (n.sqrt() - 1.).abs() <= 1e-6,
+                ),
+                (
+                    PoseTolerance::IkHint,
+                    n.is_finite() && (n - 1.).abs() <= 1e-8,
+                ),
+            ] {
+                assert_eq!(p.validate_with(policy).is_ok(), expected, "{policy:?}: {w}");
+            }
+        }
+        assert_eq!(
+            Pose::at([f64::NAN, 0., 0.]).validate_with(PoseTolerance::Model),
+            Err(PoseError::NonfiniteTranslation)
+        );
+    }
+}

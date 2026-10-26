@@ -50,3 +50,9 @@ injection for downstream regression tests. It is not part of normal operation.
 Generic applications should depend on this crate directly. See
 [physical runtime](../../docs/physical-runtime.md) for ownership and
 [controller bench](../../docs/controller-bench.md) for the first measured consumer.
+
+Cooking returns `CookError`; runtime commands return `RuntimeError`, including
+foreign/stale/duplicate/exhausted `BindingError` categories. Carrier observations
+return `CarrierError`, and physical sessions return `SessionError` with nested
+causes. Reconstruction recipes return `RuntimeError`. See the
+[API migration notes](../../docs/engine-architecture.md#typed-errors-and-pose-admission).

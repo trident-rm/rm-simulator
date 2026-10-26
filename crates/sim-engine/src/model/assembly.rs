@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Immutable source assembly trees, without backend identities or inferred state.
+use super::ModelError;
 
 use super::{BodyState, JointDescription, RigidBodyDescription};
 use std::collections::{BTreeMap, BTreeSet};
@@ -30,11 +31,14 @@ impl AssemblyLink {
     /// Bind a source ID and body to a finite initial state with unit rotation.
     /// Pose uses metres and wxyz quaternion; COM linear velocity uses m/s and
     /// angular velocity uses rad/s, all in the common assembly FLU frame.
+    ///
+    /// # Errors
+    /// Rejects invalid links/joints, duplicate IDs, absent endpoints, cycles and disconnected links.
     pub fn new(
         id: AssemblyLinkId,
         body: RigidBodyDescription,
         initial: BodyState,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, ModelError> {
         initial.validate()?;
         Ok(Self { id, body, initial })
     }
@@ -150,44 +154,47 @@ impl AssemblyDescription {
     /// the root must exist and never be a child. Self edges, multiple parents,
     /// cycles and disconnected links are rejected. A single link without joints
     /// is valid. No body-kind or initial joint-frame compatibility is imposed.
+    ///
+    /// # Errors
+    /// Rejects invalid links/joints, duplicate IDs, absent endpoints, cycles and disconnected links.
     pub fn new(
         root: AssemblyLinkId,
         links: Vec<AssemblyLink>,
         joints: Vec<AssemblyJoint>,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, ModelError> {
         if links.is_empty() {
-            return Err("assembly must contain at least one link");
+            return Err(ModelError::EmptyAssembly);
         }
         let mut indices = BTreeMap::new();
         for (index, link) in links.iter().enumerate() {
             if indices.insert(link.id, index).is_some() {
-                return Err("duplicate assembly link ID");
+                return Err(ModelError::DuplicateAssemblyLinkId);
             }
         }
         if !indices.contains_key(&root) {
-            return Err("assembly root link is missing");
+            return Err(ModelError::MissingAssemblyRoot);
         }
         let mut joint_ids = BTreeSet::new();
         let mut has_parent = vec![false; links.len()];
         let mut children = vec![Vec::new(); links.len()];
         for joint in &joints {
             if !joint_ids.insert(joint.id) {
-                return Err("duplicate assembly joint ID");
+                return Err(ModelError::DuplicateAssemblyJointId);
             }
             let Some(&parent) = indices.get(&joint.parent) else {
-                return Err("assembly joint parent link is missing");
+                return Err(ModelError::MissingJointParent);
             };
             let Some(&child) = indices.get(&joint.child) else {
-                return Err("assembly joint child link is missing");
+                return Err(ModelError::MissingJointChild);
             };
             if parent == child {
-                return Err("assembly joint cannot connect a link to itself");
+                return Err(ModelError::SelfJoint);
             }
             if joint.child == root {
-                return Err("assembly root cannot be a child");
+                return Err(ModelError::RootHasParent);
             }
             if has_parent[child] {
-                return Err("assembly link has multiple parents");
+                return Err(ModelError::MultipleParents);
             }
             has_parent[child] = true;
             children[parent].push(child);
@@ -202,12 +209,12 @@ impl AssemblyDescription {
             visited += 1;
         }
         if visited != links.len() {
-            return Err("assembly contains a directed cycle");
+            return Err(ModelError::AssemblyCycle);
         }
         // An acyclic graph with at most one parent per link is a forest. With
         // n-1 edges it has exactly one component, rooted at the supplied root.
         if joints.len() != links.len() - 1 {
-            return Err("assembly links are disconnected from the root");
+            return Err(ModelError::DisconnectedAssembly);
         }
         Ok(Self(Arc::new(AssemblyData {
             root,
@@ -265,10 +272,7 @@ mod tests {
         )
     }
 
-    fn graph(
-        links: &[u64],
-        edges: &[(u64, u64, u64)],
-    ) -> Result<AssemblyDescription, &'static str> {
+    fn graph(links: &[u64], edges: &[(u64, u64, u64)]) -> Result<AssemblyDescription, ModelError> {
         AssemblyDescription::new(
             AssemblyLinkId(0),
             links.iter().copied().map(link).collect(),
@@ -319,7 +323,7 @@ mod tests {
                 "assembly joint child link is missing",
             ),
         ] {
-            assert_eq!(graph(&links, &edges).unwrap_err(), error);
+            assert_eq!(graph(&links, &edges).unwrap_err().as_str(), error);
         }
     }
 
@@ -340,26 +344,32 @@ mod tests {
                 "assembly link has multiple parents",
             ),
         ] {
-            assert_eq!(graph(&[0, 1, 2], &edges).unwrap_err(), error);
+            assert_eq!(graph(&[0, 1, 2], &edges).unwrap_err().as_str(), error);
         }
     }
 
     #[test]
     fn detects_cycles_away_from_root_even_with_exact_tree_edge_count() {
         assert_eq!(
-            graph(&[0, 1, 2], &[(0, 1, 2), (1, 2, 1)]).unwrap_err(),
+            graph(&[0, 1, 2], &[(0, 1, 2), (1, 2, 1)])
+                .unwrap_err()
+                .as_str(),
             "assembly contains a directed cycle"
         );
         assert_eq!(
-            graph(&[0, 1, 2, 3], &[(0, 1, 2), (1, 2, 1)]).unwrap_err(),
+            graph(&[0, 1, 2, 3], &[(0, 1, 2), (1, 2, 1)])
+                .unwrap_err()
+                .as_str(),
             "assembly contains a directed cycle"
         );
         assert_eq!(
-            graph(&[0, 1, 2, 3], &[(0, 0, 1), (1, 2, 3)]).unwrap_err(),
+            graph(&[0, 1, 2, 3], &[(0, 0, 1), (1, 2, 3)])
+                .unwrap_err()
+                .as_str(),
             "assembly links are disconnected from the root"
         );
         assert_eq!(
-            graph(&[0, 1], &[]).unwrap_err(),
+            graph(&[0, 1], &[]).unwrap_err().as_str(),
             "assembly links are disconnected from the root"
         );
     }

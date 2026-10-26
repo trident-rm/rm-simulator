@@ -3,6 +3,9 @@
 //! Immutable validated CPU query records without solver handles or resource ownership.
 //! Backends execute batches against caller-selected coherent captures. Hit ordinals
 //! are capture-local; device buffers, filtering and scheduling belong to adapters.
+#[path = "queries_error.rs"]
+mod queries_error;
+pub use queries_error::QueryError;
 
 /// Validated finite metric ray with a normalized, dimensionless FLU direction.
 /// Fields are immutable so batch execution needs no repeated validation.
@@ -27,21 +30,24 @@ impl RayQuery {
     /// Validate finite origin/direction and positive finite range in metres.
     /// Direction scale is irrelevant. Scaling before normalization avoids
     /// overflow and underflow for extreme finite nonzero directions.
+    ///
+    /// # Errors
+    /// Rejects nonfinite origins/directions, zero directions, and nonpositive or nonfinite range.
     pub fn new(
         origin_m: [f64; 3],
         direction: [f64; 3],
         max_distance_m: f64,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, QueryError> {
         if !origin_m.into_iter().chain(direction).all(f64::is_finite)
             || !max_distance_m.is_finite()
             || max_distance_m <= 0.
         {
-            return Err("ray requires finite origin/direction and a positive finite range");
+            return Err(QueryError::InvalidRay);
         }
         let direction = glam::DVec3::new(direction[0], direction[1], direction[2]);
         let scale = direction.abs().max_element();
         if scale == 0. {
-            return Err("ray direction must be nonzero");
+            return Err(QueryError::ZeroDirection);
         }
         Ok(Self {
             origin_m,

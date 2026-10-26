@@ -325,10 +325,11 @@ fn read_local(root: &Path, name: &str) -> io::Result<Vec<u8>> {
     std::fs::read(root.join(name))
 }
 fn snapshot(name: &str, bytes: Vec<u8>) -> VerifiedRobotFile {
+    let snapshot = crate::verified::Snapshot::new(bytes);
     VerifiedRobotFile {
         name: name.into(),
-        sha256: format!("{:x}", Sha256::digest(&bytes)),
-        bytes: bytes.into(),
+        sha256: snapshot.sha256,
+        bytes: snapshot.bytes.into(),
     }
 }
 fn checked_file(root: &Path, m: &Value, key: &str, name: &str) -> io::Result<VerifiedRobotFile> {

@@ -3,6 +3,36 @@
 //! Exact caller-paced integration time, independent of any solver or host clock.
 use serde::{Deserialize, Serialize};
 
+/// Why an exact simulation step was rejected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StepDurationError {
+    /// The period is zero or coarser than the supported integration ceiling.
+    OutOfRange,
+    /// The frequency has no positive integer-nanosecond period.
+    InexactFrequency,
+}
+impl StepDurationError {
+    /// Original diagnostic for compatibility adapters.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OutOfRange => "simulation step must be within 1..=7_812_500 nanoseconds",
+            Self::InexactFrequency => "frequency must have an exact integer-nanosecond period",
+        }
+    }
+}
+impl std::fmt::Display for StepDurationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl std::error::Error for StepDurationError {}
+impl From<StepDurationError> for &'static str {
+    fn from(error: StepDurationError) -> Self {
+        error.as_str()
+    }
+}
+
 /// Completed integration steps and elapsed simulation time, without a host clock.
 /// Nanoseconds are authoritative when comparing simulations at different rates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,18 +73,24 @@ impl StepDuration {
     pub const HZ_1000: Self = Self(1_000_000);
     /// Validate a positive exact nanosecond duration no coarser than 128 Hz.
     /// Larger steps are rejected to preserve the existing integration ceiling.
-    pub const fn from_ns(duration_ns: u64) -> Result<Self, &'static str> {
+    ///
+    /// # Errors
+    /// Returns `StepDurationError::OutOfRange` for zero or a period above 7,812,500 ns.
+    pub const fn from_ns(duration_ns: u64) -> Result<Self, StepDurationError> {
         match duration_ns {
             1..=DEFAULT_TICK_NS => Ok(Self(duration_ns)),
-            _ => Err("simulation step must be within 1..=7_812_500 nanoseconds"),
+            _ => Err(StepDurationError::OutOfRange),
         }
     }
     /// Select a frequency in hertz with an exact integer-nanosecond period.
     /// Zero, rates below 128 Hz and fractional-nanosecond periods are rejected;
     /// use [`Self::from_ns`] when specifying an exact duration directly.
-    pub const fn from_hz(frequency_hz: u64) -> Result<Self, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects zero, an inexact nanosecond period, or a period above the integration ceiling.
+    pub const fn from_hz(frequency_hz: u64) -> Result<Self, StepDurationError> {
         if frequency_hz == 0 || !1_000_000_000_u64.is_multiple_of(frequency_hz) {
-            return Err("frequency must have an exact integer-nanosecond period");
+            return Err(StepDurationError::InexactFrequency);
         }
         Self::from_ns(1_000_000_000 / frequency_hz)
     }
@@ -73,7 +109,7 @@ impl Default for StepDuration {
     }
 }
 impl TryFrom<u64> for StepDuration {
-    type Error = &'static str;
+    type Error = StepDurationError;
     fn try_from(value: u64) -> Result<Self, Self::Error> {
         Self::from_ns(value)
     }

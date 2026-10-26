@@ -46,6 +46,38 @@ identities still present in physics are compatibility debt, not engine contracts
 The separately published `rm-sim` 0.0.0-dev package is a development placeholder;
 it does not ship these runtime crates or expose a simulator API yet.
 
+## Typed errors and pose admission
+
+Generic engine callers receive `time::StepDurationError`, `model::ModelError`,
+`queries::QueryError` or `control::ControlError`. Physics uses `cooking::CookError`,
+`runtime::RuntimeError` (including `BindingError`), `sensors::carrier::CarrierError`
+and `runtime::session::SessionError`. Errors implement `std::error::Error`;
+wrapped model, binding, cooking and integration causes remain available through
+`source()`. Their `as_str()` diagnostics match the existing RM string-error APIs.
+`From<Error> for &'static str` keeps `?` usable inside those compatibility adapters.
+Direct tail returns at such boundaries use `Ok(operation()?)`.
+
+A `PhysicalSession` reconstruction recipe now returns `RuntimeError`; its public
+construction, reset and stepping return `SessionError`. `PhysicalRuntime::from_recipe`
+still accepts existing string-error setup closures, converting a rejected setup
+into `RuntimeError::InvalidInput`. No recipe runs on the stepping hot path.
+
+`Pose::validate_with(PoseTolerance)` centralizes existing admission arithmetic.
+`Model` uses inclusive squared-norm tolerance, `Runtime` its strict variant,
+`Asset` quaternion-length tolerance, and `IkHint` the tighter recorded-IK observation rule.
+Validation never normalizes source poses. Exact chassis restoration still retains
+its original quaternion bits; backend normalization remains explicit.
+
+The world stores one internal bare/RMUC/RMUL authority. Configuration and checkpoint
+DTOs retain their existing optional fields and reject mixed authorities before
+conversion. Host chassis records group spawn/robot/weapon and shot history while
+keeping ordered publication and the separate input stream lifetime.
+
+Bounded arm search is `rm_sim_control::manipulator_plan`; physical kinematics and
+collision queries remain in `rm_sim_physics`. The former physics planning module
+is removed to avoid a dependency cycle. The differential benchmark moved with it:
+`cargo run -p rm-sim-control --example serial_ik_bench --release --locked -- INPUT`.
+
 ## Implemented source/cooked surface boundary
 
 `engine::model::TriangleMesh` is an immutable indexed surface in local FLU

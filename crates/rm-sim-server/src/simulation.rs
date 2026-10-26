@@ -171,6 +171,21 @@ pub struct FireRecord {
     pub authoritative_muzzle_pose: rm_sim_world::Pose,
 }
 
+/// Host records with the lifetime of one addressed chassis, including bots.
+#[derive(Default)]
+struct ChassisState {
+    spawn: Option<rm_sim_world::Pose>,
+    robot: Option<Robot>,
+    weapon: Option<WeaponConfig>,
+    shots: ShotState,
+}
+#[derive(Default)]
+struct ShotState {
+    last_id: u64,
+    results: VecDeque<crate::protocol::ShotResult>,
+    intended_ns: VecDeque<u64>,
+}
+
 /// The authoritative field with the host's pause, pacing, input and shot state.
 /// One host worker owns the only live value. World time moves only through
 /// [`advance`](Simulation::advance) and [`step`](Simulation::step), and only in
@@ -188,8 +203,7 @@ pub struct Simulation {
     bots: std::collections::BTreeSet<u32>,
     /// Ordered so that snapshot bytes never depend on hash iteration order.
     pub(crate) input_streams: BTreeMap<u32, crate::input_stream::InputStream>,
-    shot_results: BTreeMap<u32, VecDeque<crate::protocol::ShotResult>>,
-    last_shot_ids: BTreeMap<u32, u64>,
+    chassis_state: BTreeMap<u32, ChassisState>,
     pending_shots: Vec<Command>,
     completed_shots: VecDeque<crate::protocol::ShotResult>,
     prediction_scene: Option<crate::prediction::PredictionScene>,
@@ -206,13 +220,6 @@ pub struct Simulation {
     /// Starting settings and caps for a 42 mm (Hero) chassis.
     hero_weapon: WeaponConfig,
     hero_weapon_limits: crate::protocol::WeaponLimits,
-    pilot_weapons: BTreeMap<u32, WeaponConfig>,
-    /// The robot each pilot's chassis was spawned as; a bot or a chassis
-    /// spawned by configuration alone has no entry.
-    robots: BTreeMap<u32, Robot>,
-    /// Intended times of each shooter's recent shots, on the pilot's timeline.
-    fired_ns: BTreeMap<u32, VecDeque<u64>>,
-    pilot_spawns: BTreeMap<u32, rm_sim_world::Pose>,
 }
 
 impl Simulation {
@@ -361,8 +368,7 @@ impl Simulation {
             bots: Default::default(),
             input_epoch: 0,
             input_streams: BTreeMap::new(),
-            shot_results: BTreeMap::new(),
-            last_shot_ids: BTreeMap::new(),
+            chassis_state: BTreeMap::new(),
             pending_shots: Vec::new(),
             completed_shots: VecDeque::new(),
             prediction_scene: None,
@@ -374,10 +380,6 @@ impl Simulation {
             weapon_limits: Default::default(),
             hero_weapon: WeaponConfig::hero(),
             hero_weapon_limits: crate::protocol::WeaponLimits::hero(),
-            pilot_weapons: BTreeMap::new(),
-            robots: BTreeMap::new(),
-            fired_ns: BTreeMap::new(),
-            pilot_spawns: Default::default(),
             fire_records: VecDeque::new(),
         })
     }
@@ -455,9 +457,12 @@ impl Simulation {
         if !position_m.into_iter().chain([yaw_deg]).all(f64::is_finite) {
             return Err("Sentry placement must be finite".into());
         }
-        if self.robots.iter().any(|(&id, &robot)| {
-            robot == Robot::Sentry && self.field.chassis_team(id) == Some(team)
-        }) {
+        if self
+            .chassis_state
+            .iter()
+            .filter_map(|(&id, state)| state.robot.map(|robot| (id, robot)))
+            .any(|(id, robot)| robot == Robot::Sentry && self.field.chassis_team(id) == Some(team))
+        {
             return Err("team already has a Sentry".into());
         }
         if self.bots.len() >= 32 {
@@ -792,9 +797,13 @@ impl Simulation {
     }
     fn validate_rmul_slot(&self, team: Team, robot: Robot) -> Result<(), String> {
         if self.competition.rmul_format().is_some()
-            && self.robots.iter().any(|(id, existing)| {
-                *existing == robot && self.field.chassis_team(*id) == Some(team)
-            })
+            && self
+                .chassis_state
+                .iter()
+                .filter_map(|(id, state)| state.robot.as_ref().map(|robot| (id, robot)))
+                .any(|(id, existing)| {
+                    *existing == robot && self.field.chassis_team(*id) == Some(team)
+                })
         {
             return Err("the team's RMUL equipment slot is occupied".into());
         }
@@ -959,16 +968,17 @@ impl Simulation {
             .field
             .add_chassis(&placement)
             .map_err(|e| e.to_string())?;
-        self.pilot_spawns.insert(id, placement.spawn);
-        if let Some(robot) = robot {
-            self.robots.insert(id, robot);
-        }
+        let state = self.chassis_state.entry(id).or_default();
+        state.spawn = Some(placement.spawn);
+        state.robot = robot;
         Ok(id)
     }
     /// The robot a chassis was spawned as; `None` for a bot or a chassis
     /// spawned by configuration alone.
     pub fn robot(&self, chassis: u32) -> Option<Robot> {
-        self.robots.get(&chassis).copied()
+        self.chassis_state
+            .get(&chassis)
+            .and_then(|state| state.robot)
     }
     /// The caliber a chassis' gun fires: its robot's, or the host default
     /// weapon's for a chassis that is no particular robot.
@@ -991,9 +1001,9 @@ impl Simulation {
     pub fn weapon_for(&self, chassis: u32) -> WeaponConfig {
         let caliber = self.caliber(chassis);
         let mut weapon = self
-            .pilot_weapons
+            .chassis_state
             .get(&chassis)
-            .copied()
+            .and_then(|state| state.weapon)
             .unwrap_or(match caliber {
                 rm_sim_world::Caliber::Mm17 => self.weapon,
                 rm_sim_world::Caliber::Mm42 => self.hero_weapon,
@@ -1012,14 +1022,9 @@ impl Simulation {
         self.external_control.remove(id);
         self.input_streams.remove(&id);
         self.cancel_pending_shots(Some(id), "shooter disconnected");
-        self.shot_results.remove(&id);
-        self.last_shot_ids.remove(&id);
+        self.chassis_state.remove(&id);
         self.bots.remove(&id);
         self.sentry_tracking.remove(id);
-        self.pilot_spawns.remove(&id);
-        self.fired_ns.remove(&id);
-        self.pilot_weapons.remove(&id);
-        self.robots.remove(&id);
         if let Some(nav) = &mut self.navigation {
             nav.remove(id);
         }
@@ -1081,9 +1086,9 @@ impl Simulation {
             snapshot_id: 0,
             input_epoch: self.input_epoch,
             shot_results: self
-                .shot_results
+                .chassis_state
                 .values()
-                .flat_map(|history| history.iter().rev().take(32).cloned())
+                .flat_map(|state| state.shots.results.iter().rev().take(32).cloned())
                 .collect(),
             paused: self.paused,
             field: self.snapshot(),
@@ -1172,9 +1177,10 @@ impl Simulation {
     /// Pilot recovery is requested explicitly outside a match; respawning
     /// changes health only.
     fn recover_pilot(&mut self, id: u32, reset: bool) -> Result<(), String> {
-        let spawn = *self
-            .pilot_spawns
+        let spawn = self
+            .chassis_state
             .get(&id)
+            .and_then(|state| state.spawn)
             .ok_or("no pilot with that chassis")?;
         if !reset && self.field.chassis_defeated(id) != Some(true) {
             return Err("robot is not defeated".into());
@@ -1222,8 +1228,10 @@ impl Simulation {
     /// The recorded result of one shot, while the shooter's last 128 results
     /// still hold it.
     pub fn shot_result(&self, shooter: u32, shot_id: u64) -> Option<&crate::protocol::ShotResult> {
-        self.shot_results
+        self.chassis_state
             .get(&shooter)?
+            .shots
+            .results
             .iter()
             .find(|result| result.shot_id == shot_id)
     }
@@ -1234,10 +1242,9 @@ impl Simulation {
         input: crate::input_stream::InputFrame,
     ) -> Result<(), String> {
         if shot_id == 0
-            || self
-                .last_shot_ids
-                .get(&shooter)
-                .is_some_and(|last| shot_id <= last.saturating_sub(128))
+            || self.chassis_state.get(&shooter).is_some_and(|state| {
+                state.shots.last_id != 0 && shot_id <= state.shots.last_id.saturating_sub(128)
+            })
         {
             return Err("shot id is stale".into());
         }
@@ -1266,10 +1273,8 @@ impl Simulation {
         result: Result<u64, String>,
         notify: bool,
     ) {
-        self.last_shot_ids
-            .entry(shooter)
-            .and_modify(|last| *last = (*last).max(shot_id))
-            .or_insert(shot_id);
+        let shots = &mut self.chassis_state.entry(shooter).or_default().shots;
+        shots.last_id = shots.last_id.max(shot_id);
         let launch_speed_m_s = result
             .as_ref()
             .ok()
@@ -1286,7 +1291,7 @@ impl Simulation {
             shot_id,
             result,
         };
-        let history = self.shot_results.entry(shooter).or_default();
+        let history = &mut self.chassis_state.entry(shooter).or_default().shots.results;
         if history.len() == 128 {
             history.pop_front();
         }
@@ -1386,10 +1391,8 @@ impl Simulation {
         let result = self.fire_now(shooter, input.sampled_time_ns);
         let _ = self.field.command_chassis(shooter, state.command);
         let projectile_id = result?;
-        self.last_shot_ids
-            .entry(shooter)
-            .and_modify(|last| *last = (*last).max(shot_id))
-            .or_insert(shot_id);
+        let shots = &mut self.chassis_state.entry(shooter).or_default().shots;
+        shots.last_id = shots.last_id.max(shot_id);
         Ok(projectile_id)
     }
     /// Fire the shooter's gun at the current tick. The gun's rate is enforced
@@ -1404,7 +1407,12 @@ impl Simulation {
             return Err("this robot has no launcher".into());
         }
         let weapon = self.weapon_for(shooter);
-        let fired = self.fired_ns.entry(shooter).or_default();
+        let fired = &mut self
+            .chassis_state
+            .entry(shooter)
+            .or_default()
+            .shots
+            .intended_ns;
         if fired
             .iter()
             .any(|&t| t.abs_diff(intended_ns) < weapon.interval_ns)
@@ -1435,7 +1443,12 @@ impl Simulation {
             accepted_time_ns: self.field.time_ns(),
             authoritative_muzzle_pose: muzzle,
         });
-        let fired = self.fired_ns.entry(shooter).or_default();
+        let fired = &mut self
+            .chassis_state
+            .entry(shooter)
+            .or_default()
+            .shots
+            .intended_ns;
         if fired.len() == 32 {
             fired.pop_front();
         }
@@ -1543,7 +1556,9 @@ impl Simulation {
                 self.field
                     .convert_heavy_to_hero(*chassis)
                     .map_err(|e| e.to_string())?;
-                self.pilot_weapons.remove(chassis);
+                if let Some(state) = self.chassis_state.get_mut(chassis) {
+                    state.weapon = None;
+                }
                 self.input_streams.remove(chassis);
                 self.cancel_pending_shots(Some(*chassis), "Heavy converted");
                 Ok(())
@@ -1578,7 +1593,7 @@ impl Simulation {
                     .weapon_limits_for(*chassis)
                     .admit(self.caliber(*chassis), *weapon)
                     .map_err(str::to_string)?;
-                self.pilot_weapons.insert(*chassis, weapon);
+                self.chassis_state.entry(*chassis).or_default().weapon = Some(weapon);
                 Ok(())
             }
             Command::FireAimed {
@@ -1799,6 +1814,26 @@ impl Simulation {
 mod tests {
     use super::*;
     use rm_sim_world::{FieldConfig, RefereeCommand};
+
+    #[test]
+    fn chassis_removal_clears_shot_state_without_reordering_other_results() {
+        let (mut sim, first) = pilot_simulation();
+        let second = sim.spawn_chassis(Team::Blue).unwrap();
+        sim.remember_shot(second, 4, Err("second rejection".into()), false);
+        sim.remember_shot(first, 2, Err("first rejection".into()), false);
+        sim.remember_shot(first, 3, Err("later rejection".into()), false);
+        let ids: Vec<_> = sim
+            .state()
+            .shot_results
+            .iter()
+            .map(|s| (s.shooter, s.shot_id))
+            .collect();
+        assert_eq!(ids, vec![(first, 3), (first, 2), (second, 4)]);
+        sim.remove_chassis(first).unwrap();
+        assert!(sim.shot_result(first, 3).is_none());
+        assert!(sim.shot_result(second, 4).is_some());
+        assert_eq!(sim.state().shot_results.len(), 1);
+    }
 
     #[test]
     fn rmul_practice_admits_only_its_roster_and_bounds_spawns() {
@@ -2390,9 +2425,9 @@ mod tests {
             })
             .is_err()
         );
-        assert_eq!(sim.pilot_weapons[&shooter], weapon);
+        assert_eq!(sim.chassis_state[&shooter].weapon.unwrap(), weapon);
         sim.remove_chassis(shooter).unwrap();
-        assert!(!sim.pilot_weapons.contains_key(&shooter));
+        assert!(!sim.chassis_state.contains_key(&shooter));
     }
 
     #[test]

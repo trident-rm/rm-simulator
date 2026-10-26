@@ -4,10 +4,10 @@
 //! No CAD, asset identity, spherical wrist or joint limits are invented here.
 #[path = "support/serial_ik_reference.rs"]
 mod reference;
+use rm_sim_control::manipulator_plan::ik_candidates;
 use rm_sim_physics::{
     Pose,
     manipulator::{RevoluteAxis, SerialArm},
-    manipulator_plan::ik_candidates,
 };
 use std::{hint::black_box, time::Instant};
 

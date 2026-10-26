@@ -814,7 +814,7 @@ impl PlayerSnapshot {
             record
                 .drive_control
                 .validate(config.wheel_hubs_m.len())
-                .map_err(invalid)?;
+                .map_err(|error| invalid(error.as_str()))?;
             let mut snapshot = rm_sim_world::ChassisSnapshot {
                 placement_revision: record.placement_revision,
                 id: record.id,

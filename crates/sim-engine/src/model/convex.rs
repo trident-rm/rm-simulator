@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Explicit convex-envelope sources, independent of backend hull construction.
+use super::ModelError;
 use std::sync::Arc;
 
 /// Immutable source points for an explicitly requested convex hull, in local FLU
@@ -30,12 +31,15 @@ pub struct ConvexHull(Arc<Vec<[f64; 3]>>);
 impl ConvexHull {
     /// Take ownership of at least four finite points in local FLU metres without
     /// copying or changing them. Backend cookability is not checked here.
-    pub fn new(points_m: Vec<[f64; 3]>) -> Result<Self, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects fewer than four points or any nonfinite point coordinate.
+    pub fn new(points_m: Vec<[f64; 3]>) -> Result<Self, ModelError> {
         if points_m.len() < 4 {
-            return Err("convex hull requires at least four points");
+            return Err(ModelError::TooFewHullPoints);
         }
         if !points_m.iter().flatten().all(|x| x.is_finite()) {
-            return Err("convex hull points must be finite");
+            return Err(ModelError::NonfiniteHullPoint);
         }
         Ok(Self(Arc::new(points_m)))
     }

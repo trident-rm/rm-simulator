@@ -120,7 +120,7 @@ match authority or renderer. Calibration is deserialized into a caller-owned
 type after the existing source arm, bearing and jaw checks. The shared
 `rm_sim_control::assembly::Rig` owns the loading and planning entry points.
 
-`physics::manipulator_plan::checked_ik_hint` validates recorded body/tool poses
+`control::manipulator_plan::checked_ik_hint` validates recorded body/tool poses
 and joint coordinates against FK before returning a body-local warm start.
 This numerical check supplies no collision certificate. Parking search and staged
 planning now live in `rm-sim-control`; worker lifetime, cancellation decisions
@@ -440,7 +440,7 @@ stop after their required subsets. Once seated, paths stay on the prescribed
 mechanism guide; random joint detours are prohibited there. Confirmation still
 goes through the ordinary manipulation evaluator.
 
-`physics::manipulator_plan` provides deterministic distinct IK candidates and a
+`control::manipulator_plan` provides deterministic distinct IK candidates and a
 bounded bidirectional joint-space RRT-Connect with swept validation and checked
 shortcuts. The workbench searches grasp clockings and source-compatible axial
 grip positions, continues each IK branch through the stage milestones, and then

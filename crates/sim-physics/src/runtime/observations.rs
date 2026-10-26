@@ -96,18 +96,25 @@ impl PhysicalRuntime {
 
     /// Read copied world FLU pose and velocities for a live participant.
     /// Foreign worlds, reset and native removal/reuse return an error.
+    ///
+    /// # Errors
+    /// Rejects a token from another runtime or an installation that no longer exists.
     pub fn participant_state(
         &self,
         binding: ParticipantBinding,
-    ) -> Result<BodyState, &'static str> {
+    ) -> Result<BodyState, RuntimeError> {
         if binding.runtime != self.bound_bodies.identity() {
-            return Err("participant binding belongs to another runtime");
+            return Err(RuntimeError::Binding(BindingError::Foreign(
+                "participant binding belongs to another runtime",
+            )));
         }
         let body = self
             .world
             .bodies
             .get(binding.handle)
-            .ok_or("stale participant binding")?;
+            .ok_or(RuntimeError::Binding(BindingError::Stale(
+                "stale participant binding",
+            )))?;
         let p = body.position();
         Ok(BodyState {
             pose: observed_pose(p),
@@ -118,15 +125,22 @@ impl PhysicalRuntime {
 
     /// Read a live collider's world pose and actual parent body association.
     /// Foreign worlds, reset and native removal/reuse return an error.
-    pub fn collider_state(&self, binding: ColliderBinding) -> Result<ColliderState, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects a token from another runtime or a collider that no longer exists.
+    pub fn collider_state(&self, binding: ColliderBinding) -> Result<ColliderState, RuntimeError> {
         if binding.runtime != self.bound_bodies.identity() {
-            return Err("collider binding belongs to another runtime");
+            return Err(RuntimeError::Binding(BindingError::Foreign(
+                "collider binding belongs to another runtime",
+            )));
         }
         let collider = self
             .world
             .colliders
             .get(binding.handle)
-            .ok_or("stale collider binding")?;
+            .ok_or(RuntimeError::Binding(BindingError::Stale(
+                "stale collider binding",
+            )))?;
         Ok(ColliderState {
             pose: observed_pose(collider.position()),
             participant: collider
@@ -140,9 +154,11 @@ impl PhysicalRuntime {
     pub fn body_participant(
         &self,
         binding: BodyBinding,
-    ) -> Result<ParticipantBinding, &'static str> {
+    ) -> Result<ParticipantBinding, RuntimeError> {
         self.participant_for_handle(self.bound_bodies.handle(binding)?)
-            .ok_or("stale participant binding")
+            .ok_or(RuntimeError::Binding(BindingError::Stale(
+                "stale participant binding",
+            )))
     }
 
     pub(crate) fn participant_for_handle(
@@ -181,10 +197,10 @@ impl PhysicalRuntime {
         discontinuity_revision: u64,
         time_ns: u64,
         interval_s: f64,
-    ) -> Result<crate::sensors::carrier::StampedCarrierPose, &'static str> {
+    ) -> Result<crate::sensors::carrier::StampedCarrierPose, RuntimeError> {
         let state = self.participant_state(binding)?;
         let (index, generation) = binding.handle.into_raw_parts();
-        crate::sensors::carrier::StampedCarrierPose::new(
+        Ok(crate::sensors::carrier::StampedCarrierPose::new(
             crate::sensors::carrier::CarrierIdentity {
                 carrier,
                 world_brand: self.runtime_identity(),
@@ -194,7 +210,7 @@ impl PhysicalRuntime {
             time_ns,
             interval_s,
             state.pose,
-        )
+        )?)
     }
 
     /// Enable bounded observations with a positive caller-selected record budget.
@@ -211,14 +227,19 @@ impl PhysicalRuntime {
     /// world.disable_contact_observations();
     /// # Ok::<(), &'static str>(())
     /// ```
-    pub fn enable_contact_observations(&mut self, capacity: usize) -> Result<(), &'static str> {
+    ///
+    /// # Errors
+    /// Rejects zero capacity or an allocation failure.
+    pub fn enable_contact_observations(&mut self, capacity: usize) -> Result<(), RuntimeError> {
         if capacity == 0 {
-            return Err("contact observation capacity must be positive");
+            return Err(RuntimeError::from(
+                "contact observation capacity must be positive",
+            ));
         }
         let mut retained = Vec::new();
         retained
             .try_reserve_exact(capacity)
-            .map_err(|_| "contact observation allocation failed")?;
+            .map_err(|_| RuntimeError::Allocation)?;
         self.contact_observer = Some(Observer {
             retained,
             limit: capacity,

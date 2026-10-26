@@ -7,11 +7,11 @@ impl Field {
     fn detect(&self, time_ns: u64, contact: &Contact) -> Result<[f64; 2], Rejection> {
         crate::rule_adapters::DetectionContext {
             detector: self
-                .rmuc_2027
-                .as_ref()
+                .authority
+                .rmuc()
                 .and_then(|s| s.detector(contact.target)),
             minimum_rune_ring: if let (ArmorTarget::Rune { rune, .. }, Some(native)) =
-                (contact.target, &self.rmuc_2027)
+                (contact.target, self.authority.rmuc())
             {
                 native
                     .game
@@ -52,7 +52,7 @@ impl Field {
         self.last_detection_ns.insert(contact.target, time_ns);
         hit.detected = true;
         self.hits_detected += 1;
-        if let Some(state) = &mut self.rmuc_2027 {
+        if let Some(state) = self.authority.rmuc_mut() {
             if let ArmorTarget::Rune { rune, blade } = contact.target {
                 let ring =
                     gameplay::rmuc_2027::rune::Rune::ring(offset[0].hypot(offset[1])).unwrap_or(1);
@@ -146,7 +146,7 @@ impl Field {
             return Ok(hit);
         }
         if let (Some(game), ArmorTarget::Chassis { chassis, .. }) =
-            (&mut self.rmul_2027, contact.target)
+            (self.authority.rmul_mut(), contact.target)
         {
             hit.damage = game.damage(contact.shooter, chassis, contact.caliber == Caliber::Mm42);
             self.sync_defeats();

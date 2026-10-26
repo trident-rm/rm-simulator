@@ -251,8 +251,8 @@ fn exact_rapier_pose(p: Pose) -> Pose3 {
     Pose3::from_parts(vector(p.translation_m), Rotation::from_xyzw(x, y, z, w))
 }
 fn pose_is_valid(p: Pose) -> bool {
-    let norm = p.rotation_wxyz.iter().map(|v| v * v).sum::<f64>();
-    p.translation_m.iter().all(|v| v.is_finite()) && norm.is_finite() && (norm - 1.).abs() < 1e-6
+    p.validate_with(sim_engine::pose::PoseTolerance::Runtime)
+        .is_ok()
 }
 
 impl ChassisSnapshot {

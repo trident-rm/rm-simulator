@@ -56,7 +56,7 @@ struct Staged {
 
 /// Native staged bodies have explicit COMs, but no native handles or colliders.
 /// Their attached colliders have zero density, so installation cannot change mass.
-fn stage(model: &CookedAssembly, placement: Pose) -> Result<Staged, &'static str> {
+fn stage(model: &CookedAssembly, placement: Pose) -> Result<Staged, RuntimeError> {
     BodyState::at(placement).validate()?;
     let placement = pose(placement);
     let bodies = model
@@ -97,7 +97,7 @@ fn stage(model: &CookedAssembly, placement: Pose) -> Result<Staged, &'static str
     Ok(Staged { bodies, joints })
 }
 
-pub(crate) fn validate_cooked(model: &CookedAssembly) -> Result<(), &'static str> {
+pub(crate) fn validate_cooked(model: &CookedAssembly) -> Result<(), RuntimeError> {
     stage(model, Pose::default()).map(|_| ())
 }
 
@@ -129,12 +129,15 @@ impl PhysicalRuntime {
     /// assert!(world.body_state(live.body(id).unwrap()).is_err());
     /// # Ok::<(), &'static str>(())
     /// ```
+    ///
+    /// # Errors
+    /// Rejects incomplete/duplicate mappings, occupied keys, exhausted generations or incompatible initial states before insertion.
     pub fn install_assembly(
         &mut self,
         model: &CookedAssembly,
         placement: Pose,
         keys: &AssemblyKeys,
-    ) -> Result<AssemblyBinding, &'static str> {
+    ) -> Result<AssemblyBinding, RuntimeError> {
         let links: HashMap<_, _> = keys.links.iter().copied().collect();
         let joints: HashMap<_, _> = keys.joints.iter().copied().collect();
         if links.len() != keys.links.len()
@@ -142,7 +145,9 @@ impl PhysicalRuntime {
             || joints.len() != keys.joints.len()
             || joints.len() != model.source().joints().len()
         {
-            return Err("assembly requires each source ID exactly once");
+            return Err(RuntimeError::from(
+                "assembly requires each source ID exactly once",
+            ));
         }
         let link_keys = model
             .source()
@@ -152,7 +157,7 @@ impl PhysicalRuntime {
                 links
                     .get(&link.id())
                     .copied()
-                    .ok_or("missing source link mapping")
+                    .ok_or(RuntimeError::from("missing source link mapping"))
             })
             .collect::<Result<Vec<_>, _>>()?;
         let joint_keys = model
@@ -163,7 +168,7 @@ impl PhysicalRuntime {
                 joints
                     .get(&joint.id())
                     .copied()
-                    .ok_or("missing source joint mapping")
+                    .ok_or(RuntimeError::from("missing source joint mapping"))
             })
             .collect::<Result<Vec<_>, _>>()?;
         let unique_links: std::collections::HashSet<_> = link_keys.iter().copied().collect();
@@ -175,7 +180,9 @@ impl PhysicalRuntime {
                 .iter()
                 .any(|key| self.bound_joints.contains(*key))
         {
-            return Err("duplicate or occupied assembly runtime key");
+            return Err(RuntimeError::Binding(BindingError::Duplicate(
+                "duplicate or occupied assembly runtime key",
+            )));
         }
         self.bound_bodies.check_capacity(link_keys.len())?;
         self.bound_joints.check_capacity(joint_keys.len())?;
@@ -223,7 +230,10 @@ impl PhysicalRuntime {
     /// is stale/foreign, nothing is removed. Other joints attached externally to
     /// these bodies are removed by ordinary body-removal cascading. Source IDs
     /// and cloned binding records do not keep removed native objects alive.
-    pub fn remove_assembly(&mut self, live: &AssemblyBinding) -> Result<(), &'static str> {
+    ///
+    /// # Errors
+    /// Rejects any stale or foreign body/joint token before removing any installation.
+    pub fn remove_assembly(&mut self, live: &AssemblyBinding) -> Result<(), RuntimeError> {
         for &(_, binding) in &live.links {
             self.bound_bodies.handle(binding)?;
         }

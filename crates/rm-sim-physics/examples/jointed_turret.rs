@@ -59,7 +59,7 @@ fn cuboid(mass_kg: Option<f64>, half: [f64; 3]) -> Result<RigidBodyDescription, 
     } else {
         BodyKind::Fixed
     };
-    RigidBodyDescription::new(
+    Ok(RigidBodyDescription::new(
         kind,
         vec![ColliderDescription::new(
             ShapeDescription::Cuboid {
@@ -73,7 +73,7 @@ fn cuboid(mass_kg: Option<f64>, half: [f64; 3]) -> Result<RigidBodyDescription, 
                 filter: u32::MAX,
             },
         )?],
-    )
+    )?)
 }
 
 /// Three-link source in shared assembly-local FLU, with its base at z = 1 m.
@@ -107,7 +107,7 @@ pub fn description(dynamic_base: bool) -> Result<AssemblyDescription, &'static s
         Some(JointLimits::new(-PITCH_LIMIT_RAD, PITCH_LIMIT_RAD)?),
         false,
     )?;
-    AssemblyDescription::new(
+    Ok(AssemblyDescription::new(
         BASE_LINK,
         vec![
             AssemblyLink::new(BASE_LINK, base, BodyState::at(Pose::at([0., 0., 1.])))?,
@@ -122,7 +122,7 @@ pub fn description(dynamic_base: bool) -> Result<AssemblyDescription, &'static s
             AssemblyJoint::new(YAW_JOINT, BASE_LINK, YOKE_LINK, yaw),
             AssemblyJoint::new(PITCH_JOINT, YOKE_LINK, BARREL_LINK, pitch),
         ],
-    )
+    )?)
 }
 
 /// Repeatable three-body fixture at 1000 Hz, with a floor at zero metres.

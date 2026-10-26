@@ -10,6 +10,38 @@ use crate::Pose;
 use glam::{DQuat, DVec3};
 use sim_engine::model::{CarrierKey, MountDescription, MountKey};
 
+/// A resolved carrier or mount observation failed admission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CarrierError {
+    /// Sample interval is not finite and positive.
+    InvalidInterval,
+    /// Mount and observation name different source carriers.
+    WrongCarrier,
+    /// A resolved transform is not finite or unit length.
+    InvalidPose,
+}
+impl CarrierError {
+    /// Original observation diagnostic for compatibility adapters.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidInterval => "carrier interval must be finite and positive",
+            Self::WrongCarrier => "mount belongs to another source carrier",
+            Self::InvalidPose => "invalid resolved carrier or mount pose",
+        }
+    }
+}
+impl std::fmt::Display for CarrierError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl std::error::Error for CarrierError {}
+impl From<CarrierError> for &'static str {
+    fn from(error: CarrierError) -> Self {
+        error.as_str()
+    }
+}
+
 /// Caller-stamped identity/continuity evidence for one resolved source carrier.
 /// Equality compares every field. This freely constructible record is not an
 /// unforgeable runtime token and does not validate a body binding. Adapters must
@@ -60,14 +92,17 @@ impl StampedCarrierPose {
     /// assert_eq!(sample.interval_s().to_bits(), interval_s.to_bits());
     /// # Ok::<(), &'static str>(())
     /// ```
+    ///
+    /// # Errors
+    /// Rejects nonpositive/nonfinite sample intervals and invalid resolved carrier poses.
     pub fn new(
         identity: CarrierIdentity,
         time_ns: u64,
         interval_s: f64,
         world_from_carrier: Pose,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, CarrierError> {
         if !interval_s.is_finite() || interval_s <= 0. {
-            return Err("carrier interval must be finite and positive");
+            return Err(CarrierError::InvalidInterval);
         }
         validate_pose(world_from_carrier)?;
         Ok(Self {
@@ -124,12 +159,15 @@ impl StampedCarrierPose {
     /// assert_eq!(resolved.carrier(), carrier);
     /// # Ok::<(), &'static str>(())
     /// ```
+    ///
+    /// # Errors
+    /// Rejects a mismatched source carrier or an invalid composed mount pose.
     pub fn resolve_mount(
         &self,
         mount: &MountDescription,
-    ) -> Result<StampedMountPose, &'static str> {
+    ) -> Result<StampedMountPose, CarrierError> {
         if mount.carrier() != self.identity.carrier {
-            return Err("mount belongs to another source carrier");
+            return Err(CarrierError::WrongCarrier);
         }
         let local = mount.carrier_from_mount();
         let rotation = quaternion(self.world_from_carrier);
@@ -181,15 +219,9 @@ fn quaternion(pose: Pose) -> DQuat {
     DQuat::from_xyzw(x, y, z, w)
 }
 
-fn validate_pose(pose: Pose) -> Result<(), &'static str> {
-    let norm = pose.rotation_wxyz.iter().map(|x| x * x).sum::<f64>();
-    if !pose.translation_m.into_iter().all(f64::is_finite)
-        || !norm.is_finite()
-        || (norm - 1.).abs() > 1e-6
-    {
-        return Err("invalid resolved carrier or mount pose");
-    }
-    Ok(())
+fn validate_pose(pose: Pose) -> Result<(), CarrierError> {
+    pose.validate_with(sim_engine::pose::PoseTolerance::Model)
+        .map_err(|_| CarrierError::InvalidPose)
 }
 
 #[cfg(test)]

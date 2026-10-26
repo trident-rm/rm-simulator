@@ -5,6 +5,51 @@
 use super::PhysicalRuntime;
 use sim_engine::{StepDuration, time::Stamp};
 
+/// A physical session could not construct, step or reset its scene.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionError {
+    /// The caller-owned reconstruction recipe rejected its inputs.
+    Recipe(super::RuntimeError),
+    /// Completed step count would overflow.
+    TickOverflow,
+    /// Elapsed nanoseconds would overflow.
+    TimeOverflow,
+    /// The runtime could not complete the next tick.
+    Integration(super::RuntimeError),
+    /// A reset recipe changed the immutable integration period.
+    ChangedStepDuration,
+}
+impl SessionError {
+    /// Original diagnostic for compatibility callers.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recipe(e) => e.as_str(),
+            Self::TickOverflow => "physics tick overflow",
+            Self::TimeOverflow => "physics time overflow",
+            Self::Integration(e) => e.as_str(),
+            Self::ChangedStepDuration => "physical session reset changed step duration",
+        }
+    }
+}
+impl std::fmt::Display for SessionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl std::error::Error for SessionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Integration(e) | Self::Recipe(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+impl From<SessionError> for &'static str {
+    fn from(error: SessionError) -> Self {
+        error.as_str()
+    }
+}
+
 /// One generic physical runtime, its completed time and a repeatable initial recipe.
 ///
 /// The recipe returns a fresh runtime and can retain shared cooked resources.
@@ -37,11 +82,14 @@ pub struct PhysicalSession<F> {
 
 impl<F> PhysicalSession<F>
 where
-    F: Fn() -> Result<PhysicalRuntime, &'static str>,
+    F: Fn() -> Result<PhysicalRuntime, super::RuntimeError>,
 {
     /// Construct the initial scene; setup errors return without a partial session.
-    pub fn new(recipe: F) -> Result<Self, &'static str> {
-        let runtime = recipe()?;
+    ///
+    /// # Errors
+    /// Returns the caller recipe failure without constructing a partial session.
+    pub fn new(recipe: F) -> Result<Self, SessionError> {
+        let runtime = recipe().map_err(SessionError::Recipe)?;
         Ok(Self {
             runtime,
             recipe,
@@ -80,18 +128,23 @@ where
     /// Completed steps remain on an integration error. Physical contact output is
     /// bounded and replaced each tick; step one tick at a time to consume every
     /// tick's contacts or run feedback control. No observation history is allocated.
-    pub fn step(&mut self, steps: u64) -> Result<(), &'static str> {
+    ///
+    /// # Errors
+    /// Rejects nanosecond overflow before integration; session clocks retain only completed ticks.
+    pub fn step(&mut self, steps: u64) -> Result<(), SessionError> {
         self.stamp
             .tick
             .checked_add(steps)
-            .ok_or("physics tick overflow")?;
+            .ok_or(SessionError::TickOverflow)?;
         let duration_ns = self.step_duration().as_ns();
         steps
             .checked_mul(duration_ns)
             .and_then(|elapsed| self.stamp.time_ns.checked_add(elapsed))
-            .ok_or("physics time overflow")?;
+            .ok_or(SessionError::TimeOverflow)?;
         for _ in 0..steps {
-            self.runtime.step(self.stamp.time_ns)?;
+            self.runtime
+                .step(self.stamp.time_ns)
+                .map_err(SessionError::Integration)?;
             self.stamp.tick += 1;
             self.stamp.time_ns += duration_ns;
         }
@@ -101,10 +154,13 @@ where
     /// Prepare a fresh scene before replacing live state and restarting time.
     /// Recipe errors or a changed integration duration leave the live runtime,
     /// held commands, bindings and time untouched. Success invalidates old bindings.
-    pub fn reset(&mut self) -> Result<(), &'static str> {
-        let runtime = (self.recipe)()?;
+    ///
+    /// # Errors
+    /// Returns recipe/integration-period errors without replacing the live scene or clock.
+    pub fn reset(&mut self) -> Result<(), SessionError> {
+        let runtime = (self.recipe)().map_err(SessionError::Recipe)?;
         if runtime.step_duration() != self.step_duration() {
-            return Err("physical session reset changed step duration");
+            return Err(SessionError::ChangedStepDuration);
         }
         self.runtime = runtime;
         self.stamp = Stamp {

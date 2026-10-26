@@ -92,5 +92,5 @@ pub(super) fn cook(shape: &PayloadShape) -> Result<CookedRigidBody, &'static str
             ccd_enabled: true,
             ..Default::default()
         })?;
-    CookedRigidBody::new(source)
+    Ok(CookedRigidBody::new(source)?)
 }

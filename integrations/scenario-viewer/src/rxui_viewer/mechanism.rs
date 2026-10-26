@@ -71,17 +71,20 @@ impl Playback {
                         .with_policy(c.policy())
                 })
                 .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(str::to_owned)?;
+                .map_err(|error| error.to_string())?;
             let mut policy = body.policy();
             policy.gravity_scale = 0.;
             let body = RigidBodyDescription::new(body.kind(), colliders)
                 .and_then(|b| b.with_policy(policy))
-                .map_err(str::to_owned)?;
-            links.push(AssemblyLink::new(link.id(), body, link.initial()).map_err(str::to_owned)?);
+                .map_err(|error| error.to_string())?;
+            links.push(
+                AssemblyLink::new(link.id(), body, link.initial())
+                    .map_err(|error| error.to_string())?,
+            );
         }
         let description = AssemblyDescription::new(source.root(), links, source.joints().to_vec())
-            .map_err(str::to_owned)?;
-        let model = CookedAssembly::new(description).map_err(str::to_owned)?;
+            .map_err(|error| error.to_string())?;
+        let model = CookedAssembly::new(description).map_err(|error| error.to_string())?;
         let keys = AssemblyKeys {
             links: model
                 .source()
@@ -161,7 +164,7 @@ impl Playback {
     pub fn reset(&mut self) -> Result<()> {
         let mut next = PhysicalRuntime::new(StepDuration::HZ_128);
         next.install_assembly(&self.model, Pose::default(), &self.keys)
-            .map_err(str::to_owned)?;
+            .map_err(|error| error.to_string())?;
         self.runtime = next;
         self.tick = 0;
         self.targets.clear();
@@ -202,10 +205,10 @@ impl Playback {
         // Demonstration gains: natural frequency 8/s, critically damped, capped
         // at 30 units/s² of generalized acceleration. Not robot motor calibration.
         let motor = JointMotor::new(coordinate, 0., scale * 64., scale * 16., scale * 30.)
-            .map_err(str::to_owned)?;
+            .map_err(|error| error.to_string())?;
         self.runtime
             .set_joint_motor(binding, Some(motor))
-            .map_err(str::to_owned)?;
+            .map_err(|error| error.to_string())?;
         self.targets.insert(group, coordinate);
         Ok(())
     }
@@ -222,7 +225,7 @@ impl Playback {
         while self.tick < end {
             self.runtime
                 .step(self.tick * StepDuration::HZ_128.as_ns())
-                .map_err(str::to_owned)?;
+                .map_err(|error| error.to_string())?;
             self.tick += 1;
         }
         self.refresh()
@@ -237,7 +240,7 @@ impl Playback {
                 id.0,
                 self.runtime
                     .body_state(binding)
-                    .map_err(str::to_owned)?
+                    .map_err(|error| error.to_string())?
                     .pose,
             );
         }
@@ -253,7 +256,10 @@ impl Playback {
                     .runtime
                     .joint_binding(JointKey(j.id().0))
                     .ok_or("missing live joint")?;
-                let state = self.runtime.joint_state(binding).map_err(str::to_owned)?;
+                let state = self
+                    .runtime
+                    .joint_state(binding)
+                    .map_err(|error| error.to_string())?;
                 let a = transform(
                     self.poses[&j.parent().0],
                     j.description().parent_frame().translation_m,

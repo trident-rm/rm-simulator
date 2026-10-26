@@ -14,7 +14,7 @@ use std::sync::Arc;
 /// Source body plus shared cooked collider shapes, with no world handles/state.
 /// Cooking preserves local frames, source collider order and contact parameters.
 /// Explicit inertial data remains the default; collider aggregation is opt-in.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CookedRigidBody {
     source: RigidBodyDescription,
     shapes: Arc<[SharedShape]>,
@@ -38,12 +38,15 @@ impl CookedRigidBody {
     /// assert!(cooked.source().colliders().is_empty());
     /// # Ok::<(), &'static str>(())
     /// ```
-    pub fn new(source: RigidBodyDescription) -> Result<Self, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects unsupported compound children, degenerate hulls, or unrepresentable native mass properties.
+    pub fn new(source: RigidBodyDescription) -> Result<Self, CookError> {
         let shapes = source
             .colliders()
             .iter()
             .map(|c| cook_shape(c.shape()))
-            .collect::<Result<Vec<_>, &'static str>>()?;
+            .collect::<Result<Vec<_>, CookError>>()?;
         let mut cooked = Self {
             source,
             shapes: shapes.into(),
@@ -125,7 +128,7 @@ impl CookedRigidBody {
         self.aggregate_mass.as_ref()
     }
 
-    fn validate_mass_properties(&self) -> Result<Option<MassProperties>, &'static str> {
+    fn validate_mass_properties(&self) -> Result<Option<MassProperties>, CookError> {
         if matches!(self.source.kind(), BodyKind::Dynamic(_))
             || !self.source.colliders().iter().any(|collider| {
                 matches!(
@@ -159,7 +162,9 @@ impl CookedRigidBody {
                 || !mass.inv_principal_inertia.is_finite()
                 || !mass.principal_inertia_local_frame.is_finite()
             {
-                return Err("unrepresentable cooked collider mass properties");
+                return Err(CookError::Backend(
+                    "unrepresentable cooked collider mass properties",
+                ));
             }
             // Native accumulation stores inverse mass: an overflowing sum may
             // become zero mass, which a later collider can replace with a finite
@@ -167,7 +172,9 @@ impl CookedRigidBody {
             // is lost. Initial and auxiliary zero masses remain valid.
             accumulated_mass_kg += mass.mass();
             if !accumulated_mass_kg.is_finite() {
-                return Err("unrepresentable aggregate body mass properties");
+                return Err(CookError::Backend(
+                    "unrepresentable aggregate body mass properties",
+                ));
             }
             total += mass;
         }
@@ -178,7 +185,9 @@ impl CookedRigidBody {
             || total.inv_principal_inertia.min_element() <= 0.
             || !total.principal_inertia_local_frame.is_finite()
         {
-            return Err("unrepresentable aggregate body mass properties");
+            return Err(CookError::Backend(
+                "unrepresentable aggregate body mass properties",
+            ));
         }
         Ok(Some(total))
     }
@@ -194,7 +203,7 @@ impl CookedRigidBody {
 fn validate_compound_child_mass(
     shape: &SharedShape,
     policy: ColliderMass,
-) -> Result<(), &'static str> {
+) -> Result<(), CookError> {
     let density = match policy {
         ColliderMass::DensityKgM3(density) if density > 0. => density,
         ColliderMass::MassKg(mass) if mass > 0. => 1.,
@@ -213,7 +222,9 @@ fn validate_compound_child_mass(
             || mass.inv_principal_inertia.min_element() <= 0.
             || !mass.principal_inertia_local_frame.is_finite()
         {
-            Err("unrepresentable cooked compound child mass properties")
+            Err(CookError::Backend(
+                "unrepresentable cooked compound child mass properties",
+            ))
         } else {
             Ok(())
         }
@@ -226,7 +237,7 @@ fn validate_compound_child_mass(
             validate(&mass)?;
             Ok(mass)
         })
-        .collect::<Result<Vec<_>, &'static str>>()?;
+        .collect::<Result<Vec<_>, CookError>>()?;
     if let ColliderMass::MassKg(mass) = policy {
         // Match MassProperties::set_mass's inverse-inertia multiplier exactly.
         // Do not assign the whole collider mass independently to each leaf, or
@@ -242,7 +253,7 @@ fn validate_compound_child_mass(
 }
 
 /// Preserve one native shape per source collider, including source child order.
-fn cook_shape(source: &ShapeDescription) -> Result<SharedShape, &'static str> {
+fn cook_shape(source: &ShapeDescription) -> Result<SharedShape, CookError> {
     Ok(match source {
         ShapeDescription::Ball { radius_m } => SharedShape::ball(*radius_m),
         ShapeDescription::Cylinder {
@@ -275,15 +286,17 @@ fn cook_shape(source: &ShapeDescription) -> Result<SharedShape, &'static str> {
                 .iter()
                 .map(|(pose, shape)| {
                     if matches!(shape, ShapeDescription::HeightField(_)) {
-                        return Err(
+                        return Err(CookError::Backend(
                             "backend policy does not support heightfield children in compounds",
-                        );
+                        ));
                     }
                     let shape = cook_shape(shape)?;
                     // Parry panics for composite children (including triangle meshes).
                     // Reject before native construction; never flatten or split them.
                     if shape.as_composite_shape().is_some() {
-                        return Err("backend does not support composite children in compounds");
+                        return Err(CookError::Backend(
+                            "backend does not support composite children in compounds",
+                        ));
                     }
                     let [w, x, y, z] = pose.rotation_wxyz;
                     Ok((
@@ -294,7 +307,7 @@ fn cook_shape(source: &ShapeDescription) -> Result<SharedShape, &'static str> {
                         shape,
                     ))
                 })
-                .collect::<Result<Vec<_>, &'static str>>()?;
+                .collect::<Result<Vec<_>, CookError>>()?;
             SharedShape::compound(children)
         }
     })
@@ -314,9 +327,9 @@ fn native_combine(rule: sim_engine::model::CoefficientCombineRule) -> Coefficien
 /// Preflight follows the backend's normalization arithmetic, rejecting singular
 /// or unrepresentable input before its geometric algorithm. Volume at unit
 /// density is a dimensionality check only; installation retains explicit inertia.
-fn cook_convex(source: &ConvexHull) -> Result<SharedShape, &'static str> {
+fn cook_convex(source: &ConvexHull) -> Result<SharedShape, CookError> {
     if u32::try_from(source.points_m().len()).is_err() {
-        return Err("too many convex hull points");
+        return Err(CookError::Backend("too many convex hull points"));
     }
     let points: Vec<_> = source
         .points_m()
@@ -335,7 +348,9 @@ fn cook_convex(source: &ConvexHull) -> Result<SharedShape, &'static str> {
     let center = (min + max) * 0.5;
     let diagonal = (max - min).length();
     if !center.is_finite() || !diagonal.is_finite() || diagonal <= 0. {
-        return Err("convex hull normalization is singular or unrepresentable");
+        return Err(CookError::Backend(
+            "convex hull normalization is singular or unrepresentable",
+        ));
     }
     // A scaled affine-rank check also avoids invoking native hull construction
     // for a point, line or plane. It does not reorder or modify the source.
@@ -358,13 +373,15 @@ fn cook_convex(source: &ConvexHull) -> Result<SharedShape, &'static str> {
             .iter()
             .any(|point| area.dot(offset(*point)).abs() > 0.)
     {
-        return Err("convex hull points must span three dimensions");
+        return Err(CookError::Backend(
+            "convex hull points must span three dimensions",
+        ));
     }
-    let shape =
-        SharedShape::convex_hull(&points).ok_or("native convex hull construction failed")?;
+    let shape = SharedShape::convex_hull(&points)
+        .ok_or(CookError::Backend("native convex hull construction failed"))?;
     let hull = shape
         .as_convex_polyhedron()
-        .ok_or("native convex hull is not a polyhedron")?;
+        .ok_or(CookError::Backend("native convex hull is not a polyhedron"))?;
     let volume = shape.mass_properties(1.).mass();
     if hull.points().len() < 4
         || hull.faces().len() < 4
@@ -375,7 +392,9 @@ fn cook_convex(source: &ConvexHull) -> Result<SharedShape, &'static str> {
         || !volume.is_finite()
         || volume <= 0.
     {
-        return Err("native convex hull is degenerate or unrepresentable");
+        return Err(CookError::Backend(
+            "native convex hull is degenerate or unrepresentable",
+        ));
     }
     Ok(shape)
 }
@@ -765,7 +784,9 @@ mod tests {
                     RigidBodyDescription::new(kind, vec![compound_collider(shape)]).unwrap();
                 assert!(matches!(
                     CookedRigidBody::new(source),
-                    Err("backend does not support composite children in compounds")
+                    Err(CookError::Backend(
+                        "backend does not support composite children in compounds"
+                    ))
                 ));
                 assert!(world.body_binding(BodyKey(99)).is_none());
             }

@@ -18,12 +18,14 @@ pub(crate) mod assembly;
 #[path = "runtime/bindings.rs"]
 mod bindings;
 mod directional;
+mod error;
 #[path = "runtime/joints.rs"]
 mod joints;
 #[path = "runtime/observations.rs"]
 mod observations;
 #[path = "runtime/scenery.rs"]
 mod scenery;
+pub use error::{BindingError, RuntimeError};
 /// Caller-paced stepping and recipe reset without RoboMaster participants.
 pub mod session;
 pub use assembly::{AssemblyBinding, AssemblyKeys};
@@ -113,12 +115,17 @@ impl PhysicalRuntime {
     /// assert!(PhysicalRuntime::with_solver_iterations(StepDuration::HZ_1000, 0).is_err());
     /// # Ok::<(), &'static str>(())
     /// ```
+    ///
+    /// # Errors
+    /// Rejects iteration counts outside the inclusive range 1..=64.
     pub fn with_solver_iterations(
         step_duration: StepDuration,
         iterations: usize,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, RuntimeError> {
         if !(1..=64).contains(&iterations) {
-            return Err("solver iterations must be within 1..=64");
+            return Err(RuntimeError::from(
+                "solver iterations must be within 1..=64",
+            ));
         }
         let mut runtime = Self::new(step_duration);
         runtime.world.integration_parameters.num_solver_iterations = iterations;
@@ -143,12 +150,15 @@ impl PhysicalRuntime {
     /// assert!(runtime.is_idle());
     /// # Ok::<(), &'static str>(())
     /// ```
+    ///
+    /// # Errors
+    /// Returns the setup failure after discarding the partially constructed runtime.
     pub fn from_recipe(
         step_duration: StepDuration,
         setup: impl FnOnce(&mut Self) -> Result<(), &'static str>,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, RuntimeError> {
         let mut runtime = Self::new(step_duration);
-        setup(&mut runtime)?;
+        setup(&mut runtime).map_err(RuntimeError::from)?;
         Ok(runtime)
     }
 
@@ -190,30 +200,40 @@ impl PhysicalRuntime {
     /// assert_ne!(before.placement_epoch(), after.placement_epoch());
     /// # Ok::<(), &'static str>(())
     /// ```
-    pub fn mark_placement_discontinuity(&mut self) -> Result<(), &'static str> {
+    ///
+    /// # Errors
+    /// Rejects exhaustion of the discontinuity revision before changing it.
+    pub fn mark_placement_discontinuity(&mut self) -> Result<(), RuntimeError> {
         self.placement_epoch = self
             .placement_epoch
             .checked_add(1)
-            .ok_or("physical placement epoch exhausted")?;
+            .ok_or(RuntimeError::Binding(BindingError::Exhausted(
+                "physical placement epoch exhausted",
+            )))?;
         Ok(())
     }
 
     #[cfg(feature = "rapier-extension")]
-    pub(crate) fn check_placement_epoch(&self) -> Result<(), &'static str> {
+    pub(crate) fn check_placement_epoch(&self) -> Result<(), RuntimeError> {
         self.placement_epoch
             .checked_add(1)
             .map(|_| ())
-            .ok_or("physical placement epoch exhausted")
+            .ok_or(RuntimeError::Binding(BindingError::Exhausted(
+                "physical placement epoch exhausted",
+            )))
     }
 
     /// Advance one explicit tick and replace bounded physical observations.
     /// Held wrenches and joint commands apply on every solver slice; kinematic
     /// endpoints interpolate from actual tick-start poses. Time overflow fails
     /// before changing observations or native state. No wall clock is consulted.
-    pub fn step(&mut self, prev_ns: u64) -> Result<(), &'static str> {
+    ///
+    /// # Errors
+    /// Rejects nanosecond overflow before integration; session clocks retain only completed ticks.
+    pub fn step(&mut self, prev_ns: u64) -> Result<(), RuntimeError> {
         prev_ns
             .checked_add(self.step_duration.as_ns())
-            .ok_or("physics time overflow")?;
+            .ok_or(RuntimeError::TimeOverflow)?;
         self.begin_contact_observations();
         self.ensure_queries_primed();
         if self.is_idle() {

@@ -247,7 +247,7 @@ fn collider(
     mass: ColliderMass,
     restitution_combine_rule: Combine,
 ) -> Result<ColliderDescription, &'static str> {
-    ColliderDescription::new(
+    Ok(ColliderDescription::new(
         shape,
         pose,
         ContactMaterial {
@@ -261,7 +261,7 @@ fn collider(
         mass,
         restitution_combine_rule,
         ..Default::default()
-    })
+    })?)
 }
 fn normalized_pose(pose: Pose) -> Pose {
     source_pose(rapier_pose(pose))

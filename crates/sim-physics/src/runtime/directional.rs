@@ -29,7 +29,10 @@ impl DirectionalFriction {
     /// assert!(DirectionalFriction::new([0.; 3], 0.9, 0.02).is_err());
     /// # Ok::<(), &'static str>(())
     /// ```
-    pub fn new(roller_axis: [f64; 3], tread: f64, roller: f64) -> Result<Self, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects nonfinite/negative friction coefficients and a nonfinite or nonunit roller axis.
+    pub fn new(roller_axis: [f64; 3], tread: f64, roller: f64) -> Result<Self, RuntimeError> {
         let axis = vector(roller_axis);
         if !axis.is_finite()
             || (axis.length_squared() - 1.).abs() > 1e-6
@@ -37,7 +40,7 @@ impl DirectionalFriction {
                 .into_iter()
                 .all(|v| v.is_finite() && (0. ..=10.).contains(&v))
         {
-            return Err("invalid directional friction");
+            return Err(RuntimeError::from("invalid directional friction"));
         }
         Ok(Self {
             axis: axis.normalize(),
@@ -57,9 +60,12 @@ impl DirectionalFriction {
     /// assert!(law.with_slip_damping(0.).is_err());
     /// # Ok::<(), &'static str>(())
     /// ```
-    pub fn with_slip_damping(mut self, damping_n_s_m: f64) -> Result<Self, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects nonfinite or negative damping coefficients.
+    pub fn with_slip_damping(mut self, damping_n_s_m: f64) -> Result<Self, RuntimeError> {
         if !damping_n_s_m.is_finite() || !(1. ..=1e6).contains(&damping_n_s_m) {
-            return Err("invalid directional slip damping");
+            return Err(RuntimeError::from("invalid directional slip damping"));
         }
         self.slip_damping_n_s_m = damping_n_s_m;
         Ok(self)
@@ -290,7 +296,7 @@ impl PhysicalRuntime {
     pub fn directional_normal_load_n(
         &self,
         collider: ColliderBinding,
-    ) -> Result<Option<f64>, &'static str> {
+    ) -> Result<Option<f64>, RuntimeError> {
         self.collider_state(collider)?;
         if !self
             .directional
@@ -340,18 +346,23 @@ impl PhysicalRuntime {
     /// runtime.step(0)?;
     /// # Ok::<(), &'static str>(())
     /// ```
+    ///
+    /// # Errors
+    /// Rejects stale/foreign tokens and nondynamic colliders.
     pub fn set_directional_friction(
         &mut self,
         collider: ColliderBinding,
         law: Option<DirectionalFriction>,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), RuntimeError> {
         self.collider_state(collider)?;
         let native = &self.world.colliders[collider.handle];
         if !native
             .parent()
             .is_some_and(|p| self.world.bodies[p].is_dynamic())
         {
-            return Err("directional friction requires a dynamic collider");
+            return Err(RuntimeError::from(
+                "directional friction requires a dynamic collider",
+            ));
         }
         self.directional
             .entries

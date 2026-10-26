@@ -235,15 +235,16 @@ impl Viewport {
                         )
                     })
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(str::to_owned)?;
+                    .map_err(|error| error.to_string())?;
                 let body = CookedRigidBody::new(
-                    RigidBodyDescription::new(BodyKind::Fixed, colliders).map_err(str::to_owned)?,
+                    RigidBodyDescription::new(BodyKind::Fixed, colliders)
+                        .map_err(|error| error.to_string())?,
                 )
-                .map_err(str::to_owned)?;
+                .map_err(|error| error.to_string())?;
                 let mut world = PhysicalRuntime::new(StepDuration::HZ_128);
                 world
                     .install_body(BodyKey(1), &body, BodyState::at(Default::default()))
-                    .map_err(str::to_owned)?;
+                    .map_err(|error| error.to_string())?;
                 let (vertices, triangles) = world.geometry_capture().into_triangles();
                 descriptions.push((
                     group.id,

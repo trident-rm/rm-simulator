@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Caller-owned drive requests, independent of scheduling and external transports.
+#[path = "control_error.rs"]
+mod control_error;
+pub use control_error::ControlError;
 use serde::{Deserialize, Serialize};
 
 /// Held wheel-axis motor torques in the caller's wheel roster order.
@@ -22,7 +25,10 @@ impl WheelTorques {
     /// assert!(WheelTorques::new(vec![f64::NAN]).is_err());
     /// # Ok::<(), &'static str>(())
     /// ```
-    pub fn new(torques_nm: Vec<f64>) -> Result<Self, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects an empty torque roster or nonfinite motor torques.
+    pub fn new(torques_nm: Vec<f64>) -> Result<Self, ControlError> {
         let request = Self(torques_nm);
         request.validate(request.0.len())?;
         Ok(request)
@@ -34,12 +40,15 @@ impl WheelTorques {
     }
 
     /// Check finite values and exact nonzero wheel count, including after deserialization.
-    pub fn validate(&self, wheel_count: usize) -> Result<(), &'static str> {
+    ///
+    /// # Errors
+    /// Rejects inconsistent body velocities, wheel counts or nonfinite actuation parameters.
+    pub fn validate(&self, wheel_count: usize) -> Result<(), ControlError> {
         if wheel_count == 0 || self.0.len() != wheel_count {
-            return Err("wheel torque count must match a nonempty chassis wheel roster");
+            return Err(ControlError::WheelCountMismatch);
         }
         if self.0.iter().any(|v| !v.is_finite()) {
-            return Err("wheel motor torques must be finite");
+            return Err(ControlError::NonfiniteTorque);
         }
         Ok(())
     }
@@ -67,7 +76,10 @@ pub enum DriveControl {
 
 impl DriveControl {
     /// Validate a held request against a chassis wheel roster.
-    pub fn validate(&self, wheel_count: usize) -> Result<(), &'static str> {
+    ///
+    /// # Errors
+    /// Rejects inconsistent body velocities, wheel counts or nonfinite actuation parameters.
+    pub fn validate(&self, wheel_count: usize) -> Result<(), ControlError> {
         match self {
             Self::BodyVelocity => Ok(()),
             Self::WheelTorques(torques) => torques.validate(wheel_count),

@@ -124,9 +124,15 @@ fn standalone_owner_matches_facade_states_joints_and_ordered_observations_at_bot
                 (prescribed, facade_prescribed),
                 (child, facade_child),
             ] {
-                assert_eq!(runtime.body_state(a), facade.body_state(b));
+                assert_eq!(
+                    runtime.body_state(a).map_err(|e| e.as_str()),
+                    facade.body_state(b)
+                );
             }
-            assert_eq!(runtime.joint_state(joint), facade.joint_state(facade_joint));
+            assert_eq!(
+                runtime.joint_state(joint).map_err(|e| e.as_str()),
+                facade.joint_state(facade_joint)
+            );
             let generic_colliders: Vec<_> = runtime.colliders().collect();
             let facade_colliders: Vec<_> = facade.colliders().collect();
             let a = runtime.physical_contacts();
@@ -322,7 +328,10 @@ fn bounded_observations_and_overflow_preserve_the_existing_step_error_contract()
     assert!(runtime.physical_contacts_dropped() > 0);
     let retained = runtime.physical_contacts().to_vec();
     let state = runtime.body_state(body).unwrap();
-    assert_eq!(runtime.step(u64::MAX), Err("physics time overflow"));
+    assert_eq!(
+        runtime.step(u64::MAX),
+        Err(sim_physics::runtime::RuntimeError::TimeOverflow)
+    );
     assert_eq!(runtime.physical_contacts(), retained);
     assert_eq!(runtime.body_state(body).unwrap(), state);
     let dropped = runtime.physical_contacts_dropped();
@@ -348,7 +357,10 @@ fn placement_epoch_exhaustion_preserves_native_state_and_never_wraps() {
     let snapshot = facade.chassis_snapshot(id).unwrap();
     sim_physics::test_support::set_placement_epoch(&mut facade.physical, u64::MAX);
     assert_eq!(
-        facade.physical.mark_placement_discontinuity(),
+        facade
+            .physical
+            .mark_placement_discontinuity()
+            .map_err(|e| e.as_str()),
         Err("physical placement epoch exhausted")
     );
     assert_eq!(

@@ -64,26 +64,32 @@ impl Bodies {
     pub(super) fn identity(&self) -> u64 {
         self.runtime
     }
-    fn entry(&self, binding: BodyBinding) -> Result<&Entry, &'static str> {
+    fn entry(&self, binding: BodyBinding) -> Result<&Entry, RuntimeError> {
         if binding.runtime != self.runtime {
-            return Err("body binding belongs to another runtime");
+            return Err(RuntimeError::Binding(BindingError::Foreign(
+                "body binding belongs to another runtime",
+            )));
         }
         self.entries
             .get(&binding.key)
             .filter(|e| e.generation == binding.generation)
-            .ok_or("stale body binding")
+            .ok_or(RuntimeError::Binding(BindingError::Stale(
+                "stale body binding",
+            )))
     }
     pub(super) fn contains(&self, key: BodyKey) -> bool {
         self.entries.contains_key(&key)
     }
-    pub(super) fn check_capacity(&self, count: usize) -> Result<(), &'static str> {
-        let count = u64::try_from(count).map_err(|_| "too many bodies")?;
+    pub(super) fn check_capacity(&self, count: usize) -> Result<(), RuntimeError> {
+        let count = u64::try_from(count).map_err(|_| RuntimeError::from("too many bodies"))?;
         self.next_generation
             .checked_add(count)
-            .ok_or("body binding generation exhausted")?;
+            .ok_or(RuntimeError::Binding(BindingError::Exhausted(
+                "body binding generation exhausted",
+            )))?;
         Ok(())
     }
-    pub(super) fn handle(&self, binding: BodyBinding) -> Result<RigidBodyHandle, &'static str> {
+    pub(super) fn handle(&self, binding: BodyBinding) -> Result<RigidBodyHandle, RuntimeError> {
         Ok(self.entry(binding)?.handle)
     }
     pub(super) fn apply_wrenches(&self, world: &mut PhysicsWorld) {
@@ -129,15 +135,20 @@ impl PhysicalRuntime {
     /// assert!(world.body_state(binding).is_err());
     /// # Ok::<(), &'static str>(())
     /// ```
+    ///
+    /// # Errors
+    /// Rejects an occupied body key, exhausted generation, invalid placement or incompatible initial velocities.
     pub fn install_body(
         &mut self,
         key: BodyKey,
         model: &CookedRigidBody,
         state: BodyState,
-    ) -> Result<BodyBinding, &'static str> {
+    ) -> Result<BodyBinding, RuntimeError> {
         state.validate()?;
         if self.bound_bodies.entries.contains_key(&key) {
-            return Err("duplicate body key");
+            return Err(RuntimeError::Binding(BindingError::Duplicate(
+                "duplicate body key",
+            )));
         }
         self.bound_bodies.check_capacity(1)?;
         let body = prepare_body(model, state)?;
@@ -191,15 +202,21 @@ impl PhysicalRuntime {
     }
 
     /// Borrow the installed immutable source without cloning collider buffers.
+    ///
+    /// # Errors
+    /// Rejects foreign or removed/replaced body bindings.
     pub fn body_description(
         &self,
         binding: BodyBinding,
-    ) -> Result<&RigidBodyDescription, &'static str> {
+    ) -> Result<&RigidBodyDescription, RuntimeError> {
         Ok(self.bound_bodies.entry(binding)?.model.source())
     }
 
     /// Read copied privileged motion, not a measured sensor or checkpoint.
-    pub fn body_state(&self, binding: BodyBinding) -> Result<BodyState, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects foreign or removed/replaced body bindings.
+    pub fn body_state(&self, binding: BodyBinding) -> Result<BodyState, RuntimeError> {
         let body = &self.world.bodies[self.bound_bodies.entry(binding)?.handle];
         let p = body.position();
         Ok(BodyState {
@@ -214,23 +231,26 @@ impl PhysicalRuntime {
 
     /// Replace dynamic world COM velocity and angular velocity; wake the body.
     /// Nonfinite requests or bindings to fixed/kinematic bodies fail before mutation.
+    ///
+    /// # Errors
+    /// Rejects stale/foreign bindings, nonfinite velocities and nondynamic bodies.
     pub fn set_body_velocity(
         &mut self,
         binding: BodyBinding,
         velocity_m_s: [f64; 3],
         angular_velocity_rad_s: [f64; 3],
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), RuntimeError> {
         if !velocity_m_s
             .into_iter()
             .chain(angular_velocity_rad_s)
             .all(f64::is_finite)
         {
-            return Err("nonfinite body velocity");
+            return Err(RuntimeError::from("nonfinite body velocity"));
         }
         let handle = self.bound_bodies.entry(binding)?.handle;
         let body = &mut self.world.bodies[handle];
         if !body.is_dynamic() {
-            return Err("body is not dynamic");
+            return Err(RuntimeError::from("body is not dynamic"));
         }
         body.set_linvel(vector(velocity_m_s), true);
         body.set_angvel(vector(angular_velocity_rad_s), true);
@@ -240,19 +260,22 @@ impl PhysicalRuntime {
     /// Replace a held world-frame force (N) at the COM and torque (N m).
     /// Remains active across solver slices/ticks until replaced or removed; zero
     /// clears it. This does not change other participants' actuation or advance time.
+    ///
+    /// # Errors
+    /// Rejects stale/foreign bindings, nonfinite wrenches and nondynamic bodies.
     pub fn set_body_wrench(
         &mut self,
         binding: BodyBinding,
         force_n: [f64; 3],
         torque_nm: [f64; 3],
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), RuntimeError> {
         if !force_n.into_iter().chain(torque_nm).all(f64::is_finite) {
-            return Err("nonfinite body wrench");
+            return Err(RuntimeError::from("nonfinite body wrench"));
         }
         let handle = self.bound_bodies.entry(binding)?.handle;
         let body = &mut self.world.bodies[handle];
         if !body.is_dynamic() {
-            return Err("body is not dynamic");
+            return Err(RuntimeError::from("body is not dynamic"));
         }
         body.reset_forces(false);
         body.reset_torques(false);
@@ -272,15 +295,18 @@ impl PhysicalRuntime {
     /// runtime interpolates from its actual current pose across solver slices.
     /// Only kinematic bodies accept endpoints; no teleport/placement API is implied.
     /// Repeated requests replace an endpoint; first-request order is retained.
+    ///
+    /// # Errors
+    /// Rejects stale/foreign bindings, invalid poses and nonkinematic bodies.
     pub fn set_body_endpoint(
         &mut self,
         binding: BodyBinding,
         endpoint: Pose,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), RuntimeError> {
         BodyState::at(endpoint).validate()?;
         let handle = self.bound_bodies.entry(binding)?.handle;
         if !self.world.bodies[handle].is_kinematic() {
-            return Err("body is not kinematic");
+            return Err(RuntimeError::from("body is not kinematic"));
         }
         if let Some((_, _, end)) = self
             .bound_body_endpoints
@@ -301,7 +327,10 @@ impl PhysicalRuntime {
     /// Remove one generic body, its colliders and attached described joints.
     /// Invalidates the body binding and every attached joint binding.
     /// Reinstalling the same logical key produces a different generation.
-    pub fn remove_bound_body(&mut self, binding: BodyBinding) -> Result<(), &'static str> {
+    ///
+    /// # Errors
+    /// Rejects foreign or removed/replaced body bindings before removal.
+    pub fn remove_bound_body(&mut self, binding: BodyBinding) -> Result<(), RuntimeError> {
         let handle = self.bound_bodies.entry(binding)?.handle;
         self.bound_joints.remove_attached(handle, &mut self.world);
         self.bound_bodies.entries.remove(&binding.key);
@@ -319,7 +348,7 @@ impl PhysicalRuntime {
 pub(super) fn prepare_body(
     model: &CookedRigidBody,
     state: BodyState,
-) -> Result<RigidBody, &'static str> {
+) -> Result<RigidBody, RuntimeError> {
     state.validate()?;
     let mut body = model.native_body_builder();
     if !matches!(
@@ -331,7 +360,9 @@ pub(super) fn prepare_body(
         .chain(state.angular_velocity_rad_s)
         .any(|x| x != 0.)
     {
-        return Err("non-dynamic body requires zero initial velocities");
+        return Err(RuntimeError::from(
+            "non-dynamic body requires zero initial velocities",
+        ));
     }
     body = body
         .pose(pose(state.pose))
@@ -349,7 +380,9 @@ pub(super) fn prepare_body(
             !world.translation.is_finite() || !world.rotation.is_finite()
         })
     {
-        return Err("nonfinite placed body mass or collider frame");
+        return Err(RuntimeError::from(
+            "nonfinite placed body mass or collider frame",
+        ));
     }
     Ok(body)
 }

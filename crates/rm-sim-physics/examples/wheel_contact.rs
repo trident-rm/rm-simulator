@@ -226,7 +226,7 @@ impl RollingWheel {
         &self,
         runtime: &mut rm_sim_physics::runtime::PhysicalRuntime,
     ) -> Result<(), &'static str> {
-        runtime.set_joint_motor(self.axle, None)
+        Ok(runtime.set_joint_motor(self.axle, None)?)
     }
     /// Hold the same assumed velocity motor as the isolated wheel fixture.
     pub fn drive(

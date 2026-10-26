@@ -677,15 +677,8 @@ fn same_surface(a: ArmorTarget, b: ArmorTarget) -> bool {
     }
 }
 fn validate_pose(pose: Pose) -> anyhow::Result<()> {
-    ensure!(
-        pose.translation_m
-            .iter()
-            .chain(&pose.rotation_wxyz)
-            .all(|v| v.is_finite())
-            && (math::quat_length(pose.rotation_wxyz) - 1.).abs() <= 1e-6,
-        "pose must be finite with a unit quaternion"
-    );
-    Ok(())
+    pose.validate_with(sim_engine::pose::PoseTolerance::Asset)
+        .map_err(|_| anyhow::anyhow!("pose must be finite with a unit quaternion"))
 }
 fn transform_point(placement: Pose, point: [f64; 3]) -> [f64; 3] {
     math::add(

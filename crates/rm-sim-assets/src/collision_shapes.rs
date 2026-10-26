@@ -100,12 +100,11 @@ pub(crate) fn local_file(directory: &Path, file: &str) -> anyhow::Result<PathBuf
                 .all(|c| matches!(c, Component::Normal(_))),
         "collision shape path must be local: {file:?}"
     );
-    let path = directory.join(file);
-    ensure!(
-        path.canonicalize()?.starts_with(directory.canonicalize()?),
-        "collision shape path escapes its directory: {file:?}"
-    );
-    Ok(path)
+    crate::verified::confined_path(directory, Path::new(file))
+        .map(|_| directory.join(file))
+        .with_context(|| {
+            format!("collision shape path escapes its directory or is missing: {file:?}")
+        })
 }
 
 fn check_hash(hash: &str) -> anyhow::Result<()> {

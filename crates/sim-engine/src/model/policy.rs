@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Explicit integration and collider mass/contact policies, independent of a solver.
+use super::ModelError;
 
 /// Coefficient combination for a contacting pair. If the two rules differ, the
 /// higher priority wins: Average < Min < Multiply < Max.
@@ -29,11 +30,11 @@ pub enum ColliderMass {
     DensityKgM3(f64),
 }
 impl ColliderMass {
-    pub(super) fn validate(self) -> Result<(), &'static str> {
+    pub(super) fn validate(self) -> Result<(), ModelError> {
         match self {
             Self::Zero => Ok(()),
             Self::MassKg(x) | Self::DensityKgM3(x) if x.is_finite() && x >= 0. => Ok(()),
-            _ => Err("collider mass or density must be finite and nonnegative"),
+            _ => Err(ModelError::InvalidColliderMass),
         }
     }
     pub(super) fn contributes(self) -> bool {
@@ -87,13 +88,13 @@ impl Default for BodyPolicy {
     }
 }
 impl BodyPolicy {
-    pub(super) fn validate(self) -> Result<(), &'static str> {
+    pub(super) fn validate(self) -> Result<(), ModelError> {
         if !self.gravity_scale.is_finite()
             || ![self.linear_damping, self.angular_damping]
                 .into_iter()
                 .all(|x| x.is_finite() && x >= 0.)
         {
-            return Err("invalid body gravity or damping policy");
+            return Err(ModelError::InvalidBodyPolicy);
         }
         Ok(())
     }

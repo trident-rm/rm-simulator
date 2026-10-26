@@ -18,3 +18,5 @@ pub mod semantics;
 
 /// Verified portable terrain collision tiers and native heightfield adapters.
 pub mod terrain_collision;
+
+mod verified;

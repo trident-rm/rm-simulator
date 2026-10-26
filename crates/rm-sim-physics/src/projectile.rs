@@ -666,7 +666,7 @@ impl WorldPhysics {
         model: &crate::cooking::CookedRigidBody,
         placement: Pose,
     ) -> Result<Vec<runtime::ColliderBinding>, &'static str> {
-        self.physical.install_fixed_model(model, placement)
+        Ok(self.physical.install_fixed_model(model, placement)?)
     }
 
     /// Borrow the sole physical scene for generic truth, geometry and observation access.
@@ -968,7 +968,7 @@ impl WorldPhysics {
         model: &CookedRigidBody,
         state: BodyState,
     ) -> Result<BodyBinding, &'static str> {
-        self.physical.install_body(key, model, state)
+        Ok(self.physical.install_body(key, model, state)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::body_binding`].
     pub fn body_binding(&self, key: BodyKey) -> Option<BodyBinding> {
@@ -979,11 +979,11 @@ impl WorldPhysics {
         &self,
         binding: BodyBinding,
     ) -> Result<&RigidBodyDescription, &'static str> {
-        self.physical.body_description(binding)
+        Ok(self.physical.body_description(binding)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::body_state`].
     pub fn body_state(&self, binding: BodyBinding) -> Result<BodyState, &'static str> {
-        self.physical.body_state(binding)
+        Ok(self.physical.body_state(binding)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::set_body_velocity`].
     pub fn set_body_velocity(
@@ -992,8 +992,9 @@ impl WorldPhysics {
         velocity_m_s: [f64; 3],
         angular_velocity_rad_s: [f64; 3],
     ) -> Result<(), &'static str> {
-        self.physical
-            .set_body_velocity(binding, velocity_m_s, angular_velocity_rad_s)
+        Ok(self
+            .physical
+            .set_body_velocity(binding, velocity_m_s, angular_velocity_rad_s)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::set_body_wrench`].
     pub fn set_body_wrench(
@@ -1002,7 +1003,7 @@ impl WorldPhysics {
         force_n: [f64; 3],
         torque_nm: [f64; 3],
     ) -> Result<(), &'static str> {
-        self.physical.set_body_wrench(binding, force_n, torque_nm)
+        Ok(self.physical.set_body_wrench(binding, force_n, torque_nm)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::set_body_endpoint`].
     pub fn set_body_endpoint(
@@ -1010,11 +1011,11 @@ impl WorldPhysics {
         binding: BodyBinding,
         endpoint: Pose,
     ) -> Result<(), &'static str> {
-        self.physical.set_body_endpoint(binding, endpoint)
+        Ok(self.physical.set_body_endpoint(binding, endpoint)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::remove_bound_body`].
     pub fn remove_bound_body(&mut self, binding: BodyBinding) -> Result<(), &'static str> {
-        self.physical.remove_bound_body(binding)
+        Ok(self.physical.remove_bound_body(binding)?)
     }
 }
 
@@ -1027,7 +1028,9 @@ impl WorldPhysics {
         child: BodyBinding,
         description: &JointDescription,
     ) -> Result<JointBinding, &'static str> {
-        self.physical.install_joint(key, parent, child, description)
+        Ok(self
+            .physical
+            .install_joint(key, parent, child, description)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::joint_binding`].
     pub fn joint_binding(&self, key: JointKey) -> Option<JointBinding> {
@@ -1038,11 +1041,11 @@ impl WorldPhysics {
         &self,
         binding: JointBinding,
     ) -> Result<&JointDescription, &'static str> {
-        self.physical.joint_description(binding)
+        Ok(self.physical.joint_description(binding)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::joint_state`].
     pub fn joint_state(&self, binding: JointBinding) -> Result<JointState, &'static str> {
-        self.physical.joint_state(binding)
+        Ok(self.physical.joint_state(binding)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::set_joint_motor`].
     pub fn set_joint_motor(
@@ -1050,11 +1053,11 @@ impl WorldPhysics {
         binding: JointBinding,
         motor: Option<JointMotor>,
     ) -> Result<(), &'static str> {
-        self.physical.set_joint_motor(binding, motor)
+        Ok(self.physical.set_joint_motor(binding, motor)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::joint_applied_effort`].
     pub fn joint_applied_effort(&self, binding: JointBinding) -> Result<f64, &'static str> {
-        self.physical.joint_applied_effort(binding)
+        Ok(self.physical.joint_applied_effort(binding)?)
     }
 
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::set_joint_effort`].
@@ -1063,11 +1066,11 @@ impl WorldPhysics {
         binding: JointBinding,
         effort: f64,
     ) -> Result<(), &'static str> {
-        self.physical.set_joint_effort(binding, effort)
+        Ok(self.physical.set_joint_effort(binding, effort)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::remove_bound_joint`].
     pub fn remove_bound_joint(&mut self, binding: JointBinding) -> Result<(), &'static str> {
-        self.physical.remove_bound_joint(binding)
+        Ok(self.physical.remove_bound_joint(binding)?)
     }
 }
 
@@ -1079,11 +1082,11 @@ impl WorldPhysics {
         placement: Pose,
         keys: &AssemblyKeys,
     ) -> Result<AssemblyBinding, &'static str> {
-        self.physical.install_assembly(model, placement, keys)
+        Ok(self.physical.install_assembly(model, placement, keys)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::remove_assembly`].
     pub fn remove_assembly(&mut self, live: &AssemblyBinding) -> Result<(), &'static str> {
-        self.physical.remove_assembly(live)
+        Ok(self.physical.remove_assembly(live)?)
     }
 }
 
@@ -1101,22 +1104,22 @@ impl WorldPhysics {
         &self,
         binding: ParticipantBinding,
     ) -> Result<BodyState, &'static str> {
-        self.physical.participant_state(binding)
+        Ok(self.physical.participant_state(binding)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::collider_state`].
     pub fn collider_state(&self, binding: ColliderBinding) -> Result<ColliderState, &'static str> {
-        self.physical.collider_state(binding)
+        Ok(self.physical.collider_state(binding)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::body_participant`].
     pub fn body_participant(
         &self,
         binding: BodyBinding,
     ) -> Result<ParticipantBinding, &'static str> {
-        self.physical.body_participant(binding)
+        Ok(self.physical.body_participant(binding)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::enable_contact_observations`].
     pub fn enable_contact_observations(&mut self, capacity: usize) -> Result<(), &'static str> {
-        self.physical.enable_contact_observations(capacity)
+        Ok(self.physical.enable_contact_observations(capacity)?)
     }
     /// Compatibility forwarding to [`runtime::PhysicalRuntime::disable_contact_observations`].
     pub fn disable_contact_observations(&mut self) {

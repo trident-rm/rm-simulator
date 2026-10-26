@@ -6,7 +6,11 @@ use crate::{ArmorSnapshot, Pose};
 use serde::{Deserialize, Serialize};
 
 use rm_sim_physics::motion::RotorMotion;
-pub use rm_sim_physics::motion::outpost::*;
+pub use rm_sim_physics::motion::outpost::{
+    BODY_CENTER_M, BODY_SIZE_M, DEFAULT_SPEED_RAD_S, DETECTION_HEIGHT_M, DETECTION_WIDTH_M,
+    FACE_HEIGHT_M, FACE_WIDTH_M, FRONT_CAD_M, HOUSING_BOXES, LIGHT_LENGTH_M, LIGHT_SPAN_M,
+    PIVOT_CAD_M, armor_poses_at, offset_pose, rotate,
+};
 /// RMUC 2027 V1.0.0 initial Outpost HP (§5.6.1).
 pub const INITIAL_HP: u32 = 1000;
 

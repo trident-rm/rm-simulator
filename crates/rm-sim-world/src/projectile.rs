@@ -2,7 +2,15 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Physical exports and the live simulation's serialized hit report.
 use crate::rune::HitOutcome;
-pub use rm_sim_physics::projectile::*;
+pub use rm_sim_physics::projectile::{
+    ARMOR_COLLISION_SPEED_M_S, ArmorCollision, ArmorTarget, Caliber, Contact, GRAVITY_M_S2,
+    HIT_MEMORY_NS, MAX_FLIGHT_NS, MAX_PROJECTILES, MovingGeometry, OUTPOST_TARGET_HALF_M,
+    PayloadShape, PayloadSnapshot, PayloadTelemetry, PreparedPayload, ProjectilePolicy,
+    ProjectileSnapshot, RETIRE_DWELL_NS, RETIRE_SPEED_M_S, RUNE_EFFECTIVE_RADIUS_M,
+    RUNE_HOUSING_HALF_M, RUNE_PHYSICAL_RADIUS_M, Removal, RemovalReason,
+    SMALL_ARMOR_HOUSING_HALF_M, Shot, StaticGeometry, TargetFace, TargetFrames, WorldPhysics,
+    runtime, scoring_offset,
+};
 use serde::{Deserialize, Serialize};
 /// Why an armor module did not register a contact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

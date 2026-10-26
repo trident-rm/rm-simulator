@@ -122,7 +122,7 @@ impl RuntimeExt for PhysicalRuntime {
     }
     #[inline]
     fn extension_check_placement_epoch(&self) -> Result<(), &'static str> {
-        self.check_placement_epoch()
+        Ok(self.check_placement_epoch()?)
     }
     #[inline]
     fn extension_ensure_queries_primed(&mut self) {
@@ -261,7 +261,7 @@ pub fn cook_buffers(
     vertices_m: Vec<[f64; 3]>,
     triangles: Vec<[u32; 3]>,
 ) -> Result<SharedShape, &'static str> {
-    crate::cooking::cook_buffers(vertices_m, triangles)
+    Ok(crate::cooking::cook_buffers(vertices_m, triangles)?)
 }
 
 /// Expand retained native shape boundaries with the same policy as generic captures.

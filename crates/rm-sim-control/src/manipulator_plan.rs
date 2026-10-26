@@ -2,7 +2,7 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Bounded deterministic planning for prescribed arms. The caller supplies swept
 //! collision validation; these searches do not advance time or apply forces.
-use crate::{Pose, manipulator::SerialArm};
+use rm_sim_physics::{Pose, manipulator::SerialArm};
 
 /// Validate a recorded IK warm start and return its body-local tool pose.
 /// The arm calibration is validated before FK. Body/tool translations are in
@@ -12,8 +12,8 @@ use crate::{Pose, manipulator::SerialArm};
 /// This accepts numerical planning input only; it does not certify clearance.
 ///
 /// ```
-/// use rm_sim_physics::{Pose, manipulator::{RevoluteAxis, SerialArm},
-///     manipulator_plan::checked_ik_hint};
+/// use rm_sim_physics::{Pose, manipulator::{RevoluteAxis, SerialArm}};
+/// use rm_sim_control::manipulator_plan::checked_ik_hint;
 /// let axis = RevoluteAxis { origin_m: [0.; 3], axis: [0., 0., 1.], range_rad: [-3., 3.] };
 /// let arm = SerialArm { axes: [axis; 6], tool: Pose::at([0.2, 0., 0.]) };
 /// let (target, joints) = checked_ik_hint(&arm, Pose::default(), arm.tool, [0.; 6]).unwrap();
@@ -35,19 +35,15 @@ pub fn checked_ik_hint(
     arm.validate()?;
     let quaternion = |p: Pose| {
         let [w, x, y, z] = p.rotation_wxyz;
-        rapier3d_f64::math::Rotation::from_xyzw(x, y, z, w)
+        glam::DQuat::from_xyzw(x, y, z, w)
     };
-    let position = |p: Pose| rapier3d_f64::math::Vector::from_array(p.translation_m);
-    if !body
-        .translation_m
-        .into_iter()
-        .chain(body.rotation_wxyz)
-        .chain(tool.translation_m)
-        .chain(tool.rotation_wxyz)
-        .all(f64::is_finite)
-        || [body, tool]
-            .iter()
-            .any(|p| (p.rotation_wxyz.into_iter().map(|v| v * v).sum::<f64>() - 1.).abs() > 1e-8)
+    let position = |p: Pose| glam::DVec3::from_array(p.translation_m);
+    if body
+        .validate_with(sim_engine::pose::PoseTolerance::IkHint)
+        .is_err()
+        || tool
+            .validate_with(sim_engine::pose::PoseTolerance::IkHint)
+            .is_err()
         || q.iter()
             .zip(arm.axes)
             .any(|(q, a)| !q.is_finite() || !(a.range_rad[0]..=a.range_rad[1]).contains(q))
@@ -100,11 +96,24 @@ pub enum PlanError {
     /// No connection was found within the supplied sampling budget.
     Exhausted,
 }
+impl std::fmt::Display for PlanError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::InvalidInput => "invalid planning input",
+            Self::CollisionQuery => "collision query failed",
+            Self::BlockedEndpoint => "planning endpoint is blocked",
+            Self::Exhausted => "planning budget exhausted",
+        })
+    }
+}
+impl std::error::Error for PlanError {}
+
 /// Distinct numerical IK solutions, ordered by the caller's seed preference.
 /// Joint coordinates are not wrapped across their calibrated range boundaries.
 ///
 /// ```
-/// use rm_sim_physics::{Pose,manipulator::*,manipulator_plan::ik_candidates};
+/// use rm_sim_physics::{Pose,manipulator::*};
+/// use rm_sim_control::manipulator_plan::ik_candidates;
 /// let axis=RevoluteAxis{origin_m:[0.;3],axis:[0.,0.,1.],range_rad:[-3.,3.]};
 /// let arm=SerialArm{axes:[axis;6],tool:Pose::at([0.2,0.,0.])};
 /// assert_eq!(ik_candidates(&arm,arm.tool,[ [0.;6] ],4).len(),1);
@@ -177,7 +186,7 @@ fn extend(
 /// constrained IK guide once the unit enters a socket.
 ///
 /// ```
-/// use rm_sim_physics::manipulator_plan::*;
+/// use rm_sim_control::manipulator_plan::*;
 /// let path=joint_path([[-1.,1.];6],[0.;6],[0.5;6],JointSearch::default(),|_,_|Ok(true)).unwrap();
 /// assert_eq!(path,vec![[0.;6],[0.5;6]]);
 /// ```
@@ -278,7 +287,7 @@ mod tests {
     use super::*;
     #[test]
     fn recorded_hint_rejects_invalid_arm_before_fk() {
-        use crate::manipulator::RevoluteAxis;
+        use rm_sim_physics::manipulator::RevoluteAxis;
         let axis = RevoluteAxis {
             origin_m: [0.; 3],
             axis: [0., 0., 1.],
@@ -324,7 +333,7 @@ mod tests {
     }
     #[test]
     fn routed_edges_pass_the_real_swept_collision_query() {
-        use crate::{Pose, manipulator_collision::*};
+        use rm_sim_physics::{Pose, manipulator_collision::*};
         use std::collections::BTreeMap;
         let body = |name: &str, half_m| CollisionBody {
             frame: name.into(),

@@ -6111,12 +6111,14 @@ name = "rm-sim-control"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
+ "rapier3d-f64",
  "rm-sim-assets",
  "rm-sim-gameplay",
  "rm-sim-physics",
  "serde",
  "serde_json",
  "sha2",
+ "sim-engine",
 ]
 
 [[package]]

@@ -50,7 +50,7 @@ pub fn prepared() -> Result<CookedAssembly, &'static str> {
             },
         )?],
     )?;
-    CookedAssembly::new(AssemblyDescription::new(
+    Ok(CookedAssembly::new(AssemblyDescription::new(
         LINK,
         vec![AssemblyLink::new(
             LINK,
@@ -58,7 +58,7 @@ pub fn prepared() -> Result<CookedAssembly, &'static str> {
             BodyState::at(Pose::at([0., 0., 1.])),
         )?],
         vec![],
-    )?)
+    )?)?)
 }
 
 /// A fresh 1000 Hz world reuses the same immutable prepared assembly on reset.

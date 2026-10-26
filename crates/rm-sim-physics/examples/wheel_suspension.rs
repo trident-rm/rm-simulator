@@ -152,7 +152,7 @@ fn body(
     } else {
         source
     };
-    CookedRigidBody::new(source)
+    Ok(CookedRigidBody::new(source)?)
 }
 
 /// Actual runtime truth sampled after a completed explicit tick.
@@ -531,8 +531,9 @@ impl Fixture {
     /// Replace a held vertical force at the moving test load's COM, N. Zero
     /// releases the external load; gravity and the passive spring remain active.
     pub fn load(&mut self, vertical_n: f64) -> Result<(), &'static str> {
-        self.runtime
-            .set_body_wrench(self.linkage.carrier, [0., 0., vertical_n], [0.; 3])
+        Ok(self
+            .runtime
+            .set_body_wrench(self.linkage.carrier, [0., 0., vertical_n], [0.; 3])?)
     }
     /// Change damping for comparison without rebuilding or moving bodies.
     pub fn damping(&mut self, value: f64) -> Result<(), &'static str> {

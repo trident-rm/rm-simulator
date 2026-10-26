@@ -2445,11 +2445,13 @@ name = "rm-sim-assets"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "glam 0.33.12",
  "rm-sim-gameplay",
  "rm-sim-physics",
  "serde",
  "serde_json",
  "sha2",
+ "sim-engine",
 ]
 
 [[package]]

@@ -15,10 +15,11 @@ pub(crate) fn pose(p: Pose) -> Pose3 {
         Rotation::from_xyzw(x, y, z, w).normalize(),
     )
 }
+#[cfg(feature = "rapier-extension")]
 pub(crate) fn finite(v: [f64; 3]) -> bool {
     v.iter().all(|x| x.is_finite())
 }
 pub(crate) fn pose_is_valid(p: Pose) -> bool {
-    let norm = p.rotation_wxyz.iter().map(|v| v * v).sum::<f64>();
-    finite(p.translation_m) && norm.is_finite() && (norm - 1.).abs() < 1e-6
+    p.validate_with(sim_engine::pose::PoseTolerance::Runtime)
+        .is_ok()
 }

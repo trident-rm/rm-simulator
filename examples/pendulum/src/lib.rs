@@ -91,7 +91,7 @@ fn prepare() -> Result<CookedAssembly, &'static str> {
         translation_m,
         rotation_wxyz: [FRAC_1_SQRT_2, 0., 0., FRAC_1_SQRT_2],
     };
-    CookedAssembly::new(AssemblyDescription::new(
+    Ok(CookedAssembly::new(AssemblyDescription::new(
         AssemblyLinkId(1),
         vec![
             AssemblyLink::new(
@@ -117,7 +117,7 @@ fn prepare() -> Result<CookedAssembly, &'static str> {
                 false,
             )?,
         )],
-    )?)
+    )?)?)
 }
 
 /// Latest held sensor observation. It contains no exact physical velocity.
@@ -254,7 +254,8 @@ pub struct Telemetry {
     pub motor: MotorOutput,
 }
 
-type Recipe = Box<dyn Fn() -> Result<PhysicalRuntime, &'static str> + Send + Sync>;
+type Recipe =
+    Box<dyn Fn() -> Result<PhysicalRuntime, sim_physics::runtime::RuntimeError> + Send + Sync>;
 
 /// One caller-paced experiment, with explicit extension-owned sensor/control state.
 /// One boxed setup recipe retains cooked resources for reconstruction; it is
@@ -317,7 +318,7 @@ impl Experiment {
     }
     /// Exact joint truth for evaluation; the controller does not consume this API.
     pub fn truth(&self) -> Result<JointState, &'static str> {
-        self.runtime().joint_state(self.hinge)
+        Ok(self.runtime().joint_state(self.hinge)?)
     }
     /// Compact sensor/control/actuation telemetry, with no geometry capture.
     pub fn telemetry(&self) -> Telemetry {

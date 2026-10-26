@@ -876,7 +876,7 @@ impl crate::Field {
     pub(crate) fn advance_assemblies(&mut self) {
         let step_duration = self.step_duration();
         for arm in &mut self.arms {
-            if self.rmuc_2027.as_ref().is_some_and(|s| {
+            if self.authority.rmuc().is_some_and(|s| {
                 s.game.phase == crate::rmuc_2027::match_rules::Phase::Running
                     && s.game.robots.iter().any(|r| r.id == arm.owner && !r.online)
             }) {
@@ -908,7 +908,7 @@ impl crate::Field {
         let mut settle = Vec::new();
         let mut begin = Vec::new();
         for run in &mut self.assemblies {
-            let offline = self.rmuc_2027.as_ref().is_some_and(|s| {
+            let offline = self.authority.rmuc().is_some_and(|s| {
                 s.game.phase == crate::rmuc_2027::match_rules::Phase::Running
                     && s.game.robots.iter().any(|r| r.id == run.owner && !r.online)
             });

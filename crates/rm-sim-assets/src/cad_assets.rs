@@ -7,6 +7,7 @@ use crate::math::{gltf_root_pose, quat_length, quat_normalize};
 use anyhow::{Context, anyhow, ensure};
 use rm_sim_physics::Pose;
 use serde::Deserialize;
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
@@ -718,15 +719,15 @@ fn read_manifest(path: &Path) -> anyhow::Result<Manifest> {
 /// whole and hashed; a missing or unreadable file is an error, and so is any
 /// mismatch, with both digests in the message.
 pub(crate) fn read_verified_bytes(path: &Path, expected: &str) -> anyhow::Result<Vec<u8>> {
-    let bytes =
-        std::fs::read(path).with_context(|| format!("reading CAD asset {}", path.display()))?;
-    let actual = format!("{:x}", Sha256::digest(&bytes));
+    let snapshot = crate::verified::Snapshot::read(path)
+        .with_context(|| format!("reading CAD asset {}", path.display()))?;
     ensure!(
-        actual.eq_ignore_ascii_case(expected),
-        "{} does not match the manifest checksum (expected {expected}, found {actual})",
-        path.display()
+        snapshot.sha256.eq_ignore_ascii_case(expected),
+        "{} does not match the manifest checksum (expected {expected}, found {})",
+        path.display(),
+        snapshot.sha256
     );
-    Ok(bytes)
+    Ok(snapshot.bytes)
 }
 
 /// Verify the bytes read from a file against the manifest checksum.

@@ -4,7 +4,8 @@
 
 Solver-free core for the incrementally separated robotics simulation engine.
 
-- `Pose`: FLU translation in metres and wxyz quaternion storage.
+- `Pose`: FLU translation in metres and wxyz quaternion storage, with explicit
+  model/runtime/asset/recorded-IK admission tolerances.
 - `time`: completed simulation `Stamp`, validated exact step durations and the
   existing 128 Hz default. Physics sessions retain their existing timestamp import.
 - `model`: validated immutable triangle surfaces with shared source buffers,
@@ -65,3 +66,7 @@ for buffer, lifecycle, identity and acceptance design.
 
 This internal workspace crate is unpublished. The separate `rm-sim` registry
 package is currently a documented development placeholder.
+
+Validation returns typed errors from `time`, `model`, `queries` and `control`.
+Each implements the standard error traits and retains its original diagnostic
+through `as_str()` for existing RM adapters.

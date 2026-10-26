@@ -108,7 +108,7 @@ fn checked_ik_hint(
     tool: Pose,
     q: [f64; 6],
 ) -> Result<(Pose, [f64; 6]), &'static str> {
-    rm_sim_physics::manipulator_plan::checked_ik_hint(arm, body, tool, q)
+    crate::manipulator_plan::checked_ik_hint(arm, body, tool, q)
 }
 /// Read a FLU pose quaternion as wxyz without normalization.
 pub fn quaternion(p: Pose) -> DQuat {
@@ -884,7 +884,7 @@ impl Rig {
     }
     /// Choose a collision-clear positioning branch before an attempt begins.
     pub fn select_live_core_branch(&mut self) -> Result<(), &'static str> {
-        for q in rm_sim_physics::manipulator_plan::ik_candidates(
+        for q in crate::manipulator_plan::ik_candidates(
             &self.config.core,
             self.socket,
             initial_seeds(),

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Solver-free joint descriptions and scalar runtime observations/commands.
+use super::ModelError;
 
 use crate::Pose;
 use std::f64::consts::PI;
@@ -28,9 +29,12 @@ pub struct JointLimits {
 
 impl JointLimits {
     /// Require finite endpoints with `min <= max`, without changing the values.
-    pub fn new(min: f64, max: f64) -> Result<Self, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects invalid limits, frames or motor targets; fixed joints cannot carry limits.
+    pub fn new(min: f64, max: f64) -> Result<Self, ModelError> {
         if !min.is_finite() || !max.is_finite() || min > max {
-            return Err("joint limits must be finite and ordered");
+            return Err(ModelError::InvalidJointLimits);
         }
         Ok(Self { min, max })
     }
@@ -77,20 +81,23 @@ impl JointDescription {
     /// must lie within inclusive [-π, π]. `None` leaves the free axis unlimited,
     /// but does not promise multi-turn revolute coordinates. Contact policy is
     /// explicit and applies to the connected pair, subject to collider filters.
+    ///
+    /// # Errors
+    /// Rejects invalid limits, frames or motor targets; fixed joints cannot carry limits.
     pub fn new(
         kind: JointKind,
         parent_frame: Pose,
         child_frame: Pose,
         limits: Option<JointLimits>,
         contacts_enabled: bool,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, ModelError> {
         validate_frame(parent_frame)?;
         validate_frame(child_frame)?;
         if let Some(limits) = limits {
             match kind {
-                JointKind::Fixed => return Err("fixed joints cannot have limits"),
+                JointKind::Fixed => return Err(ModelError::FixedJointLimits),
                 JointKind::Revolute if limits.min < -PI || limits.max > PI => {
-                    return Err("revolute limits must lie within [-pi, pi]");
+                    return Err(ModelError::RevoluteLimitsOutOfRange);
                 }
                 _ => {}
             }
@@ -167,13 +174,16 @@ pub struct JointMotor {
 impl JointMotor {
     /// Require finite targets, finite nonnegative gains and finite positive
     /// maximum effort. No reciprocal-finiteness restriction is imposed.
+    ///
+    /// # Errors
+    /// Rejects invalid limits, frames or motor targets; fixed joints cannot carry limits.
     pub fn new(
         target_position: f64,
         target_velocity: f64,
         stiffness: f64,
         damping: f64,
         max_force: f64,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, ModelError> {
         if ![
             target_position,
             target_velocity,
@@ -187,7 +197,7 @@ impl JointMotor {
             || damping < 0.
             || max_force <= 0.
         {
-            return Err("invalid joint motor targets, gains or maximum effort");
+            return Err(ModelError::InvalidJointMotor);
         }
         Ok(Self {
             target_position,
@@ -224,15 +234,10 @@ impl JointMotor {
     }
 }
 
-fn validate_frame(frame: Pose) -> Result<(), &'static str> {
-    let norm = frame.rotation_wxyz.iter().map(|x| x * x).sum::<f64>();
-    if !frame.translation_m.into_iter().all(f64::is_finite)
-        || !norm.is_finite()
-        || (norm - 1.).abs() > 1e-6
-    {
-        return Err("invalid joint frame");
-    }
-    Ok(())
+fn validate_frame(frame: Pose) -> Result<(), ModelError> {
+    frame
+        .validate_with(crate::pose::PoseTolerance::Model)
+        .map_err(|_| ModelError::InvalidJointFrame)
 }
 
 #[cfg(test)]
@@ -242,7 +247,7 @@ mod tests {
     fn description(
         kind: JointKind,
         limits: Option<JointLimits>,
-    ) -> Result<JointDescription, &'static str> {
+    ) -> Result<JointDescription, ModelError> {
         JointDescription::new(kind, Pose::default(), Pose::default(), limits, false)
     }
 

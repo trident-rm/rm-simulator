@@ -11,11 +11,13 @@ worker scheduling, cancellation and authoritative actuation.
   waypoints, conservative footprint checks and explicit-interval following.
 - `assembly`: source-bound Cartesian rig, staged IK/collision planning, fixed
   grasp/twist freedom, cancellation/progress and 128 Hz playback retiming.
+- `manipulator_plan`: deterministic IK candidate selection and bounded joint-space
+  search over physical arm models and caller collision checks.
 - `test-support`: optional synthetic rig fixture for diagnostic tests.
 
 ```sh
-mbx run -p rm-sim-control --example navigation --locked
-mbx test -p rm-sim-control --all-features --locked
+cargo run -p rm-sim-control --example navigation --locked
+cargo test -p rm-sim-control --all-features --locked
 ```
 
 The example drives a bare physical robot around a wall without constructing a

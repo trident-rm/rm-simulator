@@ -297,7 +297,9 @@ impl Project {
             if !ids.insert(g.id) {
                 return Err("duplicate group ID".into());
             }
-            BodyState::at(g.pose).validate().map_err(str::to_owned)?;
+            BodyState::at(g.pose)
+                .validate()
+                .map_err(|error| error.to_string())?;
             match g.mass_mode {
                 MassMode::ReviewedCache { products_sign }
                     if products_sign != -1. && products_sign != 1. =>
@@ -349,7 +351,9 @@ impl Project {
             {
                 return Err("invalid part identity/group/provenance".into());
             }
-            BodyState::at(p.pose).validate().map_err(str::to_owned)?;
+            BodyState::at(p.pose)
+                .validate()
+                .map_err(|error| error.to_string())?;
             if let Some(m) = &p.override_mass {
                 principal(m)?;
             }
@@ -439,7 +443,9 @@ impl Project {
             }
             Proxy::Hull => Ok(vec![(
                 Pose::default(),
-                ShapeDescription::ConvexHull(ConvexHull::new(points).map_err(str::to_owned)?),
+                ShapeDescription::ConvexHull(
+                    ConvexHull::new(points).map_err(|error| error.to_string())?,
+                ),
             )]),
             Proxy::PerPartBoxes => unreachable!(),
         }
@@ -480,7 +486,10 @@ impl Project {
     }
     pub fn assembly(&self) -> Result<(CookedAssembly, Vec<GroupReport>)> {
         let (source, report) = self.description()?;
-        Ok((CookedAssembly::new(source).map_err(str::to_owned)?, report))
+        Ok((
+            CookedAssembly::new(source).map_err(|error| error.to_string())?,
+            report,
+        ))
     }
     /// Validated source descriptions, before backend preparation.
     pub(super) fn description(&self) -> Result<(AssemblyDescription, Vec<GroupReport>)> {
@@ -537,7 +546,7 @@ impl Project {
                     )
                 })
                 .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(str::to_owned)?;
+                .map_err(|error| error.to_string())?;
             let body = RigidBodyDescription::new(
                 if g.fixed {
                     BodyKind::Fixed
@@ -546,10 +555,10 @@ impl Project {
                 },
                 colliders,
             )
-            .map_err(str::to_owned)?;
+            .map_err(|error| error.to_string())?;
             links.push(
                 AssemblyLink::new(AssemblyLinkId(g.id), body, BodyState::at(g.pose))
-                    .map_err(str::to_owned)?,
+                    .map_err(|error| error.to_string())?,
             );
             if let Some(j) = &g.joint {
                 if !j.reviewed || j.evidence.trim().is_empty() {
@@ -581,7 +590,7 @@ impl Project {
                     .limits
                     .map(|[a, b]| JointLimits::new(a, b))
                     .transpose()
-                    .map_err(str::to_owned)?;
+                    .map_err(|error| error.to_string())?;
                 let joint = JointDescription::new(
                     kind,
                     compose(inverse(parent.pose), frame),
@@ -589,7 +598,7 @@ impl Project {
                     limits,
                     false,
                 )
-                .map_err(str::to_owned)?;
+                .map_err(|error| error.to_string())?;
                 joints.push(AssemblyJoint::new(
                     AssemblyJointId(g.id),
                     AssemblyLinkId(parent.id),
@@ -599,7 +608,7 @@ impl Project {
             }
         }
         let source = AssemblyDescription::new(AssemblyLinkId(roots[0].id), links, joints)
-            .map_err(str::to_owned)?;
+            .map_err(|error| error.to_string())?;
         Ok((source, report))
     }
     pub fn check_runtime(&self) -> Result<Vec<GroupReport>> {
@@ -621,7 +630,7 @@ impl Project {
         let mut runtime = PhysicalRuntime::new(StepDuration::HZ_128);
         runtime
             .install_assembly(&model, Pose::default(), &keys)
-            .map_err(str::to_owned)?;
+            .map_err(|error| error.to_string())?;
         Ok(report)
     }
     pub fn export(&self, path: &Path) -> Result<()> {
@@ -798,7 +807,7 @@ fn principal(m: &Mass) -> Result<Inertial> {
             rotation_wxyz: [q.w, q.x, q.y, q.z],
         },
     )
-    .map_err(str::to_owned)
+    .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

@@ -47,34 +47,40 @@ impl Joints {
     pub(super) fn contains(&self, key: JointKey) -> bool {
         self.entries.iter().any(|e| e.key == key)
     }
-    pub(super) fn check_capacity(&self, count: usize) -> Result<(), &'static str> {
-        let count = u64::try_from(count).map_err(|_| "too many joints")?;
+    pub(super) fn check_capacity(&self, count: usize) -> Result<(), RuntimeError> {
+        let count = u64::try_from(count).map_err(|_| RuntimeError::from("too many joints"))?;
         self.next_generation
             .checked_add(count)
-            .ok_or("joint binding generation exhausted")?;
+            .ok_or(RuntimeError::Binding(BindingError::Exhausted(
+                "joint binding generation exhausted",
+            )))?;
         Ok(())
     }
     pub(super) fn check_binding(
         &self,
         runtime: u64,
         binding: JointBinding,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), RuntimeError> {
         self.entry(runtime, binding).map(|_| ())
     }
-    fn entry(&self, runtime: u64, binding: JointBinding) -> Result<&Entry, &'static str> {
+    fn entry(&self, runtime: u64, binding: JointBinding) -> Result<&Entry, RuntimeError> {
         if binding.runtime != runtime {
-            return Err("joint binding belongs to another runtime");
+            return Err(RuntimeError::Binding(BindingError::Foreign(
+                "joint binding belongs to another runtime",
+            )));
         }
         self.entries
             .iter()
             .find(|e| e.key == binding.key && e.generation == binding.generation)
-            .ok_or("stale joint binding")
+            .ok_or(RuntimeError::Binding(BindingError::Stale(
+                "stale joint binding",
+            )))
     }
     fn entry_mut(
         &mut self,
         runtime: u64,
         binding: JointBinding,
-    ) -> Result<&mut Entry, &'static str> {
+    ) -> Result<&mut Entry, RuntimeError> {
         self.entry(runtime, binding)?;
         Ok(self
             .entries
@@ -234,20 +240,25 @@ impl PhysicalRuntime {
     /// assert!(world.joint_state(joint).is_err());
     /// # Ok::<(), &'static str>(())
     /// ```
+    ///
+    /// # Errors
+    /// Rejects occupied keys, invalid bodies, incompatible initial frames/limits or exhausted generations.
     pub fn install_joint(
         &mut self,
         key: JointKey,
         parent: BodyBinding,
         child: BodyBinding,
         description: &JointDescription,
-    ) -> Result<JointBinding, &'static str> {
+    ) -> Result<JointBinding, RuntimeError> {
         let parent = self.bound_bodies.handle(parent)?;
         let child = self.bound_bodies.handle(child)?;
         if parent == child {
-            return Err("joint requires distinct bodies");
+            return Err(RuntimeError::from("joint requires distinct bodies"));
         }
         if self.bound_joints.entries.iter().any(|e| e.key == key) {
-            return Err("duplicate joint key");
+            return Err(RuntimeError::Binding(BindingError::Duplicate(
+                "duplicate joint key",
+            )));
         }
         self.bound_joints.check_capacity(1)?;
         let joint = prepare_joint(
@@ -302,10 +313,13 @@ impl PhysicalRuntime {
     }
 
     /// Borrow the immutable installed source; stale/foreign bindings fail.
+    ///
+    /// # Errors
+    /// Rejects foreign or removed/replaced joint bindings.
     pub fn joint_description(
         &self,
         binding: JointBinding,
-    ) -> Result<&JointDescription, &'static str> {
+    ) -> Result<&JointDescription, RuntimeError> {
         Ok(&self
             .bound_joints
             .entry(self.runtime_identity(), binding)?
@@ -314,7 +328,10 @@ impl PhysicalRuntime {
 
     /// Read a compact scalar observation without allocating. Fixed joints report
     /// zero; revolute angles are principal values in [-pi, pi], without turns.
-    pub fn joint_state(&self, binding: JointBinding) -> Result<JointState, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects foreign or removed/replaced joint bindings.
+    pub fn joint_state(&self, binding: JointBinding) -> Result<JointState, RuntimeError> {
         Ok(state(
             self.bound_joints.entry(self.runtime_identity(), binding)?,
             &self.world,
@@ -350,7 +367,10 @@ impl PhysicalRuntime {
     /// assert_eq!(runtime.joint_applied_effort(joint)?, 0.2);
     /// # Ok(()) }
     /// ```
-    pub fn joint_applied_effort(&self, binding: JointBinding) -> Result<f64, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects foreign or removed/replaced joint bindings.
+    pub fn joint_applied_effort(&self, binding: JointBinding) -> Result<f64, RuntimeError> {
         Ok(self
             .bound_joints
             .entry(self.runtime_identity(), binding)?
@@ -364,26 +384,31 @@ impl PhysicalRuntime {
     /// inclusive limits fail; even unlimited revolute targets must be in [-pi, pi].
     /// Angular errors use ordinary principal-coordinate subtraction, not a
     /// shortest-path wrap or multi-turn target. No time advances here.
+    ///
+    /// # Errors
+    /// Rejects invalid motor targets, incompatible fixed joints and stale/foreign bindings.
     pub fn set_joint_motor(
         &mut self,
         binding: JointBinding,
         motor: Option<JointMotor>,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), RuntimeError> {
         let runtime = self.runtime_identity();
         let entry = self.bound_joints.entry_mut(runtime, binding)?;
         if let Some(motor) = motor {
             if entry.description.kind() == JointKind::Fixed {
-                return Err("fixed joint cannot have a motor");
+                return Err(RuntimeError::from("fixed joint cannot have a motor"));
             }
             if entry.description.kind() == JointKind::Revolute
                 && !(-PI..=PI).contains(&motor.target_position())
             {
-                return Err("revolute motor target must lie within [-pi, pi]");
+                return Err(RuntimeError::from(
+                    "revolute motor target must lie within [-pi, pi]",
+                ));
             }
             if entry.description.limits().is_some_and(|l| {
                 motor.target_position() < l.min() || motor.target_position() > l.max()
             }) {
-                return Err("joint motor target outside limits");
+                return Err(RuntimeError::from("joint motor target outside limits"));
             }
         }
         entry.motor = motor;
@@ -396,18 +421,21 @@ impl PhysicalRuntime {
     /// Equal/opposite forces act at the two anchors, including COM torque;
     /// hinge torques are equal/opposite world torques. Zero clears both modes.
     /// Fixed joints reject nonzero effort; nonfinite effort fails before mutation.
+    ///
+    /// # Errors
+    /// Rejects nonfinite effort, fixed joints and stale/foreign bindings.
     pub fn set_joint_effort(
         &mut self,
         binding: JointBinding,
         effort: f64,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), RuntimeError> {
         if !effort.is_finite() {
-            return Err("nonfinite joint effort");
+            return Err(RuntimeError::from("nonfinite joint effort"));
         }
         let runtime = self.runtime_identity();
         let entry = self.bound_joints.entry_mut(runtime, binding)?;
         if entry.description.kind() == JointKind::Fixed && effort != 0. {
-            return Err("fixed joint cannot have effort");
+            return Err(RuntimeError::from("fixed joint cannot have effort"));
         }
         entry.motor = None;
         entry.effort = effort;
@@ -416,7 +444,10 @@ impl PhysicalRuntime {
 
     /// Remove this constraint and its held actuation, invalidating its token.
     /// Logical key reuse creates a fresh generation; body bindings remain valid.
-    pub fn remove_bound_joint(&mut self, binding: JointBinding) -> Result<(), &'static str> {
+    ///
+    /// # Errors
+    /// Rejects foreign or removed/replaced joint bindings.
+    pub fn remove_bound_joint(&mut self, binding: JointBinding) -> Result<(), RuntimeError> {
         self.bound_joints.entry(self.runtime_identity(), binding)?;
         let index = self
             .bound_joints
@@ -435,7 +466,7 @@ fn validate_initial(
     description: &JointDescription,
     parent: &RigidBody,
     child: &RigidBody,
-) -> Result<(), &'static str> {
+) -> Result<(), RuntimeError> {
     let a = parent.position() * pose(description.parent_frame());
     let b = child.position() * pose(description.child_frame());
     let rotation = a.rotation.inverse() * b.rotation;
@@ -477,14 +508,16 @@ fn validate_initial(
     .into_iter()
     .any(|x| !x.is_finite() || x > 1e-6)
     {
-        return Err("initial joint locked frames or velocities disagree");
+        return Err(RuntimeError::from(
+            "initial joint locked frames or velocities disagree",
+        ));
     }
     let position = state_for_bodies(description, parent, child).position;
     if description
         .limits()
         .is_some_and(|l| position < l.min() || position > l.max())
     {
-        return Err("initial joint position outside limits");
+        return Err(RuntimeError::from("initial joint position outside limits"));
     }
     Ok(())
 }
@@ -494,9 +527,11 @@ pub(super) fn prepare_joint(
     parent: &RigidBody,
     child: &RigidBody,
     description: &JointDescription,
-) -> Result<GenericJoint, &'static str> {
+) -> Result<GenericJoint, RuntimeError> {
     if !parent.is_dynamic() && !child.is_dynamic() {
-        return Err("joint requires at least one dynamic body");
+        return Err(RuntimeError::from(
+            "joint requires at least one dynamic body",
+        ));
     }
     validate_initial(description, parent, child)?;
     let (mask, axis) = match description.kind() {

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Immutable physical descriptions, independent of cooked shapes and world state.
+mod error;
+pub use error::ModelError;
 use std::sync::Arc;
 mod assembly;
 mod body;
@@ -52,19 +54,22 @@ impl TriangleMesh {
     /// Take ownership without copying buffers; reject nonfinite vertices and
     /// invalid indices. Empty surfaces are valid descriptions, not necessarily
     /// valid collision shapes. No simplification or winding repair is performed.
-    pub fn new(vertices_m: Vec<[f64; 3]>, triangles: Vec<[u32; 3]>) -> Result<Self, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects nonfinite vertices, more than `u32::MAX` vertices, or out-of-range triangle indices.
+    pub fn new(vertices_m: Vec<[f64; 3]>, triangles: Vec<[u32; 3]>) -> Result<Self, ModelError> {
         if !vertices_m.iter().flatten().all(|v| v.is_finite()) {
-            return Err("mesh vertices must be finite");
+            return Err(ModelError::NonfiniteMeshVertex);
         }
         if vertices_m.len() > u32::MAX as usize {
-            return Err("mesh has too many vertices");
+            return Err(ModelError::TooManyMeshVertices);
         }
         if triangles
             .iter()
             .flatten()
             .any(|&i| i as usize >= vertices_m.len())
         {
-            return Err("mesh triangle index out of range");
+            return Err(ModelError::MeshIndexOutOfRange);
         }
         Ok(Self(Arc::new(MeshData {
             vertices_m,

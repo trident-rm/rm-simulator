@@ -114,8 +114,8 @@ impl Field {
     pub fn snapshot(&self) -> FieldSnapshot {
         let time_ns = self.time_ns();
         FieldSnapshot {
-            rmuc_2027: self.rmuc_2027.clone(),
-            rmul_2027: self.rmul_2027.clone(),
+            rmuc_2027: self.authority.rmuc().cloned(),
+            rmul_2027: self.authority.rmul().cloned(),
             bases: Vec::new(),
             tick: self.tick,
             time_ns,
@@ -132,8 +132,8 @@ impl Field {
                 assemblies: self.assemblies.clone(),
                 arms: self.arms.clone(),
                 energy_units: self.energy_units(),
-                rmuc_2027: self.rmuc_2027.clone(),
-                rmul_2027: self.rmul_2027.clone(),
+                rmuc_2027: self.authority.rmuc().cloned(),
+                rmul_2027: self.authority.rmul().cloned(),
                 next_chassis_id: self.physics.next_chassis_id(),
                 projectile_policy: self.physics.projectile_policy(),
                 last_detection_ns: {
@@ -302,8 +302,10 @@ impl Field {
             assemblies: rules.assemblies.clone(),
             arms: rules.arms.clone(),
             energy_units: rules.energy_units.clone(),
-            rmuc_2027: rules.rmuc_2027.clone(),
-            rmul_2027: rules.rmul_2027.clone(),
+            authority: crate::Authority::from_records(
+                rules.rmuc_2027.clone(),
+                rules.rmul_2027.clone(),
+            )?,
             floor_height_m,
             tick: snapshot.tick,
             physics,

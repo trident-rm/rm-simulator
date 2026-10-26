@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Finite regular height grids, independent of solver storage/cooking.
+use super::ModelError;
 use super::TriangleMesh;
 use std::sync::Arc;
 
@@ -23,11 +24,10 @@ pub struct HeightField {
 impl HeightField {
     /// Require a finite rectangular grid with at least two rows/columns and
     /// finite positive extents. Zero heights and negative elevations are valid.
-    pub fn new(
-        heights_m: Vec<Vec<f64>>,
-        size_x_m: f64,
-        size_z_m: f64,
-    ) -> Result<Self, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects ragged, undersized or oversized grids and nonfinite samples or nonpositive extents.
+    pub fn new(heights_m: Vec<Vec<f64>>, size_x_m: f64, size_z_m: f64) -> Result<Self, ModelError> {
         let columns = heights_m.first().map_or(0, Vec::len);
         if heights_m.len() < 2
             || columns < 2
@@ -42,7 +42,7 @@ impl HeightField {
                 .into_iter()
                 .all(|v| v.is_finite() && v > 0.)
         {
-            return Err("invalid finite heightfield");
+            return Err(ModelError::InvalidHeightfield);
         }
         Ok(Self {
             heights_m: heights_m.into(),

@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Copyright (c) 2026 hxyulin <hxyulin@proton.me>
+[default]
+# Commit IDs in provenance must never be rewritten as ordinary words.
+extend-ignore-re = ['\b[0-9a-f]{7,40}\b']
+
 [default.extend-identifiers]
 # Existing domain terms and coordinate indices, not spelling errors.
 iy = "iy"

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Immutable prepared assembly resources; no caller-world installations.
-use super::CookedRigidBody;
+use super::{CookError, CookedRigidBody};
 use sim_engine::model::AssemblyDescription;
 use std::{collections::HashMap, sync::Arc};
 
+#[derive(Debug)]
 struct Prepared {
     source: AssemblyDescription,
     bodies: Vec<CookedRigidBody>,
@@ -15,14 +16,17 @@ struct Prepared {
 /// Preparation validates backend body modes and initial joint constraints. It
 /// creates no world, live native handles or persistent model identity. Cloning
 /// shares all arrays and shapes; installation supplies runtime keys and placement.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CookedAssembly(Arc<Prepared>);
 impl CookedAssembly {
     /// Cook all body resources and validate canonical initial state once.
     /// Unsupported geometry/body pairs or inconsistent joint frames/velocities
     /// return an error without touching a caller's runtime. The source tree's
     /// order is preserved; no joint placement or inertial properties are inferred.
-    pub fn new(source: AssemblyDescription) -> Result<Self, &'static str> {
+    ///
+    /// # Errors
+    /// Rejects body cooking failures or inconsistent initial joint frames, velocities and limits.
+    pub fn new(source: AssemblyDescription) -> Result<Self, CookError> {
         let indices: HashMap<_, _> = source
             .links()
             .iter()
@@ -44,7 +48,8 @@ impl CookedAssembly {
             bodies,
             endpoints,
         }));
-        crate::runtime::assembly::validate_cooked(&prepared)?;
+        crate::runtime::assembly::validate_cooked(&prepared)
+            .map_err(|error| CookError::Backend(error.as_str()))?;
         Ok(prepared)
     }
     /// Original immutable source, with assembly-local initial states and IDs.

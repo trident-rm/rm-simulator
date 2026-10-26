@@ -7,3 +7,6 @@
 pub mod assembly;
 
 pub mod navigation;
+
+/// Caller-driven numerical IK candidate selection and bounded joint-space search.
+pub mod manipulator_plan;

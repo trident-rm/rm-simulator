@@ -82,6 +82,54 @@ pub enum FieldError {
     Restore(&'static str),
 }
 
+/// The single admitted authority. Wire DTOs retain their historical optional fields.
+enum Authority {
+    Bare,
+    Rmuc(Box<rmuc_2027::State>),
+    Rmul(gameplay::rmul_2027::Match),
+}
+impl Authority {
+    fn from_records(
+        uc: Option<rmuc_2027::State>,
+        ul: Option<gameplay::rmul_2027::Match>,
+    ) -> Result<Self, FieldError> {
+        match (uc, ul) {
+            (None, None) => Ok(Self::Bare),
+            (Some(state), None) => Ok(Self::Rmuc(Box::new(state))),
+            (None, Some(game)) => Ok(Self::Rmul(game)),
+            (Some(_), Some(_)) => Err(FieldError::Restore("mixed competition configuration")),
+        }
+    }
+    fn rmuc(&self) -> Option<&rmuc_2027::State> {
+        if let Self::Rmuc(state) = self {
+            Some(state)
+        } else {
+            None
+        }
+    }
+    fn rmuc_mut(&mut self) -> Option<&mut rmuc_2027::State> {
+        if let Self::Rmuc(state) = self {
+            Some(state)
+        } else {
+            None
+        }
+    }
+    fn rmul(&self) -> Option<&gameplay::rmul_2027::Match> {
+        if let Self::Rmul(game) = self {
+            Some(game)
+        } else {
+            None
+        }
+    }
+    fn rmul_mut(&mut self) -> Option<&mut gameplay::rmul_2027::Match> {
+        if let Self::Rmul(game) = self {
+            Some(game)
+        } else {
+            None
+        }
+    }
+}
+
 /// The complete field: one physics world holding projectiles and chassis, with
 /// the runes, outposts, bases and optional referee on top. Reading a snapshot
 /// never advances time.
@@ -103,8 +151,7 @@ pub struct Field {
     energy_units: Vec<energy_unit::EnergyUnit>,
     arms: Vec<assembly::ArmState>,
     assemblies: Vec<assembly::Run>,
-    rmuc_2027: Option<rmuc_2027::State>,
-    rmul_2027: Option<gameplay::rmul_2027::Match>,
+    authority: Authority,
     floor_height_m: f64,
     tick: u64,
     physics: WorldPhysics,
@@ -150,8 +197,10 @@ impl Field {
             energy_units: Vec::new(),
             arms: Vec::new(),
             assemblies: Vec::new(),
-            rmuc_2027,
-            rmul_2027: config.rmul_2027.map(gameplay::rmul_2027::Match::new),
+            authority: Authority::from_records(
+                rmuc_2027,
+                config.rmul_2027.map(gameplay::rmul_2027::Match::new),
+            )?,
             floor_height_m: config.floor_height_m,
             tick: 0,
             physics: {
@@ -420,7 +469,7 @@ impl Field {
         shot: Shot,
         shooter: Option<u32>,
     ) -> Result<u64, FieldError> {
-        if let Some(state) = &self.rmuc_2027 {
+        if let Some(state) = self.authority.rmuc() {
             if shot.caliber == Caliber::Mm42
                 && !shooter.is_some_and(|id| {
                     state.game.robots.iter().any(|r| {
@@ -451,7 +500,7 @@ impl Field {
                 ));
             }
         }
-        if let Some(game) = &self.rmul_2027 {
+        if let Some(game) = self.authority.rmul() {
             let shooter = shooter.ok_or(FieldError::Referee("RMUL launch requires a robot"))?;
             game.check_launch(shooter, shot.caliber == Caliber::Mm42)
                 .map_err(FieldError::Referee)?;
@@ -460,10 +509,10 @@ impl Field {
             .physics
             .fire(self.time_ns(), muzzle, shot, shooter)
             .map_err(FieldError::Shot)?;
-        if let (Some(state), Some(id)) = (&mut self.rmuc_2027, shooter) {
+        if let (Some(state), Some(id)) = (self.authority.rmuc_mut(), shooter) {
             state.game.record_launch(id, shot.speed_m_s);
         }
-        if let (Some(game), Some(shooter)) = (&mut self.rmul_2027, shooter) {
+        if let (Some(game), Some(shooter)) = (self.authority.rmul_mut(), shooter) {
             game.fire(shooter, shot.caliber == Caliber::Mm42, shot.speed_m_s);
         }
         Ok(id)
@@ -472,7 +521,7 @@ impl Field {
     /// 17 mm rounds or one 42 mm round; native 2027 chooses ten zone rounds or
     /// 100 remote rounds with six-second delivery (Tables 5-7–5-9).
     pub fn buy_ammo(&mut self, chassis: u32, caliber: Caliber) -> Result<(), FieldError> {
-        if let Some(state) = &mut self.rmuc_2027 {
+        if let Some(state) = self.authority.rmuc_mut() {
             let heavy =
                 state.game.robots.iter().any(|r| {
                     r.id == chassis && r.role == rmuc_2027::match_rules::GroundRole::Heavy
@@ -536,7 +585,7 @@ impl Field {
     /// assert_eq!(field.chassis_team(2), Some(Team::Blue));
     /// ```
     pub fn add_chassis(&mut self, placement: &ChassisPlacement) -> Result<u32, FieldError> {
-        if self.rmuc_2027.is_some()
+        if self.authority.rmuc().is_some()
             && !matches!(
                 placement.kind,
                 RobotKind::Infantry | RobotKind::Sentry | RobotKind::Engineer
@@ -544,7 +593,7 @@ impl Field {
         {
             return Err(FieldError::Referee("unsupported 2027 ground role"));
         }
-        if self.rmuc_2027.is_some()
+        if self.authority.rmuc().is_some()
             && placement.performance.is_some_and(|p| {
                 !matches!(
                     (placement.kind, p),
@@ -556,14 +605,14 @@ impl Field {
                 "native 2027 deployment accepts only Infantry performance choices",
             ));
         }
-        if let Some(game) = &self.rmul_2027 {
+        if let Some(game) = self.authority.rmul() {
             self.check_rmul_placement(game, placement)?;
         }
         let id = self
             .physics
             .add_chassis(placement.team, placement.config.clone(), placement.spawn)
             .map_err(FieldError::Chassis)?;
-        if let Some(state) = &mut self.rmuc_2027 {
+        if let Some(state) = self.authority.rmuc_mut() {
             let role = match placement.kind {
                 RobotKind::Infantry => rmuc_2027::match_rules::GroundRole::Infantry,
                 RobotKind::Sentry => rmuc_2027::match_rules::GroundRole::Sentry,
@@ -583,7 +632,7 @@ impl Field {
                 r.hp = r.max_hp;
             }
         }
-        if let Some(game) = &mut self.rmul_2027 {
+        if let Some(game) = self.authority.rmul_mut() {
             game.add_robot(
                 id,
                 referee::game_team(placement.team),
@@ -605,7 +654,7 @@ impl Field {
     }
     /// Take a chassis off the field, with its robot record.
     pub fn remove_chassis(&mut self, id: u32) -> Result<(), FieldError> {
-        if let Some(game) = &mut self.rmul_2027 {
+        if let Some(game) = self.authority.rmul_mut() {
             game.robots.retain(|r| r.id != id);
         }
         self.cancel_assembly(id, "Assembly owner disconnected");
@@ -614,7 +663,7 @@ impl Field {
         self.physics
             .remove_chassis(id)
             .map_err(FieldError::Chassis)?;
-        if let Some(state) = &mut self.rmuc_2027 {
+        if let Some(state) = self.authority.rmuc_mut() {
             state.game.robots.retain(|r| r.id != id);
             for marks in &mut state.game.radar.marks {
                 marks.remove(&id);
@@ -647,12 +696,12 @@ impl Field {
     /// Cut the drive of every chassis whose robot the referee has defeated
     /// and restore the revived ones.
     fn sync_defeats(&mut self) {
-        if let Some(game) = &self.rmul_2027 {
+        if let Some(game) = self.authority.rmul() {
             for robot in &game.robots {
                 self.physics.set_chassis_defeated(robot.id, robot.hp == 0);
             }
         }
-        if let Some(state) = &self.rmuc_2027 {
+        if let Some(state) = self.authority.rmuc() {
             for robot in &state.game.robots {
                 self.physics.set_chassis_defeated(robot.id, robot.hp == 0);
             }
@@ -742,12 +791,12 @@ impl Field {
     /// RMUL requires a parked chassis at its practice workbench; upgraded
     /// properties remain locked until the confirmation shot.
     pub fn convert_heavy_to_hero(&mut self, id: u32) -> Result<(), FieldError> {
-        if self.rmul_2027.is_some() {
+        if self.authority.rmul().is_some() {
             return self.convert_rmul_heavy(id);
         }
         let state = self
-            .rmuc_2027
-            .as_ref()
+            .authority
+            .rmuc()
             .ok_or(FieldError::Referee("conversion requires RMUC 2027"))?;
         let robot = state
             .game
@@ -797,7 +846,7 @@ impl Field {
         self.cancel_assembly(id, "Converted to Hero approximation");
         self.release_energy_units(id);
         self.arms.retain(|a| a.owner != id);
-        let state = self.rmuc_2027.as_mut().unwrap();
+        let state = self.authority.rmuc_mut().unwrap();
         let robot = state.game.robots.iter_mut().find(|r| r.id == id).unwrap();
         robot.combat.heavy_installed = true;
         robot.hp = robot.hp.saturating_add(600 - robot.max_hp).min(600);
@@ -887,14 +936,14 @@ impl Field {
     /// Supply the host's random shared rotor direction for the next 2027 round.
     /// The selected sign is carried into the match checkpoint at Start.
     pub fn set_rmuc_2027_rotor_direction(&mut self, direction: i8) {
-        if let Some(state) = &mut self.rmuc_2027 {
+        if let Some(state) = self.authority.rmuc_mut() {
             state.config.rotor_direction = if direction < 0 { -1 } else { 1 };
         }
     }
     /// Host-provided random target/motion seed for the next native Rune round.
     /// The generator is persisted in checkpoints and never rerolled by restore.
     pub fn set_rmuc_2027_rune_seed(&mut self, seed: u64) {
-        if let Some(state) = &mut self.rmuc_2027 {
+        if let Some(state) = self.authority.rmuc_mut() {
             for (i, rune) in state.game.runes.iter_mut().enumerate() {
                 rune.seed = seed.wrapping_add(i as u64);
             }
@@ -909,10 +958,10 @@ impl Field {
     /// assert!(field.referee_command(RefereeCommand::StartMatch).is_err());
     /// ```
     pub fn referee_command(&mut self, command: RefereeCommand) -> Result<(), FieldError> {
-        if self.rmul_2027.is_some() {
+        if self.authority.rmul().is_some() {
             return self.rmul_command(command);
         }
-        if let Some(state) = &mut self.rmuc_2027 {
+        if let Some(state) = self.authority.rmuc_mut() {
             use rmuc_2027::match_rules::{Match, Phase};
             match command {
                 RefereeCommand::StartMatch => {
@@ -1204,8 +1253,8 @@ impl Field {
         while self.tick < end {
             let idle = self.physics.is_idle();
             if idle
-                && self.rmuc_2027.is_none()
-                && self.rmul_2027.is_none()
+                && self.authority.rmuc().is_none()
+                && self.authority.rmul().is_none()
                 && !self.assemblies.iter().any(assembly::Run::active)
             {
                 self.tick = end;
@@ -1217,7 +1266,7 @@ impl Field {
                 // Rule commands and scored hits may change a target at this same
                 // timestamp, so derive the start frame from authoritative rules.
                 self.target_frames
-                    .begin(|faces| Self::write_target_faces(self.rmuc_2027.as_ref(), faces))
+                    .begin(|faces| Self::write_target_faces(self.authority.rmuc(), faces))
                     .map_err(FieldError::Ballistics)?;
             }
             self.tick += 1;
@@ -1230,13 +1279,13 @@ impl Field {
                 continue;
             }
             self.target_frames
-                .update(|faces| Self::write_target_faces(self.rmuc_2027.as_ref(), faces))
+                .update(|faces| Self::write_target_faces(self.authority.rmuc(), faces))
                 .map_err(FieldError::Ballistics)?;
             let contacts = self
                 .physics
                 .step(prev_ns, &self.target_frames)
                 .map_err(FieldError::Ballistics)?;
-            if let Some(state) = &mut self.rmuc_2027 {
+            if let Some(state) = self.authority.rmuc_mut() {
                 for r in &mut state.game.robots {
                     r.combat.power.actual_mw =
                         (self.physics.chassis_drive_power_w(r.id).unwrap_or(0.) * 1000.)
@@ -1266,7 +1315,7 @@ impl Field {
     /// detection interval.
     fn apply_collisions(&mut self, time_ns: u64) {
         let collisions = self.physics.take_armor_collisions();
-        if let Some(game) = &mut self.rmul_2027 {
+        if let Some(game) = self.authority.rmul_mut() {
             for collision in collisions {
                 let target = ArmorTarget::Chassis {
                     chassis: collision.chassis,
@@ -1282,7 +1331,7 @@ impl Field {
             }
             return;
         }
-        if let Some(state) = &mut self.rmuc_2027 {
+        if let Some(state) = self.authority.rmuc_mut() {
             if state.game.phase != rmuc_2027::match_rules::Phase::Running {
                 return;
             }
@@ -1309,7 +1358,7 @@ impl Field {
     fn sync_mechanisms(&mut self) {
         if self.physics.has_mechanisms() {
             let mut state = referee::mechanism_view(None, self.time_ns());
-            if let Some(r) = &self.rmuc_2027 {
+            if let Some(r) = self.authority.rmuc() {
                 state.outpost_angle_rad = Team::BOTH.map(|t| r.angle_rad(t));
                 state.rune_angle_rad = r
                     .game
@@ -1324,7 +1373,7 @@ impl Field {
     /// Whether native authority disables this physical scoring face.
     /// Unknown targets are disabled; physical chassis remain usable in bare worlds.
     pub fn armor_disabled(&self, target: ArmorTarget) -> bool {
-        if let Some(state) = &self.rmuc_2027 {
+        if let Some(state) = self.authority.rmuc() {
             return state.disabled(target);
         }
         match target {

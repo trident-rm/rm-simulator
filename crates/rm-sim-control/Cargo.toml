@@ -15,6 +15,7 @@ workspace = true
 test-support = []
 
 [dependencies]
+sim-engine = { version = "0.1.0", path = "../sim-engine" }
 rm-sim-assets = { version = "0.1.0", path = "../rm-sim-assets" }
 rm-sim-physics = { version = "0.1.0", path = "../rm-sim-physics" }
 rm-sim-gameplay = { version = "0.1.0", path = "../rm-sim-gameplay" }
@@ -22,3 +23,7 @@ glam.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+
+[dev-dependencies]
+# Frozen differential benchmark uses the same backend math as its original source.
+rapier3d-f64 = "0.35.3"
