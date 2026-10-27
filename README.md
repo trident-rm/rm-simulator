@@ -14,9 +14,9 @@ The final 2026-capable source is preserved at Git tag `rm2026-final`.
 
 Select `--competition rmuc-2027` (the default), `rmul-2027` (3v3), or
 `rmul-infantry-2027` (Infantry confrontation) in either binary. The title menu
-also accepts these spellings in its Competition field. RMUL uses explicitly
-approximate flat practice floors: 12 × 8 m for 3v3 and 5 × 5 m for Infantry.
-It loads no UC CAD and rejects `--cad-assets` until dedicated UL assets exist.
+also accepts these spellings in its Competition field. RMUL loads the official
+2027 3v3 and 1v1 CAD packages, including terrain and cover collision.
+It loads no UC CAD; `--cad-assets` must match the selected competition.
 The UL pilot roster offers Heavy (`--robot engineer`) and Infantry 3 in 3v3,
 and only Infantry 3 in confrontation. Manual UL Sentry pilots are rejected;
 fully autonomous Sentry firing remains unimplemented. Use the referee match controls to start
@@ -648,7 +648,7 @@ Hero approximation for Heavy combat. These simulator approximations and remainin
 rules gaps are documented in the [field guide](docs/rmuc2027-field.md),
 [assembly workbench](docs/assembly-workbench.md) and
 [2027 interpretation](docs/rules-2027.md). RMUL 3v3 and Infantry confrontation
-run on approximate practice floors; see [UL coverage and gaps](docs/rmul-2027.md).
+run on official 2027 CAD fields; see [UL coverage and gaps](docs/rmul-2027.md).
 
 Use `--start-paused`, referee controls and the [automation console](docs/console.md)
 to inspect a scenario. Unbound 2027 CAD exports support rest-pose practice with

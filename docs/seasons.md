@@ -43,10 +43,10 @@ bound package and supported mechanics. The [rules reference](rules-2027.md)
 records the manual revision and adopted policies.
 
 `--competition rmul-2027` and `--competition rmul-infantry-2027` select
-the separate RMUL authorities. They use approximate 12 × 8 m and 5 × 5 m
-practice layouts without CAD. The bound `field-2027/` remains RMUC-only;
-explicit CAD overrides are rejected for RMUL. These layouts are not official
-RMUL field packages. See [RMUL rules and limitations](rmul-2027.md).
+the separate RMUL authorities. They load the checksummed official DJI
+`field-rmul-2027-3v3/` and `field-rmul-2027-1v1/` packages. Explicit CAD overrides
+must match the selected competition; RMUC CAD is never relabeled as RMUL.
+See [RMUL rules and limitations](rmul-2027.md).
 
 ## Shared types and physics
 
@@ -60,7 +60,7 @@ identities, serialized presentation/command records, robot descriptors, armor
 geometry and reusable physics remain shared. Historical records do not execute
 rules and cannot restore an old match.
 
-The checkpoint schema is protocol **83**. Both peers must use the same version;
+The checkpoint schema is protocol **84**. Both peers must use the same version;
 old checkpoints containing removed rule state cannot be replayed on main.
 
 The historical `field/` package and its inventory have been removed from main;

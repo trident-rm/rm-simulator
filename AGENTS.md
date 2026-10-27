@@ -43,8 +43,9 @@ two disagree, this file wins.
 
 - **Season scope.** The app and headless host support RMUC 2027 V1.0.0 using the bound
   repaired Low `field-2027/`, plus distinct RMUL 2027 V1.0.0 3v3 and
-  Infantry 1v1 authorities on explicitly approximate practice layouts.
-  RMUL never loads or relabels RMUC CAD; official RMUL geometry is unavailable. There are no season
+  Infantry 1v1 authorities with the official source-backed
+  `field-rmul-2027-3v3/` and `field-rmul-2027-1v1/` packages.
+  RMUL never loads or relabels RMUC CAD; RFID antennas remain approximate. There are no season
   Cargo features. The final dual-season revision is tagged `rm2026-final`.
   The 2026 runtime engines and field package are removed; shared data types,
   model descriptors and physics remain. Never reintroduce a 2026 execution path. The supplied 2027 manuals

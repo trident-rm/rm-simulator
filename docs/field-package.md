@@ -2,8 +2,10 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Field package
 
-The application and headless host use only the reviewed, bound `field-2027/`
-package. Discovery checks beside installed `bin/` and then the checkout;
+The RMUC application and headless host use the reviewed, bound `field-2027/`
+package. RMUL uses the official `field-rmul-2027-3v3/` and
+`field-rmul-2027-1v1/` source packages, documented in [RMUL](rmul-2027.md).
+Discovery checks beside installed `bin/` and then the checkout;
 `--cad-assets` overrides that location. Live matches require native bindings.
 See [2027 integration](rmuc2027-field.md#default-bound-repaired-low-package).
 
@@ -11,7 +13,7 @@ The directory and collision contracts below are shared with offline tools.
 Historical 2026 composition and deployment instructions are archived at
 `rm2026-final`. Its `field/` package and inventory have been removed from main.
 The active pipeline pins `scripts/release-field-2027.json`; `just field-check`
-verifies that single package.
+verifies it and both `scripts/release-field-rmul-2027-*.json` inventories.
 
 ## Textures and semantic assets
 

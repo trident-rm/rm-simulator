@@ -844,6 +844,16 @@ impl Match {
     /// Drive budget in W, including the available 100 ms share of the 60 J
     /// referee buffer (UL §3.3.1.4). Physical hardware remains an upper bound.
     /// A chassis cut does not imply a gimbal or other actuation cut.
+    ///
+    /// ```
+    /// use rm_sim_gameplay::{Team, rmul_2027::{Format, Match, Role}};
+    /// let mut game = Match::new(Format::ThreeVsThree);
+    /// game.add_robot(3, Team::Red, Role::Infantry)?;
+    /// assert_eq!(game.drive_budget_w(3), 0); // Not running yet.
+    /// game.start();
+    /// assert_eq!(game.drive_budget_w(3), 675); // 75 W + 60 J / 0.1 s.
+    /// # Ok::<(), &'static str>(())
+    /// ```
     pub fn drive_budget_w(&self, id: u32) -> u32 {
         self.robots
             .iter()

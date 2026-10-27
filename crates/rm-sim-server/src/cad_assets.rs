@@ -3,6 +3,7 @@
 //! Compatibility facade for verified CAD packages used by the server runtime.
 pub use rm_sim_assets::cad_assets::{
     CENTER_CAD_Y_M, CadAsset, FLOOR_TOP_CAD_M, arena_pose, cad_point_to_flu, default_cad_assets,
+    default_rmul_assets,
 };
 
 /// Verified CAD package with the server's native 2027 runtime bindings.

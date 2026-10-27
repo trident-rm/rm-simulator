@@ -168,7 +168,6 @@ pub fn collision_view(
     session: Res<Session>,
     mut debug: ResMut<CollisionDebug>,
     mut scenery: ResMut<SceneryVisibility>,
-    config: Option<Res<crate::staging::StagingConfig>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -213,13 +212,7 @@ pub fn collision_view(
             },
         ));
     }
-    scenery.set_if_neq(SceneryVisibility(
-        debug.scenery_visible()
-            && session.snapshot.rmul_2027.is_none()
-            && config
-                .as_ref()
-                .is_none_or(|c| c.0.host.competition.rmul_format().is_none()),
-    ));
+    scenery.set_if_neq(SceneryVisibility(debug.scenery_visible()));
     for mut visibility in &mut wireframes {
         visibility.set_if_neq(if show_wireframe {
             Visibility::Inherited

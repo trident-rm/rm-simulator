@@ -1,0 +1,16 @@
+{
+  "_license": "SPDX-License-Identifier: MIT OR Apache-2.0",
+  "_copyright": "Copyright (c) 2026 hxyulin <hxyulin@proton.me>",
+  "storage": "git-lfs",
+  "directory": "field-rmul-2027-1v1",
+  "source": "Official DJI RMUL 2027 V1.0.0, complete source tessellation",
+  "files": {
+    "CAD-NOTICE.md": "844b63428ffac42931603e056a8431bb4cca423a8e366c19df1d54436a214143",
+    "empty.glb": "e37d5d247ce00a0155af60d346b07a850f573de0a0a28747bb2f6600c3e49afe",
+    "equipment/empty.glb": "e37d5d247ce00a0155af60d346b07a850f573de0a0a28747bb2f6600c3e49afe",
+    "equipment/manifest.json": "f6df4ec8adebae5d477956d9fe2c52e830665dd622703b0022e50dffb5400a1d",
+    "floor.glb": "f7e311309ddee9dfae402c6e0ffaa7886e625db3e00a6ec83fb9f2732af509a1",
+    "manifest.json": "d1ca1d11d3423842546ec05ef33628f8964046f02c618adf19d57a3e8c02fe7a",
+    "runtime-build.json": "ba9ed695693938dcf6591a9dfd771da889c27869a8aef98fe7a80d489f835bff"
+  }
+}

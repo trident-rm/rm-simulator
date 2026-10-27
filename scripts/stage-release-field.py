@@ -77,26 +77,31 @@ def main():
         parser.error("--allow-lfs-pointers requires --verify-only")
     if args.update_checksums and (args.verify_only or args.allow_lfs_pointers):
         parser.error("--update-checksums cannot be combined with verification flags")
-    contract_path = args.inventory
-    contract = json.loads(contract_path.read_text())
-    source = ROOT / contract["directory"]
-    if args.update_checksums:
-        files = {}
-        for path in sorted(source.rglob("*")):
-            if path.is_file():
-                name = path.relative_to(source).as_posix()
-                data = field_file(source.resolve(), name).read_bytes()
-                if data.startswith(POINTER):
-                    raise ValueError("hydrate the LFS field before recording checksums")
-                files[name] = hashlib.sha256(data).hexdigest()
-        verify(source, files)
-        contract["files"] = files
-        contract_path.write_text(json.dumps(contract, indent=2) + "\n")
-    elif args.verify_only:
-        verify(source, contract["files"], args.allow_lfs_pointers)
-    else:
-        stage(source, args.destination, contract["files"])
-    print(f"Verified {len(contract['files'])} field files from {contract['directory']}")
+    inventories = [args.inventory]
+    if args.inventory == ROOT / "scripts/release-field-2027.json":
+        inventories += [ROOT / f"scripts/release-field-rmul-2027-{mode}.json" for mode in ("3v3", "1v1")]
+    for contract_path in inventories:
+        destination = (args.destination if contract_path == args.inventory else
+                       args.destination.parent / contract_path.stem.removeprefix("release-"))
+        contract = json.loads(contract_path.read_text())
+        source = ROOT / contract["directory"]
+        if args.update_checksums:
+            files = {}
+            for path in sorted(source.rglob("*")):
+                if path.is_file():
+                    name = path.relative_to(source).as_posix()
+                    data = field_file(source.resolve(), name).read_bytes()
+                    if data.startswith(POINTER):
+                        raise ValueError("hydrate the LFS field before recording checksums")
+                    files[name] = hashlib.sha256(data).hexdigest()
+            verify(source, files)
+            contract["files"] = files
+            contract_path.write_text(json.dumps(contract, indent=2) + "\n")
+        elif args.verify_only:
+            verify(source, contract["files"], args.allow_lfs_pointers)
+        else:
+            stage(source, destination, contract["files"])
+        print(f"Verified {len(contract['files'])} field files from {contract['directory']}")
 
 
 if __name__ == "__main__":

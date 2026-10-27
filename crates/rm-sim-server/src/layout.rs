@@ -648,6 +648,7 @@ mod tests {
     fn layout_options_place_runes_outposts_and_the_referee() {
         let cad = CadAssets {
             terrain_collision: None,
+            rmul_2027: None,
             rmuc_2027: None,
             season: rm_sim_world::season::Season::Rm2026,
             rest_pose_only: false,

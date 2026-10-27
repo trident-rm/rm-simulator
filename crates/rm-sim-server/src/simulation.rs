@@ -223,6 +223,36 @@ pub struct Simulation {
 }
 
 impl Simulation {
+    /// Build an RMUL host from its checksummed official CAD, preserving the
+    /// distinct rules authority. RFID footprints remain source-aligned approximations.
+    pub fn rmul_from_cad(
+        cad: &CadAssets,
+        competition: crate::host_args::Competition,
+        referee: bool,
+        chassis: Option<ChassisConfig>,
+        paused: bool,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            cad.rmul_2027.is_some() && cad.rmul_2027 == competition.rmul_format(),
+            "CAD package does not match the selected RMUL competition"
+        );
+        let terrain = load_terrain(cad)?;
+        let mut field = Field::new(&rm_sim_world::FieldConfig {
+            rmul_2027: referee.then_some(cad.rmul_2027.unwrap()),
+            floor_height_m: crate::layout::CATCH_FLOOR_M,
+            ..Default::default()
+        })?;
+        add_terrain(&mut field, &terrain)?;
+        let mut simulation = Self::new(field, paused);
+        simulation.competition = competition;
+        if let Some(config) = chassis {
+            simulation = simulation.with_spawner(ChassisSpawner {
+                config,
+                terrain: Some(terrain),
+            });
+        }
+        Ok(simulation)
+    }
     /// Construct an explicitly approximate RMUL practice floor without loading UC CAD.
     /// The native match remains the rules authority; terrain and equipment are absent.
     ///
@@ -291,6 +321,10 @@ impl Simulation {
         paused: bool,
         progress: impl FnMut(BuildProgress),
     ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            cad.rmul_2027.is_none(),
+            "RMUL CAD cannot be admitted as RMUC"
+        );
         cad.season.require_current()?;
         anyhow::ensure!(
             !options.referee || cad.rmuc_2027.is_some(),
@@ -1877,6 +1911,7 @@ mod tests {
         };
         CadAssets {
             terrain_collision: None,
+            rmul_2027: None,
             rmuc_2027: None,
             season: rm_sim_world::season::Season::Rm2026,
             rest_pose_only: false,

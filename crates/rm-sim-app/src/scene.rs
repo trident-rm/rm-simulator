@@ -68,6 +68,9 @@ pub fn cad_instances(cad: &CadAssets, rune_faces: bool, base_plates: bool) -> Ve
         .into_iter()
         .chain(&cad.static_assets)
         {
+            if cad.rmul_2027.is_some() && asset.file != cad.floor.file {
+                continue;
+            }
             let transforms = if asset.placements.is_empty() {
                 vec![arena]
             } else {
@@ -373,7 +376,12 @@ pub fn setup_stadium(
     bounds: Res<ArenaBounds>,
     stadium: Query<Entity, With<lighting::Stadium>>,
 ) {
-    if stadium.is_empty() {
+    if bounds.is_changed() {
+        for entity in &stadium {
+            commands.entity(entity).despawn();
+        }
+    }
+    if stadium.is_empty() || bounds.is_changed() {
         let [low, high] = bounds.0;
         lighting::spawn_stadium(
             &mut commands,
@@ -397,6 +405,7 @@ pub fn setup(
     appearance: Res<Appearance>,
     config: Option<Res<crate::staging::StagingConfig>>,
     session: Res<Session>,
+    cad_scene: Option<Res<rm_sim_render::cad::CadSceneConfig>>,
 ) {
     let rendering = appearance.0;
     let snapshot = &session.snapshot;
@@ -416,7 +425,9 @@ pub fn setup(
                 .map(|c| c.0.host.competition)
                 .filter(|c| c.rmul_format().is_some())
         });
-    if let Some(competition) = practice_competition {
+    if let Some(competition) = practice_competition
+        && cad_scene.as_ref().is_none_or(|c| c.instances.is_empty())
+    {
         let [_, high] = competition.practice_bounds();
         commands.spawn((
             Mesh3d(meshes.add(Cuboid::new(
@@ -698,6 +709,7 @@ mod tests {
         };
         let cad = CadAssets {
             terrain_collision: None,
+            rmul_2027: None,
             rmuc_2027: None,
             season: rm_sim_world::season::Season::Rm2026,
             rest_pose_only: false,

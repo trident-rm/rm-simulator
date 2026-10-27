@@ -8,6 +8,14 @@
   Fill perforations and remove rear corner fittings while retaining fronts,
   light geometry and all physical collision payloads.
 
+- Load the official RMUL 2027 3v3 and 1v1 source geometry for rendering and
+  collision, with separate checksummed LFS packages and format admission.
+  Preserve source materials, decks, tunnels and covers; align the approximate
+  supply/Highland antennas with source surfaces.
+- Correct RMUC 42 mm fallback XP, non-projectile death XP and explicit pre-round
+  profile locking. Restore RMUL buffered power bursts, buffer recharge during
+  cuts and gimbal actuation during chassis-only power cuts.
+
 - Add targeted Rust test commands with conservative downstream crate selection,
   an optional nextest runner with Cargo doctests, and timed Python test commands.
   Keep runtime checks on the release profile in native CI to avoid a second

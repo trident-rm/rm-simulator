@@ -132,8 +132,9 @@ def main():
             shutil.copy2(build / (binary + suffix), bin_dir / (binary + suffix))
         for artifact in ("README.md", "NOTICE.md", "LICENSE-MIT", "LICENSE-APACHE", "LICENSES/MPL-2.0.txt"):
             shutil.copy2(ROOT / artifact, stage / artifact)
-        shutil.copytree(dist / "field-2027", stage / "field-2027")
-        shutil.copy2(ROOT / "scripts/release-field-2027.json", stage / "field-2027-source.json")
+        for field in ("field-2027", "field-rmul-2027-3v3", "field-rmul-2027-1v1"):
+            shutil.copytree(dist / field, stage / field)
+            shutil.copy2(ROOT / f"scripts/release-{field}.json", stage / f"{field}-source.json")
         # Include the exact dependency lockfile used to compile the release.
         shutil.copy2(ROOT / "Cargo.lock", stage / "Cargo.lock")
         if system == "Darwin":

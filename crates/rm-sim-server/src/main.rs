@@ -40,19 +40,7 @@ fn main() -> anyhow::Result<()> {
         .validate_competition_assets()
         .map_err(anyhow::Error::msg)?;
 
-    let cad = if args.host.competition.rmul_format().is_some() {
-        anyhow::ensure!(
-            args.host.assembly_assets.is_none(),
-            "UC assembly source assets are unavailable in RMUL practice"
-        );
-        println!(
-            "{}: approximate practice floor (no CAD)",
-            args.host.competition.id()
-        );
-        None
-    } else {
-        Some(cad_assets::load(&args.host.cad_assets_path())?)
-    };
+    let cad = cad_assets::load(&args.host.cad_assets_path())?;
     let options = args.host.layout_options();
     let chassis = (!args.no_chassis).then(|| {
         if args.host.stair_heavy {
@@ -65,25 +53,26 @@ fn main() -> anyhow::Result<()> {
             ChassisConfig::default()
         }
     });
-    let simulation = if let Some(cad) = &cad {
-        Simulation::from_cad(cad, &options, chassis, args.host.start_paused, |stage| {
-            if let BuildProgress::TerrainReady(description) = stage {
-                println!("{description}");
-            }
-        })?
-    } else {
-        Simulation::rmul_practice(
+    let simulation = if args.host.competition.rmul_format().is_some() {
+        Simulation::rmul_from_cad(
+            &cad,
             args.host.competition,
             !args.host.no_referee,
             chassis,
             args.host.start_paused,
         )?
+    } else {
+        Simulation::from_cad(&cad, &options, chassis, args.host.start_paused, |stage| {
+            if let BuildProgress::TerrainReady(description) = stage {
+                println!("{description}");
+            }
+        })?
     }
     .with_assembly_assets(
         args.host.assembly_assets.as_deref(),
         args.host.assembly_area.as_deref(),
         args.host.assembly_hints.as_deref(),
-        cad.as_ref().map_or(0.0, |cad| cad.floor_top_cad_m),
+        cad.floor_top_cad_m,
     )
     .map_err(anyhow::Error::msg)?
     .with_weapon(args.host.weapon())

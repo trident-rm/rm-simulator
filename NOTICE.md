@@ -100,6 +100,13 @@ The original archive URL and checksum are retained as import provenance in
 the `rm2026-final` archive’s `scripts/release-field.json`. The CAD scene plugin follows the `cad_scene`
 module of `rm-vision-sim`.
 
+The official RMUL 2027 3v3 and 1v1 geometry in `field-rmul-2027-3v3/`
+and `field-rmul-2027-1v1/` remains DJI / RoboMaster property under its source
+terms. Each LFS package retains `CAD-NOTICE.md`, the official source SHA-256
+and a tessellation/coordinate record in `runtime-build.json`. The offline
+builder calls rm-map-tools' existing OCCT importer and GLB writer without
+vendoring them or adding a Rust dependency.
+
 The offline `scripts/generate-minimap.py` tool imports GLB scene traversal from
 `rm-map-tools/python/gltf_scene.py`, licensed MIT OR Apache-2.0. The generated
 map is derived from DJI / RoboMaster CAD and stays in the LFS field

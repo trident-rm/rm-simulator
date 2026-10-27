@@ -186,7 +186,7 @@ impl Field {
         };
         let [x, y, z] = body.pose.translation_m;
         if (x - 4.75 * sign).abs() > 1.1
-            || (y - 2.75 * sign).abs() > 1.
+            || (y + 2.75 * sign).abs() > 1.
             || !(-0.1..=0.5).contains(&z)
         {
             return Err(FieldError::Referee(
@@ -238,10 +238,10 @@ impl Field {
                             && (-0.1..=0.5).contains(&p[2])
                     })
                 };
-                game.observe_supply(r.id, contains([4.75 * sign, 2.75 * sign], [1.1, 1.]));
+                game.observe_supply(r.id, contains([4.75 * sign, -2.75 * sign], [1.1, 1.]));
                 for (zone, center, half) in [
-                    (Zone::RedHighland, [2.3, 0.8], [0.65, 0.65]),
-                    (Zone::BlueHighland, [-2.3, -0.8], [0.65, 0.65]),
+                    (Zone::RedHighland, [2.5, -0.8], [0.65, 0.65]),
+                    (Zone::BlueHighland, [-2.5, 0.8], [0.65, 0.65]),
                     (Zone::Center, [0., 0.], [1.3, 1.3]),
                 ] {
                     game.observe_zone(r.id, zone, contains(center, half));
@@ -325,7 +325,7 @@ mod tests {
         let id = f
             .add_chassis(&ChassisPlacement {
                 config: ChassisConfig::default(),
-                spawn: Pose::at([4.75, 2.75, 1.0]),
+                spawn: Pose::at([4.75, -2.75, 1.0]),
                 team: Team::Red,
                 kind: RobotKind::Engineer,
                 performance: None,
@@ -334,7 +334,7 @@ mod tests {
         let before = f.snapshot();
         assert!(f.convert_heavy_to_hero(id).is_err());
         assert_eq!(f.snapshot(), before);
-        f.place_chassis(id, Pose::at([4.75, 2.75, 0.16])).unwrap();
+        f.place_chassis(id, Pose::at([4.75, -2.75, 0.16])).unwrap();
         f.convert_heavy_to_hero(id).unwrap();
         let game = f.rmul_2027().unwrap();
         assert!(game.robots[0].heavy_installed);
@@ -431,7 +431,7 @@ mod tests {
         for (team, sign) in [(Team::Red, 1.), (Team::Blue, -1.)] {
             f.add_chassis(&ChassisPlacement {
                 config: ChassisConfig::default(),
-                spawn: Pose::at([4.75 * sign, 2.75 * sign, 0.16]),
+                spawn: Pose::at([4.75 * sign, -2.75 * sign, 0.16]),
                 team,
                 kind: RobotKind::Infantry,
                 performance: None,

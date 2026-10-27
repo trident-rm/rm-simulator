@@ -69,6 +69,7 @@ fn cad(path: PathBuf, part: CylinderPart) -> CadAssets {
     };
     CadAssets {
         terrain_collision: None,
+        rmul_2027: None,
         rmuc_2027: None,
         season: rm_sim_gameplay::season::Season::Rm2027,
         rest_pose_only: false,

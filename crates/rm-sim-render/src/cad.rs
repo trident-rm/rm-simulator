@@ -262,7 +262,16 @@ fn spawn(
     config: Res<CadSceneConfig>,
     mut status: ResMut<CadSceneStatus>,
     mut next: Local<usize>,
+    roots: Query<Entity, With<CadRoot>>,
 ) {
+    if config.is_changed() {
+        for root in &roots {
+            commands.entity(root).despawn();
+        }
+        *next = 0;
+        status.loaded = 0;
+        status.failed = None;
+    }
     status.expected = config.instances.len();
     if let Some(instance) = config.instances.get(*next) {
         let scene = match instance.role {
@@ -332,7 +341,9 @@ fn loaded(
             commands.entity(child).insert(CadMesh);
         }
     }
-    let instance = &config.instances[root.0];
+    let Some(instance) = config.instances.get(root.0) else {
+        return;
+    };
     if let CadRole::Semantic {
         joints,
         hidden_ids,

@@ -489,14 +489,15 @@ mod tests {
     }
 
     #[test]
-    fn rmul_asset_admission_requires_no_cad_package() {
+    fn rmul_asset_path_resolution_leaves_identity_validation_to_loader() {
         for competition in ["rmul-2027", "rmul-infantry-2027"] {
             let mut args =
                 Args::try_parse_from(["rm-simulator", "--competition", competition]).unwrap();
             args.resolve_asset_path().unwrap();
             assert!(args.host.cad_assets.is_none());
             args.host.cad_assets = Some("field-2027".into());
-            assert!(args.resolve_asset_path().is_err());
+            args.resolve_asset_path().unwrap();
+            assert!(args.host.cad_assets.as_ref().unwrap().is_absolute());
         }
     }
 

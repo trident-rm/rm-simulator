@@ -20,7 +20,7 @@ use crate::protocol::{BulletSpread, DEFAULT_HTTP_PORT, DEFAULT_PORT, WeaponConfi
 use clap::{Args, ValueEnum};
 use rm_sim_world::{Caliber, RuneKind, Shot, outpost, projectile::ProjectilePolicy};
 
-/// Competition identity; RMUL currently uses an approximate practice floor.
+/// Competition identity; each format loads its own source-backed field.
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum, serde::Serialize, serde::Deserialize,
 )]
@@ -29,10 +29,10 @@ pub enum Competition {
     #[default]
     #[value(name = "rmuc-2027")]
     Rmuc2027,
-    /// RMUL 2027 three-versus-three on a 12 × 8 metre practice floor.
+    /// RMUL 2027 three-versus-three on the official 12 × 8 metre field.
     #[value(name = "rmul-2027")]
     Rmul2027,
-    /// RMUL 2027 Infantry confrontation on a 5 × 5 metre practice floor.
+    /// RMUL 2027 Infantry confrontation on the official 5 × 5 metre field.
     #[value(name = "rmul-infantry-2027")]
     RmulInfantry2027,
 }
@@ -85,7 +85,7 @@ impl Competition {
 /// accepted by the other. `source_chassis` is embedding-only, populated after asset verification.
 #[derive(Args, Debug, Clone)]
 pub struct HostArgs {
-    /// Competition rules and field identity; RMUL uses an approximate practice floor.
+    /// Competition rules and source field identity.
     #[arg(long, value_enum, default_value = "rmuc-2027")]
     pub competition: Competition,
     /// Verified Engineer/Core source rig for in-game automatic assembly.
@@ -192,19 +192,17 @@ pub struct HostArgs {
 
 impl HostArgs {
     /// Resolve an explicit CAD package or the ordinary UC package discovery path.
-    /// RMUL callers validate admission and never read this package.
+    /// Each RMUL format discovers its own official package.
     pub fn cad_assets_path(&self) -> std::path::PathBuf {
-        self.cad_assets
-            .clone()
-            .unwrap_or_else(crate::cad_assets::default_cad_assets)
+        self.cad_assets.clone().unwrap_or_else(|| {
+            self.competition.rmul_format().map_or_else(
+                crate::cad_assets::default_cad_assets,
+                crate::cad_assets::default_rmul_assets,
+            )
+        })
     }
-    /// Reject UC CAD and source assembly assets for an RMUL practice session.
+    /// Reject UC assembly assets for an RMUL session; CAD identity is checked on load.
     pub fn validate_competition_assets(&self) -> Result<(), &'static str> {
-        if self.competition.rmul_format().is_some() && self.cad_assets.is_some() {
-            return Err(
-                "--cad-assets is unavailable for RMUL 2027; dedicated UL assets are not available",
-            );
-        }
         if self.competition.rmul_format().is_some() && self.assembly_assets.is_some() {
             return Err("UC assembly source assets are unavailable in RMUL practice");
         }
@@ -367,7 +365,7 @@ mod tests {
                     .rmul_format()
                     .is_some()
             );
-            assert!(parse(&["--competition", mode, "--cad-assets", "field-2027"]).is_err());
+            assert!(parse(&["--competition", mode, "--cad-assets", "field-2027"]).is_ok());
         }
         assert!(parse(&["--competition", "rmuc-2027", "--cad-assets", "field-2027"]).is_ok());
         assert!(parse(&["--competition", "rmul-2026"]).is_err());

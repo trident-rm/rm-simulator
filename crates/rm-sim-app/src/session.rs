@@ -197,6 +197,10 @@ impl Session {
             .validate_competition_assets()
             .map_err(anyhow::Error::msg)?;
         cad.season.require_current()?;
+        anyhow::ensure!(
+            cad.rmul_2027 == args.host.competition.rmul_format(),
+            "CAD package does not match the selected competition"
+        );
         let role = if args.staging && !args.referee {
             Role::Spectator
         } else {
@@ -225,7 +229,8 @@ impl Session {
                     args.host.assembly_assets.is_none(),
                     "UC assembly source assets are unavailable in RMUL practice"
                 );
-                Simulation::rmul_practice(
+                Simulation::rmul_from_cad(
+                    cad,
                     args.host.competition,
                     !args.host.no_referee,
                     Some(ChassisConfig::default()),
@@ -342,6 +347,10 @@ impl Session {
         progress: impl Fn(f32, &str),
     ) -> anyhow::Result<Opened> {
         cad.season.require_current()?;
+        anyhow::ensure!(
+            cad.rmul_2027 == args.host.competition.rmul_format(),
+            "CAD package does not match the selected competition"
+        );
         client.set_time_source(time.clone());
         let flash = FlashSettings {
             hit_flash_ns: args.hit_flash_ms * 1_000_000,
@@ -1458,6 +1467,7 @@ pub(crate) fn test_cad_assets() -> CadAssets {
     };
     CadAssets {
         terrain_collision: None,
+        rmul_2027: None,
         rmuc_2027: None,
         season: rm_sim_world::season::Season::Rm2027,
         rest_pose_only: true,
@@ -1499,6 +1509,7 @@ pub(crate) fn wait_for_session(session: &mut Session, done: impl Fn(&Session) ->
 
 /// Empty presentation metadata for an RMUL practice scene. No package is loaded,
 /// and empty placement lists prevent any UC geometry or equipment from spawning.
+#[cfg(test)]
 pub(crate) fn practice_assets() -> CadAssets {
     use rm_sim_server::cad_assets::CadAsset;
     let asset = CadAsset {
@@ -1512,6 +1523,7 @@ pub(crate) fn practice_assets() -> CadAssets {
     };
     CadAssets {
         terrain_collision: None,
+        rmul_2027: None,
         rmuc_2027: None,
         season: rm_sim_world::season::Season::Rm2027,
         rest_pose_only: true,
@@ -1568,11 +1580,13 @@ mod tests {
                     "--no-prediction",
                 ])
                 .unwrap();
+                let mut cad = practice_assets();
+                cad.rmul_2027 = selected.rmul_format();
                 let opened = Session::from_client(
                     client,
                     TimeSource::system(),
                     &args,
-                    &practice_assets(),
+                    &cad,
                     [0.; 3],
                     |_, _| {},
                 );

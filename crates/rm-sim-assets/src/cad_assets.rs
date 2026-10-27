@@ -22,6 +22,26 @@ pub fn default_cad_assets() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../field-2027")
 }
 
+/// Resolve the official RMUL package beside installed binaries or in the checkout.
+pub fn default_rmul_assets(format: rm_sim_gameplay::rmul_2027::Format) -> PathBuf {
+    let name = match format {
+        rm_sim_gameplay::rmul_2027::Format::ThreeVsThree => "field-rmul-2027-3v3",
+        rm_sim_gameplay::rmul_2027::Format::Infantry => "field-rmul-2027-1v1",
+    };
+    if let Some(bin) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+        && bin.file_name().is_some_and(|n| n == "bin")
+        && let Some(root) = bin.parent()
+        && root.join(name).join("manifest.json").is_file()
+    {
+        return root.join(name);
+    }
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(name)
+}
+
 /// A 2027 package beside an executable installed in `bin`.
 /// No historical home-directory or 2026 package fallback is performed.
 fn bundled_cad_assets(executable: &Path) -> Option<PathBuf> {
@@ -73,6 +93,8 @@ pub fn cad_point_to_flu(point: [f64; 3], floor_top_cad_m: f64) -> [f64; 3] {
 /// any asset is read.
 #[derive(Deserialize)]
 struct Manifest {
+    #[serde(default)]
+    rmul2027_format: Option<rm_sim_gameplay::rmul_2027::Format>,
     #[serde(default)]
     source_sha256: Option<String>,
     #[serde(default)]
@@ -284,14 +306,17 @@ pub struct CadAsset {
 /// records, and the named assets the layout needs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CadAssets<B = crate::rmuc_2027::Bindings> {
+    /// Verified RMUL competition identity; absent for UC packages.
+    pub rmul_2027: Option<rm_sim_gameplay::rmul_2027::Format>,
     /// Optional verified static terrain replacement, separate from visual meshes.
     pub terrain_collision: Option<crate::terrain_collision::VerifiedTerrain>,
     /// Verified optional RMUC 2027 V1.0.0 source detector/motion bindings.
     pub rmuc_2027: Option<B>,
     /// Season of the source CAD, independent of match engine availability.
     pub season: rm_sim_gameplay::season::Season,
-    /// Draw and collide with the complete CAD rest pose; do not fit old targets,
-    /// animate old joints or enable a referee on this package.
+    /// Draw and collide with the complete CAD rest pose; do not fit old targets
+    /// or animate old joints. UC requires native bindings for its referee;
+    /// RMUL uses the independent static-field authority.
     pub rest_pose_only: bool,
     /// Package root. Every manifest path is resolved inside it, and every
     /// listed file is read only after its checksum matches.
@@ -300,7 +325,8 @@ pub struct CadAssets<B = crate::rmuc_2027::Bindings> {
     pub floor_top_cad_m: f64,
     /// Legacy package metadata; not permission to use an old collision proxy.
     pub collision_solids: bool,
-    /// The arena floor slab, with no placements.
+    /// Primary static support mesh, with no placements. RMUL retains the whole
+    /// source field here; UC separates the slab and stationary scenery.
     pub floor: CadAsset,
     /// The stationary arena scenery, with no placements.
     pub arena_static: CadAsset,
@@ -415,6 +441,27 @@ pub fn load_with_bindings<B>(
 ) -> anyhow::Result<CadAssets<B>> {
     let arena = read_manifest(&root.join("manifest.json"))?;
     let equipment = read_manifest(&root.join("equipment/manifest.json"))?;
+    ensure!(
+        arena.rmul2027_format == equipment.rmul2027_format,
+        "field and equipment RMUL identities differ"
+    );
+    if let Some(format) = arena.rmul2027_format {
+        let expected = match format {
+            rm_sim_gameplay::rmul_2027::Format::ThreeVsThree => {
+                "7d47c1b6a6a0253a732e46cb122bb84410b11d5134bcb5658104299db4a48ca4"
+            }
+            rm_sim_gameplay::rmul_2027::Format::Infantry => {
+                "954936e74885493836d73ba215e1c42efc3b6d40279478f5e5d626109e2cf6d1"
+            }
+        };
+        ensure!(
+            arena.source_sha256.as_deref() == Some(expected)
+                && arena.season == Some(rm_sim_gameplay::season::Season::Rm2027)
+                && equipment.source_sha256.as_deref() == Some(expected)
+                && arena.rmuc2027_bindings.is_none(),
+            "RMUL source identity mismatch"
+        );
+    }
     let season = arena
         .season
         .unwrap_or(rm_sim_gameplay::season::Season::Rm2026);
@@ -676,6 +723,7 @@ pub fn load_with_bindings<B>(
         })
         .transpose()?;
     Ok(CadAssets {
+        rmul_2027: arena.rmul2027_format,
         terrain_collision,
         rmuc_2027,
         season,
@@ -686,10 +734,42 @@ pub fn load_with_bindings<B>(
         collision_solids: arena.collision_solids,
         floor: asset(&arena, "floor", "", 0)?,
         arena_static: asset(&arena, "arena-static", "", 0)?,
-        rune: asset(&arena, "rune", "", 1)?,
-        outpost: asset(&arena, "outpost", "", 2)?,
-        base: asset(&equipment, "base", "equipment/", 2)?,
-        tech_core: asset(&equipment, "tech-core", "equipment/", 2)?,
+        rune: asset(
+            &arena,
+            "rune",
+            "",
+            usize::from(arena.rmul2027_format.is_none()),
+        )?,
+        outpost: asset(
+            &arena,
+            "outpost",
+            "",
+            if arena.rmul2027_format.is_some() {
+                0
+            } else {
+                2
+            },
+        )?,
+        base: asset(
+            &equipment,
+            "base",
+            "equipment/",
+            if arena.rmul2027_format.is_some() {
+                0
+            } else {
+                2
+            },
+        )?,
+        tech_core: asset(
+            &equipment,
+            "tech-core",
+            "equipment/",
+            if arena.rmul2027_format.is_some() {
+                0
+            } else {
+                2
+            },
+        )?,
     })
 }
 

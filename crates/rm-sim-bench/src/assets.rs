@@ -17,6 +17,8 @@ use std::{
 
 #[derive(Deserialize)]
 struct Manifest {
+    #[serde(default)]
+    rmul2027_format: Option<String>,
     schema_version: u32,
     units: String,
     floor_top_source_z_m: Option<f64>,
@@ -108,6 +110,9 @@ pub fn load(root: &Path) -> anyhow::Result<Loaded> {
         ),
     ] {
         for name in names {
+            if arena.rmul2027_format.is_some() && name != "floor" && name != "arena-static" {
+                continue;
+            }
             let asset = Context::with_context(manifest.assets.get(&name), || {
                 format!("missing asset {name}")
             })?;

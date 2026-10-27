@@ -222,6 +222,9 @@ fn load_terrain_inner<B>(
     }
     let mut fixtures = CollisionMesh::default();
     for (name, asset) in [("rune", &cad.rune), ("outpost", &cad.outpost)] {
+        if cad.rmul_2027.is_some() {
+            continue;
+        }
         let role = if name == "rune" {
             crate::components::ComponentRole::Rune
         } else {
@@ -247,6 +250,9 @@ fn load_terrain_inner<B>(
     let mut equipment = Vec::new();
     let mut endpoint_bakes = Vec::new();
     for asset in [&cad.base, &cad.tech_core] {
+        if cad.rmul_2027.is_some() {
+            continue;
+        }
         let model = load_component(cad, asset, crate::components::ComponentRole::Equipment)?;
         mechanisms.extend(model.mechanisms(&asset.placements));
         for placement in &asset.placements {

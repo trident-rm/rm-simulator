@@ -210,7 +210,10 @@ fn start(world: &mut World) {
     }
     let multiplayer = args.connect.is_some() || args.host.listen.is_some();
     world.resource_mut::<TitleScreen>().status = None;
-    let cached = world.get_resource::<CadCache>().cloned();
+    let cached = world
+        .get_resource::<CadCache>()
+        .cloned()
+        .filter(|cache| cache.0.root == args.host.cad_assets_path());
     let preload = world.get_resource::<Preload>().cloned();
     let (sender, receiver) = mpsc::channel();
     let worker = std::thread::Builder::new()
@@ -222,7 +225,7 @@ fn start(world: &mut World) {
             let result = (|| {
                 let practice = args.host.competition.rmul_format().is_some();
                 let cad = if practice {
-                    Arc::new(crate::session::practice_assets())
+                    Arc::new(cad_assets::load(&args.host.cad_assets_path())?)
                 } else {
                     match cached {
                         Some(cache) => cache.0,
@@ -256,9 +259,7 @@ fn start(world: &mut World) {
                     crate::minimap::load(&args.host.cad_assets_path())
                 };
                 let opened = Session::open(&args, &cad, spawn, yaw, progress)?;
-                let bounds = if practice {
-                    args.host.competition.practice_bounds()
-                } else {
+                let bounds = {
                     let floor = cad
                         .floor
                         .physics_mesh(&cad.root)?
@@ -400,7 +401,10 @@ fn poll(world: &mut World) {
                     ));
                     // Direct CLI joins may skip title preloading; install scenery
                     // here only when the preload has not already supplied it.
-                    if !world.contains_resource::<CadCache>() {
+                    if world
+                        .get_resource::<CadCache>()
+                        .is_none_or(|cache| cache.0.root != cad.root)
+                    {
                         let instances = scene::cad_instances(
                             &cad,
                             !args.host.no_rune,
@@ -412,9 +416,7 @@ fn poll(world: &mut World) {
                             rendering: RenderingConfig::field(),
                         });
                     }
-                    if args.host.competition.rmul_format().is_none() {
-                        world.insert_resource(CadCache(cad));
-                    }
+                    world.insert_resource(CadCache(cad));
                     world.insert_resource(CollisionDebug::new(args.collision_view));
                     world.insert_resource(Player::at(
                         flu_position(opened.eye_flu),
