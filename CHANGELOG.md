@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Flatten twenty thin Rune pattern backings into double-sided vector panels,
+  saving 3,035 visual triangles. Retain colored patterns, materials, part
+  ownership, motion bindings and physical collision assets.
+
 - Replace internal Base armor detail with simple housings and plain rear caps,
   saving 6,110 visual triangles. Retain source front skin, light bezels, light
   geometry, physical collision assets and bindings.
