@@ -4,6 +4,14 @@
 
 ## Unreleased
 
+- Add a rest-pose field-task benchmark for nearest-hit LiDAR, overlap queries,
+  CCD spheres and box contacts against hydrated packages or full-CAD meshes.
+
+- Reduce reviewed Outpost armor backings and seams, the green indicator lens,
+  Rune frame plates and Base crossbar/casings. Save 3,173 visual triangles,
+  reaching 131,824 across the field. Preserve collision meshes, native shapes,
+  optical bindings and motion ownership.
+
 - Simplify reviewed Dart trays, fittings, guide caps, panels and channels; remove
   small glyph meshes and use coarse collision-only caster mounts. Retessellate
   Outpost armor front outlines with light bars unchanged. Save 4,556 visual and
