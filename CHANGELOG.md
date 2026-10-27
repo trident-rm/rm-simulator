@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- Simplify the Base indicator bracket rear, saving 1,480 visual triangles.
+  Preserve the accepted front, complete green light and collision geometry.
+
 - Simplify Dart visual panels and Base armor backs, saving 19,358 triangles.
   Fill perforations and remove rear corner fittings while retaining fronts,
   light geometry and all physical collision payloads.
