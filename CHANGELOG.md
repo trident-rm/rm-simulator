@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Simplify Base lower panels and compact support hardware, Rune backplates,
+  and Tech Core visual cylinders at 20 sides, saving 3,402 visual triangles.
+  Preserve lights, artwork, motion ownership and all native/mesh collision assets.
+
 - Simplify thin Outpost upper panels and remove tiny Resource brass hardware,
   saving 2,028 visual triangles. Retain armor, lights, Resource housing/rods
   and physical collision assets.
