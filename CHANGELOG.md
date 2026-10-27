@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- Reduce Base indicator housing and neutral Rune visuals by 1,746 placed
+  triangles. Retain colored lights, textures, seam edges and collision geometry.
+
 - Reduce Outpost upper casing and carrier visuals by 1,824 placed triangles.
   Retain lights, armor fronts, seam edges and collision geometry.
 
