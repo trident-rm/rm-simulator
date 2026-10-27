@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Deploy reviewed Base rear bodies/supports, Outpost/Resource sheet edges,
+  Dart hardware/text removal and Rune hubs, saving 7,201 visual and 744
+  collision triangles. Fix red and pale Rune paint leaking onto the blue side;
+  retain outward paint, artwork, lights and moving-arm ownership.
+
 - Remove thin Dart fixed-frame panel walls while retaining both original
   faces and folds, saving 202 visual triangles. Keep tray/door geometry,
   motion records and dedicated collision assets unchanged.
