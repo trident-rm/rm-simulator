@@ -134,6 +134,11 @@ impl Match {
             return Err("only Infantry selects these performance types");
         }
         let c = &mut r.combat;
+        if self.phase == Phase::Idle {
+            // Explicit preparation choices remain confirmed when the round starts.
+            c.chassis_locked = true;
+            c.launcher_locked = true;
+        }
         if self.phase == Phase::Running
             && ((c.chassis_locked && c.chassis != chassis)
                 || (c.launcher_locked && c.launcher != launcher))
@@ -348,6 +353,16 @@ impl Match {
     /// Apply actual robot HP loss. Operator penalties bypass invincibility;
     /// ordinary projectile/collision damage respects it, field defense and connectivity.
     pub fn damage_robot(&mut self, id: u32, amount: u32, penalty: bool) -> u32 {
+        let victim = self.robots.iter().find(|r| r.id == id).map(|r| r.team);
+        let applied = self.apply_robot_damage(id, amount, penalty);
+        if penalty && let Some(team) = victim {
+            self.reward_attack(crate::Target::Robot(id), None, team, applied, None);
+        }
+        applied
+    }
+
+    // HP bookkeeping without reward routing, also used for administrative overrides.
+    fn apply_robot_damage(&mut self, id: u32, amount: u32, penalty: bool) -> u32 {
         let now = self.elapsed_ns();
         self.resolve();
         let effects = self.field_effects(id);
@@ -404,7 +419,7 @@ impl Match {
             return 0;
         };
         let applied = self.damage_robot(id, 2, false);
-        self.reward_attack(crate::Target::Robot(id), None, team, applied);
+        self.reward_attack(crate::Target::Robot(id), None, team, applied, None);
         applied
     }
     /// Operator HP override, preserving normal death bookkeeping but granting no XP.
@@ -414,7 +429,7 @@ impl Match {
             .find(|r| r.id == id)
             .ok_or("unknown 2027 robot")?;
         if hp == 0 {
-            self.damage_robot(id, u32::MAX, true);
+            self.apply_robot_damage(id, u32::MAX, true);
         } else {
             let r = self.robots.iter_mut().find(|r| r.id == id).unwrap();
             if r.hp == 0 {
@@ -483,6 +498,7 @@ impl Match {
         shooter: Option<u32>,
         victim: Team,
         applied: u32,
+        caliber: Option<crate::Caliber>,
     ) {
         if applied == 0 {
             return;
@@ -492,6 +508,8 @@ impl Match {
                 && r.role == GroundRole::Infantry
                 && r.hp > 0
                 && r.combat.level < self.level_caps[r.team.index()]
+                // Table 5-14: Infantry cannot qualify for fallback 42 mm XP.
+                && caliber != Some(crate::Caliber::Mm42)
         };
         let killer =
             shooter.and_then(|id| self.robots.iter().filter(eligible).find(|r| r.id == id));

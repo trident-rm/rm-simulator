@@ -841,6 +841,18 @@ impl Match {
                 r.id == id && r.hp > 0 && r.online && self.elapsed_ns >= r.power_cut_until_ns
             })
     }
+    /// Drive budget in W, including the available 100 ms share of the 60 J
+    /// referee buffer (UL §3.3.1.4). Physical hardware remains an upper bound.
+    /// A chassis cut does not imply a gimbal or other actuation cut.
+    pub fn drive_budget_w(&self, id: u32) -> u32 {
+        self.robots
+            .iter()
+            .find(|r| r.id == id)
+            .filter(|_| self.chassis_enabled(id))
+            .map_or(0, |r| {
+                r.stats().chassis_power_w.saturating_add(r.buffer_mj / 100)
+            })
+    }
     /// Update trusted module observations; penalties settle at 2 Hz (§3.3.1.5).
     pub fn observe_modules(
         &mut self,
@@ -1028,9 +1040,13 @@ impl Match {
                 r.weak = false;
                 r.invincible_until_ns = 0;
             }
-            if now >= r.power_cut_until_ns && r.online {
-                let delta =
-                    (i64::from(r.actual_power_mw) - i64::from(stats.chassis_power_w) * 1000) / 10;
+            if r.online {
+                let actual_mw = if now < r.power_cut_until_ns {
+                    0
+                } else {
+                    r.actual_power_mw
+                };
+                let delta = (i64::from(actual_mw) - i64::from(stats.chassis_power_w) * 1000) / 10;
                 r.buffer_mj = (i64::from(r.buffer_mj) - delta).clamp(0, 60_000) as u32;
                 if r.buffer_mj == 0 && delta > 0 {
                     r.power_cut_until_ns = now + 5 * SECOND;

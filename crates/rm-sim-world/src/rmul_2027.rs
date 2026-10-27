@@ -252,8 +252,8 @@ impl Field {
             for r in &game.robots {
                 self.physics.set_chassis_power(
                     r.id,
-                    f64::from(r.stats().chassis_power_w),
-                    !game.chassis_enabled(r.id),
+                    f64::from(game.drive_budget_w(r.id)),
+                    !r.online,
                 );
             }
         }

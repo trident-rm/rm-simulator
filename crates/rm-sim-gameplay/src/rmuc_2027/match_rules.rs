@@ -293,6 +293,8 @@ impl Match {
                     r.combat.chassis,
                     r.combat.launcher,
                     r.combat.sentry.mode,
+                    r.combat.chassis_locked,
+                    r.combat.launcher_locked,
                 )
             })
             .collect::<Vec<_>>();
@@ -300,12 +302,14 @@ impl Match {
         for (r, seed) in self.runes.iter_mut().zip(rune_seeds) {
             r.seed = seed;
         }
-        for (id, team, role, chassis, launcher, mode) in robots {
+        for (id, team, role, chassis, launcher, mode, chassis_locked, launcher_locked) in robots {
             self.add_robot(id, team, role);
             let robot = self.robots.iter_mut().find(|r| r.id == id).unwrap();
             robot.combat.sentry.mode = mode;
             robot.combat.chassis = chassis;
             robot.combat.launcher = launcher;
+            robot.combat.chassis_locked = chassis_locked;
+            robot.combat.launcher_locked = launcher_locked;
             robot.max_hp = robot.stats(0).max_hp;
             robot.hp = robot.max_hp;
         }
@@ -792,7 +796,7 @@ impl Match {
             self.attack_damage[attacker.index()] += u64::from(applied);
         }
         self.observe_heavy_deficits();
-        self.reward_attack(target, shooter, team, applied);
+        self.reward_attack(target, shooter, team, applied, Some(caliber));
         // A lethal contact revokes activation in this same event, even when
         // a caller publishes or pauses before the next simulation advance.
         self.resolve();
