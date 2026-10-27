@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Simplify Dart visual panels and Base armor backs, saving 19,358 triangles.
+  Fill perforations and remove rear corner fittings while retaining fronts,
+  light geometry and all physical collision payloads.
+
 - Add targeted Rust test commands with conservative downstream crate selection,
   an optional nextest runner with Cargo doctests, and timed Python test commands.
   Keep runtime checks on the release profile in native CI to avoid a second
