@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Remove thin Dart fixed-frame panel walls while retaining both original
+  faces and folds, saving 202 visual triangles. Keep tray/door geometry,
+  motion records and dedicated collision assets unchanged.
+
 - Reduce neutral Base surfaces with exact seam edges and locked optical
   margins, saving 924 visual triangles. Retain lights, artwork, motion bindings
   and physical collision assets.

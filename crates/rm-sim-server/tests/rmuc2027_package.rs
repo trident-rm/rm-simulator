@@ -57,10 +57,10 @@ fn reviewed_field_has_live_motion_native_rules_and_restorable_authority() -> any
             .iter()
             .map(|m| m.triangles.len())
             .sum::<usize>();
-    // Resource fittings/hardware, Dart panels and markings remove 26,378 support triangles.
+    // Resource fittings/hardware, Dart panels/walls and markings remove 26,580 support triangles.
     assert_eq!(
         fixed + moving + terrain.boundary.triangles.len(),
-        108_149 + 1_280 + 48 - unit_triangles
+        107_947 + 1_280 + 48 - unit_triangles
     );
     let config = layout::field_config(&cad, &layout::LayoutOptions::default());
     let mut field = Field::new(&config)?;
