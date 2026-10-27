@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- Reduce the small Core head cover by 792 placed visual triangles. Keep the
+  protected front, lights, ownership and collision geometry unchanged.
+
 - Simplify the Base indicator bracket rear, saving 1,480 visual triangles.
   Preserve the accepted front, complete green light and collision geometry.
 
