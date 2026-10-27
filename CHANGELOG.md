@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Remove thin Rune pattern sidewalls while retaining both original colored
+  faces, saving 1,396 visual triangles. Reduce colored edge depth; keep motion
+  bindings and physical collision assets unchanged.
+
 - Simplify Base lower panels and compact support hardware, Rune backplates,
   and Tech Core visual cylinders at 20 sides, saving 3,402 visual triangles.
   Preserve lights, artwork, motion ownership and all native/mesh collision assets.
