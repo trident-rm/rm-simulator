@@ -139,7 +139,7 @@ jobs:
         run: cargo test --release -p sim-physics -p sim-pendulum-example --no-default-features --locked
       - name: Test current runtime without optional integrations
         if: inputs.validate && runner.os == 'Linux'
-        run: python scripts/check-runtime.py
+        run: python scripts/check-runtime.py --profile release
       - name: Verify RMUC 2027 field with the real loader
         if: inputs.package
         run: cargo run --release --locked -p rm-sim-server --example inspect_assets -- dist/field-2027

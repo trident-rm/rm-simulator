@@ -113,6 +113,12 @@ policy. Run timing probes after compilation has finished. The asynchronous netwo
 trace tests can also miss their comparison-count threshold under heavy competing
 CPU load; rerun in isolation before diagnosing a behavior regression.
 
+While editing, use `just test-crate <package> [filter]` or
+`just affected-test <base> --list` followed by `just affected-test <base>`.
+The latter includes transitive workspace consumers, not just changed crates.
+`just python-test <filename-pattern>` narrows tooling tests; `just python-fast-test`
+excludes the real-time network subprocess trials. The full gate retains them.
+
 ## Release pause
 
 Release packaging and publishing are paused during development. Commit and verify

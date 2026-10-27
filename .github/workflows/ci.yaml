@@ -64,7 +64,7 @@ jobs:
         run: python3 scripts/stage-release-field.py --verify-only --allow-lfs-pointers
       - name: Python regression tests
         run: |
-          python3 -m unittest discover -s scripts/tests
+          python3 scripts/test-python.py
           python3 -m doctest scripts/check-mpl-compliance.py
   required:
     name: CI required

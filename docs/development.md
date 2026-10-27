@@ -63,6 +63,11 @@ arguments; the recipes select `mbx` automatically when available.
 | `just check` | `cargo check --workspace --all-targets --all-features --locked` |
 | `just lint` | Clippy over the workspace with `-D warnings` |
 | `just test` | `cargo test --workspace --all-features --locked` |
+| `just test-crate <package> [filter]` | One crate, all features, with an optional test-name substring |
+| `just affected-test [base] [--list]` | Changed crates and their workspace consumers; defaults to `HEAD` |
+| `just test-nextest` | Optional nextest run, Cargo doctests and isolated generic feature tests |
+| `just python-test [pattern] [--name substring]` | Python tooling tests with per-test timing |
+| `just python-fast-test` | Python tests except the real-time network subprocess trial class |
 | `just deny` | `cargo deny check advisories bans licenses sources` |
 | `just hooks` | Run every `prek` hook over all files |
 | `just module-deps` | Crate boundaries via `scripts/check-module-dependencies.py` |
@@ -71,7 +76,7 @@ arguments; the recipes select `mbx` automatically when available.
 | `just verify` | The full pre-PR gate; see below |
 | `just run <args>` / `just server <args>` | Interactive app / headless server |
 | `just world-test` | Renderer-independent world tests |
-| `just runtime-test` | Native 2027 rules and admission without optional integrations |
+| `just runtime-test [profile]` | Native 2027 rules and admission without optional integrations; default `test` |
 | `just gameplay-test` / `just gameplay-demo` | Gameplay tests / headless `match` example |
 | `just control-test` | Native 2027 control, physical RFID and console automation tests, without rendering |
 | `just network-test` / `just network-trial <scenario>` | Harness tests with real UDP / one scenario against built binaries |
@@ -98,7 +103,7 @@ and the LFS `field-2027/` package. Clippy remains in `just verify` and CI's full
 7. `python3 scripts/check-module-dependencies.py`
 8. `python3 scripts/check-mpl-compliance.py`
 9. `python3 scripts/stage-release-field.py --verify-only --allow-lfs-pointers`, the field inventory CI checks (also `just field-check`)
-10. `python3 -m unittest discover -s scripts/tests`, every Python regression test
+10. `python3 scripts/test-python.py`, every Python regression test with slow-test reporting
 11. `python3 -m doctest scripts/check-mpl-compliance.py`
 12. `cargo deny check advisories bans licenses sources`
 
@@ -141,6 +146,81 @@ narrow to one crate.
 
 Python suites live in `scripts/tests/`; `just network-test` runs the network
 harness tests verbosely, including real UDP and process cleanup.
+
+### Targeted iteration
+
+Use the smallest relevant suite while editing. Keep `just verify` as the full
+pre-PR gate; targeted runs do not replace feature-isolation, ignored CAD checks
+or repository policy checks.
+
+```sh
+just test-crate rm-sim-world energy_unit
+just test-crate rm-sim-control assembly
+just affected-test HEAD --list
+just affected-test origin/main
+just python-test test_console.py
+just python-test test_network_harness.py --name RunnerProcessTests
+just python-fast-test
+```
+
+`affected-test` reads Cargo metadata and Git changes, including staged, unstaged,
+deleted and untracked files. It selects changed packages and their transitive
+workspace consumers, including optional, build and dev dependency edges. It
+selects the whole workspace for global configuration, unknown paths and tooling
+changes. Root Markdown and `docs/` changes select no Rust packages. It does not
+infer individual test coverage or select Python tests. A name filter narrows
+execution, but Cargo still compiles the selected test targets.
+
+To select several crates explicitly or choose a build profile:
+
+```sh
+python3 scripts/test-rust.py -p rm-sim-world -p rm-sim-server --filter energy_unit
+python3 scripts/test-rust.py --changed-since HEAD --profile release --list
+```
+
+The default runner is Cargo. If `cargo-nextest` is installed, `just test-nextest`
+uses its cross-binary scheduling, then runs doctests through Cargo. For a targeted
+nextest run, append `--runner nextest` to `just affected-test`, or pass it to
+`scripts/test-rust.py`. A failing nextest run stops before doctests. No retries
+are enabled. Both runners use the same selected packages and all features.
+
+`check-runtime.py --profile release` keeps native CI's isolated runtime checks
+on the release build profile. Local runtime checks default to `test`. The
+separate feature configurations remain intentional boundary checks.
+
+### Test cost and Python ownership
+
+Python runs offline asset preparation and developer tools: field/CAD conversion
+and binding, console scenario automation, network impairment trials, benchmark
+reporting, release packaging and repository/CI checks. The optional ROS bridge
+also has Python control-I/O tests. Rust owns simulation stepping, physical
+dynamics, match rules and the production server/app.
+
+On the local Mac, a warm run on 2026-10-27 listed 1,543 Rust tests: 1,280 unit
+and integration tests (18 ignored), plus 263 doctests. The full workspace run
+passed in 39.2 seconds. Nextest ran the same 1,262 enabled unit/integration tests
+in 17.8 seconds including command overhead, without doctests. These are single
+samples; compilation, doctests and the extra feature configurations must be
+included when comparing full gates.
+A later nextest-plus-doctest run passed in 63.9 seconds while other builds and
+browser processes competed for CPU. Nextest remains opt-in; these samples do
+not establish a fixed speedup for the full gate.
+The six whole-chassis tests took 12.0 seconds in the workspace run. A separate
+level-2 optimization trial for both physics crates took 13.3 seconds of test
+execution, so the checked-in optimization settings remain unchanged.
+
+The original 198-test Python run took about 26 seconds with 39 skipped. Per-test
+timing attributed 24.3 seconds to `test_network_harness`, including 22.6 seconds
+in `RunnerProcessTests`. Those tests start real fixture processes and wait for
+sampling windows, rate pacing, console stalls and readiness timeouts. The
+baseline comparison test runs two trials and took 5.2 seconds. These waits test
+the tooling's time behavior; reducing them can weaken coverage or cause flakes.
+`python-fast-test` excludes only that process-test class and prints the exclusion.
+With the workflow regression tests added, that command passed 194 discovered
+tests in 3.3 seconds (39 skipped).
+Full local and CI validation still run it. The Python runner reports setup,
+execution and teardown time for the ten slowest tests; `--durations 0` disables
+the report. Skipped CAD tests still require their external tools/assets.
 
 ## Commits and pull requests
 

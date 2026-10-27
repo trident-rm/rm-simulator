@@ -4,13 +4,17 @@
 """Verify native 2027 competition rules with optional integrations disabled."""
 
 from pathlib import Path
+import argparse
 import json
 import subprocess
 import shutil
 
 
-def main():
+def main(argv=None):
     """Reject season switches and exercise current rules without default features."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--profile', default='test', help='Cargo build profile (default: test)')
+    args = parser.parse_args(argv)
     root = Path(__file__).resolve().parent.parent
     rust = "mbx" if shutil.which("mbx") else "cargo"
     metadata = json.loads(subprocess.check_output(
@@ -30,11 +34,11 @@ def main():
         ("rm-sim-server", "rmul"),
     ]:
         subprocess.run([
-            rust, "test", "--locked", "-p", package,
+            rust, "test", "--profile", args.profile, "--locked", "-p", package,
             "--no-default-features", "--lib", test_filter,
         ], cwd=root, check=True)
     subprocess.run([
-        rust, "test", "--locked", "-p", "rm-sim-gameplay",
+        rust, "test", "--profile", args.profile, "--locked", "-p", "rm-sim-gameplay",
         "--no-default-features", "--test", "control_2027", "--test", "field_buffs_2027",
         "--test", "terrain_2027", "--test", "rune_2027", "--test", "assembly_2027",
         "--test", "adaptive_2027",

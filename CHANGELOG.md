@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Add targeted Rust test commands with conservative downstream crate selection,
+  an optional nextest runner with Cargo doctests, and timed Python test commands.
+  Keep runtime checks on the release profile in native CI to avoid a second
+  default-profile build. Full validation retains the real-time Python trials.
+
 - Record source-station retrieval through live Cartesian jog and grip commands.
   Preserve measured retained Unit poses during collision checks and allow only
   the owner's jaw contacts. Use 5000 N/m provisional grasp stiffness and small

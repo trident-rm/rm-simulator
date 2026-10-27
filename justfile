@@ -25,6 +25,27 @@ test:
     {{rust}} test --workspace --all-features --locked
     {{rust}} test -p sim-physics -p sim-pendulum-example --no-default-features --locked
 
+# One crate, with an optional test-name substring. Includes doctests.
+test-crate PACKAGE FILTER="":
+    python3 scripts/test-rust.py --package {{quote(PACKAGE)}} --filter {{quote(FILTER)}}
+
+# Changed crates and their consumers; HEAD includes staged, unstaged and new files.
+affected-test BASE="HEAD" *ARGS:
+    python3 scripts/test-rust.py --changed-since {{quote(BASE)}} {{ARGS}}
+
+# Optional nextest runner, followed by Cargo doctests. Requires cargo-nextest.
+test-nextest:
+    python3 scripts/test-rust.py --workspace --runner nextest
+    {{rust}} test -p sim-physics -p sim-pendulum-example --no-default-features --locked
+
+# Python tooling tests, with slow-test reporting and optional name filtering.
+python-test PATTERN="test_*.py" *ARGS:
+    python3 scripts/test-python.py --pattern {{quote(PATTERN)}} {{ARGS}}
+
+# Skip only the real-time subprocess trial class; the full gate still runs it.
+python-fast-test:
+    python3 scripts/test-python.py --exclude test_network_harness.RunnerProcessTests
+
 deny:
     cargo deny check advisories bans licenses sources
 
@@ -35,8 +56,8 @@ module-deps:
     python3 scripts/check-module-dependencies.py
 
 # Current runtime admission and native rules without optional app integrations.
-runtime-test:
-    python3 scripts/check-runtime.py
+runtime-test PROFILE="test":
+    python3 scripts/check-runtime.py --profile {{quote(PROFILE)}}
 
 mpl:
     python3 scripts/check-mpl-compliance.py
@@ -54,7 +75,7 @@ verify:
     python3 scripts/check-module-dependencies.py
     python3 scripts/check-mpl-compliance.py
     python3 scripts/stage-release-field.py --verify-only --allow-lfs-pointers
-    python3 -m unittest discover -s scripts/tests
+    python3 scripts/test-python.py
     python3 -m doctest scripts/check-mpl-compliance.py
     cargo deny check advisories bans licenses sources
 
