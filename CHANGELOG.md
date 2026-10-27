@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- Reduce Outpost upper casing and carrier visuals by 1,824 placed triangles.
+  Retain lights, armor fronts, seam edges and collision geometry.
+
 - Reduce the small Core head cover by 792 placed visual triangles. Keep the
   protected front, lights, ownership and collision geometry unchanged.
 
