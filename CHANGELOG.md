@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Reduce neutral Base surfaces with exact seam edges and locked optical
+  margins, saving 924 visual triangles. Retain lights, artwork, motion bindings
+  and physical collision assets.
+
 - Remove thin Rune pattern sidewalls while retaining both original colored
   faces, saving 1,396 visual triangles. Reduce colored edge depth; keep motion
   bindings and physical collision assets unchanged.
