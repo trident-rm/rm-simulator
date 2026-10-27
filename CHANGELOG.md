@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Replace internal Base armor detail with simple housings and plain rear caps,
+  saving 6,110 visual triangles. Retain source front skin, light bezels, light
+  geometry, physical collision assets and bindings.
+
 - Replace two thin Resource marking solids with a shared 128-pixel alpha
   texture, saving 884 visual/support triangles. Keep physical collision assets
   and the Resource mechanism unchanged.
