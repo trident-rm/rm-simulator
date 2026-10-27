@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Simplify reviewed Dart trays, fittings, guide caps, panels and channels; remove
+  small glyph meshes and use coarse collision-only caster mounts. Retessellate
+  Outpost armor front outlines with light bars unchanged. Save 4,556 visual and
+  4,180 collision-mesh triangles across the field.
+
 - Deploy reviewed Base rear bodies/supports, Outpost/Resource sheet edges,
   Dart hardware/text removal and Rune hubs, saving 7,201 visual and 744
   collision triangles. Fix red and pale Rune paint leaking onto the blue side;
