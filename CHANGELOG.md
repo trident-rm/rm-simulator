@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Flatten thin Outpost carrier strips into double-sided vector panels, saving
+  988 visual triangles. Preserve thick connections, armor, lights and physical
+  collision assets.
+
 - Flatten twenty thin Rune pattern backings into double-sided vector panels,
   saving 3,035 visual triangles. Retain colored patterns, materials, part
   ownership, motion bindings and physical collision assets.
