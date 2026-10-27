@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Replace two thin Resource marking solids with a shared 128-pixel alpha
+  texture, saving 884 visual/support triangles. Keep physical collision assets
+  and the Resource mechanism unchanged.
+
 - Texture road line strips on the existing road tops, removing 5,192 visual
   triangles. Keep top positions/normals and collision geometry unchanged;
   the two embedded PNGs total 298 bytes. Visual-derived support also omits
