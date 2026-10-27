@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Simplify thin Outpost upper panels and remove tiny Resource brass hardware,
+  saving 2,028 visual triangles. Retain armor, lights, Resource housing/rods
+  and physical collision assets.
+
 - Flatten thin Outpost carrier strips into double-sided vector panels, saving
   988 visual triangles. Preserve thick connections, armor, lights and physical
   collision assets.
