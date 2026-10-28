@@ -1,0 +1,44 @@
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RoboMaster field</title>
+  <style>
+    html,body { margin:0; width:100%; height:100%; overflow:hidden; background:#212630; color:#eef0f5; font:15px system-ui,sans-serif; }
+    canvas { display:block; width:100%; height:100%; outline:none; }
+    header { position:absolute; z-index:1; top:16px; left:16px; padding:12px 16px; border-radius:8px; background:#141820e8; }
+    form { display:flex; align-items:center; gap:12px; }
+    select,button { font:inherit; color:inherit; background:#303846; border:1px solid #667080; border-radius:4px; padding:6px 10px; }
+    #status { margin:10px 0 0; max-width:32rem; }
+    [data-state=error] { color:#ffb1a4; }
+  </style>
+</head>
+<body>
+  <header>
+    <form><label for="field">Field</label><select id="field" name="field"><option value="1v1">RMUL 1v1</option><option value="3v3">RMUL 3v3</option><option value="rmuc">RMUC</option></select><button>Load</button></form>
+    <p id="status" role="status" data-state="loading">Starting…</p>
+  </header>
+  <canvas id="sim" tabindex="0" aria-label="RoboMaster field view"></canvas>
+  <script type="module">
+    const status = document.getElementById('status');
+    const fail = error => {
+      status.dataset.state = 'error';
+      status.textContent = `Cannot start viewer: ${error.message || error}`;
+    };
+    window.addEventListener('error', event => fail(event.error || event.message));
+    window.addEventListener('unhandledrejection', event => fail(event.reason));
+    const field = new URLSearchParams(location.search).get('field') || '1v1';
+    document.getElementById('field').value = field;
+    try {
+      if (!navigator.gpu) throw new Error('This field viewer requires WebGPU.');
+      const {default: init} = await import('./pkg/rm_simulator.js');
+      await init();
+    } catch (error) {
+      fail(error);
+    }
+  </script>
+</body>
+</html>

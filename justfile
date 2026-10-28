@@ -90,6 +90,15 @@ client-test:
 client-wasm-check:
     {{rust}} check -p rm-sim-server --lib --no-default-features --target wasm32-unknown-unknown --locked
 
+# Compile the browser entry point. No native host or socket dependencies.
+browser-check:
+    {{rust}} clippy -p rm-sim-app --bin rm-simulator --target wasm32-unknown-unknown --locked -- -D warnings
+
+# Requires a matching wasm-bindgen CLI. OUT must be a new directory.
+browser-build OUT="local-assets/browser" PROFILE="web":
+    {{rust}} build -p rm-sim-app --bin rm-simulator --target wasm32-unknown-unknown --profile {{quote(PROFILE)}} --locked
+    python3 scripts/stage-browser.py --out {{quote(OUT)}} --profile {{quote(PROFILE)}}
+
 # The field package inventory CI checks, without staging a release.
 field-check:
     python3 scripts/stage-release-field.py --verify-only --allow-lfs-pointers

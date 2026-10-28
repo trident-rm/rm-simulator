@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Add a WebGPU browser field viewer for official 2027 arenas, with asynchronous
+  HTTP loading, shared manifest validation, checksummed in-memory GLBs, camera
+  controls and static bundle tooling. Native startup remains separate.
+
 - Separate native hosting from shared client state and codecs with the default
   `native-host` feature. Expose a caller-driven client codec, add host-free
   tests and Wasm compile checks, and use `mkShellNoCC` for the Nix shell.

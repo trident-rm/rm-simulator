@@ -1,337 +1,99 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! First-person RoboMaster field simulator: window, driven omni chassis or fly
-//! camera, tick pacing, gun and HUD. The world advances only through explicit
-//! ticks derived from frame time, either in a simulation hosted in this
-//! process (optionally shared over GNS UDP) or on a remote host.
-//!
-//! `args` parses the command line, `session` owns the local or remote
-//! simulation and sends every input as a protocol command, `controls` reads
-//! the player's keys and mouse, `scene` turns world snapshots into the
-//! renderer's scene state, `hud` writes the overlay, `debug` draws the
-//! physics wireframe, `screenshot` serves `--screenshot` and `frames` holds
-//! the FLU-to-Bevy conversions.
+//! Native simulator and browser field-view entry points.
+//! Native modules retain their protocol-driven sessions. The browser module
+//! asynchronously loads verified HTTP visuals without starting a native host.
+#[cfg(not(target_arch = "wasm32"))]
 mod args;
+#[cfg(not(target_arch = "wasm32"))]
 mod assembly;
+#[cfg(not(target_arch = "wasm32"))]
 mod auto_aim;
+#[cfg(not(target_arch = "wasm32"))]
 mod bindings;
+#[cfg(not(target_arch = "wasm32"))]
 mod console;
+#[cfg(not(target_arch = "wasm32"))]
 mod controls;
+#[cfg(not(target_arch = "wasm32"))]
 mod debug;
+#[cfg(not(target_arch = "wasm32"))]
 mod debug_panel;
+#[cfg(not(target_arch = "wasm32"))]
 mod enemy_intel;
+#[cfg(not(target_arch = "wasm32"))]
 mod frames;
+#[cfg(not(target_arch = "wasm32"))]
 mod graphics;
+#[cfg(not(target_arch = "wasm32"))]
 mod hit_feedback;
+#[cfg(not(target_arch = "wasm32"))]
 mod hud;
+#[cfg(not(target_arch = "wasm32"))]
 mod interpolation;
+#[cfg(not(target_arch = "wasm32"))]
 mod loading;
+#[cfg(not(target_arch = "wasm32"))]
 mod minimap;
 #[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 mod net_harness;
+#[cfg(not(target_arch = "wasm32"))]
 mod network_hud;
+#[cfg(not(target_arch = "wasm32"))]
 mod prediction;
+#[cfg(not(target_arch = "wasm32"))]
 mod preferences;
+#[cfg(not(target_arch = "wasm32"))]
 mod presentation;
+#[cfg(not(target_arch = "wasm32"))]
 mod projectile_prediction;
 #[cfg(feature = "referee-link")]
+#[cfg(not(target_arch = "wasm32"))]
 mod referee_link;
 #[cfg(feature = "referee-link")]
+#[cfg(not(target_arch = "wasm32"))]
 mod referee_video;
+#[cfg(not(target_arch = "wasm32"))]
 mod robot_assets;
+#[cfg(not(target_arch = "wasm32"))]
 mod scene;
+#[cfg(not(target_arch = "wasm32"))]
 mod screenshot;
+#[cfg(not(target_arch = "wasm32"))]
 mod sentry;
+#[cfg(not(target_arch = "wasm32"))]
 mod session;
+#[cfg(not(target_arch = "wasm32"))]
 mod staging;
 #[cfg(feature = "steam")]
+#[cfg(not(target_arch = "wasm32"))]
 mod steam_support;
+#[cfg(not(target_arch = "wasm32"))]
 mod supply;
 #[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 mod test_fixtures;
+#[cfg(not(target_arch = "wasm32"))]
 mod title;
+#[cfg(not(target_arch = "wasm32"))]
 mod ui_theme;
+#[cfg(not(target_arch = "wasm32"))]
 mod video_capture;
+#[cfg(not(target_arch = "wasm32"))]
 mod zone_debug;
 
-use bevy::prelude::*;
-use clap::Parser;
-use rm_sim_render::{
-    RenderingConfig,
-    cad::CadScenePlugin,
-    chassis::ChassisVisualsPlugin,
-    projectile::ProjectileVisualsPlugin,
-    sync::{SceneSyncPlugin, SceneSyncSet},
-};
+#[cfg(target_arch = "wasm32")]
+mod browser;
+#[cfg(not(target_arch = "wasm32"))]
+mod native;
 
-use args::Args;
-use controls::{Drive, Gun, drive_camera, drive_chassis, fire_gun, fly_camera, mouse_capture};
-use debug::collision_view;
-use hud::update_hud;
-use scene::{Appearance, publish_scene};
-use screenshot::{ScreenshotRequest, take_screenshot};
-use session::advance_world;
+#[cfg(not(target_arch = "wasm32"))]
+fn main() -> bevy::app::AppExit {
+    native::run()
+}
 
-fn main() -> AppExit {
-    #[cfg(feature = "steam")]
-    let steam_runtime = steam_support::SteamRuntime::initialize();
-    let mut args = Args::parse();
-    if let Err(error) = args.resolve_asset_path() {
-        eprintln!("resolving assets: {error}");
-        return AppExit::error();
-    }
-    let mut app = App::new();
-    #[cfg(feature = "steam")]
-    steam_support::install(&mut app, steam_runtime);
-    if let Some(path) = &args.hero_assets {
-        use bevy::asset::io::{AssetSourceBuilder, file::FileAssetReader};
-        let root = path.clone();
-        app.register_asset_source(
-            "hero-robot",
-            AssetSourceBuilder::new(move || Box::new(FileAssetReader::new(root.clone()))),
-        );
-    }
-    if let Some(path) = &args.robot_assets {
-        use bevy::asset::io::{AssetSourceBuilder, file::FileAssetReader};
-        let root = std::path::absolute(path).expect("robot asset path");
-        app.register_asset_source(
-            "robots",
-            AssetSourceBuilder::new(move || Box::new(FileAssetReader::new(root.clone()))),
-        );
-        app.insert_resource(rm_sim_render::team_robot::TeamRobotAssets {
-            file: "robots://neutral.glb".into(),
-            hero_file: args
-                .hero_assets
-                .as_ref()
-                .map(|_| "hero-robot://neutral.glb".into()),
-            folding_hero: args.host.folding_hero,
-            stair_heavy: args.host.stair_heavy,
-            articulated: args.host.source_chassis.is_some(),
-            required_groups: args
-                .host
-                .source_chassis
-                .as_ref()
-                .and_then(|c| c.articulation.as_ref())
-                .map(|a| {
-                    a.joints
-                        .iter()
-                        .map(|j| j.name.clone())
-                        .chain((0..4).map(|i| format!("wheel-{i}")))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            replace_armor: matches!(
-                args.robot_descriptor
-                    .as_ref()
-                    .expect("resolved robot package")
-                    .armor(),
-                rm_sim_assets::robots::ArmorIdentity::Replacement { .. }
-            ),
-        });
-    }
-    if let Err(error) = assembly::register(&mut app, args.host.assembly_assets.as_deref()) {
-        eprintln!("assembly assets: {error}");
-        return AppExit::error();
-    }
-    let mut plugins = DefaultPlugins
-        .set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "rm-simulator".into(),
-                focused: args.window_mode == args::WindowMode::Normal,
-                ..default()
-            }),
-            ..default()
-        })
-        .set(AssetPlugin {
-            file_path: args.host.cad_assets_path().to_string_lossy().into_owned(),
-            ..default()
-        });
-    if args.window_mode == args::WindowMode::Headless {
-        plugins = plugins.disable::<bevy::winit::WinitPlugin>();
-    }
-    // The referee link's broker logs every connection and subscription.
-    #[cfg(feature = "referee-link")]
-    {
-        plugins = plugins.set(bevy::log::LogPlugin {
-            filter: format!("{},rumqttd=warn", bevy::log::DEFAULT_FILTER),
-            ..default()
-        });
-    }
-    app.insert_resource(args.window_mode);
-    app.add_plugins(plugins)
-        .add_plugins(rm_sim_render::team_robot::TeamRobotVisualsPlugin)
-        .add_plugins(presentation::PresentationPlugin {
-            headless_fps: args.headless_fps,
-        })
-        .add_plugins(screenshot::ScreenshotReadinessPlugin)
-        .add_plugins(video_capture::VideoCapturePlugin)
-        .add_plugins(CadScenePlugin {
-            instances: Vec::new(),
-            rendering: RenderingConfig::field(),
-        })
-        // Venue-like haze instead of a black void beyond the field edge.
-        .insert_resource(ClearColor(Color::srgb(0.13, 0.15, 0.19)))
-        .add_plugins(SceneSyncPlugin)
-        .insert_resource(Appearance(RenderingConfig::field()))
-        .add_plugins(ProjectileVisualsPlugin {
-            rendering: RenderingConfig::field(),
-        })
-        .add_plugins(ChassisVisualsPlugin {
-            rendering: RenderingConfig::field(),
-            armor: scene::armor_optics(),
-        })
-        .insert_resource(Gun::new(args.shot(), args.fire_interval_ns()))
-        .insert_resource(hud::HudState {
-            debug: args.debug_panel,
-            network_stats: args.network_stats,
-            ..default()
-        })
-        .init_resource::<auto_aim::AutoAim>()
-        .add_plugins(preferences::PreferencesPlugin {
-            graphics_preset: args.graphics_preset.map(args::GraphicsPreset::quality),
-            no_bloom: args.no_bloom,
-        })
-        .add_plugins(graphics::GraphicsPlugin)
-        .add_plugins(hud::HudPlugin)
-        .add_plugins(assembly::AssemblyPlugin)
-        .add_plugins(supply::SupplyPlugin)
-        .add_plugins(sentry::SentryPlugin)
-        .add_plugins(enemy_intel::EnemyIntelPlugin)
-        .add_plugins(debug_panel::DebugPanelPlugin)
-        .add_plugins(zone_debug::ZoneDebugPlugin)
-        .insert_resource(debug_panel::DebugOptions {
-            stats: args.render_stats,
-            zones: args.zones,
-            rfid_zones: args.rfid_zones,
-            zone_labels: args.zone_labels,
-        })
-        .insert_resource(bevy::pbr::wireframe::WireframeConfig {
-            global: args.wireframe,
-            ..default()
-        })
-        .add_systems(
-            Update,
-            (hud::panel_input, hud::menu_input)
-                .chain()
-                .run_if(not(in_state(loading::Screen::Staging)))
-                .before(fire_gun)
-                .before(drive_chassis)
-                .before(fly_camera)
-                .before(mouse_capture)
-                .before(update_hud)
-                .before(hud::update_map)
-                .before(hud::update_panel_rows),
-        )
-        .add_plugins(loading::LoadingPlugin)
-        .add_plugins(title::TitlePlugin)
-        .add_plugins(staging::StagingPlugin)
-        .add_systems(
-            Update,
-            hud::sync_menus.after(mouse_capture).after(hud::menu_input),
-        )
-        .add_systems(Startup, scene::setup_camera)
-        // Poll, sample mouse/assist, submit controls and shots, then exchange
-        // prediction and place the physical camera. A capturing click cannot fire.
-        .add_systems(
-            Update,
-            (
-                advance_world,
-                controls::sample_drive_aim.run_if(resource_exists::<Drive>),
-                fly_camera.run_if(not(resource_exists::<Drive>)),
-                auto_aim::update,
-                drive_chassis.run_if(resource_exists::<Drive>),
-                session::advance_shots,
-                fire_gun,
-                session::predict_frame,
-                drive_camera.run_if(resource_exists::<Drive>),
-                publish_scene,
-            )
-                .chain()
-                .run_if(in_state(loading::Screen::InMatch))
-                .before(SceneSyncSet)
-                .before(mouse_capture)
-                .before(update_hud)
-                .before(hud::update_map),
-        )
-        .add_systems(
-            Update,
-            (
-                mouse_capture,
-                collision_view,
-                debug::dynamic_colliders
-                    .after(collision_view)
-                    .after(publish_scene)
-                    .before(SceneSyncSet),
-                update_hud,
-                hud::click_map.before(mouse_capture),
-                hud::sync_map_interaction.after(hud::click_map),
-                hud::update_map,
-                hud::navigation_paths,
-                network_hud::update,
-                hud::update_panel_rows,
-            )
-                .run_if(in_state(loading::Screen::InMatch)),
-        )
-        .add_systems(
-            Update,
-            take_screenshot
-                .after(collision_view)
-                .after(SceneSyncSet)
-                .run_if(resource_exists::<ScreenshotRequest>)
-                .run_if(
-                    in_state(loading::Screen::InMatch)
-                        .or_else(in_state(loading::Screen::Staging))
-                        .or_else(in_state(loading::Screen::Title)),
-                ),
-        );
-    if let Some(path) = &args.screenshot {
-        app.insert_resource(ScreenshotRequest::new(path.clone()));
-    }
-    if let Some(address) = args.console {
-        match console::Console::bind(address) {
-            Ok(console) => {
-                app.insert_resource(console)
-                    .add_plugins(console::ConsolePlugin);
-            }
-            Err(error) => {
-                eprintln!("cannot start console: {error}");
-                return AppExit::error();
-            }
-        }
-    }
-    #[cfg(feature = "referee-link")]
-    if let Some(address) = args.referee_link {
-        match referee_link::start(address) {
-            Ok(link) => {
-                app.insert_resource(link)
-                    .add_plugins(referee_link::RefereeLinkPlugin);
-            }
-            Err(error) => {
-                eprintln!("cannot start referee link on {address}: {error}");
-                return AppExit::error();
-            }
-        }
-    }
-    #[cfg(feature = "referee-link")]
-    if let Some(address) = args.referee_video {
-        match referee_video::start(address) {
-            Ok(video) => {
-                app.insert_resource(video)
-                    .add_plugins(referee_video::RefereeVideoPlugin);
-            }
-            Err(error) => {
-                eprintln!("cannot start referee video to {address}: {error:#}");
-                return AppExit::error();
-            }
-        }
-    }
-    // A command line that already names a match starts on the splash.
-    if args.auto_join() {
-        app.insert_resource(loading::JoinRequest(args.clone()))
-            .insert_state(loading::Screen::Loading);
-    } else {
-        app.insert_state(loading::Screen::Title);
-    }
-    app.insert_resource(title::BaseArgs(args));
-    app.run()
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    browser::start();
 }

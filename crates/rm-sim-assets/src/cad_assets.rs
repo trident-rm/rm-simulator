@@ -11,6 +11,8 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
+pub mod visual;
+
 /// Prefer a package beside installed binaries, then the source checkout's package.
 pub fn default_cad_assets() -> PathBuf {
     if let Some(local) = std::env::current_exe()
@@ -441,44 +443,7 @@ pub fn load_with_bindings<B>(
 ) -> anyhow::Result<CadAssets<B>> {
     let arena = read_manifest(&root.join("manifest.json"))?;
     let equipment = read_manifest(&root.join("equipment/manifest.json"))?;
-    ensure!(
-        arena.rmul2027_format == equipment.rmul2027_format,
-        "field and equipment RMUL identities differ"
-    );
-    if let Some(format) = arena.rmul2027_format {
-        let expected = match format {
-            rm_sim_gameplay::rmul_2027::Format::ThreeVsThree => {
-                "7d47c1b6a6a0253a732e46cb122bb84410b11d5134bcb5658104299db4a48ca4"
-            }
-            rm_sim_gameplay::rmul_2027::Format::Infantry => {
-                "954936e74885493836d73ba215e1c42efc3b6d40279478f5e5d626109e2cf6d1"
-            }
-        };
-        ensure!(
-            arena.source_sha256.as_deref() == Some(expected)
-                && arena.season == Some(rm_sim_gameplay::season::Season::Rm2027)
-                && equipment.source_sha256.as_deref() == Some(expected)
-                && arena.rmuc2027_bindings.is_none(),
-            "RMUL source identity mismatch"
-        );
-    }
-    let season = arena
-        .season
-        .unwrap_or(rm_sim_gameplay::season::Season::Rm2026);
-    ensure!(
-        season
-            == equipment
-                .season
-                .unwrap_or(rm_sim_gameplay::season::Season::Rm2026)
-            && arena.rest_pose_only == equipment.rest_pose_only,
-        "field and equipment season/rest-pose modes differ"
-    );
-    if season == rm_sim_gameplay::season::Season::Rm2027 {
-        ensure!(
-            arena.rest_pose_only,
-            "RM2027 CAD currently requires rest_pose_only; match bindings are unavailable"
-        );
-    }
+    let season = validate_identity(&arena, &equipment)?;
 
     let arena_semantics = arena
         .articulation
@@ -773,26 +738,74 @@ pub fn load_with_bindings<B>(
     })
 }
 
-/// Parse a manifest file and check the schema version and units that every
-/// asset read depends on.
+/// Parse a manifest file through the same byte parser used by remote callers.
 fn read_manifest(path: &Path) -> anyhow::Result<Manifest> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading CAD manifest {}", path.display()))?;
+    parse_manifest(
+        &std::fs::read(path).with_context(|| format!("reading CAD manifest {}", path.display()))?,
+        &path.display().to_string(),
+    )
+}
+
+fn parse_manifest(bytes: &[u8], name: &str) -> anyhow::Result<Manifest> {
     let manifest: Manifest =
-        serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        serde_json::from_slice(bytes).with_context(|| format!("parsing {name}"))?;
     ensure!(
         manifest.schema_version == 1,
-        "{}: unsupported schema version {}",
-        path.display(),
+        "{name}: unsupported schema version {}",
         manifest.schema_version
     );
     ensure!(
         manifest.units == "metres",
-        "{}: units are {:?}, expected metres",
-        path.display(),
+        "{name}: units are {:?}, expected metres",
         manifest.units
     );
     Ok(manifest)
+}
+
+fn validate_identity(
+    arena: &Manifest,
+    equipment: &Manifest,
+) -> anyhow::Result<rm_sim_gameplay::season::Season> {
+    ensure!(
+        arena.rmul2027_format == equipment.rmul2027_format,
+        "field and equipment RMUL identities differ"
+    );
+    if let Some(format) = arena.rmul2027_format {
+        let expected = match format {
+            rm_sim_gameplay::rmul_2027::Format::ThreeVsThree => {
+                "7d47c1b6a6a0253a732e46cb122bb84410b11d5134bcb5658104299db4a48ca4"
+            }
+            rm_sim_gameplay::rmul_2027::Format::Infantry => {
+                "954936e74885493836d73ba215e1c42efc3b6d40279478f5e5d626109e2cf6d1"
+            }
+        };
+        ensure!(
+            arena.source_sha256.as_deref() == Some(expected)
+                && arena.season == Some(rm_sim_gameplay::season::Season::Rm2027)
+                && equipment.source_sha256.as_deref() == Some(expected)
+                && arena.rmuc2027_bindings.is_none(),
+            "RMUL source identity mismatch"
+        );
+    }
+    let season = arena
+        .season
+        .unwrap_or(rm_sim_gameplay::season::Season::Rm2026);
+    ensure!(
+        season
+            == equipment
+                .season
+                .unwrap_or(rm_sim_gameplay::season::Season::Rm2026)
+            && arena.rest_pose_only == equipment.rest_pose_only,
+        "field and equipment season/rest-pose modes differ"
+    );
+    if season == rm_sim_gameplay::season::Season::Rm2027 {
+        ensure!(
+            arena.rest_pose_only,
+            "RM2027 CAD currently requires rest_pose_only; match bindings are unavailable"
+        );
+    }
+
+    Ok(season)
 }
 
 /// Check a file against the checksum its manifest records. The file is read

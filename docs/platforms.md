@@ -2,10 +2,59 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Platform boundaries
 
-The interactive app and headless host are native applications. The shared client
-library in `rm-sim-server` also compiles for `wasm32-unknown-unknown`. There is
-no browser app, browser asset loader or browser server endpoint yet. Compilation
-does not establish browser runtime correctness, frame rate or memory use.
+The native app supports simulation and multiplayer. The Wasm entry point is a
+field viewer: it loads source-backed 2027 CAD over HTTP and renders it through
+the shared passive renderer. It does not start a match or connect to a server.
+
+## Browser viewer
+
+The browser entry point uses a canvas and asynchronous Fetch requests. It reads
+the arena and equipment manifests through the same byte parser and identity
+checks as native loading. The visual plan shares native placement conversion.
+Each GLB is SHA-256 checked before it enters Bevy's in-memory asset source. The
+renderer receives those exact bytes, without a second HTTP read. External image
+and buffer URIs are rejected; the current packages embed their dependencies.
+This is visual validation, not collision or rules admission. SHA-256 is checked
+against the served manifests; serve the bundle from an origin you trust.
+
+Install the Rust `wasm32-unknown-unknown` target and a `wasm-bindgen-cli` matching
+the locked `wasm-bindgen` version (currently 0.2.129). Hydrate the field packages
+with Git LFS, then run:
+
+```sh
+just browser-check
+just browser-build
+python3 -m http.server 8080 --bind 127.0.0.1 --directory local-assets/browser
+```
+
+Open `http://127.0.0.1:8080/`. Choose RMUL 1v1, RMUL 3v3 or RMUC, then drag
+to orbit and scroll to zoom. WebGPU and a secure context (HTTPS or localhost)
+are required. The page reports missing HTTP files, hash mismatches, renderer
+loading failures and unavailable WebGPU. The default field is 1v1. Scenery is
+static; rule-driven lights, moving equipment and robots are not installed.
+The viewer uses no shadows or MSAA and fetches each distinct visual file once,
+sequentially, with a 64 MiB per-file and 256 MiB package byte ceiling.
+
+`just browser-build <new-output-directory> [profile]` uses the size-oriented
+`web` profile by default and runs `wasm-bindgen` to produce a static bundle.
+The output directory must not exist. The bundle contains the viewer, manifests,
+verified visual GLBs and ownership/license notices. It excludes collision and
+rule sidecars. Native release settings are unchanged. A static HTTP server is
+enough; no Python process runs inside the browser.
+
+The optional real-browser regression test starts and stops its own loopback
+HTTP server. Install Playwright's Chromium, or pass `--executable` for an
+existing Chromium build:
+
+```sh
+uv run --with playwright playwright install chromium
+uv run --with playwright python scripts/smoke-browser.py --root local-assets/browser
+```
+
+It tests all three fields, camera dragging, missing manifests, checksum failures
+and the no-WebGPU message. Ordinary CI compiles and lints the Wasm entry point;
+it does not claim a GPU browser run. Browser performance and memory budgets
+have not been measured.
 
 ## Shared client library
 
@@ -65,9 +114,9 @@ exercise the same client codec through GNS and loopback.
 
 ## Remaining deployment work
 
-A browser app needs HTTP-backed verified asset bytes, asynchronous startup and
-a browser rendering configuration. Embedded simulation needs caller-driven task
+Browser gameplay needs client/session startup and an HTTP-backed verified physics
+package, beyond this visual loader. Embedded simulation needs caller-driven task
 scheduling or Web Workers in place of native host threads. Browser multiplayer
 needs a server endpoint for a browser-supported carrier; the native GNS socket
 is not that endpoint. Keep host permission checks and the existing wire ordering
-when adding it. A Wasm compile check does not substitute for a browser playtest.
+when adding it.

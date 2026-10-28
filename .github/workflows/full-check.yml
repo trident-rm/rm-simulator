@@ -60,7 +60,9 @@ jobs:
           cargo test -p rm-sim-server --lib --test portable_client --no-default-features --locked
           cargo test -p rm-sim-server --doc --no-default-features --locked
       - name: Compile for browsers
-        run: cargo check -p rm-sim-server --lib --no-default-features --target wasm32-unknown-unknown --locked
+        run: |
+          cargo check -p rm-sim-server --lib --no-default-features --target wasm32-unknown-unknown --locked
+          cargo clippy -p rm-sim-app --bin rm-simulator --target wasm32-unknown-unknown --locked -- -D warnings
   result:
     name: Full validation passed
     if: always()

@@ -64,3 +64,10 @@ debug = 0
 
 [profile.dev]
 opt-level = 1
+
+# Browser downloads favor size; native release settings stay unchanged.
+[profile.web]
+inherits = "release"
+opt-level = "s"
+lto = "thin"
+strip = "debuginfo"
