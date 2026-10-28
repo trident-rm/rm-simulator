@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Prediction contracts and bounded replay, independent of rendering and sockets.
+#[cfg(feature = "native-host")]
 use crate::{cad_assets::CadAssets, layout::LayoutOptions};
 use rm_sim_world::{
     ChassisCommand, ChassisSnapshot, Field, FieldSnapshot, StaticGeometry, tick_ns,
 };
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "native-host")]
 use sha2::{Digest, Sha256};
 use std::{collections::VecDeque, sync::Arc};
 
@@ -20,6 +22,7 @@ pub struct PredictionScene {
     /// differently cannot predict.
     pub package_sha256: Option<String>,
 }
+#[cfg(feature = "native-host")]
 impl PredictionScene {
     /// Whether the local verified package matches the host's package identity.
     pub fn matches_package(&self, cad: &CadAssets) -> bool {
@@ -68,6 +71,7 @@ impl PredictionScene {
         ))
     }
 }
+#[cfg(feature = "native-host")]
 fn package_hash(cad: &CadAssets) -> Option<String> {
     let mut hash = Sha256::new();
     for file in ["manifest.json", "equipment/manifest.json"] {
@@ -395,7 +399,7 @@ pub fn muzzle_for(chassis: &ChassisSnapshot, _command: ChassisCommand) -> rm_sim
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native-host"))]
 mod tests {
     use super::*;
     use rm_sim_world::{ChassisConfig, ChassisPlacement, Field, FieldConfig, Pose, Team};

@@ -42,10 +42,29 @@ jobs:
       version: '0.0.0'
       package: false
       validate: true
+  portable:
+    name: Host-free client and Wasm compile
+    needs: receipt
+    if: needs.receipt.outputs.reused != 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          shared-key: portable-client
+      - name: Install Wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Check and test the host-free client
+        run: |
+          cargo clippy -p rm-sim-server --lib --test portable_client --no-default-features --locked -- -D warnings
+          cargo test -p rm-sim-server --lib --test portable_client --no-default-features --locked
+          cargo test -p rm-sim-server --doc --no-default-features --locked
+      - name: Compile for browsers
+        run: cargo check -p rm-sim-server --lib --no-default-features --target wasm32-unknown-unknown --locked
   result:
     name: Full validation passed
     if: always()
-    needs: [receipt, repository, native]
+    needs: [receipt, repository, native, portable]
     runs-on: ubuntu-24.04
     steps:
       - name: Require reused success or all current checks
@@ -54,9 +73,11 @@ jobs:
           REUSED: ${{ needs.receipt.outputs.reused }}
           REPOSITORY_RESULT: ${{ needs.repository.result }}
           NATIVE_RESULT: ${{ needs.native.result }}
+          PORTABLE_RESULT: ${{ needs.portable.result }}
         run: |
           test "$RECEIPT_RESULT" = success
           test "$REPOSITORY_RESULT" = success
           if [ "$REUSED" != true ]; then
             test "$NATIVE_RESULT" = success
+            test "$PORTABLE_RESULT" = success
           fi

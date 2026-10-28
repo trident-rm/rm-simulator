@@ -20,7 +20,7 @@
           pkgs = import nixpkgs { inherit system; };
         in
         {
-          default = pkgs.mkShell {
+          default = pkgs.mkShellNoCC {
             packages = with pkgs; [
               rustup
               cmake
@@ -37,7 +37,8 @@
             ];
             buildInputs =
               with pkgs;
-              lib.optionals stdenv.hostPlatform.isLinux [
+              lib.optionals stdenv.hostPlatform.isDarwin [ apple-sdk ]
+              ++ lib.optionals stdenv.hostPlatform.isLinux [
                 alsa-lib
                 udev
                 vulkan-loader
@@ -48,6 +49,10 @@
                 libXi
                 libXrandr
               ];
+            # Browser C dependencies need a target-neutral compiler, not the
+            # native wrapper's SDK, linker and hardening flags.
+            CC_wasm32_unknown_unknown = "${pkgs.clang.cc}/bin/clang";
+            AR_wasm32_unknown_unknown = "${pkgs.llvmPackages.bintools-unwrapped}/bin/llvm-ar";
             LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
             # Keep Nix native builds separate from existing Homebrew-linked objects.
             shellHook = ''

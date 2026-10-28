@@ -83,10 +83,21 @@ assert not ({"rm-sim-physics", "rm-sim-world", "rm-sim-server", "rm-sim-gameplay
 assert not any(d.startswith("rapier") for d in bench), bench
 assert not any(p["name"] in ("rm-sim", "rm-sim-api", "rm-sim-viewer", "rm-vision-world",
                              "rm-vision-runtime", "rm-vision-runner") for p in packages.values())
+# Resolve the client package alone: workspace-wide feature unification would
+# enable native-host again through the app and hide an accidental dependency.
+client_graph = subprocess.check_output(
+    ["cargo", "tree", "-p", "rm-sim-server", "--no-default-features",
+     "--target", "wasm32-unknown-unknown", "--edges", "normal",
+     "--prefix", "none", "--format", "{p}", "--locked"], text=True)
+client_names = {line.split()[0] for line in client_graph.splitlines() if line.strip()}
+assert not ({"game-networking-sockets", "game-networking-sockets-sys", "if-addrs",
+             "rm-sim-app", "rm-sim-render", "sim-render", "bevy"} & client_names), client_names
+
 print("PASS: engine has no solver, application or simulator dependency; generic physics depends only on engine among simulator crates, RM physics extends it, "
       "gameplay is independent of physics and the simulator, "
       "assets have no world, networking or renderer, "
       "controllers have no match, host, networking or renderer, "
       "world and server have no renderer, renderer has no world or server, "
       "presentation adapts world to render without hosting or transport, "
+      "the host-free client has no native socket dependencies, "
       "and no sibling simulator crate is imported")

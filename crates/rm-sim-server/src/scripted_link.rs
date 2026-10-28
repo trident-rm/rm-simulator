@@ -11,7 +11,7 @@
 //! opens a socket; the caller hands in `now` and drains what has arrived.
 use crate::pacing::Datagram;
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use web_time::{Duration, Instant};
 
 /// SplitMix64. A seeded, portable stream so a scenario replays identically.
 struct Rng(u64);
@@ -45,7 +45,7 @@ impl Rng {
 /// ```
 /// use rm_sim_server::pacing::Datagram;
 /// use rm_sim_server::scripted_link::{Impairment, Link};
-/// use std::time::{Duration, Instant};
+/// use web_time::{Duration, Instant};
 ///
 /// let epoch = Instant::now();
 /// let rules = Impairment {
@@ -303,7 +303,7 @@ impl Lane {
 /// ```
 /// use rm_sim_server::pacing::Datagram;
 /// use rm_sim_server::scripted_link::{Impairment, Link};
-/// use std::time::{Duration, Instant};
+/// use web_time::{Duration, Instant};
 ///
 /// let epoch = Instant::now();
 /// // The window is [100 ms, 300 ms) on the link clock. The send ordinals are
@@ -350,7 +350,7 @@ impl Lane {
 /// ```
 /// use rm_sim_server::pacing::Datagram;
 /// use rm_sim_server::scripted_link::{Impairment, Link};
-/// use std::time::{Duration, Instant};
+/// use web_time::{Duration, Instant};
 ///
 /// let epoch = Instant::now();
 /// let rules = Impairment {

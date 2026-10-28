@@ -71,6 +71,7 @@ verify:
     {{rust}} test --workspace --all-features --locked
     {{rust}} test -p sim-physics -p sim-pendulum-example --no-default-features --locked
     {{rust}} test -p rm-sim-render --no-default-features --locked
+    just client-test
     python3 scripts/check-runtime.py
     python3 scripts/check-module-dependencies.py
     python3 scripts/check-mpl-compliance.py
@@ -78,6 +79,16 @@ verify:
     python3 scripts/test-python.py
     python3 -m doctest scripts/check-mpl-compliance.py
     cargo deny check advisories bans licenses sources
+
+# Caller-driven client code without host workers or native socket dependencies.
+client-test:
+    {{rust}} clippy -p rm-sim-server --lib --test portable_client --no-default-features --locked -- -D warnings
+    {{rust}} test -p rm-sim-server --lib --test portable_client --no-default-features --locked
+    {{rust}} test -p rm-sim-server --doc --no-default-features --locked
+
+# Compile the shared client library for the browser target.
+client-wasm-check:
+    {{rust}} check -p rm-sim-server --lib --no-default-features --target wasm32-unknown-unknown --locked
 
 # The field package inventory CI checks, without staging a release.
 field-check:

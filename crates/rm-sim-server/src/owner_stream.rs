@@ -9,7 +9,7 @@
 //! the peer acknowledged it. A peer that meets an unknown reference drops the
 //! anchor and asks for the configuration again; it never applies a reference it
 //! cannot resolve and never fails the connection over one.
-use crate::simulation::SimulationState;
+use crate::state::SimulationState;
 use rm_sim_world::{ChassisConfig, ChassisSnapshot, DriveControl, WheelTorques};
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -135,6 +135,7 @@ pub(crate) struct AnchorRef<'a> {
     pub(crate) owner: &'a ChassisSnapshot,
 }
 impl<'a> AnchorRef<'a> {
+    #[cfg(feature = "native-host")]
     pub(crate) fn from_state(state: &'a SimulationState, chassis: u32) -> Option<Self> {
         Some(Self {
             snapshot_id: state.snapshot_id,
@@ -544,7 +545,7 @@ impl AnchorRef<'_> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native-host"))]
 mod tests {
     use super::*;
     use rm_sim_world::*;

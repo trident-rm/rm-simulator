@@ -5,7 +5,7 @@
 //! `Hello`; the server answers `Welcome` and then streams `Snapshot`s at its
 //! own rate while accepting commands at any time. Everything a client can
 //! do is a [`Command`], which the HTTP panel also posts.
-use crate::simulation::SimulationState;
+use crate::state::SimulationState;
 use rm_sim_world::{ChassisCommand, ChassisConfig, Pose, RefereeCommand, Shot, Team};
 use serde::{Deserialize, Serialize};
 
@@ -1245,7 +1245,7 @@ pub struct ChassisAssignment {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Welcome {
     /// Host competition and practice layout, independent of referee enablement.
-    pub competition: crate::host_args::Competition,
+    pub competition: crate::competition::Competition,
     /// How to build the shared prediction geometry, or `None` when this host
     /// offers no client-side prediction.
     pub prediction_scene: Option<crate::prediction::PredictionScene>,
@@ -1430,7 +1430,7 @@ pub enum ServerMessage {
     Roster(Vec<PlayerInfo>),
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native-host"))]
 mod tests {
     use super::*;
     use rm_sim_world::{Caliber, Field};
@@ -1498,7 +1498,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native-host"))]
 mod spread_tests {
     use super::*;
     #[test]

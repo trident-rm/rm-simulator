@@ -598,18 +598,7 @@ impl ClientInbox {
     }
 }
 
-/// One queued client-leg item. The writer emits the parts in this order, so a
-/// barrier always covers the command queued with it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct QueuedCommand {
-    /// Command to write first, before any barrier.
-    pub(crate) command: Option<Command>,
-    /// State barrier nonce. The host answers it with a confirmation snapshot
-    /// and then a Pong, after every earlier command has been applied.
-    pub(crate) confirmation: Option<u64>,
-    /// Timing probe nonce, written between the command and the barrier.
-    pub(crate) time_probe: Option<u64>,
-}
+pub(crate) use crate::udp_codec::QueuedCommand;
 
 /// A connection to a host. Socket reads and command writes run on workers;
 /// frame-facing methods never wait for I/O. Connect and wait_snapshot are

@@ -8,7 +8,7 @@
 //! refuse.
 use crate::binary_snapshot::bitpack::{self, Node};
 use crate::protocol::ServerMessage;
-use crate::simulation::SimulationState;
+use crate::state::SimulationState;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::BTreeMap, io, sync::OnceLock};
 /// First four bytes of every baseline or owner-configuration feedback payload,
@@ -170,9 +170,12 @@ pub fn parse(bytes: &[u8]) -> io::Result<Option<Wire>> {
 /// encoder retains its own acknowledged baselines, prediction and counters.
 ///
 /// ```
-/// use rm_sim_server::{udp_snapshot::{Encoder, PreparedSnapshot}, workload};
-/// let (simulation, _) = workload::simulation(2);
-/// let state = simulation.state();
+/// use rm_sim_server::{udp_snapshot::{Encoder, PreparedSnapshot}, state::SimulationState};
+/// # let state = SimulationState {
+/// #     bots: vec![], navigation: vec![], sentry_tracking: vec![],
+/// #     snapshot_id: 0, input_epoch: 0, shot_results: vec![], paused: false,
+/// #     field: rm_sim_world::Field::new(&Default::default()).unwrap().snapshot(),
+/// # };
 /// let prepared = PreparedSnapshot::new(state.input_epoch, &state)?;
 /// let mut first = Encoder::default();
 /// let mut second = Encoder::default();
@@ -333,12 +336,16 @@ impl Encoder {
     ///
     /// ```
     /// use rm_sim_server::compression::decompress;
-    /// use rm_sim_server::simulation::Simulation;
+    /// use rm_sim_server::state::SimulationState;
     /// use rm_sim_server::udp_snapshot::{Decoder, Encoder, Wire, parse};
     /// use rm_sim_world::{Field, FieldConfig};
     ///
-    /// let simulation = Simulation::new(Field::new(&FieldConfig::default()).unwrap(), false);
-    /// let mut state = simulation.state();
+    /// # let state = SimulationState {
+    /// #     bots: vec![], navigation: vec![], sentry_tracking: vec![],
+    /// #     snapshot_id: 0, input_epoch: 0, shot_results: vec![], paused: false,
+    /// #     field: Field::new(&FieldConfig::default()).unwrap().snapshot(),
+    /// # };
+    /// let mut state = state;
     /// // The decoder rejects a frame whose state epoch does not match the wire.
     /// state.input_epoch = 4;
     /// let inflate = |bytes: &[u8]| {
@@ -602,7 +609,7 @@ impl Decoder {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native-host"))]
 mod tests {
     use super::*;
     use crate::simulation::Simulation;
@@ -932,7 +939,7 @@ mod tests {
             .unwrap()
             .unwrap()
     }
-    fn decoded(message: Option<ServerMessage>) -> crate::simulation::SimulationState {
+    fn decoded(message: Option<ServerMessage>) -> crate::state::SimulationState {
         let Some(ServerMessage::Snapshot(state)) = message else {
             panic!("missing snapshot")
         };

@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Separate native hosting from shared client state and codecs with the default
+  `native-host` feature. Expose a caller-driven client codec, add host-free
+  tests and Wasm compile checks, and use `mkShellNoCC` for the Nix shell.
+
 - Update Rapier to 0.36.1, application Zstd to 0.14.3 and compatible locked
   dependencies, including the Zstd Wasm allocator fix. Adapt native contact
   hooks and shape queries to the new Rapier/Parry APIs.

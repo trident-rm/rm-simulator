@@ -55,8 +55,8 @@ pub fn slots() -> &'static [Slot] {
 }
 /// Official selectable equipment for a competition. UL Table 3-1 separates the
 /// three-versus-three Heavy/Infantry/Sentry roster from Infantry confrontation.
-pub fn slots_for(competition: crate::host_args::Competition) -> &'static [Slot] {
-    use crate::host_args::Competition;
+pub fn slots_for(competition: crate::competition::Competition) -> &'static [Slot] {
+    use crate::competition::Competition;
     const UL: [Slot; 3] = [
         slot(1, "Heavy", "1 robot", Some(Robot::Engineer)),
         slot(3, "Infantry", "1 robot", Some(Robot::Infantry3)),
@@ -70,7 +70,7 @@ pub fn slots_for(competition: crate::host_args::Competition) -> &'static [Slot] 
     }
 }
 /// Whether a named robot is admitted by the selected competition.
-pub fn supports_for(competition: crate::host_args::Competition, robot: Robot) -> bool {
+pub fn supports_for(competition: crate::competition::Competition, robot: Robot) -> bool {
     slots_for(competition)
         .iter()
         .any(|slot| slot.prototype == Some(robot))
@@ -85,7 +85,7 @@ mod tests {
     use super::*;
     #[test]
     fn rmul_rosters_have_distinct_admission() {
-        use crate::host_args::Competition::*;
+        use crate::competition::Competition::*;
         assert_eq!(slots_for(Rmul2027).len(), 3);
         assert_eq!(slots_for(RmulInfantry2027).len(), 1);
         for robot in [Robot::Engineer, Robot::Infantry3, Robot::Sentry] {

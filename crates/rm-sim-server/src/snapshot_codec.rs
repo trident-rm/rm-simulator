@@ -12,7 +12,7 @@ use crate::binary_snapshot::{
     fixed_point,
 };
 use crate::protocol::{ClientMessage, ServerMessage};
-use crate::simulation::SimulationState;
+use crate::state::SimulationState;
 use serde::{Deserialize, Serialize};
 use std::io;
 
@@ -91,8 +91,8 @@ struct Header {
     shots_fired: u64,
     hits_detected: u64,
     bots: Vec<u32>,
-    navigation: Vec<crate::navigation::View>,
-    sentry_tracking: Vec<crate::sentry_controller::View>,
+    navigation: Vec<rm_sim_control::navigation::View>,
+    sentry_tracking: Vec<crate::sentry_view::View>,
     /// Nonzero remainders of the stamps whose code marks one, in the order
     /// [`PlayerSnapshot::for_each_field_stamp`] visits them.
     sub_tick_ns: Vec<u32>,
@@ -947,12 +947,16 @@ enum Wire {
 ///
 /// ```
 /// use rm_sim_server::protocol::ServerMessage;
-/// use rm_sim_server::simulation::Simulation;
+/// use rm_sim_server::state::SimulationState;
 /// use rm_sim_server::snapshot_codec::{decode_player_message, encode_player_message};
 /// use rm_sim_world::{Field, FieldConfig};
 ///
-/// let simulation = Simulation::new(Field::new(&FieldConfig::default()).unwrap(), false);
-/// let mut state = simulation.state();
+/// # let state = SimulationState {
+/// #     bots: vec![], navigation: vec![], sentry_tracking: vec![],
+/// #     snapshot_id: 0, input_epoch: 0, shot_results: vec![], paused: false,
+/// #     field: Field::new(&FieldConfig::default()).unwrap().snapshot(),
+/// # };
+/// let mut state = state;
 /// state.snapshot_id = 9;
 /// let tick = state.field.tick;
 /// let message = ServerMessage::Snapshot(Box::new(state));
@@ -1264,12 +1268,16 @@ fn tick_mut(node: &mut Node) -> io::Result<&mut u64> {
 /// checkpoint.
 ///
 /// ```
-/// use rm_sim_server::simulation::Simulation;
+/// use rm_sim_server::state::SimulationState;
 /// use rm_sim_server::snapshot_codec::{checkpoint_node, predict_baseline};
 /// use rm_sim_world::{Field, FieldConfig};
 ///
-/// let simulation = Simulation::new(Field::new(&FieldConfig::default()).unwrap(), false);
-/// let baseline = checkpoint_node(&simulation.state()).unwrap();
+/// # let state = SimulationState {
+/// #     bots: vec![], navigation: vec![], sentry_tracking: vec![],
+/// #     snapshot_id: 0, input_epoch: 0, shot_results: vec![], paused: false,
+/// #     field: Field::new(&FieldConfig::default()).unwrap().snapshot(),
+/// # };
+/// let baseline = checkpoint_node(&state).unwrap();
 /// // No lead predicts nothing; a lead moves at least the tick.
 /// assert_eq!(predict_baseline(&baseline, 0).unwrap(), baseline);
 /// assert_ne!(predict_baseline(&baseline, 4).unwrap(), baseline);
@@ -1420,7 +1428,7 @@ pub fn decode_checkpoint_with(
     Ok((message, node))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native-host"))]
 mod tests {
     #[test]
     fn duration_authority_is_explicit_on_wire_and_network_rejects_custom_rates() {

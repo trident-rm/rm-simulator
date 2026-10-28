@@ -16,6 +16,7 @@ Git history.
 | Contribution rules and review | [Contributing](../CONTRIBUTING.md) |
 | Environment, `just` targets, tests and commits | [Development](development.md) |
 | CI checks, validation reuse and releases | [CI and releases](releases.md) |
+| Native hosting, shared client codecs and Wasm compilation | [Platform boundaries](platforms.md) |
 | Crate ownership, ticks, restore and ECS | [Simulation architecture](architecture-refactor.md) |
 | Engine core, component lifecycle and staged architecture migration | [Engine architecture](engine-architecture.md) |
 | Joint foundation, robot assembly and remaining physics migration gates | [Physics migration](physics-migration.md) |
