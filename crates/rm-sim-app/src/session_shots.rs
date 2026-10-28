@@ -3,12 +3,8 @@
 //! Provisional shots with bounded retries and independent authoritative outcomes.
 use super::*;
 use crate::projectile_prediction::{Flight, Request, Worker};
-use rm_sim_server::protocol::ShotResult;
-use std::{
-    collections::BTreeMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use rm_sim_server::{clock::Instant, protocol::ShotResult};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 struct LocalFlight {
     flight: Flight,
     spread: rm_sim_server::protocol::BulletSpread,
@@ -224,7 +220,7 @@ impl Session {
     /// Fold a checkpoint's shot results into the flights and stop reserving
     /// ammo for accepted shots. A confirmed flight is kept only while its
     /// projectile is still in the snapshot.
-    pub(super) fn reconcile_shots(&mut self, state: &rm_sim_server::simulation::SimulationState) {
+    pub(super) fn reconcile_shots(&mut self, state: &rm_sim_server::state::SimulationState) {
         for result in &state.shot_results {
             self.shot_result(result.clone());
             if Some(result.shooter) == self.chassis_id
@@ -652,7 +648,7 @@ mod tests {
         older.launch_speed_m_s = Some(20.);
         session.shot_result(older);
         assert_eq!(session.last_bullet_speed_m_s(), Some(24.87));
-        let state = rm_sim_server::simulation::SimulationState {
+        let state = rm_sim_server::state::SimulationState {
             bots: vec![],
             navigation: Vec::new(),
             sentry_tracking: Vec::new(),

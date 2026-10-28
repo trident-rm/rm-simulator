@@ -322,7 +322,7 @@ fn read_local(root: &Path, name: &str) -> io::Result<Vec<u8>> {
             "robot reference must be a local regular file",
         ));
     }
-    std::fs::read(root.join(name))
+    crate::package_io::read(root.join(name))
 }
 fn snapshot(name: &str, bytes: Vec<u8>) -> VerifiedRobotFile {
     let snapshot = crate::verified::Snapshot::new(bytes);

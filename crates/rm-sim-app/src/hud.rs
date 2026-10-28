@@ -784,8 +784,8 @@ fn control_summary(session: &Session) -> String {
 fn roster_competition(
     session: &Session,
     config: Option<&crate::staging::StagingConfig>,
-) -> rm_sim_server::host_args::Competition {
-    use rm_sim_server::host_args::Competition;
+) -> rm_sim_server::competition::Competition {
+    use rm_sim_server::competition::Competition;
     use rm_sim_world::gameplay::rmul_2027::Format;
     session
         .snapshot

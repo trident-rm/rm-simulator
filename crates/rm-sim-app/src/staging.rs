@@ -16,6 +16,7 @@ use bevy::{
 };
 use rm_sim_render::{flu_position, flu_vector, sync::SceneSyncSet};
 use rm_sim_server::{
+    competition::Competition,
     deployment,
     protocol::{Chassis, Command, Robot, Role},
 };
@@ -75,6 +76,7 @@ enum Action {
 }
 #[derive(Resource)]
 struct Stage {
+    competition: Competition,
     step: Step,
     team: Team,
     robot: Robot,
@@ -104,13 +106,14 @@ fn enter(
     config: Res<StagingConfig>,
     mut hud: Query<&mut Node, With<crate::hud::HudRoot>>,
 ) {
-    let robot = if rm_sim_server::roster::supports(config.0.robot) {
+    let robot = if rm_sim_server::roster::supports_for(config.0.host.competition, config.0.robot) {
         config.0.robot
     } else {
         Robot::Infantry3
     };
     commands.insert_resource(SideHover::default());
     commands.insert_resource(Stage {
+        competition: config.0.host.competition,
         step: Step::Side,
         team: config.0.team.into(),
         robot,
@@ -309,19 +312,22 @@ fn input(
     let dy = i32::from(keys.just_pressed(KeyCode::ArrowLeft))
         - i32::from(keys.just_pressed(KeyCode::ArrowRight));
     if dx != 0 || dy != 0 {
-        let mut p = stage
-            .position_m
-            .unwrap_or(deployment::for_team(stage.team, [10.4, 0.0]));
+        let mut p = stage.position_m.unwrap_or_else(|| initial_position(&stage));
         p[0] += f64::from(dx) * 0.1;
         p[1] += f64::from(dy) * 0.1;
         point = Some(p);
     }
     if let Some(p) = point {
-        if deployment::contains(stage.team, p) {
+        if contains_position(stage.competition, stage.team, p) {
             stage.position_m = Some(p);
             stage.status.clear();
         } else {
-            stage.status = "Choose a point inside the outlined ring, outside the base.".into();
+            stage.status = if stage.competition.rmul_format().is_some() {
+                "Choose a point inside your outlined field half, clear of its edges."
+            } else {
+                "Choose a point inside the outlined ring, outside the base."
+            }
+            .into();
         }
     }
     if keys.just_pressed(KeyCode::Enter) && stage.position_m.is_some() {
@@ -344,23 +350,39 @@ fn camera(
     let center = if close && stage.robot == Robot::Drone {
         let (p, _) = rm_sim_server::layout::drone_slot(stage.team, 0);
         [p[0], p[1]]
+    } else if close && stage.competition.rmul_format().is_some() {
+        let high = stage.competition.practice_bounds()[1];
+        deployment::for_team(stage.team, [high[0] * 0.5, 0.])
     } else if close {
         deployment::for_team(stage.team, deployment::RED_BASE_M)
     } else {
         [0.0, 0.0]
     };
     let target = flu_position([center[0], center[1], 0.0]);
+    let close_height = if stage.competition.rmul_format().is_some() {
+        (stage.competition.practice_bounds()[1][1] * 2. + 0.8) as f32
+    } else {
+        6.5
+    };
     let (offset, up, height) = if stage.step == Step::Position {
-        (Vec3::Y * 20.0, Vec3::NEG_Z, 6.5)
+        (Vec3::Y * 20.0, Vec3::NEG_Z, close_height)
     } else if stage.step == Step::Robot {
-        (Vec3::new(6.0, 8.0, 0.0), Vec3::Y, 6.5)
+        (Vec3::new(6.0, 8.0, 0.0), Vec3::Y, close_height)
     } else {
         {
             let [low, high] = bounds.0;
             let height = ((high[0] - low[0]) as f32 + 2.0) * window.height()
                 / (window.width() - 340.0).max(160.0);
             // Look across the short axis: the arena's long edge stays horizontal.
-            (Vec3::new(24.0, 28.0, 0.0), Vec3::Y, height.max(18.0))
+            (
+                Vec3::new(24.0, 28.0, 0.0),
+                Vec3::Y,
+                height.max(if stage.competition.rmul_format().is_some() {
+                    (high[1] - low[1]) as f32 + 1.
+                } else {
+                    18.0
+                }),
+            )
         }
     };
     let mut view = Transform::from_translation(target + offset).looking_at(target, up);
@@ -498,7 +520,7 @@ fn ui(
                     format!("{} side", stage.team.name()),
                     16.0,
                 );
-                for slot in rm_sim_server::roster::slots() {
+                for slot in rm_sim_server::roster::slots_for(stage.competition) {
                     let Some(robot) = slot.prototype else {
                         label(
                             &mut commands,
@@ -577,6 +599,8 @@ fn ui(
                     panel,
                     if stage.robot == Robot::Drone {
                         "Drone uses its designated aerial starting pad and flight boundary."
+                    } else if stage.competition.rmul_format().is_some() {
+                        "Choose a position inside your outlined half, clear of the field edges.\n\nArrow keys adjust by 0.1 m. Enter deploys."
                     } else {
                         "Click anywhere in the outlined ring around your base. The base itself is excluded.\n\nArrow keys adjust by 0.1 m. Enter deploys."
                     },
@@ -628,11 +652,13 @@ fn publish_preview(
                     let (p, _) = rm_sim_server::layout::drone_slot(stage.team, 0);
                     [p[0], p[1]]
                 } else {
-                    deployment::for_team(stage.team, [10.4, 0.0])
+                    initial_position(&stage)
                 }
             })
         })
-        && let Some(ground_m) = session.deployment_ground_height(point)
+        && let Some(ground_m) = session
+            .deployment_ground_height(point)
+            .or_else(|| stage.competition.rmul_format().is_some().then_some(0.))
         && let Some(scene) = &mut input.0
     {
         scene.chassis.push(preview(&stage, point, ground_m));
@@ -725,6 +751,53 @@ fn remember(args: &Args, stage: &Stage, spectate: bool) {
     }
 }
 
+// Keep the client selection predicate aligned with host deployment admission.
+fn contains_position(competition: Competition, team: Team, point: [f64; 2]) -> bool {
+    if !point.into_iter().all(f64::is_finite) {
+        return false;
+    }
+    if competition.rmul_format().is_none() {
+        return deployment::contains(team, point);
+    }
+    let [low, high] = competition.practice_bounds();
+    point[0].abs() < high[0] - 0.4
+        && point[1] > low[1] + 0.4
+        && point[1] < high[1] - 0.4
+        && rm_sim_server::layout::side_team(point[0]) == team
+}
+fn initial_position(stage: &Stage) -> [f64; 2] {
+    if stage.competition.rmul_format().is_some() {
+        let (point, _) = stage.competition.practice_spawn(stage.team, 0);
+        [point[0], point[1]]
+    } else {
+        deployment::for_team(stage.team, [10.4, 0.])
+    }
+}
+fn boundaries(competition: Competition, team: Team) -> Vec<Vec<[f64; 2]>> {
+    if competition.rmul_format().is_none() {
+        return [&deployment::RED_OUTER_M, &deployment::RED_INNER_M]
+            .into_iter()
+            .map(|ring| {
+                ring.iter()
+                    .map(|&p| deployment::for_team(team, p))
+                    .collect()
+            })
+            .collect();
+    }
+    let [low, high] = competition.practice_bounds();
+    let [left, right] = if team == Team::Red {
+        [0., high[0] - 0.4]
+    } else {
+        [low[0] + 0.4, 0.]
+    };
+    vec![vec![
+        [left, low[1] + 0.4],
+        [right, low[1] + 0.4],
+        [right, high[1] - 0.4],
+        [left, high[1] - 0.4],
+    ]]
+}
+
 fn outlines(stage: Res<Stage>, mut gizmos: Gizmos<DeploymentGizmos>) {
     let teams: &[Team] = if stage.step == Step::Position {
         std::slice::from_ref(&stage.team)
@@ -737,13 +810,10 @@ fn outlines(stage: Res<Stage>, mut gizmos: Gizmos<DeploymentGizmos>) {
         } else {
             Color::srgb(0.2, 0.6, 1.0)
         };
-        for boundary in [&deployment::RED_OUTER_M, &deployment::RED_INNER_M] {
+        for boundary in boundaries(stage.competition, team) {
             let points: Vec<Vec3> = boundary
                 .iter()
-                .map(|&p| {
-                    let p = deployment::for_team(team, p);
-                    flu_position([p[0], p[1], 0.35])
-                })
+                .map(|&p| flu_position([p[0], p[1], 0.35]))
                 .collect();
             gizmos.linestrip(points.iter().copied().chain(points.first().copied()), color);
         }
@@ -765,36 +835,46 @@ fn spawn_zones(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut gizmos: ResMut<bevy::gizmos::config::GizmoConfigStore>,
     session: Res<Session>,
+    staging: Res<StagingConfig>,
 ) {
     let (config, _) = gizmos.config_mut::<DeploymentGizmos>();
     config.line.width = 3.0;
     config.depth_bias = -0.01;
     for team in [Team::Red, Team::Blue] {
-        let vertices = deployment::RED_OUTER_M
+        let competition = staging.0.host.competition;
+        let points: Vec<_> = boundaries(competition, team)
             .into_iter()
-            .chain(deployment::RED_INNER_M)
-            .map(|p| {
-                let p = deployment::for_team(team, p);
+            .flatten()
+            .collect();
+        let vertices = points
+            .iter()
+            .map(|&p| {
                 session
                     .deployment_ground_height(p)
+                    .or_else(|| competition.rmul_format().is_some().then_some(0.))
                     .map(|z| flu_position([p[0], p[1], z + 0.04]).to_array())
             })
             .collect::<Option<Vec<_>>>();
         let Some(vertices) = vertices else {
             continue;
         };
-        let indices = (0..6_u32)
-            .flat_map(|i| {
-                let next = (i + 1) % 6;
-                [i, next, i + 6, next, next + 6, i + 6]
-            })
-            .collect();
+        let count = vertices.len();
+        let indices = if competition.rmul_format().is_some() {
+            vec![0, 1, 2, 0, 2, 3]
+        } else {
+            (0..6_u32)
+                .flat_map(|i| {
+                    let next = (i + 1) % 6;
+                    [i, next, i + 6, next, next + 6, i + 6]
+                })
+                .collect()
+        };
         let mesh = Mesh::new(
             bevy::mesh::PrimitiveTopology::TriangleList,
             bevy::asset::RenderAssetUsages::default(),
         )
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; 12])
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; count])
         .with_inserted_indices(bevy::mesh::Indices::U32(indices));
         let color = if team == Team::Red {
             Color::srgba(1.0, 0.18, 0.12, 0.22)
@@ -1003,6 +1083,60 @@ mod tests {
     }
 
     #[test]
+    fn rmul_selection_uses_each_competitions_half_and_inset() {
+        for competition in [Competition::Rmul2027, Competition::RmulInfantry2027] {
+            let [low, high] = competition.practice_bounds();
+            for team in Team::BOTH {
+                let stage = Stage {
+                    competition,
+                    step: Step::Position,
+                    team,
+                    robot: Robot::Infantry3,
+                    chassis: Chassis::Auto,
+                    position_m: None,
+                    pending: None,
+                    status: String::new(),
+                    actions: vec![],
+                };
+                let point = initial_position(&stage);
+                assert!(
+                    contains_position(competition, team, point),
+                    "{competition:?} {team:?}: {point:?}"
+                );
+                assert!(!contains_position(competition, team, [-point[0], point[1]]));
+                assert!(!contains_position(
+                    competition,
+                    team,
+                    [point[0], low[1] + 0.4]
+                ));
+                assert!(!contains_position(
+                    competition,
+                    team,
+                    [point[0], high[1] - 0.4]
+                ));
+                assert!(!contains_position(competition, team, [f64::NAN, 0.]));
+                let outline = boundaries(competition, team);
+                assert_eq!(outline.len(), 1);
+                assert_eq!(outline[0].len(), 4);
+                assert!(
+                    outline[0]
+                        .iter()
+                        .all(|p| p[0].abs() <= high[0] - 0.4 && p[1].abs() <= high[1] - 0.4)
+                );
+            }
+            let supported = rm_sim_server::roster::slots_for(competition);
+            assert!(
+                supported
+                    .iter()
+                    .any(|slot| slot.prototype == Some(Robot::Infantry3))
+            );
+            if competition == Competition::RmulInfantry2027 {
+                assert_eq!(supported.len(), 1);
+            }
+        }
+    }
+
+    #[test]
     fn confirmed_deployment_hands_off_to_driving_on_the_same_session() {
         use clap::Parser;
         let args = Args::try_parse_from([
@@ -1037,6 +1171,7 @@ mod tests {
         app.insert_resource(opened.session)
             .insert_resource(StagingConfig(args))
             .insert_resource(Stage {
+                competition: Competition::Rmuc2027,
                 step: Step::Position,
                 team: Team::Blue,
                 robot: Robot::Infantry4,
@@ -1076,6 +1211,7 @@ mod tests {
     #[test]
     fn changing_robot_clears_position_and_resolves_unsupported_drivetrain() {
         let mut stage = Stage {
+            competition: Competition::Rmuc2027,
             step: Step::Robot,
             team: Team::Red,
             robot: Robot::Infantry3,

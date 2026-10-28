@@ -22,38 +22,19 @@ def stage(output, profile):
         raise ValueError(f"Build the browser binary first: {binary}")
     if output.exists():
         raise ValueError(f"Output already exists; choose a new directory: {output}")
-    # Keep both manifests and the original CAD notice. Collision recipes and
-    # physical collision sidecars are not part of this distribution.
-    # Reviewed source motions and optical nodes are needed for live RMUC visuals.
+    # The coupled application uses the same verified field/collision loaders as native.
     files = {name: ROOT / name for name in ("LICENSE-MIT", "LICENSE-APACHE", "NOTICE.md", "LICENSES/MPL-2.0.txt")}
+    indexes = {}
     for package in PACKAGES:
+        inventory = json.loads((ROOT / "scripts" / f"release-{package}.json").read_bytes())
+        indexes[package] = inventory["files"]
         root = ROOT / package
-        for relative in ("manifest.json", "equipment/manifest.json"):
-            path = root / relative
-            manifest = json.loads(path.read_bytes())
-            files[f"{package}/{relative}"] = path
-            if binding := manifest.get("rmuc2027_bindings"):
-                if binding["file"] != "rmuc2027-bindings.json":
-                    raise ValueError("Invalid RMUC visual binding path")
-                source = path.parent / binding["file"]
-                source.resolve().relative_to(root.resolve())
-                if hashlib.sha256(source.read_bytes()).hexdigest() != binding["sha256"]:
-                    raise ValueError(f"Source binding checksum mismatch: {source}")
-                files[f"{package}/{source.relative_to(root).as_posix()}"] = source
-            for asset in manifest["assets"].values():
-                relative_visual = Path(asset["visual"])
-                if relative_visual.is_absolute() or ".." in relative_visual.parts:
-                    raise ValueError(f"Invalid package path: {relative_visual}")
-                visual = path.parent / relative_visual
-                visual.resolve().relative_to(root.resolve())
-                digest = hashlib.sha256(visual.read_bytes()).hexdigest()
-                if digest != asset["visual_sha256"]:
-                    raise ValueError(f"Visual checksum mismatch: {visual}. Hydrate Git LFS first.")
-                files[f"{package}/{visual.relative_to(root).as_posix()}"] = visual
-        notice = root / "CAD-NOTICE.md"
-        if not notice.is_file():
-            raise ValueError(f"Missing upstream ownership notice: {notice}")
-        files[f"{package}/CAD-NOTICE.md"] = notice
+        for relative, expected in inventory["files"].items():
+            source = root / relative
+            source.resolve().relative_to(root.resolve())
+            if hashlib.sha256(source.read_bytes()).hexdigest() != expected:
+                raise ValueError(f"Package checksum mismatch: {source}. Hydrate Git LFS first.")
+            files[f"{package}/{relative}"] = source
     output.mkdir(parents=True)
     shutil.copyfile(ROOT / "web/index.html", output / "index.html")
     subprocess.run(["wasm-bindgen", "--target", "web", "--out-dir", str(output / "pkg"),
@@ -62,6 +43,8 @@ def stage(output, profile):
         destination = output / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
+    for package, index in indexes.items():
+        (output / package / "package-files.json").write_text(json.dumps(index, sort_keys=True) + "\n")
     print(f"Staged {len(files)} files and browser application in {output}")
 
 

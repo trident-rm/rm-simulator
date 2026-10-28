@@ -18,14 +18,14 @@ impl Snapshot {
         Self { bytes, sha256 }
     }
     pub(crate) fn read(path: &Path) -> io::Result<Self> {
-        std::fs::read(path).map(Self::new)
+        crate::package_io::read(path).map(Self::new)
     }
 }
 
 /// Check canonical containment without changing a format's lexical path rules.
 pub(crate) fn confined_path(root: &Path, relative: &Path) -> io::Result<PathBuf> {
-    let path = root.join(relative).canonicalize()?;
-    if !path.starts_with(root.canonicalize()?) {
+    let path = crate::package_io::canonicalize(root.join(relative))?;
+    if !path.starts_with(crate::package_io::canonicalize(root)?) {
         return Err(io::Error::other("asset payload escapes package root"));
     }
     Ok(path)

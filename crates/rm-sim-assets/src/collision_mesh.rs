@@ -452,7 +452,7 @@ pub struct CollisionPart {
 
 /// Read a GLB collision proxy as one soup; points stay in the file's own frame.
 pub fn load_glb(path: &Path) -> anyhow::Result<CollisionMesh> {
-    let bytes = std::fs::read(path)?;
+    let bytes = crate::package_io::read(path)?;
     load_glb_bytes(&bytes)
 }
 
@@ -468,7 +468,7 @@ pub fn load_glb_bytes(bytes: &[u8]) -> anyhow::Result<CollisionMesh> {
 /// Read a GLB collision proxy part by part (one per mesh node, in document
 /// order); points stay in the file's own frame.
 pub fn load_glb_parts(path: &Path) -> anyhow::Result<Vec<CollisionPart>> {
-    let bytes = std::fs::read(path)
+    let bytes = crate::package_io::read(path)
         .with_context(|| format!("reading collision proxy {}", path.display()))?;
     load_glb_parts_bytes(&bytes)
         .with_context(|| format!("parsing collision proxy {}", path.display()))
@@ -498,7 +498,7 @@ pub fn load_glb_selected(
     path: &Path,
     selected: &std::collections::BTreeSet<(usize, usize)>,
 ) -> anyhow::Result<CollisionMesh> {
-    let bytes = std::fs::read(path)?;
+    let bytes = crate::package_io::read(path)?;
     load_glb_selected_bytes(&bytes, selected)
 }
 /// Decode exact primitive selectors from an immutable GLB snapshot.
@@ -527,7 +527,7 @@ pub fn load_glb_filtered(
     excluded: &[usize],
     subtree: Option<usize>,
 ) -> anyhow::Result<CollisionMesh> {
-    load_glb_filtered_bytes(&std::fs::read(path)?, selected, excluded, subtree)
+    load_glb_filtered_bytes(&crate::package_io::read(path)?, selected, excluded, subtree)
 }
 /// Decode selected collision triangles from one immutable snapshot.
 pub(crate) fn load_glb_filtered_bytes(
@@ -678,7 +678,7 @@ pub struct VisualPart {
 /// metallic/roughness shading and material extensions are not evaluated.
 /// Obtain the path from an already checked [`crate::cad_assets::CadAssets`].
 pub fn load_glb_visuals(path: &Path) -> anyhow::Result<Vec<VisualPart>> {
-    parse_visuals(&std::fs::read(path)?)
+    parse_visuals(&crate::package_io::read(path)?)
 }
 fn parse_visuals(bytes: &[u8]) -> anyhow::Result<Vec<VisualPart>> {
     let (gltf, bin) = glb_document(bytes)?;

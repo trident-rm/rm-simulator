@@ -5,7 +5,7 @@
 /// owner anchors and snapshot checkpoints on one epoch. It never advances host
 /// physics and never sends anything.
 #[derive(Default)]
-pub(super) struct ClockEstimate {
+pub struct ClockEstimate {
     epoch: Option<u64>,
     anchor_local_ns: u64,
     anchor_simulation_ns: u64,
@@ -27,7 +27,7 @@ impl ClockEstimate {
     /// when the pause state flips or when the report disagrees with the
     /// projected time by more than 500 ms; a moved anchor clears the
     /// synchronized flag until a probe confirms the mapping.
-    pub(super) fn observe(&mut self, epoch: u64, local_ns: u64, simulation_ns: u64, paused: bool) {
+    pub fn observe(&mut self, epoch: u64, local_ns: u64, simulation_ns: u64, paused: bool) {
         // Owner anchors and world snapshots arrive independently. An older
         // context is not a simulation rewind and must not reset the clock.
         if self.epoch.is_some_and(|current| epoch < current)
@@ -63,7 +63,7 @@ impl ClockEstimate {
     /// because a later lower-round-trip sample must undo a bad first offset
     /// rather than slew at 5 ms per second for a whole session. The anchor
     /// never moves the estimate backwards past the latest observed time.
-    pub(super) fn synchronize(&mut self, local_ns: u64, simulation_ns: u64, paused: bool) {
+    pub fn synchronize(&mut self, local_ns: u64, simulation_ns: u64, paused: bool) {
         if paused != self.paused || paused {
             return;
         }
@@ -89,7 +89,7 @@ impl ClockEstimate {
     /// never leads the latest observation by more than
     /// [`crate::prediction::MAX_CONTINUOUS_REPLAY_NS`], so a long stall cannot
     /// make the presentation extrapolate without bound.
-    pub(super) fn at(&self, local_ns: u64) -> u64 {
+    pub fn at(&self, local_ns: u64) -> u64 {
         if self.paused || !self.initialized {
             return self.latest_ns;
         }
@@ -160,7 +160,7 @@ mod tests {
 /// The lead grows while input arrives late and shrinks slowly once it is early
 /// enough, always between 32 ms and 150 ms.
 #[derive(Default)]
-pub(super) struct InputLead {
+pub struct InputLead {
     identity: Option<(u64, u64)>,
     sequence: u64,
     lead_ns: Option<u64>,
@@ -169,7 +169,7 @@ pub(super) struct InputLead {
 impl InputLead {
     /// Start a new adjustment when `epoch` or `revision` changes; readings from
     /// the same pair keep the current lead.
-    pub(super) fn reset(&mut self, epoch: u64, revision: u64) {
+    pub fn reset(&mut self, epoch: u64, revision: u64) {
         if self.identity != Some((epoch, revision)) {
             *self = Self {
                 identity: Some((epoch, revision)),
@@ -188,11 +188,7 @@ impl InputLead {
     /// per step, and the stable counter restarts. When the margin is above
     /// 16 ms the lead loses 2 ms after 5 consecutive such samples, never below
     /// 32 ms. Any other margin leaves the lead alone and restarts the counter.
-    pub(super) fn observe(
-        &mut self,
-        feedback: crate::network_stats::HostTelemetry,
-        initial_ns: u64,
-    ) {
+    pub fn observe(&mut self, feedback: crate::network_stats::HostTelemetry, initial_ns: u64) {
         let stats = feedback.3;
         if self.identity != Some((feedback.0, stats.placement_revision))
             || stats.received_sequence <= self.sequence
@@ -226,7 +222,7 @@ impl InputLead {
     }
     /// The current lead in nanoseconds, clamped to 32 ms to 150 ms. Before the
     /// first accepted sample this clamps `initial_ns` instead.
-    pub(super) fn get(&self, initial_ns: u64) -> u64 {
+    pub fn get(&self, initial_ns: u64) -> u64 {
         self.lead_ns
             .unwrap_or(initial_ns)
             .clamp(32_000_000, 150_000_000)

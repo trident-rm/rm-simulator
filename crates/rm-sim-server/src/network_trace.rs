@@ -1,22 +1,26 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Bounded transport metadata tracing. Never records payloads, names or passwords.
+#[cfg(feature = "native-host")]
+use crate::clock::Instant;
+#[cfg(feature = "native-host")]
 use crate::{
     clock::TimeSource,
     protocol::{ClientMessage, Command, ServerMessage},
 };
 use serde::Serialize;
+use std::{collections::BTreeMap, path::PathBuf};
+#[cfg(feature = "native-host")]
 use std::{
-    collections::BTreeMap,
     fs::{File, OpenOptions},
     io::{self, BufWriter, Write},
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 /// Bounded event measurements in milliseconds, with monotonic sample identities.
@@ -51,8 +55,11 @@ impl EventSamples {
     }
 }
 
+#[cfg(feature = "native-host")]
 const CAPACITY: usize = 2048;
+#[cfg(feature = "native-host")]
 const FILE_LIMIT: u64 = 64 * 1024 * 1024;
+#[cfg(feature = "native-host")]
 static NEXT_FILE: AtomicU64 = AtomicU64::new(1);
 
 /// Counts for one stage and message class. Bytes exclude UDP/IP and GNS overhead.
@@ -86,6 +93,7 @@ pub struct Report {
     pub error: Option<String>,
 }
 /// One metadata observation. Optional identities allow correlation without payloads.
+#[cfg(feature = "native-host")]
 #[derive(Clone, Default, Serialize)]
 pub(crate) struct Event {
     pub stage: &'static str,
@@ -123,12 +131,14 @@ pub(crate) struct Event {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub work_ns: Option<u64>,
 }
+#[cfg(feature = "native-host")]
 #[derive(Serialize)]
 struct Row {
     elapsed_ns: u64,
     #[serde(flatten)]
     event: Event,
 }
+#[cfg(feature = "native-host")]
 #[derive(Default)]
 struct Health {
     dropped: AtomicU64,
@@ -137,6 +147,7 @@ struct Health {
     error: Mutex<Option<String>>,
 }
 /// Local counters plus an optional nonblocking disk writer. No socket or simulation access.
+#[cfg(feature = "native-host")]
 pub(crate) struct Observer {
     time: TimeSource,
     started: Instant,
@@ -145,6 +156,7 @@ pub(crate) struct Observer {
     health: Arc<Health>,
     writer: Option<std::thread::JoinHandle<()>>,
 }
+#[cfg(feature = "native-host")]
 impl Observer {
     pub(crate) fn new(label: &'static str, time: TimeSource) -> Self {
         let directory = std::env::var_os("RM_NET_TRACE_DIR").map(PathBuf::from);
@@ -390,6 +402,7 @@ impl Observer {
         self.record(event);
     }
 }
+#[cfg(feature = "native-host")]
 impl Drop for Observer {
     fn drop(&mut self) {
         drop(self.sender.take());
@@ -399,6 +412,7 @@ impl Drop for Observer {
     }
 }
 
+#[cfg(feature = "native-host")]
 fn write_trace(
     file: File,
     receiver: mpsc::Receiver<Row>,
@@ -453,7 +467,7 @@ fn write_trace(
     writer.flush()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native-host"))]
 mod tests {
     #[test]
     fn event_samples_keep_equal_events_and_bound_retention() {

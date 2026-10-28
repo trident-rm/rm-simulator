@@ -48,7 +48,8 @@ pub fn load(root: &Path) -> Option<(Image, [f64; 4])> {
     }
 }
 fn read(root: &Path) -> anyhow::Result<(Image, [f64; 4])> {
-    let metadata: Metadata = serde_json::from_slice(&std::fs::read(root.join("minimap.json"))?)?;
+    let metadata: Metadata =
+        serde_json::from_slice(&rm_sim_assets::package_io::read(root.join("minimap.json"))?)?;
     anyhow::ensure!(
         metadata.schema_version == 1
             && metadata.orientation == "x-left-y-down"
@@ -62,11 +63,14 @@ fn read(root: &Path) -> anyhow::Result<(Image, [f64; 4])> {
     );
     for file in ["manifest.json", "equipment/manifest.json"] {
         anyhow::ensure!(
-            metadata.manifest_sha256.get(file) == Some(&checksum(&std::fs::read(root.join(file))?)),
+            metadata.manifest_sha256.get(file)
+                == Some(&checksum(&rm_sim_assets::package_io::read(
+                    root.join(file)
+                )?)),
             "minimap belongs to a different field package"
         );
     }
-    let bytes = std::fs::read(root.join("minimap.png"))?;
+    let bytes = rm_sim_assets::package_io::read(root.join("minimap.png"))?;
     anyhow::ensure!(
         checksum(&bytes) == metadata.image_sha256,
         "minimap image checksum mismatch"

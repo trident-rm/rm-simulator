@@ -368,7 +368,7 @@ impl CadAsset {
         if let Some(shapes) = &self.collision_shapes {
             return Ok(std::borrow::Cow::Borrowed(&shapes.remainder_bytes));
         }
-        Ok(std::borrow::Cow::Owned(std::fs::read(
+        Ok(std::borrow::Cow::Owned(crate::package_io::read(
             self.physics_file(root),
         )?))
     }
@@ -684,7 +684,7 @@ pub fn load_with_bindings<B>(
             );
             let path = root.join(&binding.file);
             verify_sha256(&path, &binding.sha256)?;
-            decode(&std::fs::read(path)?)
+            decode(&crate::package_io::read(path)?)
         })
         .transpose()?;
     Ok(CadAssets {
@@ -741,7 +741,8 @@ pub fn load_with_bindings<B>(
 /// Parse a manifest file through the same byte parser used by remote callers.
 fn read_manifest(path: &Path) -> anyhow::Result<Manifest> {
     parse_manifest(
-        &std::fs::read(path).with_context(|| format!("reading CAD manifest {}", path.display()))?,
+        &crate::package_io::read(path)
+            .with_context(|| format!("reading CAD manifest {}", path.display()))?,
         &path.display().to_string(),
     )
 }

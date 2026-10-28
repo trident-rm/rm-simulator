@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Receipt-timed authoritative contact effects, independent of world coalescing.
+use rm_sim_server::clock::Instant;
 use rm_sim_world::{ArmorHit, FieldSnapshot};
-use std::{collections::VecDeque, time::Instant};
+use std::collections::VecDeque;
 
 const CAPACITY: usize = 4096;
 const RECOVERY_AGE_NS: u64 = 250_000_000;

@@ -22,22 +22,17 @@ mod assembly_rig;
 #[cfg(feature = "native-host")]
 mod bandwidth_probe;
 pub mod binary_snapshot;
-#[cfg(feature = "native-host")]
 pub mod cad_assets;
-#[cfg(feature = "native-host")]
 pub mod clock;
 pub use rm_sim_assets::collision_mesh;
 pub mod compression;
-#[cfg(feature = "native-host")]
 pub mod deployment;
 pub mod external_control;
 #[cfg(feature = "native-host")]
 pub mod host;
-#[cfg(feature = "native-host")]
 pub mod host_args;
 #[cfg(feature = "native-host")]
 pub mod http;
-#[cfg(feature = "native-host")]
 pub mod layout;
 #[cfg(feature = "native-host")]
 mod lifecycle;
@@ -45,12 +40,16 @@ pub mod map_interaction;
 pub use rm_sim_assets::math;
 #[cfg(feature = "native-host")]
 pub mod navigation;
+/// Caller-visible navigation diagnostics without native planning workers.
+#[cfg(not(feature = "native-host"))]
+pub mod navigation {
+    pub use rm_sim_control::navigation::{Bake, CELL_M, Phase, RADIUS_M, View};
+}
 #[cfg(feature = "native-host")]
 pub mod net;
 pub mod protocol;
 #[cfg(feature = "native-host")]
 pub mod referee_protocol;
-#[cfg(feature = "native-host")]
 pub mod rmuc_2027;
 pub mod roster;
 #[cfg(feature = "native-host")]
@@ -71,12 +70,10 @@ pub mod workload;
 
 pub mod input_stream;
 pub mod intelligence;
-#[cfg(feature = "native-host")]
 pub mod sentry_controller;
 
 pub mod network_stats;
 
-#[cfg(feature = "native-host")]
 pub mod network_trace;
 
 pub mod owner_stream;
@@ -89,7 +86,6 @@ pub mod udp_codec;
 
 pub mod udp_snapshot;
 
-#[cfg(feature = "native-host")]
 pub mod lobby;
 
 pub mod competition;
@@ -99,3 +95,7 @@ pub mod state;
 
 #[cfg(feature = "native-host")]
 pub mod websocket;
+
+#[cfg(not(feature = "native-host"))]
+#[path = "presentation_clock.rs"]
+pub mod presentation_clock;

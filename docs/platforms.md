@@ -2,25 +2,15 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Platform boundaries
 
-The native app supports simulation and multiplayer. The Wasm entry point loads
-source-backed 2027 CAD over HTTP. Without a server it is a static field viewer.
-With a WebSocket server it sends pilot commands and draws authoritative snapshots
-through the shared renderer. Physics and match rules run on the native host.
+Native and browser launches use the same app wiring, `Session`, `Screen`,
+controls and HUD. Browser platform adapters provide asynchronous WebSocket
+admission, HTTP field packages and localStorage preferences. They do not define
+another HUD or match lifecycle.
 
-## Browser viewer
-
-The browser entry point uses a canvas and asynchronous Fetch requests. It reads
-the arena and equipment manifests through the same byte parser and identity
-checks as native loading. The visual plan shares native placement conversion.
-Each GLB is SHA-256 checked before it enters Bevy's in-memory asset source. The
-renderer receives those exact bytes, without a second HTTP read. External image
-and buffer URIs are rejected; the current packages embed their dependencies.
-This is visual validation, not collision or rules admission. SHA-256 is checked
-against the served manifests; serve the bundle from an origin you trust.
+## Browser application
 
 Install the Rust `wasm32-unknown-unknown` target and a `wasm-bindgen-cli` matching
-the locked `wasm-bindgen` version (currently 0.2.129). Hydrate the field packages
-with Git LFS, then run:
+the locked version (currently 0.2.129). Hydrate the field packages with Git LFS:
 
 ```sh
 just browser-check
@@ -28,39 +18,18 @@ just browser-build
 python3 -m http.server 8080 --bind 127.0.0.1 --directory local-assets/browser
 ```
 
-Open `http://127.0.0.1:8080/`. Choose RMUL 1v1, RMUL 3v3 or RMUC, then drag
-to orbit and scroll to zoom. WebGPU and a secure context (HTTPS or localhost)
-are required. The page reports missing HTTP files, hash mismatches, renderer
-loading failures and unavailable WebGPU. The default field is 1v1. Scenery is
-static; rule-driven lights, moving equipment and robots are not installed.
-The browser uses the native lit materials and venue lights/skybox, with bloom,
-shadows and MSAA disabled. It fetches each distinct visual file once,
-sequentially, with a 64 MiB per-file and 256 MiB package byte ceiling.
+Open `http://127.0.0.1:8080/`. The existing title screen, settings, multiplayer
+form, loading splash, deployment view and gameplay HUD all render in Bevy.
+There is no HTML pilot card or crosshair. WebGPU and a secure context (HTTPS or
+localhost) are required. The HTML page only owns the canvas and fatal startup
+errors. Existing [controls and HUD documentation](app-options.md) applies.
 
-`just browser-build <new-output-directory> [profile]` uses the size-oriented
-`web` profile by default and runs `wasm-bindgen` to produce a static bundle.
-The output directory must not exist. The bundle contains the viewer, manifests,
-verified visual GLBs and ownership/license notices. It includes the checksummed RMUC source-motion and optical-node bindings.
-It excludes collision sidecars. Native release settings are unchanged. A static HTTP server is
-enough; no Python process runs inside the browser.
+The native HUD keeps its scoreboard, robot and ammunition cards, heat ring,
+reticle, team status, controls help and map. Settings retain the same validated
+JSON format in browser localStorage; passwords are not saved. The browser starts
+with the low graphics preset and bloom disabled; settings can change these.
 
-The optional real-browser regression test starts and stops its own loopback
-HTTP server. Install Playwright's Chromium, or pass `--executable` for an
-existing Chromium build:
-
-```sh
-uv run --with playwright playwright install chromium
-uv run --with playwright python scripts/smoke-browser.py --root local-assets/browser
-```
-
-It tests all three fields, camera dragging, missing manifests, checksum failures
-and the no-WebGPU message. Ordinary CI compiles and lints the Wasm entry point;
-it does not claim a GPU browser run. Browser performance and memory budgets
-have not been measured.
-
-## Browser gameplay
-
-Start a native 1v1 host with an explicit browser endpoint and allowed origin:
+Start a practice host with an explicit WebSocket endpoint and allowed origin:
 
 ```sh
 cargo run -p rm-sim-server --bin rm-sim-server -- \
@@ -68,52 +37,52 @@ cargo run -p rm-sim-server --bin rm-sim-server -- \
   --websocket 127.0.0.1:5002 --websocket-origin http://127.0.0.1:8080
 ```
 
-Build and serve the static bundle as above, then open
-`http://127.0.0.1:8080/?field=1v1&server=ws%3A%2F%2F127.0.0.1%3A5002%2F&team=red`.
-This starts practice mode. For a refereed match, omit `--no-referee` and start
-the match through the private native referee panel; pre-match rules gate controls.
-A second pilot can choose `team=blue`. The host grants the pilot's robot through
-ordinary admission. The pilot starts in first person; V switches to the trailing
-camera. Click the canvas to capture the pointer, move the mouse to aim, and
-click again to fire. The capture click never fires. Escape releases capture.
-WASD drives, Q/E turns, arrow keys aim and Space also fires. Editing the
-connection form suspends game input. The HUD displays authoritative HP, rounds,
-heat, speed and defeat state, with a centre crosshair. The selected field must
-match the server competition. The browser reports mismatches and disconnects.
+For a refereed match, omit `--no-referee` and start the round through the private
+native referee panel. Pre-match rules still gate controls. Enter the endpoint
+in the Multiplayer form. A launch URL can prefill and join it directly:
+`http://127.0.0.1:8080/?field=1v1&server=ws%3A%2F%2F127.0.0.1%3A5002%2F`.
+Use `field=3v3` or `field=rmuc` for another competition. The selected field must
+match the host. Admission starts as a spectator, then the native deployment UI
+requests a side, robot and position. The server validates the deployment.
 
-Each binary WebSocket message contains one existing codec datagram. Command
-ownership, admission, weapon cadence and snapshots use the existing host path.
-The endpoint rejects referee admission and accepts only exact configured Origins.
-Connections, handshake time, message size and pending writes are bounded.
-WebSocket provides ordered delivery; congestion can still delay newer snapshots.
-The client interpolates robot poses using the shared bounded history with a
-64 ms presentation delay. Extrapolation stops after 100 ms; pause and placement
-changes reset history. It does not run local physics prediction. Projectiles use
-authoritative snapshot positions. RMUC source joints, target lights, HP and
-strike flashes use the native presentation and passive renderer.
+The bundle includes approved field files and a checksum inventory. HTTP bytes
+enter the same package loader that native uses, including collision recipes,
+source bindings and minimap validation. Each fetch has a 64 MiB ceiling; a
+package has a 512 MiB byte ceiling and at most 256 files. Paths remain confined
+to the package root. Checksums validate the served inventory and manifests;
+serve these from a trusted origin. Verified visuals are supplied through Bevy's
+memory asset reader, without an unchecked second HTTP download.
 
-For public hosting, serve the bundle over HTTPS and proxy a WSS endpoint to the
-native listener. Configure the exact frontend origin with `--websocket-origin`.
-The listener provides no TLS itself. Keep the privileged referee HTTP panel
-private. No public deployment is performed by the build command.
+Browser sessions retain verified collision geometry for staging heights, aim
+queries and debug drawing. Robot interpolation and shot feedback use the existing
+Session. Local physics prediction remains disabled because its worker requires a
+browser scheduling implementation. Simulation and match authority stay on the
+native host. Native hosting, UDP LAN discovery, the TCP automation console and
+FFmpeg recording are native platform facilities. Optional external robot and
+assembly CAD packages still need browser loading support.
 
-Run the existing viewer checks plus host-backed movement and firing checks:
+Each binary WebSocket message carries one existing codec datagram. Host command
+ownership, admission, weapon cadence, confirmation ordering and snapshots retain
+the same path. The endpoint accepts exact configured Origins and pilot/spectator
+admission only. Connections, handshake time, message size and pending writes are
+bounded. Public hosting uses HTTPS with a WSS reverse proxy to the listener;
+the listener itself provides no TLS. Keep the privileged referee panel private.
+No public deployment is performed by the build command.
+
+The optional browser regression test uses Chromium and a running practice host:
 
 ```sh
+uv run --with playwright playwright install chromium
 uv run --with playwright python scripts/smoke-browser.py \
   --root local-assets/browser --server ws://127.0.0.1:5002/
 ```
 
-The test owns a temporary HTTP server on port 8080; start only the practice simulation
-server beforehand. Pass `--port` and update the host's allowed Origin together
-if 8080 is occupied. These checks use authoritative position and shot/projectile
-observations, rather than assuming key events reached the simulation. Camera
-mode changes, pointer capture, capture-click suppression, mouse aim and form
-focus are also checked. Pass `--rmuc-server ws://127.0.0.1:5003/` to check a
-separate source-bound RMUC host; source joints and target lights must be present.
-A running RMUC round also checks Rune motion. Pilot tests wait for all CAD
-instances to finish spawning before exercising controls. A tampered source
-binding JSON must fail loading.
+The test owns a temporary HTTP server on port 8080. `--executable` selects an
+existing Chromium; `--port` and the host's Origin allowlist must agree. Tests use
+`inspect=1`, which exports actual app screen, session and laid-out UI observations
+to a hidden diagnostic element. It adds no controls or alternate HUD. Ordinary
+CI compiles and lints Wasm; it does not claim a GPU browser run. Browser frame-time
+and memory budgets remain unmeasured.
 
 ## Shared client library
 
@@ -173,8 +142,6 @@ exercise the same client codec through GNS and loopback.
 
 ## Remaining deployment work
 
-Offline browser simulation still needs an HTTP-backed verified physics package
-and caller-driven task scheduling or Web Workers in place of native host threads.
-The remote browser client does not predict or restore a local physical world.
-Native staging, the full HUD, local prediction and robot CAD-package loading
-remain to be shared with the browser entry point. Browser performance and memory budgets remain unmeasured.
+Browser scheduling for local physics prediction, optional robot/assembly CAD
+loading and performance measurements remain. Offline browser hosting needs a
+caller-driven host or Web Worker, rather than native socket/thread services.

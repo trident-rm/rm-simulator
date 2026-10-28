@@ -693,11 +693,14 @@ mod tests {
 }
 
 fn window_focus(
-    automation: Option<Res<crate::console::ConsoleInputs>>,
+    #[cfg(not(target_arch = "wasm32"))] automation: Option<Res<crate::console::ConsoleInputs>>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut ui: ResMut<HudState>,
 ) {
+    #[cfg(not(target_arch = "wasm32"))]
     let captured = automation.is_some_and(|input| input.captured);
+    #[cfg(target_arch = "wasm32")]
+    let captured = false;
     let unfocused = !captured
         && windows
             .iter()

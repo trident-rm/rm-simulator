@@ -20,4 +20,5 @@ pub mod supply;
 /// Verified portable terrain collision tiers and native heightfield adapters.
 pub mod terrain_collision;
 
+pub mod package_io;
 mod verified;

@@ -316,6 +316,7 @@ impl Args {
     }
     /// CLI-relative paths are based on the launch working directory, including
     /// when Bevy would otherwise choose the executable's directory.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn resolve_asset_path(&mut self) -> std::io::Result<()> {
         self.robot_descriptor = None;
         self.hero_descriptor = None;
@@ -379,6 +380,14 @@ impl Args {
             self.hero_descriptor = Some(descriptor);
         }
         Ok(())
+    }
+
+    /// Browser asset roots are URL-relative paths, never host filesystem paths.
+    #[cfg(target_arch = "wasm32")]
+    pub fn resolve_asset_path(&mut self) -> std::io::Result<()> {
+        self.host
+            .validate_competition_assets()
+            .map_err(std::io::Error::other)
     }
 
     /// What this player is to a host: the referee, a spectator when flying,

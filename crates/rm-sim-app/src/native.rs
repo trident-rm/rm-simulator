@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
-//! Native command-line startup and application wiring.
+//! Application wiring shared by native command-line and browser startup.
 use bevy::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
 use clap::Parser;
 use rm_sim_render::{
     RenderingConfig,
@@ -11,6 +12,7 @@ use rm_sim_render::{
     sync::{SceneSyncPlugin, SceneSyncSet},
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::args::Args;
 use crate::controls::{
     Drive, Gun, drive_camera, drive_chassis, fire_gun, fly_camera, mouse_capture,
@@ -24,14 +26,27 @@ use crate::session::advance_world;
 pub(crate) fn run() -> AppExit {
     #[cfg(feature = "steam")]
     let steam_runtime = crate::steam_support::SteamRuntime::initialize();
+    #[cfg(not(target_arch = "wasm32"))]
     let mut args = Args::parse();
+    #[cfg(target_arch = "wasm32")]
+    let mut args = crate::browser::args();
     if let Err(error) = args.resolve_asset_path() {
         eprintln!("resolving assets: {error}");
         return AppExit::error();
     }
     let mut app = App::new();
+    #[cfg(target_arch = "wasm32")]
+    {
+        use bevy::asset::io::AssetSourceBuilder;
+        let memory = crate::browser_assets::reader();
+        app.register_asset_source(
+            "verified",
+            AssetSourceBuilder::new(move || Box::new(memory.clone())),
+        );
+    }
     #[cfg(feature = "steam")]
     crate::steam_support::install(&mut app, steam_runtime);
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(path) = &args.hero_assets {
         use bevy::asset::io::{AssetSourceBuilder, file::FileAssetReader};
         let root = path.clone();
@@ -40,6 +55,7 @@ pub(crate) fn run() -> AppExit {
             AssetSourceBuilder::new(move || Box::new(FileAssetReader::new(root.clone()))),
         );
     }
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(path) = &args.robot_assets {
         use bevy::asset::io::{AssetSourceBuilder, file::FileAssetReader};
         let root = std::path::absolute(path).expect("robot asset path");
@@ -86,6 +102,10 @@ pub(crate) fn run() -> AppExit {
         .set(WindowPlugin {
             primary_window: Some(Window {
                 title: "rm-simulator".into(),
+                #[cfg(target_arch = "wasm32")]
+                canvas: Some("#sim".into()),
+                #[cfg(target_arch = "wasm32")]
+                fit_canvas_to_parent: true,
                 focused: args.window_mode == crate::args::WindowMode::Normal,
                 ..default()
             }),
@@ -113,7 +133,6 @@ pub(crate) fn run() -> AppExit {
             headless_fps: args.headless_fps,
         })
         .add_plugins(crate::screenshot::ScreenshotReadinessPlugin)
-        .add_plugins(crate::video_capture::VideoCapturePlugin)
         .add_plugins(CadScenePlugin {
             instances: Vec::new(),
             rendering: RenderingConfig::field(),
@@ -240,6 +259,7 @@ pub(crate) fn run() -> AppExit {
     if let Some(path) = &args.screenshot {
         app.insert_resource(ScreenshotRequest::new(path.clone()));
     }
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(address) = args.console {
         match crate::console::Console::bind(address) {
             Ok(console) => {
@@ -278,6 +298,10 @@ pub(crate) fn run() -> AppExit {
             }
         }
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    app.add_plugins(crate::video_capture::VideoCapturePlugin);
+    #[cfg(target_arch = "wasm32")]
+    crate::browser::install(&mut app);
     // A command line that already names a match starts on the splash.
     if args.auto_join() {
         app.insert_resource(crate::loading::JoinRequest(args.clone()))

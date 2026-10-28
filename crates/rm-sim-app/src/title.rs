@@ -404,11 +404,24 @@ pub fn join_args(base: &Args, fields: &TitleFields, choice: Choice) -> Result<Ar
         args.chassis.config(args.robot)?;
     }
 
+    #[cfg(target_arch = "wasm32")]
+    if matches!(choice, Choice::Host | Choice::Practice) {
+        return Err("Browser clients connect to a native host. Open Multiplayer and enter its ws:// or wss:// address".into());
+    }
     match choice {
         Choice::Connect => {
             let address = fields.address.trim();
             if address.is_empty() {
-                return Err("Enter the host address as HOST:PORT".into());
+                return Err(if cfg!(target_arch = "wasm32") {
+                    "Enter a ws:// or wss:// server address"
+                } else {
+                    "Enter the host address as HOST:PORT"
+                }
+                .into());
+            }
+            #[cfg(target_arch = "wasm32")]
+            if !address.starts_with("ws://") && !address.starts_with("wss://") {
+                return Err("Browser server addresses must start with ws:// or wss://".into());
             }
             args.connect = Some(address.into());
             args.host.listen = None;
@@ -516,6 +529,7 @@ pub fn join_args(base: &Args, fields: &TitleFields, choice: Choice) -> Result<Ar
 
 /// Where the fields are remembered: `$XDG_CONFIG_HOME` or `~/.config` on
 /// Unix, `%APPDATA%` on Windows, under `rm-simulator/title.json`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn remembered_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -523,17 +537,48 @@ pub fn remembered_path() -> Option<PathBuf> {
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
     Some(base.join("rm-simulator").join("title.json"))
 }
+#[cfg(target_arch = "wasm32")]
+pub fn remembered_path() -> Option<PathBuf> {
+    Some(PathBuf::from("rm-simulator/title.json"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn read_browser_storage(path: &Path) -> Result<Option<String>, String> {
+    web_sys::window()
+        .ok_or_else(|| "Browser window unavailable".to_string())?
+        .local_storage()
+        .map_err(|error| format!("Browser storage unavailable: {error:?}"))?
+        .ok_or_else(|| "Browser storage unavailable".to_string())?
+        .get_item(&path.to_string_lossy())
+        .map_err(|error| format!("Cannot read browser storage: {error:?}"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn write_browser_storage(path: &Path, contents: &str) -> std::io::Result<()> {
+    web_sys::window()
+        .ok_or_else(|| std::io::Error::other("Browser window unavailable"))?
+        .local_storage()
+        .map_err(|error| std::io::Error::other(format!("Browser storage unavailable: {error:?}")))?
+        .ok_or_else(|| std::io::Error::other("Browser storage unavailable"))?
+        .set_item(&path.to_string_lossy(), contents)
+        .map_err(|error| std::io::Error::other(format!("Cannot save browser storage: {error:?}")))
+}
+
 /// Read the remembered fields from `path`. A missing, unreadable or malformed
 /// file gives `None`, as does one without its name, address or host key, so the
 /// caller falls back to the command line.
 pub fn load_remembered(path: &Path) -> Option<TitleFields> {
+    #[cfg(not(target_arch = "wasm32"))]
     let text = std::fs::read_to_string(path).ok()?;
+    #[cfg(target_arch = "wasm32")]
+    let text = read_browser_storage(path).ok()??;
     serde_json::from_str(&text).ok()
 }
 /// Write the fields to `path` as pretty JSON, creating the parent directory
 /// when it is missing. The two password fields are skipped, so they never reach
 /// the file. Serializing the plain fields cannot fail; only the filesystem
 /// errors are returned.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn save_remembered(path: &Path, fields: &TitleFields) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -544,7 +589,13 @@ pub fn save_remembered(path: &Path, fields: &TitleFields) -> std::io::Result<()>
     )
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn save_remembered(path: &Path, fields: &TitleFields) -> std::io::Result<()> {
+    write_browser_storage(path, &serde_json::to_string(fields)?)
+}
+
 // One writer keeps successive joins in order without writing on Bevy's frame.
+#[cfg(not(target_arch = "wasm32"))]
 fn remember_in_background(path: PathBuf, fields: TitleFields) {
     type SaveRequest = (PathBuf, TitleFields);
     static WRITER: std::sync::OnceLock<Option<std::sync::mpsc::Sender<SaveRequest>>> =
@@ -574,6 +625,13 @@ fn remember_in_background(path: PathBuf, fields: TitleFields) {
         && sender.send((path, fields)).is_err()
     {
         warn!("title save worker stopped unexpectedly");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn remember_in_background(path: PathBuf, fields: TitleFields) {
+    if let Err(error) = save_remembered(&path, &fields) {
+        warn!("Cannot remember connection fields: {error}");
     }
 }
 
@@ -712,7 +770,11 @@ struct LobbyColumn;
 struct FirewallTip;
 /// Network help shown with the multiplayer fields and on the multiplayer
 /// loading splash: allow the app through the firewall and use one network.
+#[cfg(not(target_arch = "wasm32"))]
 pub const FIREWALL_TIP: &str = "Can’t find or join a LAN lobby? Allow RM Simulator through your firewall on private networks. Both players must be on the same network; guest Wi-Fi may block connections.";
+
+#[cfg(target_arch = "wasm32")]
+pub const FIREWALL_TIP: &str = "Use the server’s WebSocket address. HTTPS pages require wss://. The host must allow this page’s exact Origin.";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StatusLocation {
@@ -1093,7 +1155,11 @@ fn spawn_title(mut commands: Commands, base: Res<BaseArgs>, mut state: ResMut<Ti
         .id();
     commands.spawn((
         ChildOf(row),
-        Text::new("Practice solo or join your team."),
+        Text::new(if cfg!(target_arch = "wasm32") {
+            "Join a native host through WebSocket."
+        } else {
+            "Practice solo or join your team."
+        }),
         TextFont {
             font_size: FontSize::Px(16.),
             ..default()
@@ -1281,7 +1347,11 @@ fn spawn_title(mut commands: Commands, base: Res<BaseArgs>, mut state: ResMut<Ti
     field(
         &mut commands,
         left,
-        "Direct address (HOST:PORT)",
+        if cfg!(target_arch = "wasm32") {
+            "Server address (ws:// or wss://)"
+        } else {
+            "Direct address (HOST:PORT)"
+        },
         &mut fields,
         TitleInput::Address,
     );
@@ -1353,7 +1423,11 @@ fn spawn_title(mut commands: Commands, base: Res<BaseArgs>, mut state: ResMut<Ti
     );
     commands.spawn((
         ChildOf(right),
-        Text::new("LAN only. Public lobbies are disabled until relay support is available."),
+        Text::new(if cfg!(target_arch = "wasm32") {
+            "Hosting runs in the native server. Use its WebSocket address to join."
+        } else {
+            "LAN only. Public lobbies are disabled until relay support is available."
+        }),
         TextFont {
             font_size: FontSize::Px(12.0),
             ..default()
@@ -1628,7 +1702,7 @@ fn poll_lobbies(
         if state.entries.is_empty() {
             commands.spawn((
                 ChildOf(parent),
-                Text::new("No lobbies found. Refresh after a host creates one, or enter its HOST:PORT below."),
+                Text::new(if cfg!(target_arch = "wasm32") { "Enter the host’s ws:// or wss:// address below." } else { "No lobbies found. Refresh after a host creates one, or enter its HOST:PORT below." }),
                 TextFont {
                     font_size: FontSize::Px(14.0),
                     ..default()
@@ -1695,7 +1769,13 @@ fn title_input(
         && !focus.get().is_some_and(|entity| controls.contains(entity))
     {
         let choice = match page {
-            Page::Main => Choice::Practice,
+            Page::Main => {
+                if cfg!(target_arch = "wasm32") {
+                    Choice::Multiplayer
+                } else {
+                    Choice::Practice
+                }
+            }
             Page::Multiplayer => {
                 let hosting = focus
                     .get()
@@ -1744,6 +1824,12 @@ fn title_input(
         *input.value_mut(&mut fields) = text.value().to_string();
     }
     if choice == Choice::Refresh {
+        #[cfg(target_arch = "wasm32")]
+        {
+            state.search_status = Some("Browser clients join an explicit ws:// or wss:// address; LAN discovery is unavailable".into());
+            state.search_failed = false;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         if state.discovery.is_none() {
             let (tx, rx) = std::sync::mpsc::channel();
             state.discovery = Some(std::sync::Mutex::new(rx));

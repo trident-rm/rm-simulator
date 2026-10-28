@@ -66,10 +66,16 @@ impl Preferences {
     /// first launch needs no file at all; a parse error or an unsupported
     /// version gives `Err` and leaves the file for the user to fix.
     pub fn load(path: &Path) -> Result<Self, String> {
+        #[cfg(not(target_arch = "wasm32"))]
         let contents = match std::fs::read_to_string(path) {
             Ok(contents) => contents,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(default()),
             Err(error) => return Err(format!("Cannot read settings: {error}")),
+        };
+        #[cfg(target_arch = "wasm32")]
+        let contents = match crate::title::read_browser_storage(path)? {
+            Some(contents) => contents,
+            None => return Ok(default()),
         };
         let mut preferences: Self = serde_json::from_str(&contents)
             .map_err(|error| format!("Cannot read settings: {error}; file left unchanged"))?;
@@ -79,6 +85,7 @@ impl Preferences {
     /// Write the settings to `path` as pretty JSON, creating the parent
     /// directory when it is missing. The bytes go to a `.tmp` sibling that is
     /// synced and renamed over `path`, and a failed write removes that sibling.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -96,6 +103,11 @@ impl Preferences {
         }
         result
     }
+    /// Store the same validated preference document in this origin’s local storage.
+    #[cfg(target_arch = "wasm32")]
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        crate::title::write_browser_storage(path, &serde_json::to_string(self)?)
+    }
 }
 /// Runtime bookkeeping for the settings file: where it lives, the last saved
 /// and observed copies, when the last edit happened and whether writes are
@@ -106,6 +118,7 @@ pub struct PreferenceStatus {
     last_saved: Preferences,
     last_observed: Preferences,
     changed_at: std::time::Duration,
+    #[cfg(not(target_arch = "wasm32"))]
     pending: Option<PendingSave>,
     /// A readable explanation shown in settings; corrupt files are never overwritten.
     pub message: String,
@@ -152,6 +165,7 @@ fn save_document(settings: &Preferences, launch: &mut Option<LaunchGraphics>) ->
     }
     document
 }
+#[cfg(not(target_arch = "wasm32"))]
 struct PendingSave {
     settings: Preferences,
     worker: std::thread::JoinHandle<std::io::Result<()>>,
@@ -197,6 +211,7 @@ impl Plugin for PreferencesPlugin {
             last_saved: settings.clone(),
             last_observed: settings.clone(),
             changed_at: std::time::Duration::ZERO,
+            #[cfg(not(target_arch = "wasm32"))]
             pending: None,
             message,
             writable,
@@ -237,6 +252,7 @@ fn save_changes(
         status.last_observed = settings.clone();
         status.changed_at = time.elapsed();
     }
+    #[cfg(not(target_arch = "wasm32"))]
     if status
         .pending
         .as_ref()
@@ -260,6 +276,7 @@ fn save_changes(
     if *settings == status.last_saved || !status.writable {
         return;
     }
+    #[cfg(not(target_arch = "wasm32"))]
     if status.pending.is_some() {
         return;
     }
@@ -277,7 +294,7 @@ fn save_changes(
         return;
     };
     let document = save_document(&settings, &mut status.graphics_launch);
-    if exiting {
+    if exiting || cfg!(target_arch = "wasm32") {
         // Preserve the final edit before process shutdown. Only exit waits for
         // disk I/O; normal frames hand the atomic write to a worker.
         let result = document.save(&path);
@@ -289,23 +306,27 @@ fn save_changes(
             warn!("{}", status.message);
         }
         status.last_saved = settings.clone();
+        #[cfg(not(target_arch = "wasm32"))]
         return;
     }
-    let submitted = document;
-    match std::thread::Builder::new()
-        .name("settings-save".into())
-        .spawn(move || submitted.save(&path))
+    #[cfg(not(target_arch = "wasm32"))]
     {
-        Ok(worker) => {
-            status.pending = Some(PendingSave {
-                settings: settings.clone(),
-                worker,
-            })
-        }
-        Err(error) => {
-            status.message = format!("Settings could not be saved: {error}");
-            warn!("{}", status.message);
-            status.last_saved = settings.clone();
+        let submitted = document;
+        match std::thread::Builder::new()
+            .name("settings-save".into())
+            .spawn(move || submitted.save(&path))
+        {
+            Ok(worker) => {
+                status.pending = Some(PendingSave {
+                    settings: settings.clone(),
+                    worker,
+                })
+            }
+            Err(error) => {
+                status.message = format!("Settings could not be saved: {error}");
+                warn!("{}", status.message);
+                status.last_saved = settings.clone();
+            }
         }
     }
 }

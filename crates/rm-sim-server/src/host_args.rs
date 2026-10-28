@@ -139,6 +139,15 @@ impl HostArgs {
     /// Each RMUL format discovers its own official package.
     pub fn cad_assets_path(&self) -> std::path::PathBuf {
         self.cad_assets.clone().unwrap_or_else(|| {
+            #[cfg(target_arch = "wasm32")]
+            {
+                std::path::PathBuf::from(match self.competition {
+                    Competition::Rmuc2027 => "field-2027",
+                    Competition::Rmul2027 => "field-rmul-2027-3v3",
+                    Competition::RmulInfantry2027 => "field-rmul-2027-1v1",
+                })
+            }
+            #[cfg(not(target_arch = "wasm32"))]
             self.competition.rmul_format().map_or_else(
                 crate::cad_assets::default_cad_assets,
                 crate::cad_assets::default_rmul_assets,

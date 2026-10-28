@@ -8,7 +8,9 @@
 //! by hand, so cadence assertions need no sleeps and no deadlines.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+/// Monotonic host/client clock, backed by browser performance time on Wasm.
+pub use web_time::Instant;
 
 /// A shared reading of the wall clock. Cloning shares one source.
 #[derive(Clone)]

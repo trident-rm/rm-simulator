@@ -51,6 +51,18 @@ pub struct Appearance(pub RenderingConfig);
 /// base gate, dart target and dart door mechanisms. Instance order is the
 /// renderer's spawn order and must stay stable across joins.
 pub fn cad_instances(cad: &CadAssets, rune_faces: bool, base_plates: bool) -> Vec<CadInstance> {
+    let instances = cad_instances_inner(cad, rune_faces, base_plates);
+    #[cfg(target_arch = "wasm32")]
+    let instances = instances
+        .into_iter()
+        .map(|mut instance| {
+            instance.file = format!("verified://{}/{}", cad.root.display(), instance.file);
+            instance
+        })
+        .collect();
+    instances
+}
+fn cad_instances_inner(cad: &CadAssets, rune_faces: bool, base_plates: bool) -> Vec<CadInstance> {
     if cad.floor.file.is_empty() {
         return Vec::new();
     }

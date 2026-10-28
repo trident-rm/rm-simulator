@@ -158,7 +158,7 @@ fn load_terrain_inner<B>(
     }
     .into_flu(cad.floor_top_cad_m);
     let source_scenery = if cad.terrain_collision.is_some() {
-        let bytes = std::fs::read(cad.root.join(&cad.arena_static.file))?;
+        let bytes = crate::package_io::read(cad.root.join(&cad.arena_static.file))?;
         if supply {
             crate::supply::without_units(&bytes, &supply_units)?
         } else {

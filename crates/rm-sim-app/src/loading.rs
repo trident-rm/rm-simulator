@@ -64,6 +64,7 @@ struct CadCache(Arc<cad_assets::CadAssets>);
 #[derive(Resource, Clone)]
 struct Preload(Arc<OnceLock<Result<Arc<cad_assets::CadAssets>, String>>>);
 
+#[cfg(not(target_arch = "wasm32"))]
 fn preload(world: &mut World) {
     if world
         .resource::<crate::title::BaseArgs>()
@@ -98,6 +99,23 @@ fn preload(world: &mut World) {
         warn!("Could not preload field: {error}");
         return;
     }
+    world.insert_resource(Preload(shared));
+}
+
+#[cfg(target_arch = "wasm32")]
+fn preload(world: &mut World) {
+    if world.contains_resource::<Preload>() || world.contains_resource::<CadCache>() {
+        return;
+    }
+    let args = world.resource::<crate::title::BaseArgs>().0.clone();
+    let shared = Arc::new(OnceLock::new());
+    let job = Arc::clone(&shared);
+    wasm_bindgen_futures::spawn_local(async move {
+        let result = crate::browser_assets::load(&args)
+            .await
+            .map_err(|error| format!("{error:#}"));
+        let _ = job.set(result);
+    });
     world.insert_resource(Preload(shared));
 }
 
@@ -201,21 +219,20 @@ fn despawn_splash(mut commands: Commands, splash: Query<Entity, With<Splash>>) {
     }
 }
 fn start(world: &mut World) {
-    let mut args = world
+    let args = world
         .remove_resource::<JoinRequest>()
         .expect("join request")
         .0;
-    if args.host.competition.rmul_format().is_some() {
-        args.staging = false;
-    }
     let multiplayer = args.connect.is_some() || args.host.listen.is_some();
     world.resource_mut::<TitleScreen>().status = None;
     let cached = world
         .get_resource::<CadCache>()
         .cloned()
         .filter(|cache| cache.0.root == args.host.cad_assets_path());
+    #[cfg(not(target_arch = "wasm32"))]
     let preload = world.get_resource::<Preload>().cloned();
     let (sender, receiver) = mpsc::channel();
+    #[cfg(not(target_arch = "wasm32"))]
     let worker = std::thread::Builder::new()
         .name("field-loading".into())
         .spawn(move || {
@@ -274,6 +291,44 @@ fn start(world: &mut World) {
             })();
             let _ = sender.send(Update::Complete(Box::new(result)));
         });
+    #[cfg(target_arch = "wasm32")]
+    let worker = {
+        wasm_bindgen_futures::spawn_local(async move {
+            let progress = |value, text: &str| {
+                let _ = sender.send(Update::Progress(value, text.into()));
+            };
+            let result = async {
+                anyhow::ensure!(
+                    args.connect.is_some(),
+                    "Browser clients connect to a native host using ws:// or wss://"
+                );
+                progress(0.05, "Verifying field files");
+                let cad = if let Some(cache) = cached {
+                    cache.0
+                } else {
+                    crate::browser_assets::load(&args).await?
+                };
+                let (side_spawn, side_yaw) = if args.host.competition.rmul_format().is_some() {
+                    args.host.competition.practice_spawn(args.team.into(), 1)
+                } else {
+                    default_spawn(args.team.into())
+                };
+                let spawn = args.spawn.unwrap_or(side_spawn);
+                let yaw = args.spawn_yaw_deg.map_or(side_yaw, f64::from);
+                let opened = Session::open_browser(&args, &cad, spawn, yaw, progress).await?;
+                let bounds = if args.host.competition.rmul_format().is_some() {
+                    args.host.competition.practice_bounds()
+                } else {
+                    [[-15., -9., 0.], [15., 9., 3.]]
+                };
+                let minimap = crate::minimap::load(&args.host.cad_assets_path());
+                Ok((cad, opened, args, yaw, minimap, bounds))
+            }
+            .await;
+            let _ = sender.send(Update::Complete(Box::new(result)));
+        });
+        Ok::<(), std::io::Error>(())
+    };
     let failed = worker.err().map(|e| format!("Startup failed: {e}"));
     world.insert_resource(Loading {
         receiver: Mutex::new(receiver),

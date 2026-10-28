@@ -26,7 +26,7 @@ impl SourcePackage {
     /// Later changes to the source files do not change this snapshot.
     pub fn load(root: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let m: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(root.join("manifest.json"))?)?;
+            serde_json::from_slice(&crate::package_io::read(root.join("manifest.json"))?)?;
         if m["schema"] != 1
             || m["profile"] != "pie-rmuc2027-assembly-workbench-v5"
             || m["source_step_sha256"]
@@ -47,7 +47,7 @@ impl SourcePackage {
             ("core-head", "core-head.glb"),
             ("unit", "unit.glb"),
         ] {
-            let bytes = std::fs::read(root.join(file))?;
+            let bytes = crate::package_io::read(root.join(file))?;
             let hash = format!("{:x}", Sha256::digest(&bytes));
             if m["files"][key]["file"] != file || m["files"][key]["sha256"] != hash {
                 return Err(format!("assembly CAD checksum mismatch: {file}").into());
@@ -116,7 +116,7 @@ impl SourcePackage {
     /// Read a separately supplied source-bound area frame, rejecting nonfinite or nonunit poses.
     pub fn area_frame(&self, area: &Path) -> Result<Pose, Box<dyn std::error::Error>> {
         let evidence: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(area.join("area.json"))?)?;
+            serde_json::from_slice(&crate::package_io::read(area.join("area.json"))?)?;
         if evidence["schema"] != 2
             || evidence["config_sha256"] != self.manifest["files"]["config"]["sha256"]
             || evidence["source_field_sha256"] != self.manifest["source_field_sha256"]

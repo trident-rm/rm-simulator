@@ -27,7 +27,7 @@ pub struct SourceUnit {
 /// Rejects changed file hashes, malformed transforms, partial stock or invalid proxies.
 pub fn load<B>(cad: &CadAssets<B>) -> anyhow::Result<Vec<SourceUnit>> {
     let manifest: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(cad.root.join("manifest.json"))?)?;
+        serde_json::from_slice(&crate::package_io::read(cad.root.join("manifest.json"))?)?;
     let entry = &manifest["assets"]["arena-static"];
     let expected = entry["visual_sha256"]
         .as_str()

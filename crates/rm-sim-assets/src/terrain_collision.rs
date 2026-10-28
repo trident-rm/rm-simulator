@@ -176,8 +176,8 @@ impl TerrainPackage {
         world_from_yup: Pose,
         material: ContactMaterial,
     ) -> Result<Self> {
-        let root = root.canonicalize()?;
-        let bytes = std::fs::read(root.join("manifest.json"))?;
+        let root = crate::package_io::canonicalize(root)?;
+        let bytes = crate::package_io::read(root.join("manifest.json"))?;
         Self::load_snapshot(
             &root,
             &bytes,
@@ -195,7 +195,7 @@ impl TerrainPackage {
         world_from_yup: Pose,
         material: ContactMaterial,
     ) -> Result<Self> {
-        let root = root.canonicalize()?;
+        let root = crate::package_io::canonicalize(root)?;
         let manifest: Manifest = serde_json::from_slice(bytes)?;
         ensure!(
             manifest.schema == "terrain-collision-candidates-v1",

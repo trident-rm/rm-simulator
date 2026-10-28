@@ -17,21 +17,7 @@ pub const MAX_ADVANCE_NS: u64 = 250_000_000;
 /// World time one manual step covers while paused, in nanoseconds. The step is
 /// a duration, not a tick count, so it covers at least 16 ms at every physics
 /// rate; a rate whose ticks do not divide it rounds up to the next boundary.
-pub const STEP_NS: u64 = 16_000_000;
-
-/// Ticks in one manual step while paused: the first tick boundary at or after
-/// [`STEP_NS`] at the current rate, so a step is never shorter than 16 ms.
-///
-/// ```
-/// use rm_sim_server::simulation::{STEP_NS, step_ticks};
-///
-/// let tick_ns = rm_sim_world::tick_ns();
-/// assert!(step_ticks() * tick_ns >= STEP_NS);
-/// assert!((step_ticks() - 1) * tick_ns < STEP_NS);
-/// ```
-pub fn step_ticks() -> u64 {
-    STEP_NS.div_ceil(tick_ns()).max(1)
-}
+pub use crate::state::{STEP_NS, step_ticks};
 
 /// A world-time interval schedule that yields whole ticks without losing time.
 ///

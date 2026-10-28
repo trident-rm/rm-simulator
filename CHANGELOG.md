@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Run the existing native title, staging, controls and HUD in the browser using
+  a WebSocket-backed Session, verified HTTP packages and localStorage settings.
+  Remove the separate HTML pilot HUD and fix RMUL staging regions and rosters.
+
 - Add browser first-person and trailing cameras, captured mouse aiming, a pilot
   HUD and interpolated robot poses. Render live RMUC source joints, target
   lights, HP and strike flashes through the native presentation path.

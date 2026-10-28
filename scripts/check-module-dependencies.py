@@ -99,7 +99,7 @@ browser_graph = subprocess.check_output(
 browser_names = {line.split()[0] for line in browser_graph.splitlines() if line.strip()}
 assert "rm-sim-server" in browser_names, browser_names
 assert not ({"game-networking-sockets", "game-networking-sockets-sys",
-             "if-addrs", "steamworks", "rumqttd", "bevy_flair", "tungstenite"} & browser_names), browser_names
+             "if-addrs", "steamworks", "rumqttd", "tungstenite"} & browser_names), browser_names
 
 print("PASS: engine has no solver, application or simulator dependency; generic physics depends only on engine among simulator crates, RM physics extends it, "
       "gameplay is independent of physics and the simulator, "

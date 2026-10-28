@@ -243,7 +243,7 @@ pub fn load(
     );
     let path = safe_path(root, &descriptor.file)?;
     verify_sha256(&path, &descriptor.sha256)?;
-    let mut data: Sidecar = serde_json::from_slice(&std::fs::read(path)?)?;
+    let mut data: Sidecar = serde_json::from_slice(&crate::package_io::read(path)?)?;
     ensure!(
         data.schema_version == 1
             && data.units.get("length").map(String::as_str) == Some("metres")
@@ -256,7 +256,7 @@ pub fn load(
         for file in semantics.files.values_mut() {
             let path = safe_path(root, &file.file)?;
             verify_sha256(&path, &file.sha256)?;
-            let bytes = std::fs::read(&path)?;
+            let bytes = crate::package_io::read(&path)?;
             ensure!(
                 bytes.len() >= 20
                     && &bytes[..4] == b"glTF"

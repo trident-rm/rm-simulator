@@ -16,6 +16,7 @@ struct Assets {
     model: Model,
 }
 /// Register and verify the external source package before asset plugins start.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn register(app: &mut App, root: Option<&Path>) -> Result<(), String> {
     let Some(root) = root else {
         return Ok(());
@@ -103,6 +104,15 @@ pub fn register(app: &mut App, root: Option<&Path>) -> Result<(), String> {
     );
     app.insert_resource(Assets { model });
     Ok(())
+}
+/// Reject filesystem-only workbench packages in the browser before startup.
+#[cfg(target_arch = "wasm32")]
+pub fn register(_app: &mut App, root: Option<&Path>) -> Result<(), String> {
+    if root.is_some() {
+        Err("Browser assembly assets require a verified HTTP package; local filesystem packages are unavailable".into())
+    } else {
+        Ok(())
+    }
 }
 /// Adds a screen-scoped panel; all actions travel through the host protocol.
 pub struct AssemblyPlugin;

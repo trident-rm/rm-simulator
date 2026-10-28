@@ -28,17 +28,17 @@ rm-sim-render = { version = "0.1.0", path = "../rm-sim-render" }
 anyhow.workspace = true
 bevy.workspace = true
 serde_json.workspace = true
+bevy_flair = "0.9.0"
+clap.workspace = true
+glam.workspace = true
+serde = { workspace = true, features = ["std"] }
+sha2.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 bevy = { workspace = true, features = ["bevy_feathers", "bevy_ui_widgets", "serialize"] }
-glam.workspace = true
 rm-sim-world = { version = "0.1.0", path = "../rm-sim-world" }
 rm-sim-presentation = { version = "0.1.0", path = "../rm-sim-presentation" }
 rm-sim-server = { version = "0.1.0", path = "../rm-sim-server" }
-bevy_flair = "0.9.0"
-clap.workspace = true
-serde = { workspace = true, features = ["std"] }
-sha2.workspace = true
 steamworks = { version = "=0.13.1", optional = true }
 prost = { version = "0.14", optional = true }
 rumqttd = { version = "0.20", default-features = false, optional = true }
@@ -48,7 +48,7 @@ rm-sim-control = { version = "0.1.0", path = "../rm-sim-control", features = ["t
 rm-sim-physics = { version = "0.1.0", path = "../rm-sim-physics" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-bevy = { workspace = true, features = ["webgpu"] }
+bevy = { workspace = true, features = ["webgpu", "bevy_ui_widgets", "bevy_feathers", "serialize"] }
 zstd = { workspace = true, features = ["wasm"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
@@ -56,4 +56,4 @@ js-sys = "0.3"
 rm-sim-server = { version = "0.1.0", path = "../rm-sim-server", default-features = false }
 rm-sim-world = { version = "0.1.0", path = "../rm-sim-world" }
 rm-sim-presentation = { version = "0.1.0", path = "../rm-sim-presentation" }
-web-sys = { version = "0.3", features = ["Window", "Document", "Element", "Response", "Location", "UrlSearchParams", "Headers", "WebSocket", "BinaryType", "MessageEvent", "Event"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "Response", "Location", "UrlSearchParams", "Headers", "WebSocket", "BinaryType", "MessageEvent", "Event", "Storage"] }

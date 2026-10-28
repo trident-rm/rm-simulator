@@ -2,15 +2,23 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! The app's client view of an embedded or remote authoritative server.
 //! All gameplay input and snapshots use the same connection path.
+#[cfg(target_arch = "wasm32")]
+use crate::browser_client::Client;
 use bevy::prelude::*;
+use rm_sim_server::protocol::describe_seat;
 use rm_sim_server::{
     cad_assets::CadAssets,
-    clock::TimeSource,
-    net::{Client, Server, describe_seat},
+    clock::{Instant, TimeSource},
     protocol::{Command, PlayerInfo, Role, WeaponConfig},
+};
+#[cfg(not(target_arch = "wasm32"))]
+use rm_sim_server::{
+    net::{Client, Server},
     simulation::{BuildProgress, Simulation},
 };
-use rm_sim_world::{ChassisCommand, ChassisConfig, ChassisSnapshot, FieldSnapshot, Team};
+#[cfg(not(target_arch = "wasm32"))]
+use rm_sim_world::ChassisConfig;
+use rm_sim_world::{ChassisCommand, ChassisSnapshot, FieldSnapshot, Team};
 use std::collections::VecDeque;
 
 use crate::args::Args;
@@ -20,6 +28,7 @@ const NOTICE_NS: u64 = 4_000_000_000;
 
 /// Keep the embedded host alive for this session. Simulation access stays in
 /// server workers. Collider drawing reads client-owned assets and presentation.
+#[cfg(not(target_arch = "wasm32"))]
 struct EmbeddedHost {
     _lobby: Option<rm_sim_server::lobby::Advertisement>,
     server: Server,
@@ -52,8 +61,8 @@ pub struct Session {
     /// Every wall-clock reading in the session and its client comes from here.
     /// Simulation time still arrives only in snapshots and anchors.
     pub(crate) time: TimeSource,
-    last_checkpoint: std::time::Instant,
-    last_context: std::time::Instant,
+    last_checkpoint: Instant,
+    last_context: Instant,
     owner_anchor: Option<rm_sim_server::owner_stream::OwnerAnchor>,
     /// Transport trouble to show in the HUD, or `None` while the link looks
     /// healthy. Silence alone is not a disconnect.
@@ -62,7 +71,7 @@ pub struct Session {
     /// The newest pilot input frame sent for the own chassis. A later `Fire`
     /// carries it so the host aims the shot where the client did.
     pub(crate) last_input_frame: Option<rm_sim_server::input_stream::InputFrame>,
-    last_input_sent: std::time::Instant,
+    last_input_sent: Instant,
     sampled_drive: Option<(u32, ChassisCommand)>,
     pub(crate) hit_feedback: crate::hit_feedback::HitFeedback,
     next_shot_id: u64,
@@ -70,11 +79,12 @@ pub struct Session {
     /// and for a screenshot run, which present host state directly.
     pub local_aim: bool,
     camera_offset_m: [f64; 3],
-    camera_offset_at: std::time::Instant,
+    camera_offset_at: Instant,
     snapshot_id: u64,
     input_epoch: u64,
     frame_time_ns: u64,
     reset_clock: std::sync::atomic::AtomicBool,
+    #[cfg(not(target_arch = "wasm32"))]
     host: Option<EmbeddedHost>,
     singleplayer: bool,
     /// Read-only terrain lookup for staging previews, built on the loading worker.
@@ -141,6 +151,19 @@ pub struct Opened {
 #[path = "session_shots.rs"]
 mod shots;
 impl Session {
+    /// Join a native authority through the browser carrier without blocking its event loop.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn open_browser(
+        args: &Args,
+        cad: &CadAssets,
+        spawn: [f64; 3],
+        _spawn_yaw_deg: f64,
+        progress: impl Fn(f32, &str),
+    ) -> anyhow::Result<Opened> {
+        progress(0.3, "Connecting to host");
+        let client = Client::connect(args).await?;
+        Self::from_client(client, TimeSource::system(), args, cad, spawn, progress)
+    }
     /// Live 2027 rules from the authoritative checkpoint, including RFID expiry.
     pub fn rmuc_2027(&self) -> Option<&rm_sim_world::rmuc_2027::State> {
         self.snapshot.rmuc_2027.as_ref()
@@ -172,6 +195,7 @@ impl Session {
     pub fn ready(&self) {
         self.reset_clock
             .store(true, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(host) = &self.host {
             host.server.ready();
         }
@@ -185,6 +209,7 @@ impl Session {
 
     /// Join the host named by `--connect`, or build the field from the CAD
     /// and host it as the arguments ask.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn open(
         args: &Args,
         cad: &CadAssets,
@@ -386,9 +411,15 @@ impl Session {
                 welcome.chassis.as_ref().map(|c| c.robot)
             )
         );
+        #[cfg(not(target_arch = "wasm32"))]
         let state = client
             .wait_snapshot(std::time::Duration::from_secs(5))
             .ok_or_else(|| anyhow::anyhow!("the host sent no initial state"))?
+            .clone();
+        #[cfg(target_arch = "wasm32")]
+        let state = client
+            .state()
+            .ok_or_else(|| anyhow::anyhow!("host supplied no initial state"))?
             .clone();
         let snapshot = state.field;
         let selected = args.host.competition.rmul_format();
@@ -446,7 +477,8 @@ impl Session {
         let roster = client.roster().to_vec();
         let mut remote_history = crate::interpolation::RemoteHistory::default();
         remote_history.push_identified(&snapshot, paused, state.snapshot_id);
-        let local_aim = !args.no_prediction && args.screenshot.is_none();
+        let local_aim =
+            !cfg!(target_arch = "wasm32") && !args.no_prediction && args.screenshot.is_none();
         let mut shots = shots::LocalShots::default();
         let prediction_geometry = welcome.prediction_scene.as_ref().and_then(|scene| {
             progress(0.8, "Preparing collision geometry");
@@ -541,6 +573,7 @@ impl Session {
             remote_view_time_ns: 0,
             remote_history,
             client,
+            #[cfg(not(target_arch = "wasm32"))]
             host: None,
             singleplayer: args.connect.is_none() && args.host.listen.is_none(),
             snapshot,
@@ -592,7 +625,14 @@ impl Session {
     }
     /// True when this session has no embedded host and talks to a remote one.
     pub fn is_remote(&self) -> bool {
-        self.host.is_none()
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.host.is_none()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            true
+        }
     }
     /// May run the match: the referee, or anyone whose world is local.
     pub fn referees(&self) -> bool {
@@ -702,7 +742,7 @@ impl Session {
                     sequence: pending.sequence,
                     sampled_time_ns: pending.time_ns,
                     // A 16 ms sample interval, however many ticks that is.
-                    duration_ticks: rm_sim_server::simulation::step_ticks().max(1) as u32,
+                    duration_ticks: rm_sim_server::state::step_ticks().max(1) as u32,
                     placement_revision: self.own_chassis().map_or(0, |c| c.placement_revision),
                     command: input,
                 };
@@ -715,6 +755,7 @@ impl Session {
     }
     /// Queue a snapshot barrier after every command sent so far. The error is
     /// a transport failure; poll `commands_confirmed` for the outcome.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn confirm_inputs(&mut self) -> Result<(), String> {
         self.client.confirm().map_err(|e| e.to_string())
     }
@@ -756,6 +797,7 @@ impl Session {
         Ok(())
     }
     fn poll_inputs(&mut self) -> Result<(), String> {
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(error) = self.host.as_ref().and_then(|host| host.server.failure()) {
             return Err(format!("embedded server failed: {error}"));
         }
@@ -1161,7 +1203,11 @@ impl Session {
     /// Transport statistics for the network HUD. An embedded host reports
     /// transport `local` with no remote RTT or native path.
     pub fn network_stats(&self) -> rm_sim_server::network_stats::NetworkStats {
+        #[cfg(not(target_arch = "wasm32"))]
         let mut stats = self.client.network_stats();
+        #[cfg(target_arch = "wasm32")]
+        let stats = self.client.network_stats();
+        #[cfg(not(target_arch = "wasm32"))]
         if self.host.is_some() {
             stats.transport = "local".into();
             stats.native = None;
@@ -1299,7 +1345,7 @@ pub fn advance_world(
     mut commands: Commands,
 ) {
     use crate::bindings::InputAction;
-    use rm_sim_server::simulation::step_ticks;
+    use rm_sim_server::state::step_ticks;
     use rm_sim_world::{RefereeCommand, rmuc_2027::match_rules::Phase};
     if ui.blocks_input() {
         poll_session(&mut session, &mut commands);
@@ -1493,16 +1539,13 @@ pub(crate) fn host_map_markers(session: &Session) -> Vec<rm_sim_server::host::Ma
 
 #[cfg(test)]
 pub(crate) fn wait_for_session(session: &mut Session, done: impl Fn(&Session) -> bool) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
     loop {
         session.poll().unwrap();
         if done(session) {
             return;
         }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "session update timed out"
-        );
+        assert!(Instant::now() < deadline, "session update timed out");
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }
@@ -1742,7 +1785,7 @@ mod tests {
         assert_eq!(session.snapshot.tick, 0);
         session.ready();
         wait_for_session(&mut session, |session| session.snapshot.tick > 0);
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         for _ in 0..20 {
             session
                 .client
@@ -1933,10 +1976,10 @@ mod tests {
         assert!(session.paused);
         assert_eq!(session.snapshot.tick, 0);
         session.host.as_ref().unwrap().server.stop();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
         while session.connection_toast != Some("Disconnected") {
             session.poll().unwrap();
-            assert!(std::time::Instant::now() < deadline);
+            assert!(Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }

@@ -118,6 +118,7 @@ fn valid_listing(entry: &Listing) -> bool {
 /// Query the LAN for advertisements and collect the replies for 700 ms. Each
 /// reply's address is rewritten to the peer's source IP and its advertised
 /// port, because a host behind the same NAT cannot know the address peers see.
+#[cfg(feature = "native-host")]
 pub fn lan_lobbies() -> io::Result<Vec<Listing>> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.set_broadcast(true)?;
@@ -191,6 +192,7 @@ pub fn lan_lobbies() -> io::Result<Vec<Listing>> {
 /// Preference among one host's LAN replies, lower first: 0 for the address a
 /// host bound to one interface listens on, 1 for any reply from a host bound
 /// to every interface. Equal ranks keep the earliest, fastest reply.
+#[cfg(feature = "native-host")]
 fn reply_rank(advertised: &str, peer: SocketAddr) -> u8 {
     match advertised.parse::<SocketAddr>().map(|a| a.ip()) {
         Ok(ip) if !ip.is_unspecified() && ip == peer.ip() => 0,
@@ -321,7 +323,16 @@ impl Drop for Advertisement {
     }
 }
 
-#[cfg(test)]
+/// LAN discovery requires native UDP and interface access.
+#[cfg(not(feature = "native-host"))]
+pub fn lan_lobbies() -> io::Result<Vec<Listing>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "LAN discovery requires native hosting",
+    ))
+}
+
+#[cfg(all(test, feature = "native-host"))]
 mod tests {
     use super::*;
     use crate::{

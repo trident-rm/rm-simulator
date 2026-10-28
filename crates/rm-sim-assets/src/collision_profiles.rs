@@ -235,7 +235,7 @@ pub fn load_part_profiles(
             "duplicate collision purpose"
         );
     }
-    let root = root.canonicalize()?;
+    let root = crate::package_io::canonicalize(root)?;
     let bytes = read_verified_bytes(&root.join("collision-choices.json"), manifest_sha256)?;
     let manifest: Manifest = serde_json::from_slice(&bytes)?;
     ensure!(

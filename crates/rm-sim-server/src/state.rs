@@ -48,3 +48,10 @@ pub struct ControlIdentity {
     /// Defeated robots cannot accept an external lease.
     pub defeated: bool,
 }
+
+/// Minimum world-time span of a manual paused step, in nanoseconds.
+pub const STEP_NS: u64 = 16_000_000;
+/// Whole ticks spanning at least one manual step.
+pub fn step_ticks() -> u64 {
+    STEP_NS.div_ceil(rm_sim_world::tick_ns()).max(1)
+}

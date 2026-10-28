@@ -2,28 +2,36 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Optional host-side Sentry scanning/aiming. No automatic trigger or firing.
 //! Optical detections use a finite camera cone and shared scenery line of sight.
-use rm_sim_world::{ChassisSnapshot, Field, Team};
+use rm_sim_world::Team;
+#[cfg(feature = "native-host")]
+use rm_sim_world::{ChassisSnapshot, Field};
+#[cfg(feature = "native-host")]
 use std::collections::BTreeMap;
 
 pub use crate::sentry_view::{Detection, View};
 
 /// One host-owned controller per opted-in Sentry; never owns another physics world.
 #[derive(Default)]
+#[cfg(feature = "native-host")]
 pub(crate) struct Service {
     agents: BTreeMap<u32, View>,
     outputs: BTreeMap<u32, ([f64; 2], f64)>,
 }
+#[cfg(feature = "native-host")]
 fn angle(a: f64) -> f64 {
     a.sin().atan2(a.cos())
 }
+#[cfg(feature = "native-host")]
 fn point(body: &ChassisSnapshot, local: [f64; 3]) -> [f64; 3] {
     let rotated = crate::math::rotate(body.pose.rotation_wxyz, local);
     std::array::from_fn(|i| body.pose.translation_m[i] + rotated[i])
 }
+#[cfg(feature = "native-host")]
 fn aim(from: [f64; 3], to: [f64; 3]) -> [f64; 2] {
     let d: [f64; 3] = std::array::from_fn(|i| to[i] - from[i]);
     [d[1].atan2(d[0]), d[2].atan2(d[0].hypot(d[1]))]
 }
+#[cfg(feature = "native-host")]
 impl Service {
     pub(crate) fn set(&mut self, id: u32, enabled: bool) {
         self.outputs.remove(&id);
@@ -313,7 +321,7 @@ pub fn contacts(
     contacts
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native-host"))]
 mod tests {
     use super::*;
     use rm_sim_world::{

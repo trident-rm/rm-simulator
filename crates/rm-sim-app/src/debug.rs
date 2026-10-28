@@ -87,23 +87,21 @@ impl CollisionDebug {
             return;
         };
         let (sender, receiver) = mpsc::sync_channel(1);
-        self.build = match std::thread::Builder::new()
-            .name("collision-wireframe".into())
-            .spawn(move || {
-                let geometry = match geometry() {
-                    Ok(geometry) => geometry,
-                    Err(error) => {
-                        let _ = sender.send(Err(error));
-                        return;
-                    }
-                };
-                let (vertices_m, triangles) = geometry.into_triangles();
-                let mesh = wireframe_mesh(&CollisionMesh {
-                    vertices_m,
-                    triangles,
-                });
-                let _ = sender.send(Ok(mesh));
-            }) {
+        self.build = match spawn_builder("collision-wireframe", move || {
+            let geometry = match geometry() {
+                Ok(geometry) => geometry,
+                Err(error) => {
+                    let _ = sender.send(Err(error));
+                    return;
+                }
+            };
+            let (vertices_m, triangles) = geometry.into_triangles();
+            let mesh = wireframe_mesh(&CollisionMesh {
+                vertices_m,
+                triangles,
+            });
+            let _ = sender.send(Ok(mesh));
+        }) {
             Ok(_) => Build::Building(Mutex::new(receiver)),
             Err(error) => Build::Failed(format!("could not build collision wireframe: {error}")),
         };
@@ -352,28 +350,25 @@ pub fn dynamic_colliders(
         let geometry = session.client_collision_geometry().unwrap_or_default();
         let (sender, receiver) = mpsc::sync_channel(1);
         cache.build = Some(Mutex::new(receiver));
-        if let Err(error) = std::thread::Builder::new()
-            .name("moving-collider-meshes".into())
-            .spawn(move || {
-                let parts = geometry
-                    .moving_parts()
-                    .into_iter()
-                    .map(|part| {
-                        let (vertices_m, triangles) = part.geometry.into_triangles();
-                        MovingMesh {
-                            kind: part.kind,
-                            team: part.team,
-                            motion: part.motion,
-                            mesh: wireframe_mesh(&CollisionMesh {
-                                vertices_m,
-                                triangles,
-                            }),
-                        }
-                    })
-                    .collect();
-                let _ = sender.send(parts);
-            })
-        {
+        if let Err(error) = spawn_builder("moving-collider-meshes", move || {
+            let parts = geometry
+                .moving_parts()
+                .into_iter()
+                .map(|part| {
+                    let (vertices_m, triangles) = part.geometry.into_triangles();
+                    MovingMesh {
+                        kind: part.kind,
+                        team: part.team,
+                        motion: part.motion,
+                        mesh: wireframe_mesh(&CollisionMesh {
+                            vertices_m,
+                            triangles,
+                        }),
+                    }
+                })
+                .collect();
+            let _ = sender.send(parts);
+        }) {
             warn!("cannot build moving collider meshes: {error}");
         }
     }
@@ -502,6 +497,25 @@ fn primitive_transforms(
         ));
     }
     result
+}
+
+// Browser tasks run on its event-loop executor; native builders retain worker threads.
+fn spawn_builder(name: &str, build: impl FnOnce() + Send + 'static) -> std::io::Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::thread::Builder::new()
+            .name(name.into())
+            .spawn(build)
+            .map(|_| ())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = name;
+        wasm_bindgen_futures::spawn_local(async move {
+            build();
+        });
+        Ok(())
+    }
 }
 
 #[cfg(test)]
