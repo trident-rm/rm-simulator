@@ -19,6 +19,9 @@ use std::path::Path;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
+#[path = "browser_session.rs"]
+mod session;
+
 const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PACKAGE_BYTES: usize = 256 * 1024 * 1024;
 
@@ -73,6 +76,7 @@ async fn load() -> anyhow::Result<()> {
     let query =
         web_sys::UrlSearchParams::new_with_str(&window.location().search().unwrap_or_default())
             .map_err(|_| anyhow::anyhow!("invalid URL query"))?;
+    let server = query.get("server").filter(|s| !s.is_empty());
     let (root, radius) = match query.get("field").as_deref().unwrap_or("1v1") {
         "1v1" => ("field-rmul-2027-1v1", 9.),
         "3v3" => ("field-rmul-2027-3v3", 20.),
@@ -151,6 +155,9 @@ async fn load() -> anyhow::Result<()> {
     })
     .add_systems(Startup, setup)
     .add_systems(Update, (orbit, loading_status));
+    if let Some(url) = server {
+        session::install(&mut app, &url, &query)?;
+    }
     app.run();
     Ok(())
 }
@@ -213,7 +220,14 @@ fn orbit(
         }
     }
 }
-fn loading_status(scene: Res<CadSceneStatus>, mut ready: Local<bool>) {
+fn loading_status(
+    scene: Res<CadSceneStatus>,
+    mut ready: Local<bool>,
+    session: Option<NonSend<session::BrowserSession>>,
+) {
+    if session.is_some() {
+        return;
+    }
     if *ready {
         return;
     }

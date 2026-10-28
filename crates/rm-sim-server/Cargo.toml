@@ -18,7 +18,7 @@ required-features = ["native-host"]
 [features]
 default = ["native-host"]
 # Native sockets, host workers, filesystem construction and operator services.
-native-host = ["dep:game-networking-sockets", "dep:if-addrs"]
+native-host = ["dep:game-networking-sockets", "dep:if-addrs", "dep:tungstenite"]
 
 [dependencies]
 rm-sim-control = { version = "0.1.0", path = "../rm-sim-control" }
@@ -34,6 +34,7 @@ sha2.workspace = true
 game-networking-sockets = { version = "0.3.0", optional = true }
 zstd.workspace = true
 web-time = "1.1"
+tungstenite = { version = "0.30", optional = true }
 if-addrs = { version = "0.15", optional = true }
 
 [dev-dependencies]

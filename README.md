@@ -849,3 +849,6 @@ controls; the HUD shows referee power limits, buffer and cuts. See the
 
 The offline SolidWorks workbench uses the independent sw-rs reader for
 metadata and cached Part meshes; see the [sw-rs workflow](docs/sw-rs-import.md).
+
+Browser builds support a static field viewer and a remote WebSocket pilot client.
+See [browser setup and controls](docs/platforms.md#browser-gameplay).

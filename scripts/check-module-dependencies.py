@@ -91,14 +91,15 @@ client_graph = subprocess.check_output(
      "--prefix", "none", "--format", "{p}", "--locked"], text=True)
 client_names = {line.split()[0] for line in client_graph.splitlines() if line.strip()}
 assert not ({"game-networking-sockets", "game-networking-sockets-sys", "if-addrs",
-             "rm-sim-app", "rm-sim-render", "sim-render", "bevy"} & client_names), client_names
+             "rm-sim-app", "rm-sim-render", "sim-render", "bevy", "tungstenite"} & client_names), client_names
 
 browser_graph = subprocess.check_output(
     ["cargo", "tree", "-p", "rm-sim-app", "--target", "wasm32-unknown-unknown",
      "--edges", "normal", "--prefix", "none", "--format", "{p}", "--locked"], text=True)
 browser_names = {line.split()[0] for line in browser_graph.splitlines() if line.strip()}
-assert not ({"rm-sim-server", "game-networking-sockets", "game-networking-sockets-sys",
-             "if-addrs", "steamworks", "rumqttd", "bevy_flair"} & browser_names), browser_names
+assert "rm-sim-server" in browser_names, browser_names
+assert not ({"game-networking-sockets", "game-networking-sockets-sys",
+             "if-addrs", "steamworks", "rumqttd", "bevy_flair", "tungstenite"} & browser_names), browser_names
 
 print("PASS: engine has no solver, application or simulator dependency; generic physics depends only on engine among simulator crates, RM physics extends it, "
       "gameplay is independent of physics and the simulator, "

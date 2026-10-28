@@ -96,3 +96,6 @@ pub mod competition;
 pub mod sentry_view;
 /// Published state and control identities, without a simulation owner.
 pub mod state;
+
+#[cfg(feature = "native-host")]
+pub mod websocket;

@@ -53,4 +53,7 @@ zstd = { workspace = true, features = ["wasm"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["Window", "Document", "Element", "Response", "Location", "UrlSearchParams", "Headers"] }
+rm-sim-server = { version = "0.1.0", path = "../rm-sim-server", default-features = false }
+rm-sim-world = { version = "0.1.0", path = "../rm-sim-world" }
+rm-sim-presentation = { version = "0.1.0", path = "../rm-sim-presentation" }
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "Response", "Location", "UrlSearchParams", "Headers", "WebSocket", "BinaryType", "MessageEvent", "Event"] }

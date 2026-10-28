@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Add an opt-in browser WebSocket pilot client with authoritative robot rendering,
+  keyboard driving, aiming and firing. Keep native host permissions and codecs,
+  restrict browser origins and add socket and gameplay smoke tests.
+
 - Add a WebGPU browser field viewer for official 2027 arenas, with asynchronous
   HTTP loading, shared manifest validation, checksummed in-memory GLBs, camera
   controls and static bundle tooling. Native startup remains separate.

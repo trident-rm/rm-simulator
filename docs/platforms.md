@@ -2,9 +2,10 @@
 <!-- Copyright (c) 2026 hxyulin <hxyulin@proton.me> -->
 # Platform boundaries
 
-The native app supports simulation and multiplayer. The Wasm entry point is a
-field viewer: it loads source-backed 2027 CAD over HTTP and renders it through
-the shared passive renderer. It does not start a match or connect to a server.
+The native app supports simulation and multiplayer. The Wasm entry point loads
+source-backed 2027 CAD over HTTP. Without a server it is a static field viewer.
+With a WebSocket server it sends pilot commands and draws authoritative snapshots
+through the shared renderer. Physics and match rules run on the native host.
 
 ## Browser viewer
 
@@ -55,6 +56,49 @@ It tests all three fields, camera dragging, missing manifests, checksum failures
 and the no-WebGPU message. Ordinary CI compiles and lints the Wasm entry point;
 it does not claim a GPU browser run. Browser performance and memory budgets
 have not been measured.
+
+## Browser gameplay
+
+Start a native 1v1 host with an explicit browser endpoint and allowed origin:
+
+```sh
+cargo run -p rm-sim-server --bin rm-sim-server -- \
+  --competition rmul-infantry-2027 --no-referee --no-lobby \
+  --websocket 127.0.0.1:5002 --websocket-origin http://127.0.0.1:8080
+```
+
+Build and serve the static bundle as above, then open
+`http://127.0.0.1:8080/?field=1v1&server=ws%3A%2F%2F127.0.0.1%3A5002%2F&team=red`.
+This starts practice mode. For a refereed match, omit `--no-referee` and start
+the match through the private native referee panel; pre-match rules gate controls.
+A second pilot can choose `team=blue`. The host grants the pilot's robot through
+ordinary admission. WASD drives, Q/E turns, arrow keys aim and Space fires.
+Drag and scroll retain the viewer camera controls. The selected field must
+match the server competition. The browser reports mismatches and disconnects.
+
+Each binary WebSocket message contains one existing codec datagram. Command
+ownership, admission, weapon cadence and snapshots use the existing host path.
+The endpoint rejects referee admission and accepts only exact configured Origins.
+Connections, handshake time, message size and pending writes are bounded.
+WebSocket provides ordered delivery; congestion can still delay newer snapshots.
+This client displays server snapshots without local prediction or interpolation.
+
+For public hosting, serve the bundle over HTTPS and proxy a WSS endpoint to the
+native listener. Configure the exact frontend origin with `--websocket-origin`.
+The listener provides no TLS itself. Keep the privileged referee HTTP panel
+private. No public deployment is performed by the build command.
+
+Run the existing viewer checks plus host-backed movement and firing checks:
+
+```sh
+uv run --with playwright python scripts/smoke-browser.py \
+  --root local-assets/browser --server ws://127.0.0.1:5002/
+```
+
+The test owns a temporary HTTP server on port 8080; start only the practice simulation
+server beforehand. Pass `--port` and update the host's allowed Origin together
+if 8080 is occupied. These checks use authoritative position and shot/projectile
+observations, rather than assuming key events reached the simulation.
 
 ## Shared client library
 
@@ -114,9 +158,8 @@ exercise the same client codec through GNS and loopback.
 
 ## Remaining deployment work
 
-Browser gameplay needs client/session startup and an HTTP-backed verified physics
-package, beyond this visual loader. Embedded simulation needs caller-driven task
-scheduling or Web Workers in place of native host threads. Browser multiplayer
-needs a server endpoint for a browser-supported carrier; the native GNS socket
-is not that endpoint. Keep host permission checks and the existing wire ordering
-when adding it.
+Offline browser simulation still needs an HTTP-backed verified physics package
+and caller-driven task scheduling or Web Workers in place of native host threads.
+The remote browser client does not predict or restore a local physical world.
+Native staging, first-person controls and the full HUD remain to be shared with
+the browser entry point. Browser performance and memory budgets remain unmeasured.

@@ -32,6 +32,12 @@ struct Args {
     /// Do not answer LAN lobby discovery.
     #[arg(long)]
     no_lobby: bool,
+    /// Optional browser gameplay WebSocket bind address (TLS terminates upstream).
+    #[arg(long, requires = "websocket_origin")]
+    websocket: Option<String>,
+    /// Allowed browser Origin, repeated for each trusted frontend origin.
+    #[arg(long, requires = "websocket")]
+    websocket_origin: Vec<String>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -86,6 +92,19 @@ fn main() -> anyhow::Result<()> {
     let listen = args.host.listen_address();
     let server = Server::bind(&listen, simulation)?;
     println!("players: GNS UDP at {}", server.local_addr());
+    let _websocket = args
+        .websocket
+        .as_ref()
+        .map(|address| {
+            let listener = rm_sim_server::websocket::WebSocketServer::bind(
+                address,
+                server.handle(),
+                args.websocket_origin.clone(),
+            )?;
+            println!("browser players: ws://{}/", listener.local_addr());
+            Ok::<_, std::io::Error>(listener)
+        })
+        .transpose()?;
     // A LAN advertisement that cannot bind its port (another advertised host
     // on this computer) leaves the host reachable by address only.
     let _lobby = if args.no_lobby {
