@@ -2,7 +2,10 @@
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Browser-owned transport and authoritative snapshot presentation, without prediction.
 use bevy::prelude::*;
-use rm_sim_render::sync::{SceneInput, SceneSyncSet};
+use rm_sim_render::{
+    sync::{SceneInput, SceneSyncSet},
+    targets::TargetInput,
+};
 use rm_sim_server::{
     protocol::{Command, Role, ServerMessage},
     udp_codec::{ClientCodec, ClientEvent, Instant, QueuedCommand},
@@ -27,6 +30,11 @@ pub(super) struct BrowserSession {
     failed: bool,
     last_receive: Instant,
     blocked_since: Option<Instant>,
+    latest: Option<Box<rm_sim_server::state::SimulationState>>,
+    history: rm_sim_server::view::RemoteHistory,
+    received_at: Instant,
+    roster: Vec<rm_sim_server::protocol::PlayerInfo>,
+    last_projectile: Option<u64>,
 }
 impl Drop for BrowserSession {
     fn drop(&mut self) {
@@ -104,17 +112,28 @@ pub(super) fn install(
         failed: false,
         last_receive: now,
         blocked_since: None,
+        latest: None,
+        history: Default::default(),
+        received_at: now,
+        roster: Vec::new(),
+        last_projectile: None,
     });
+    super::view::install(app);
     app.add_plugins((
         rm_sim_render::chassis::ChassisVisualsPlugin {
-            rendering: Default::default(),
+            rendering: super::rendering(),
             armor: rm_sim_presentation::armor_optics(),
         },
         rm_sim_render::projectile::ProjectileVisualsPlugin {
-            rendering: Default::default(),
+            rendering: super::rendering(),
         },
     ))
-    .add_systems(Update, update.before(SceneSyncSet));
+    .add_systems(
+        Update,
+        update
+            .after(super::view::BrowserViewSet::Input)
+            .before(SceneSyncSet),
+    );
     super::status("Connecting to server…", "connecting");
     Ok(())
 }
@@ -123,21 +142,44 @@ fn update(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     mut scene: ResMut<SceneInput>,
+    mut targets: ResMut<TargetInput>,
+    cad: Res<rm_sim_render::cad::CadSceneStatus>,
+    mut view: ResMut<super::view::PilotView>,
 ) {
     if session.failed {
         return;
     }
-    if let Err(error) = advance(&mut session, &keys, time.delta_secs_f64(), &mut scene) {
+    if let Some(error) = &cad.failed {
+        session.failed = true;
+        let _ = session.socket.close();
+        super::status(&format!("Cannot display field: {error}"), "error");
+        return;
+    }
+    if let Some(element) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id("status"))
+    {
+        let ready = if cad.ready() { "true" } else { "false" };
+        if element.get_attribute("data-scene-ready").as_deref() != Some(ready) {
+            let _ = element.set_attribute("data-scene-ready", ready);
+        }
+    }
+    if let Err(error) = advance(&mut session, &keys, time.delta_secs_f64(), &view) {
         session.failed = true;
         let _ = session.socket.close();
         super::status(&format!("Connection failed: {error:#}"), "error");
+    } else {
+        present(&session, &mut scene, &mut targets, &mut view);
+        if !cad.ready() {
+            super::status("Preparing field…", "loading");
+        }
     }
 }
 fn advance(
     session: &mut BrowserSession,
     keys: &ButtonInput<KeyCode>,
     dt: f64,
-    scene: &mut SceneInput,
+    view: &super::view::PilotView,
 ) -> anyhow::Result<()> {
     let now = Instant::now();
     anyhow::ensure!(
@@ -170,24 +212,18 @@ fn advance(
                 );
             }
             Some(ClientEvent::Message(ServerMessage::Snapshot(state))) => {
-                let flash = rm_sim_presentation::FlashSettings {
-                    hit_flash_ns: 50_000_000,
-                    rune_flash_hz: 0.,
-                    rune_flashes: 3,
-                };
-                let mut next = rm_sim_presentation::scene_state_with_hits(
-                    &state.field,
-                    flash,
-                    state.field.time_ns,
-                    &[],
-                );
-                next.chassis.extend(
-                    state
-                        .field
-                        .chassis
-                        .iter()
-                        .map(|c| rm_sim_presentation::chassis_appearance(c, &[], None)),
-                );
+                session.last_projectile = session
+                    .last_projectile
+                    .into_iter()
+                    .chain(
+                        state
+                            .field
+                            .projectiles
+                            .iter()
+                            .filter(|p| p.shooter == session.chassis)
+                            .map(|p| p.id),
+                    )
+                    .max();
                 if let Some(own) = state
                     .field
                     .chassis
@@ -217,7 +253,10 @@ fn advance(
                             "waiting",
                         );
                     } else {
-                        super::status("WASD drive · Q/E turn · Arrows aim · Space fire", "playing");
+                        super::status(
+                            "Click to capture · Mouse aim · WASD drive · Click/Space fire · V camera · Esc release",
+                            "playing",
+                        );
                     }
                     if let Some(element) = web_sys::window()
                         .and_then(|w| w.document())
@@ -240,13 +279,25 @@ fn advance(
                                 state.field.projectiles.len().to_string(),
                             ),
                             ("data-shots", state.shot_results.len().to_string()),
+                            (
+                                "data-last-projectile",
+                                session
+                                    .last_projectile
+                                    .map_or_else(|| "-1".into(), |id| id.to_string()),
+                            ),
+                            ("data-aim-yaw", own.held_aim_rad[0].to_string()),
                         ] {
                             let _ = element.set_attribute(key, &value);
                         }
                     }
                 }
-                scene.0 = Some(next);
+                session
+                    .history
+                    .push_identified(&state.field, state.paused, state.snapshot_id);
+                session.received_at = now;
+                session.latest = Some(state);
             }
+            Some(ClientEvent::Message(ServerMessage::Roster(roster))) => session.roster = roster,
             Some(ClientEvent::Message(ServerMessage::Rejected { reason: error })) => {
                 anyhow::bail!("{error}")
             }
@@ -256,8 +307,14 @@ fn advance(
     session.codec.acknowledge(now)?;
     if let Some(chassis) = session.chassis {
         let axis = |positive, negative| {
-            f64::from(keys.pressed(positive)) - f64::from(keys.pressed(negative))
+            if view.input_active {
+                f64::from(keys.pressed(positive)) - f64::from(keys.pressed(negative))
+            } else {
+                0.
+            }
         };
+        session.aim[0] -= f64::from(view.mouse_delta.x) * 0.003;
+        session.aim[1] = (session.aim[1] - f64::from(view.mouse_delta.y) * 0.003).clamp(-0.3, 0.7);
         session.aim[0] += axis(KeyCode::ArrowLeft, KeyCode::ArrowRight) * dt.min(0.1);
         session.aim[1] = (session.aim[1]
             + axis(KeyCode::ArrowUp, KeyCode::ArrowDown) * dt.min(0.1))
@@ -281,7 +338,7 @@ fn advance(
             )?;
             session.next_input = now + Duration::from_millis(32);
         }
-        if keys.pressed(KeyCode::Space) && now >= session.next_fire {
+        if view.fire && now >= session.next_fire {
             session.codec.submit(
                 QueuedCommand {
                     command: Some(Command::Fire { shooter: chassis }),
@@ -314,4 +371,117 @@ fn send(socket: &web_sys::WebSocket, bytes: &[u8]) -> anyhow::Result<()> {
     socket
         .send_with_u8_array(bytes)
         .map_err(|e| anyhow::anyhow!("sending to server: {e:?}"))
+}
+
+// Visual interpolation never advances rules or creates a second physical world.
+fn present(
+    session: &BrowserSession,
+    input: &mut SceneInput,
+    targets: &mut TargetInput,
+    view: &mut super::view::PilotView,
+) {
+    let Some(state) = &session.latest else {
+        return;
+    };
+    let elapsed_ns = Instant::now()
+        .saturating_duration_since(session.received_at)
+        .as_nanos()
+        .min(100_000_000) as u64;
+    let time_ns = if state.paused {
+        state.field.time_ns
+    } else {
+        state
+            .field
+            .time_ns
+            .saturating_add(elapsed_ns)
+            .saturating_sub(64_000_000)
+    };
+    let flash = rm_sim_presentation::FlashSettings {
+        hit_flash_ns: 50_000_000,
+        rune_flash_hz: 0.,
+        rune_flashes: 3,
+    };
+    let hits: Vec<_> = rm_sim_presentation::flashing(&state.field, flash.hit_flash_ns).collect();
+    let scene = input.0.get_or_insert_default();
+    rm_sim_presentation::scene_state_into(&state.field, flash, time_ns, &hits, scene);
+    scene.projectiles.clear();
+    scene
+        .projectiles
+        .extend(state.field.projectiles.iter().map(|p| {
+            rm_sim_render::sync::ProjectileAppearance {
+                position_m: p.position_m,
+                radius_m: (p.caliber.diameter_m() / 2.) as f32,
+            }
+        }));
+    scene.chassis.clear();
+    for latest in &state.field.chassis {
+        let chassis = session
+            .history
+            .sample(latest.id, time_ns)
+            .unwrap_or_else(|| latest.clone());
+        let mut flashes = [false; rm_sim_world::chassis::ARMOR_COUNT];
+        for hit in &hits {
+            if let rm_sim_world::ArmorTarget::Chassis { chassis: id, plate } = hit.target
+                && id == chassis.id
+                && let Some(flash) = flashes.get_mut(plate as usize)
+            {
+                *flash = true;
+            }
+        }
+        let robot = session
+            .roster
+            .iter()
+            .find(|p| p.chassis == Some(chassis.id))
+            .and_then(|p| p.robot)
+            .map(|robot| {
+                use rm_sim_server::protocol::Robot;
+                match robot {
+                    Robot::Hero => rm_sim_presentation::Robot::Hero,
+                    Robot::Engineer => rm_sim_presentation::Robot::Engineer,
+                    Robot::Infantry3 => rm_sim_presentation::Robot::Infantry3,
+                    Robot::Infantry4 => rm_sim_presentation::Robot::Infantry4,
+                    Robot::Infantry5 => rm_sim_presentation::Robot::Infantry5,
+                    Robot::Sentry => rm_sim_presentation::Robot::Sentry,
+                    Robot::Drone => rm_sim_presentation::Robot::Drone,
+                }
+            });
+        let mut appearance = rm_sim_presentation::chassis_appearance(&chassis, &flashes, robot);
+        if let Some(robot) = state
+            .field
+            .rmul_2027
+            .as_ref()
+            .and_then(|game| game.robots.iter().find(|r| r.id == chassis.id))
+        {
+            appearance.hp_fraction = robot.hp as f32 / robot.max_hp.max(1) as f32;
+        }
+        scene.chassis.push(appearance);
+        if Some(chassis.id) == session.chassis {
+            super::view::observe(view, state, &chassis);
+        }
+    }
+    rm_sim_presentation::native_scene_into(
+        &state.field,
+        time_ns,
+        state.paused,
+        &hits,
+        scene,
+        &mut targets.0,
+    );
+    if let Some(element) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id("status"))
+    {
+        for (key, value) in [
+            ("data-targets", targets.0.len().to_string()),
+            (
+                "data-rune-angle",
+                scene.runes.first().map_or(0., |r| r.angle_rad).to_string(),
+            ),
+            ("data-render-chassis", scene.chassis.len().to_string()),
+        ] {
+            if element.get_attribute(key).as_deref() != Some(&value) {
+                let _ = element.set_attribute(key, &value);
+            }
+        }
+    }
 }

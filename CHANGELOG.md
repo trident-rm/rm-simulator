@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Add browser first-person and trailing cameras, captured mouse aiming, a pilot
+  HUD and interpolated robot poses. Render live RMUC source joints, target
+  lights, HP and strike flashes through the native presentation path.
+
 - Add an opt-in browser WebSocket pilot client with authoritative robot rendering,
   keyboard driving, aiming and firing. Keep native host permissions and codecs,
   restrict browser origins and add socket and gameplay smoke tests.

@@ -11,16 +11,20 @@ use bevy::{
 };
 use rm_sim_assets::cad_assets::visual::VisualPackage;
 use rm_sim_render::{
-    PoseFlu, RenderingConfig, apply_pose,
-    cad::{CadInstance, CadRole, CadScenePlugin, CadSceneStatus},
+    RenderingConfig,
+    cad::{CadScenePlugin, CadSceneStatus},
     sync::SceneSyncPlugin,
 };
 use std::path::Path;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
+#[path = "browser_field.rs"]
+mod field;
 #[path = "browser_session.rs"]
 mod session;
+#[path = "browser_view.rs"]
+mod view;
 
 const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PACKAGE_BYTES: usize = 256 * 1024 * 1024;
@@ -87,9 +91,34 @@ async fn load() -> anyhow::Result<()> {
     let arena = fetch(&format!("{root}/manifest.json"), 1024 * 1024).await?;
     let equipment = fetch(&format!("{root}/equipment/manifest.json"), 1024 * 1024).await?;
     let package = VisualPackage::from_manifests(&arena, &equipment)?;
+    let bindings = if let Some(source) = &package.source_bindings {
+        Some(source.decode(&fetch(&format!("{root}/{}", source.file), 1024 * 1024).await?)?)
+    } else {
+        None
+    };
     let memory = MemoryAssetReader::default();
     let mut total = 0;
-    let mut instances = Vec::new();
+    let instances = field::instances(
+        &package,
+        if server.is_some() {
+            bindings.as_ref()
+        } else {
+            None
+        },
+    );
+    if let Some(element) = window
+        .document()
+        .and_then(|d| d.get_element_by_id("status"))
+    {
+        let joints: usize = instances
+            .iter()
+            .map(|i| match &i.role {
+                rm_sim_render::cad::CadRole::Semantic { joints, .. } => joints.len(),
+                _ => 0,
+            })
+            .sum();
+        let _ = element.set_attribute("data-cad-joints", &joints.to_string());
+    }
     for (index, asset) in package.assets.iter().enumerate() {
         status(
             &format!("Loading field {}/{}…", index + 1, package.assets.len()),
@@ -103,22 +132,6 @@ async fn load() -> anyhow::Result<()> {
         total += bytes.len();
         asset.verify(&bytes)?;
         memory.root.insert_asset(Path::new(&asset.file), bytes);
-        for pose in &asset.placements {
-            let mut transform = Transform::default();
-            apply_pose(
-                &mut transform,
-                PoseFlu {
-                    translation_m: pose.translation_m,
-                    rotation_wxyz: pose.rotation_wxyz,
-                },
-            );
-            instances.push(CadInstance {
-                file: format!("verified://{}", asset.file),
-                transform,
-                team: None,
-                role: CadRole::Static { base_color: None },
-            });
-        }
     }
     status("Preparing field…", "loading");
     let mut app = App::new();
@@ -151,9 +164,9 @@ async fn load() -> anyhow::Result<()> {
     .add_plugins(SceneSyncPlugin)
     .add_plugins(CadScenePlugin {
         instances,
-        rendering: RenderingConfig::default(),
+        rendering: rendering(),
     })
-    .add_systems(Startup, setup)
+    .add_systems(Startup, (setup, no_shadows).chain())
     .add_systems(Update, (orbit, loading_status));
     if let Some(url) = server {
         session::install(&mut app, &url, &query)?;
@@ -169,26 +182,36 @@ struct Orbit {
 }
 #[derive(Component)]
 struct FieldCamera;
-fn setup(mut commands: Commands, orbit: Res<Orbit>) {
-    commands.insert_resource(GlobalAmbientLight {
-        brightness: 200.,
-        ..default()
-    });
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 2000.,
-            shadow_maps_enabled: false,
-            ..default()
-        },
-        Transform::from_xyz(8., 15., 10.).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-    commands.spawn((
+fn setup(mut commands: Commands, orbit: Res<Orbit>, mut images: ResMut<Assets<Image>>) {
+    rm_sim_render::lighting::spawn_lighting(&mut commands);
+    let mut camera = commands.spawn((
         Camera3d::default(),
+        rm_sim_render::lighting::skybox(&mut images),
+        Projection::Perspective(PerspectiveProjection {
+            fov: 70_f32.to_radians(),
+            near: 0.01,
+            far: 300.,
+            ..default()
+        }),
         bevy::camera::Exposure { ev100: 9. },
         Msaa::Off,
         camera_transform(&orbit),
         FieldCamera,
     ));
+    rm_sim_render::camera_appearance(&mut camera, rendering());
+}
+fn no_shadows(
+    mut lights: Query<&mut DirectionalLight, With<rm_sim_render::lighting::ShadowKeyLight>>,
+) {
+    for mut light in &mut lights {
+        light.shadow_maps_enabled = false;
+    }
+}
+fn rendering() -> RenderingConfig {
+    RenderingConfig {
+        bloom_intensity: 0.,
+        ..RenderingConfig::field()
+    }
 }
 fn camera_transform(orbit: &Orbit) -> Transform {
     Transform::from_xyz(
@@ -199,12 +222,16 @@ fn camera_transform(orbit: &Orbit) -> Transform {
     .looking_at(Vec3::ZERO, Vec3::Y)
 }
 fn orbit(
+    pilot: Option<Res<view::PilotView>>,
     mut state: ResMut<Orbit>,
     buttons: Res<ButtonInput<MouseButton>>,
     mouse: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
     mut camera: Query<&mut Transform, With<FieldCamera>>,
 ) {
+    if pilot.is_some() {
+        return;
+    }
     let dragging = buttons.pressed(MouseButton::Left) && mouse.delta != Vec2::ZERO;
     if !dragging && scroll.delta.y == 0. {
         return;

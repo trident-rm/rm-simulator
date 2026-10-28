@@ -13,6 +13,8 @@ use std::collections::BTreeMap;
 /// One checksummed, self-contained visual file and its world placements.
 #[derive(Clone, Debug)]
 pub struct VisualAsset {
+    /// Logical asset key in its arena or equipment manifest.
+    pub name: String,
     /// Forward-slash path relative to the package root, suitable for an HTTP URL.
     pub file: String,
     /// World FLU poses in metres, including the package's floor offset.
@@ -58,9 +60,35 @@ impl VisualAsset {
     }
 }
 
+/// Checksummed source motions and optical-node bindings for live field rendering.
+#[derive(Clone, Debug)]
+pub struct VisualBindings {
+    /// Package-relative JSON filename, fixed by the native admission contract.
+    pub file: String,
+    sha256: String,
+}
+impl VisualBindings {
+    /// Verify source bytes before decoding the native binding schema and geometry.
+    ///
+    /// # Errors
+    /// Rejects modified bytes, unsupported source identity or invalid source geometry.
+    pub fn decode(&self, bytes: &[u8]) -> anyhow::Result<crate::rmuc_2027::Bindings> {
+        ensure!(
+            format!("{:x}", Sha256::digest(bytes)).eq_ignore_ascii_case(&self.sha256),
+            "{}: source binding checksum mismatch",
+            self.file
+        );
+        let binding: crate::rmuc_2027::Bindings = serde_json::from_slice(bytes)?;
+        binding.validate()?;
+        Ok(binding)
+    }
+}
+
 /// Render plan for a source-backed 2027 package, independent of its carrier.
 #[derive(Clone, Debug)]
 pub struct VisualPackage {
+    /// Optional verified source motion and optical-node description.
+    pub source_bindings: Option<VisualBindings>,
     /// Native RMUL format, or none for RMUC. This does not admit a match.
     pub rmul_format: Option<rm_sim_gameplay::rmul_2027::Format>,
     /// Unique visual files with all placements; duplicate files are fetched once.
@@ -123,11 +151,16 @@ impl VisualPackage {
                         previous.sha256.eq_ignore_ascii_case(&asset.visual_sha256),
                         "conflicting checksums for {file}"
                     );
+                    ensure!(
+                        previous.name == name,
+                        "visual file aliases different asset roles"
+                    );
                     previous.placements.extend(placements);
                 } else {
                     files.insert(
                         file.clone(),
                         VisualAsset {
+                            name: name.to_owned(),
                             file,
                             sha256: asset.visual_sha256.clone(),
                             placements,
@@ -173,7 +206,24 @@ impl VisualPackage {
             ensure!(count > 0, "static asset has no placements");
             add(&arena, name, "", count)?;
         }
+        let source_bindings = arena
+            .rmuc2027_bindings
+            .as_ref()
+            .map(|binding| -> anyhow::Result<VisualBindings> {
+                ensure!(
+                    binding.file == "rmuc2027-bindings.json"
+                        && binding.sha256.len() == 64
+                        && binding.sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+                    "invalid 2027 visual binding path/checksum"
+                );
+                Ok(VisualBindings {
+                    file: binding.file.clone(),
+                    sha256: binding.sha256.clone(),
+                })
+            })
+            .transpose()?;
         Ok(Self {
+            source_bindings,
             rmul_format: arena.rmul2027_format,
             assets: files.into_values().collect(),
         })
@@ -216,6 +266,42 @@ mod tests {
             serde_json::to_vec(&arena).unwrap(),
             serde_json::to_vec(&arena).unwrap(),
         )
+    }
+    #[test]
+    fn source_bindings_check_bytes_before_decoding_and_validate_the_source() {
+        let detector = json!({"pose": Pose::at([0., 0., 1.]), "half_m": [0.04, 0.04]});
+        let tower = json!({"pivot_m": [0., 0., 0.], "axis": [0., 0., 1.], "detectors": [detector.clone(), detector.clone(), detector.clone()]});
+        let motion = json!({"id":"outpost.spin", "bodies":["source_body_1"], "axis":[0.,0.,1.], "pivot_m":[0.,0.,0.], "limits":null});
+        let mut base = motion.clone();
+        base["limits"] = json!([0., 0.25]);
+        let mut binding = json!({"schema_version":1,"ruleset":"rmuc2027-v1.0.0",
+            "source_sha256":"a5ad3ede3b7674fc98f2e73b71717216383cb2b4b5dcdbe900c2038918bea8e0",
+            "world":{"bases":[[detector.clone()],[detector]],"outposts":[tower.clone(),tower],"zones":[],"rotor_direction":1},
+            "outpost_motion":[motion],"base_motion":[base.clone(),base.clone(),base],
+            "report":{"base":{"detector_bodies":[1]},"outpost":{"detector_bodies":[1,2,3]}}});
+        let bytes = serde_json::to_vec(&binding).unwrap();
+        let descriptor = VisualBindings {
+            file: "rmuc2027-bindings.json".into(),
+            sha256: format!("{:x}", Sha256::digest(&bytes)),
+        };
+        assert_eq!(descriptor.decode(&bytes).unwrap().base_motion.len(), 3);
+        assert!(
+            descriptor
+                .decode(b"changed bytes")
+                .unwrap_err()
+                .to_string()
+                .contains("checksum")
+        );
+        binding["ruleset"] = json!("unreviewed");
+        let invalid = serde_json::to_vec(&binding).unwrap();
+        let descriptor = VisualBindings {
+            sha256: format!("{:x}", Sha256::digest(&invalid)),
+            ..descriptor
+        };
+        assert!(
+            descriptor.decode(&invalid).is_err(),
+            "matching hash cannot authorize unknown source identity"
+        );
     }
     #[test]
     fn supplied_bytes_are_verified_without_reopening_a_file() {

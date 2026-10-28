@@ -33,14 +33,15 @@ to orbit and scroll to zoom. WebGPU and a secure context (HTTPS or localhost)
 are required. The page reports missing HTTP files, hash mismatches, renderer
 loading failures and unavailable WebGPU. The default field is 1v1. Scenery is
 static; rule-driven lights, moving equipment and robots are not installed.
-The viewer uses no shadows or MSAA and fetches each distinct visual file once,
+The browser uses the native lit materials and venue lights/skybox, with bloom,
+shadows and MSAA disabled. It fetches each distinct visual file once,
 sequentially, with a 64 MiB per-file and 256 MiB package byte ceiling.
 
 `just browser-build <new-output-directory> [profile]` uses the size-oriented
 `web` profile by default and runs `wasm-bindgen` to produce a static bundle.
 The output directory must not exist. The bundle contains the viewer, manifests,
-verified visual GLBs and ownership/license notices. It excludes collision and
-rule sidecars. Native release settings are unchanged. A static HTTP server is
+verified visual GLBs and ownership/license notices. It includes the checksummed RMUC source-motion and optical-node bindings.
+It excludes collision sidecars. Native release settings are unchanged. A static HTTP server is
 enough; no Python process runs inside the browser.
 
 The optional real-browser regression test starts and stops its own loopback
@@ -72,8 +73,12 @@ Build and serve the static bundle as above, then open
 This starts practice mode. For a refereed match, omit `--no-referee` and start
 the match through the private native referee panel; pre-match rules gate controls.
 A second pilot can choose `team=blue`. The host grants the pilot's robot through
-ordinary admission. WASD drives, Q/E turns, arrow keys aim and Space fires.
-Drag and scroll retain the viewer camera controls. The selected field must
+ordinary admission. The pilot starts in first person; V switches to the trailing
+camera. Click the canvas to capture the pointer, move the mouse to aim, and
+click again to fire. The capture click never fires. Escape releases capture.
+WASD drives, Q/E turns, arrow keys aim and Space also fires. Editing the
+connection form suspends game input. The HUD displays authoritative HP, rounds,
+heat, speed and defeat state, with a centre crosshair. The selected field must
 match the server competition. The browser reports mismatches and disconnects.
 
 Each binary WebSocket message contains one existing codec datagram. Command
@@ -81,7 +86,11 @@ ownership, admission, weapon cadence and snapshots use the existing host path.
 The endpoint rejects referee admission and accepts only exact configured Origins.
 Connections, handshake time, message size and pending writes are bounded.
 WebSocket provides ordered delivery; congestion can still delay newer snapshots.
-This client displays server snapshots without local prediction or interpolation.
+The client interpolates robot poses using the shared bounded history with a
+64 ms presentation delay. Extrapolation stops after 100 ms; pause and placement
+changes reset history. It does not run local physics prediction. Projectiles use
+authoritative snapshot positions. RMUC source joints, target lights, HP and
+strike flashes use the native presentation and passive renderer.
 
 For public hosting, serve the bundle over HTTPS and proxy a WSS endpoint to the
 native listener. Configure the exact frontend origin with `--websocket-origin`.
@@ -98,7 +107,13 @@ uv run --with playwright python scripts/smoke-browser.py \
 The test owns a temporary HTTP server on port 8080; start only the practice simulation
 server beforehand. Pass `--port` and update the host's allowed Origin together
 if 8080 is occupied. These checks use authoritative position and shot/projectile
-observations, rather than assuming key events reached the simulation.
+observations, rather than assuming key events reached the simulation. Camera
+mode changes, pointer capture, capture-click suppression, mouse aim and form
+focus are also checked. Pass `--rmuc-server ws://127.0.0.1:5003/` to check a
+separate source-bound RMUC host; source joints and target lights must be present.
+A running RMUC round also checks Rune motion. Pilot tests wait for all CAD
+instances to finish spawning before exercising controls. A tampered source
+binding JSON must fail loading.
 
 ## Shared client library
 
@@ -161,5 +176,5 @@ exercise the same client codec through GNS and loopback.
 Offline browser simulation still needs an HTTP-backed verified physics package
 and caller-driven task scheduling or Web Workers in place of native host threads.
 The remote browser client does not predict or restore a local physical world.
-Native staging, first-person controls and the full HUD remain to be shared with
-the browser entry point. Browser performance and memory budgets remain unmeasured.
+Native staging, the full HUD, local prediction and robot CAD-package loading
+remain to be shared with the browser entry point. Browser performance and memory budgets remain unmeasured.

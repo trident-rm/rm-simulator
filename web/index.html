@@ -14,6 +14,13 @@
     select,button,input { font:inherit; color:inherit; background:#303846; border:1px solid #667080; border-radius:4px; padding:6px 10px; }
     #status { margin:10px 0 0; max-width:32rem; }
     [data-state=error] { color:#ffb1a4; }
+    #pilot-hud { position:absolute; z-index:1; bottom:20px; left:20px; padding:12px 16px; white-space:pre-line; background:#141820d9; border-radius:8px; pointer-events:none; font-variant-numeric:tabular-nums; }
+    #crosshair { position:absolute; left:50%; top:50%; width:20px; height:20px; transform:translate(-50%,-50%); pointer-events:none; opacity:.55; }
+    #crosshair[data-captured=true] { opacity:1; }
+    #crosshair::before,#crosshair::after { content:""; position:absolute; background:#fff; box-shadow:0 0 2px #111; }
+    #crosshair::before { left:9px; top:0; width:2px; height:20px; }
+    #crosshair::after { left:0; top:9px; width:20px; height:2px; }
+    [hidden] { display:none !important; }
   </style>
 </head>
 <body>
@@ -21,6 +28,8 @@
     <form><label for="field">Field</label><select id="field" name="field"><option value="1v1">RMUL 1v1</option><option value="3v3">RMUL 3v3</option><option value="rmuc">RMUC</option></select><label for="server">Server</label><input id="server" name="server" placeholder="ws://localhost:5002/" size="25"><select id="team" name="team" aria-label="Team"><option value="red">Red</option><option value="blue">Blue</option></select><input id="name" name="name" placeholder="Pilot name" size="12"><button>Connect / load</button></form>
     <p id="status" role="status" data-state="loading">Starting…</p>
   </header>
+  <div id="pilot-hud" hidden role="status"></div>
+  <div id="crosshair" hidden aria-hidden="true"></div>
   <canvas id="sim" tabindex="0" aria-label="RoboMaster field view"></canvas>
   <script type="module">
     const status = document.getElementById('status');

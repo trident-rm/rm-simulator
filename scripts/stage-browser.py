@@ -23,7 +23,8 @@ def stage(output, profile):
     if output.exists():
         raise ValueError(f"Output already exists; choose a new directory: {output}")
     # Keep both manifests and the original CAD notice. Collision recipes and
-    # physical sidecars are not part of this visual-only distribution.
+    # physical collision sidecars are not part of this distribution.
+    # Reviewed source motions and optical nodes are needed for live RMUC visuals.
     files = {name: ROOT / name for name in ("LICENSE-MIT", "LICENSE-APACHE", "NOTICE.md", "LICENSES/MPL-2.0.txt")}
     for package in PACKAGES:
         root = ROOT / package
@@ -31,6 +32,14 @@ def stage(output, profile):
             path = root / relative
             manifest = json.loads(path.read_bytes())
             files[f"{package}/{relative}"] = path
+            if binding := manifest.get("rmuc2027_bindings"):
+                if binding["file"] != "rmuc2027-bindings.json":
+                    raise ValueError("Invalid RMUC visual binding path")
+                source = path.parent / binding["file"]
+                source.resolve().relative_to(root.resolve())
+                if hashlib.sha256(source.read_bytes()).hexdigest() != binding["sha256"]:
+                    raise ValueError(f"Source binding checksum mismatch: {source}")
+                files[f"{package}/{source.relative_to(root).as_posix()}"] = source
             for asset in manifest["assets"].values():
                 relative_visual = Path(asset["visual"])
                 if relative_visual.is_absolute() or ".." in relative_visual.parts:
