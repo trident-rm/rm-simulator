@@ -328,6 +328,27 @@ impl Args {
         }
         if let Some(path) = &mut self.robot_assets {
             *path = std::path::absolute(&*path)?;
+        }
+        if self.hero_assets.is_none()
+            && let Some(root) = &self.robot_assets
+        {
+            let sibling = root.parent().unwrap_or(root).join("bound-hero-armored");
+            if sibling.join("manifest.json").is_file() {
+                self.hero_assets = Some(sibling);
+            }
+        }
+        if let Some(path) = &mut self.hero_assets {
+            *path = std::path::absolute(&*path)?;
+        }
+        self.resolve_loaded_robot_assets()?;
+        Ok(())
+    }
+
+    /// Resolve already available native or HTTP package bytes through the same descriptor loader.
+    pub(crate) fn resolve_loaded_robot_assets(&mut self) -> std::io::Result<()> {
+        self.robot_descriptor = None;
+        self.hero_descriptor = None;
+        if let Some(path) = &self.robot_assets {
             use rm_sim_assets::robots::{RobotDescriptor, RobotProfile};
             let descriptor = std::sync::Arc::new(RobotDescriptor::load(path)?);
             self.host.folding_hero = descriptor.profile() == RobotProfile::ArtisansFoldingHero;
@@ -352,16 +373,7 @@ impl Args {
                 self.robot = Robot::Hero;
             }
         }
-        if self.hero_assets.is_none()
-            && let Some(root) = &self.robot_assets
-        {
-            let sibling = root.parent().unwrap_or(root).join("bound-hero-armored");
-            if sibling.join("manifest.json").is_file() {
-                self.hero_assets = Some(sibling);
-            }
-        }
-        if let Some(path) = &mut self.hero_assets {
-            *path = std::path::absolute(&*path)?;
+        if let Some(path) = &self.hero_assets {
             use rm_sim_assets::robots::{ArmorIdentity, RobotDescriptor, RobotProfile};
             let descriptor = if self.robot_assets.as_ref() == Some(path) {
                 self.robot_descriptor

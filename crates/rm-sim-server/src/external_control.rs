@@ -3,7 +3,7 @@
 //! Leased external navigation inputs, resolved on authoritative simulation ticks.
 use rm_sim_world::{ChassisCommand, Pose};
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 use std::collections::BTreeMap;
 
 /// Maximum accepted planar request magnitude in m/s; an adapter policy, not a rule.
@@ -202,10 +202,10 @@ pub struct Input {
     /// Requested planar movement, recomputed on each physical tick.
     pub motion: Motion,
 }
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 #[path = "external_control_host.rs"]
 mod host;
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 pub(crate) use host::Service;
 
 #[cfg(all(test, feature = "native-host"))]

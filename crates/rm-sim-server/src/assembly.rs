@@ -12,20 +12,103 @@ use std::{
     sync::{Arc, atomic::Ordering, mpsc},
 };
 
-struct Solved {
-    start: Rig,
-    end: Rig,
-    frames: Vec<rm_sim_world::assembly::Frame>,
+pub(crate) struct Solved {
+    pub(crate) start: Rig,
+    pub(crate) end: Rig,
+    pub(crate) frames: Vec<rm_sim_world::assembly::Frame>,
 }
 struct Job {
     generation: u64,
     signal: Arc<Signal>,
+    #[cfg(not(target_arch = "wasm32"))]
     receiver: mpsc::Receiver<Result<Solved, String>>,
+    #[cfg(target_arch = "wasm32")]
+    browser: BrowserJob,
     begin: Option<mpsc::SyncSender<()>>,
     twist: bool,
 }
+#[cfg(target_arch = "wasm32")]
+struct BrowserJob {
+    rig: Rig,
+    pending: Option<crate::assembly_worker::Request>,
+    task: Option<Box<dyn crate::assembly_worker::Task>>,
+    sender: Option<mpsc::SyncSender<Result<crate::assembly_worker::Response, String>>>,
+    receiver: mpsc::Receiver<Result<crate::assembly_worker::Response, String>>,
+    failure: Option<String>,
+}
+#[cfg(target_arch = "wasm32")]
+impl BrowserJob {
+    fn new(
+        rig: Rig,
+        recipe: crate::assembly_worker::SourceRecipe,
+        difficulty: u8,
+        twist_rad: Option<f64>,
+    ) -> Result<Self, String> {
+        let state = rig.transfer_state().map_err(|e| e.to_string())?;
+        let (sender, receiver) = mpsc::sync_channel(1);
+        Ok(Self {
+            rig,
+            pending: Some(crate::assembly_worker::Request {
+                recipe,
+                state,
+                difficulty,
+                twist_rad,
+            }),
+            task: None,
+            sender: Some(sender),
+            receiver,
+            failure: None,
+        })
+    }
+    fn begin(&mut self) -> Result<(), String> {
+        if let Some(request) = self.pending.take() {
+            match crate::assembly_worker::dispatch(
+                request,
+                self.sender.take().ok_or("assembly worker sender missing")?,
+            ) {
+                Ok(task) => self.task = Some(task),
+                Err(error) => {
+                    self.failure = Some(error.clone());
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
+    }
+    fn cancel(&mut self) {
+        self.task.take();
+        self.pending.take();
+        self.sender.take();
+    }
+    fn poll(&mut self, signal: &Signal) -> Result<Result<Solved, String>, mpsc::TryRecvError> {
+        if let Some(error) = self.failure.take() {
+            return Ok(Err(error));
+        }
+        self.receiver.try_recv().map(|result| {
+            result.and_then(|response| {
+                if response.frames.len() > 4096 {
+                    return Err("assembly worker trajectory exceeds capacity".into());
+                }
+                let mut start = self.rig.clone();
+                let mut end = self.rig.clone();
+                start.restore_transfer_state(response.start)?;
+                end.restore_transfer_state(response.end)?;
+                signal
+                    .checks
+                    .store(response.checks as usize, Ordering::Relaxed);
+                Ok(Solved {
+                    start,
+                    end,
+                    frames: response.frames,
+                })
+            })
+        })
+    }
+}
 pub(crate) struct Service {
     template: Rig,
+    #[cfg(target_arch = "wasm32")]
+    recipe: crate::assembly_worker::SourceRecipe,
     unit_shape: rm_sim_world::projectile::PayloadShape,
     recovery_core_rad: [[f64; 6]; 2],
     origins: [Pose; 2],
@@ -64,7 +147,7 @@ impl Service {
             template.load_ik_hints(hints).map_err(|e| e.to_string())?;
         }
         let evidence: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(area.join("area.json")).map_err(|e| e.to_string())?,
+            &rm_sim_assets::package_io::read(area.join("area.json")).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
         let m: [[f64; 4]; 4] = serde_json::from_value(evidence["arena_to_workbench"].clone())
@@ -87,7 +170,8 @@ impl Service {
         };
         let collision: rm_sim_physics::manipulator_collision::CollisionAsset =
             serde_json::from_slice(
-                &std::fs::read(package.join("collision.json")).map_err(|e| e.to_string())?,
+                &rm_sim_assets::package_io::read(package.join("collision.json"))
+                    .map_err(|e| e.to_string())?,
             )
             .map_err(|e| e.to_string())?;
         let unit = collision
@@ -101,6 +185,8 @@ impl Service {
             .map_err(str::to_string)?;
         Ok(Self {
             template,
+            #[cfg(target_arch = "wasm32")]
+            recipe: crate::assembly_worker::SourceRecipe::new(package.into(), area.into(), target)?,
             unit_shape,
             recovery_core_rad,
             origins,
@@ -154,7 +240,9 @@ impl Service {
             .ok_or("assembly job identity exhausted")?;
         let generation = self.generation;
         let signal = Arc::new(Signal::default());
+        #[cfg(not(target_arch = "wasm32"))]
         let (sender, receiver) = mpsc::sync_channel(1);
+        #[cfg(not(target_arch = "wasm32"))]
         let (begin, begin_receiver) = mpsc::sync_channel(1);
         let mut run = Run {
             owner,
@@ -205,7 +293,11 @@ impl Service {
         run.pose.engineer_q = arm.joints_rad;
         run.pose.jaw_angles = arm.jaws_rad;
         rig.set_live_entry(&crate::assembly_rig::arm_pose(arm));
+        #[cfg(target_arch = "wasm32")]
+        let browser = BrowserJob::new(rig, self.recipe.clone(), difficulty, None)?;
+        #[cfg(not(target_arch = "wasm32"))]
         let worker_signal = signal.clone();
+        #[cfg(not(target_arch = "wasm32"))]
         std::thread::Builder::new()
             .name("assembly-planner".into())
             .spawn(move || {
@@ -223,8 +315,14 @@ impl Service {
             Job {
                 generation,
                 signal,
+                #[cfg(not(target_arch = "wasm32"))]
                 receiver,
+                #[cfg(target_arch = "wasm32")]
+                browser,
+                #[cfg(not(target_arch = "wasm32"))]
                 begin: Some(begin),
+                #[cfg(target_arch = "wasm32")]
+                begin: None,
                 twist: false,
             },
         );
@@ -337,9 +435,20 @@ impl Service {
                 continue;
             };
             let signal = Arc::new(Signal::default());
+            #[cfg(not(target_arch = "wasm32"))]
             let worker_signal = signal.clone();
+            #[cfg(not(target_arch = "wasm32"))]
             let (sender, receiver) = mpsc::sync_channel(1);
             let difficulty = run.difficulty;
+            #[cfg(target_arch = "wasm32")]
+            let browser = BrowserJob::new(rig, self.recipe.clone(), difficulty, Some(target))
+                .and_then(|mut job| {
+                    job.begin()?;
+                    Ok(job)
+                });
+            #[cfg(target_arch = "wasm32")]
+            let spawned = browser.as_ref().map(|_| ()).map_err(String::clone);
+            #[cfg(not(target_arch = "wasm32"))]
             let spawned = std::thread::Builder::new()
                 .name("assembly-twist-planner".into())
                 .spawn(move || {
@@ -355,7 +464,10 @@ impl Service {
                 Job {
                     generation,
                     signal,
+                    #[cfg(not(target_arch = "wasm32"))]
                     receiver,
+                    #[cfg(target_arch = "wasm32")]
+                    browser: browser.expect("successful browser dispatch"),
                     begin: None,
                     twist: true,
                 },
@@ -393,13 +505,23 @@ impl Service {
             if current.is_none() {
                 job.signal.cancelled.store(true, Ordering::Relaxed);
                 job.begin.take();
+                #[cfg(target_arch = "wasm32")]
+                job.browser.cancel();
             }
-            if current.as_ref().is_some_and(|r| r.phase == Phase::Solving)
-                && let Some(begin) = job.begin.take()
-            {
-                let _ = begin.send(());
+            if current.as_ref().is_some_and(|r| r.phase == Phase::Solving) {
+                if let Some(begin) = job.begin.take() {
+                    let _ = begin.send(());
+                }
+                #[cfg(target_arch = "wasm32")]
+                if let Err(error) = job.browser.begin() {
+                    field.cancel_assembly(owner, &error);
+                }
             }
-            match job.receiver.try_recv() {
+            #[cfg(not(target_arch = "wasm32"))]
+            let result = job.receiver.try_recv();
+            #[cfg(target_arch = "wasm32")]
+            let result = job.browser.poll(&job.signal);
+            match result {
                 Err(mpsc::TryRecvError::Empty) => {
                     if let Some(mut run) = current {
                         run.checks = job.signal.checks.load(Ordering::Relaxed) as u32;
@@ -484,7 +606,7 @@ impl Service {
         }
     }
 }
-fn solve_segment(
+pub(crate) fn solve_segment(
     mut rig: Rig,
     difficulty: u8,
     twist: Option<f64>,

@@ -15,8 +15,8 @@ use crate::lifecycle::Stop;
 #[path = "gns_transport.rs"]
 mod gns_transport;
 /// Bounded per-peer output; only an unsent periodic frame is replaceable.
-#[path = "outbox.rs"]
-pub(crate) mod outbox;
+#[cfg(test)]
+use crate::host_outbox::{self as outbox, DEFAULT_CAPACITY as OUTBOX_CAPACITY};
 #[cfg(test)]
 use crate::protocol::PROTOCOL_VERSION;
 pub use crate::protocol::describe_seat;
@@ -46,9 +46,6 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 const LOOPBACK_POLL: Duration = Duration::from_millis(2);
 /// A peer that accepts no bytes for this long is disconnected.
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
-/// Frames queued for one client before it is dropped as unresponsive; periodic
-/// state is replaceable, so this only fills while the carrier stalls.
-pub(crate) const OUTBOX_CAPACITY: usize = 256;
 /// Pending client commands, never coalesced across aim/fire or match controls.
 const CLIENT_COMMAND_CAPACITY: usize = 256;
 /// Unread notices and rejections are bounded by both count and UTF-8 bytes.

@@ -264,7 +264,7 @@ fn start(world: &mut World) {
                     }
                 };
                 let (side_spawn, side_yaw) = if practice {
-                    args.host.competition.practice_spawn(args.team.into(), 1)
+                    args.host.competition.practice_spawn(args.team.into(), 0)
                 } else {
                     default_spawn(args.team.into())
                 };
@@ -298,10 +298,6 @@ fn start(world: &mut World) {
                 let _ = sender.send(Update::Progress(value, text.into()));
             };
             let result = async {
-                anyhow::ensure!(
-                    args.connect.is_some(),
-                    "Browser clients connect to a native host using ws:// or wss://"
-                );
                 progress(0.05, "Verifying field files");
                 let cad = if let Some(cache) = cached {
                     cache.0
@@ -309,7 +305,7 @@ fn start(world: &mut World) {
                     crate::browser_assets::load(&args).await?
                 };
                 let (side_spawn, side_yaw) = if args.host.competition.rmul_format().is_some() {
-                    args.host.competition.practice_spawn(args.team.into(), 1)
+                    args.host.competition.practice_spawn(args.team.into(), 0)
                 } else {
                     default_spawn(args.team.into())
                 };

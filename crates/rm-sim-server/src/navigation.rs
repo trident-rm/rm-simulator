@@ -79,6 +79,7 @@ struct Job {
     allow_tunnel: bool,
 }
 enum Reply {
+    #[cfg(not(target_arch = "wasm32"))]
     Baked(Bake),
     Route(u32, u64, Result<Route, String>),
 }
@@ -88,6 +89,14 @@ pub(crate) struct Service {
     receiver: mpsc::Receiver<Reply>,
     controller: Controller,
     ids: Vec<u32>,
+    #[cfg(target_arch = "wasm32")]
+    browser_jobs: mpsc::Receiver<Job>,
+    #[cfg(target_arch = "wasm32")]
+    browser_replies: mpsc::SyncSender<Reply>,
+    #[cfg(target_arch = "wasm32")]
+    browser_bake: Option<(StaticGeometry, Surface, [f64; 4])>,
+    #[cfg(target_arch = "wasm32")]
+    browser_map: Option<Map>,
 }
 impl Service {
     pub(crate) fn new(
@@ -107,6 +116,7 @@ impl Service {
         let worker_surface = surface.clone();
         let (sender, jobs) = mpsc::sync_channel::<Job>(1);
         let (replies, receiver) = mpsc::sync_channel(4);
+        #[cfg(not(target_arch = "wasm32"))]
         std::thread::Builder::new()
             .name("rm-navigation".into())
             .spawn(move || {
@@ -137,6 +147,14 @@ impl Service {
             receiver,
             controller: Controller::new(surface)?,
             ids: Vec::new(),
+            #[cfg(target_arch = "wasm32")]
+            browser_jobs: jobs,
+            #[cfg(target_arch = "wasm32")]
+            browser_replies: replies,
+            #[cfg(target_arch = "wasm32")]
+            browser_bake: Some((geometry, worker_surface, bounds)),
+            #[cfg(target_arch = "wasm32")]
+            browser_map: None,
         })
     }
     pub(crate) fn add(&mut self, id: u32) {
@@ -158,8 +176,38 @@ impl Service {
         self.controller.views()
     }
     pub(crate) fn poll(&mut self, field: &Field) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            // Native hosts bake/search on their worker. Browser hosts execute one
+            // indivisible bake or bounded-grid search per caller poll, never wait
+            // on a channel, and keep the same one-slot request queue.
+            if let Some((geometry, surface, bounds)) = self.browser_bake.take() {
+                let map =
+                    Map::prepare(geometry, surface, bounds).expect("admitted navigation bake");
+                self.controller.set_summary(map.summary().clone());
+                self.browser_map = Some(map);
+                return;
+            }
+            if let Ok(job) = self.browser_jobs.try_recv() {
+                let map = self
+                    .browser_map
+                    .as_ref()
+                    .expect("navigation bake precedes jobs");
+                let path = map.plan(
+                    job.start,
+                    job.goal,
+                    &job.obstacles,
+                    &job.live,
+                    job.allow_tunnel,
+                );
+                let _ = self
+                    .browser_replies
+                    .try_send(Reply::Route(job.id, job.generation, path));
+            }
+        }
         while let Ok(reply) = self.receiver.try_recv() {
             match reply {
+                #[cfg(not(target_arch = "wasm32"))]
                 Reply::Baked(summary) => self.controller.set_summary(summary),
                 Reply::Route(id, generation, path) => {
                     let position = field

@@ -54,12 +54,18 @@ serve these from a trusted origin. Verified visuals are supplied through Bevy's
 memory asset reader, without an unchecked second HTTP download.
 
 Browser sessions retain verified collision geometry for staging heights, aim
-queries and debug drawing. Robot interpolation and shot feedback use the existing
-Session. Local physics prediction remains disabled because its worker requires a
-browser scheduling implementation. Simulation and match authority stay on the
-native host. Native hosting, UDP LAN discovery, the TCP automation console and
-FFmpeg recording are native platform facilities. Optional external robot and
-assembly CAD packages still need browser loading support.
+queries and debug drawing. Chassis and provisional projectile prediction use the
+same whole-world replay as native, with at most eight chassis ticks and four
+projectile ticks per exchange. Checkpoint restoration remains indivisible.
+`prediction=0` disables local prediction.
+
+Single Player runs locally through the same host authority and codecs, without
+a native process or network socket. Each host pump advances at most eight ticks
+and retains at most 250 ms of catch-up time. F5 starts an idle RMUC or RMUL round;
+F6 pauses/resumes and F7 advances one manual step while paused. `play=1` starts
+Single Player directly. Navigation runs one queued bake/search per poll. Native
+multiplayer listening, UDP LAN discovery, the TCP automation console and FFmpeg
+recording remain native platform facilities.
 
 Each binary WebSocket message carries one existing codec datagram. Host command
 ownership, admission, weapon cadence, confirmation ordering and snapshots retain
@@ -81,8 +87,7 @@ The test owns a temporary HTTP server on port 8080. `--executable` selects an
 existing Chromium; `--port` and the host's Origin allowlist must agree. Tests use
 `inspect=1`, which exports actual app screen, session and laid-out UI observations
 to a hidden diagnostic element. It adds no controls or alternate HUD. Ordinary
-CI compiles and lints Wasm; it does not claim a GPU browser run. Browser frame-time
-and memory budgets remain unmeasured.
+CI compiles and lints Wasm; it does not claim a GPU browser run.
 
 ## Shared client library
 
@@ -140,8 +145,53 @@ receipt in raw and compressed modes, stale publication rejection and recovery
 when an owner anchor references an unknown configuration. Native tests still
 exercise the same client codec through GNS and loopback.
 
-## Remaining deployment work
+## Optional CAD packages
 
-Browser scheduling for local physics prediction, optional robot/assembly CAD
-loading and performance measurements remain. Offline browser hosting needs a
-caller-driven host or Web Worker, rather than native socket/thread services.
+Optional robot, folding-Hero, assembly and area packages use the same descriptor,
+armor, collision and frame validators as native. Browser launch parameters map
+to the existing options: `robot_assets`, `hero_assets`, `assembly_assets`,
+`assembly_area` and `assembly_hints`. `robot=engineer` chooses the Heavy role.
+Paths are relative to the served application. Invalid packages fail startup.
+
+After compiling the Wasm binary, stage explicitly supplied packages alongside
+it. Each package must retain its upstream `CAD-NOTICE.md`:
+
+```sh
+python3 scripts/stage-browser.py --out local-assets/browser-with-cad \
+  --extra-package robot=/path/to/checked-robot \
+  --extra-package hero=/path/to/checked-hero \
+  --extra-package assembly=/path/to/checked-assembly \
+  --extra-package area=/path/to/matching-area
+```
+
+Use `--extra-file hints.json=/path/to/recording.json` for optional planning hints.
+A launch URL can include
+`?field=rmuc&play=1&robot=engineer&robot_assets=robot&hero_assets=hero&assembly_assets=assembly&assembly_area=area`.
+Robot descriptors are resolved before startup, so the local host and passive
+renderer consume the same checked physical configuration.
+
+Automatic assembly planning runs the existing solver in isolated Web Workers.
+The host sends a source-pinned reconstruction recipe and bounded rig state;
+the worker receives no match or actuator authority. The host retains generation,
+parking, actual-start and cancellation checks before installing a result.
+At most two workers run, and cancelling or dropping a task terminates its worker.
+Native builds keep their planning threads. Worker source transfer is capped at
+256 MiB, metadata/results at 8 MiB, with a 60-second deadline.
+
+## Browser validation and measurements
+
+Pass `--offline` to the smoke test to exercise local admission, rule start,
+movement, firing, pause, exact manual stepping and bounded prediction. Opt-in
+`inspect=1` diagnostics include measured host/replay work, recent frame interval
+percentiles and Wasm linear-memory capacity. Linear memory is not browser-process
+RSS. Measurements include rendering and inspection overhead; they do not establish
+a hardware-independent budget. Heavy checkpoint restoration, map construction
+and a single navigation search are still indivisible operations.
+
+A local macOS Chromium run at 1600 × 1000, with one robot in the offline 1v1
+arena, recorded a 16.7 ms median frame interval and an 18.7 ms p95 over the latest
+180 samples. Wasm linear-memory capacity was 164,167,680 bytes. These are one-run
+observations, not peak process memory or startup measurements. The source-backed
+assembly worker matched a native 1,053-frame plan with 854 checks while the page
+rendered 277 frames during the worker request. Use `--cad` and
+`--worker-fixture PATH` to opt into optional CAD and native-fixture parity checks.

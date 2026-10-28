@@ -33,30 +33,29 @@ struct Mailbox {
     shots: Vec<ShotSample>,
     muzzles: Vec<(u64, u64, rm_sim_world::Pose)>,
 }
-/// Own-chassis replay on one worker thread with a single request and result
-/// slot. The app posts the newest checkpoint and pending inputs and collects the
-/// previous result, so a slow replay never blocks a frame and a newer request
-/// replaces an older one.
+/// Own-chassis replay using a native worker or bounded browser exchanges.
+/// Native requests and results each have one replaceable slot. The browser
+/// advances at most eight integration ticks per exchange on the calling thread;
+/// checkpoint restoration remains one indivisible operation.
 pub struct PredictionWorker {
     #[cfg(test)]
     synchronous: bool,
     shared: Arc<(Mutex<Mailbox>, Condvar)>,
+    #[cfg(target_arch = "wasm32")]
+    driver: Mutex<ReplayDriver>,
 }
 impl PredictionWorker {
     /// Spawn the worker. It restores a whole `Field` from each checkpoint plus
     /// `geometry` and `floor_height_m`, then replays unfinalized inputs through
     /// the ordinary step, command and fire paths.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new(geometry: StaticGeometry, floor_height_m: f64) -> std::io::Result<Self> {
         let shared = Arc::new((Mutex::new(Mailbox::default()), Condvar::new()));
         let worker = Arc::clone(&shared);
         std::thread::Builder::new()
             .name("chassis-prediction".into())
             .spawn(move || {
-                let mut replayer = Replayer::new(geometry, floor_height_m);
-                let mut history = rm_sim_server::network_stats::CorrectionHistory::default();
-                let mut shot_history: std::collections::VecDeque<(u64, ChassisSnapshot)> =
-                    std::collections::VecDeque::new();
-                let mut shot_epoch = None;
+                let mut driver = ReplayDriver::new(geometry, floor_height_m);
                 loop {
                     let ((epoch, replay), shots) = {
                         let (lock, wake) = &*worker;
@@ -73,114 +72,27 @@ impl PredictionWorker {
                             std::mem::take(&mut mailbox.shots),
                         )
                     };
-                    if shot_epoch != Some(epoch) {
-                        shot_history.clear();
-                        shot_epoch = Some(epoch);
-                    }
-                    let mut muzzles = Vec::new();
-                    for shot in &shots {
-                        if let Some((_, owner)) =
-                            shot_history.iter().rev().find(|(t, _)| *t == shot.time_ns)
-                        {
-                            muzzles.push((
-                                epoch,
-                                shot.id,
-                                rm_sim_server::prediction::muzzle_for(owner, shot.aim),
-                            ));
-                        }
-                    }
-                    let shots: Vec<_> = shots
-                        .into_iter()
-                        .filter(|s| !muzzles.iter().any(|(_, id, _)| *id == s.id))
-                        .collect();
-                    // A shot sampled inside an interval this world already
-                    // replayed has to be reached again, so rebuild and re-run it.
-                    let rewind = shots.iter().any(|shot| {
-                        shot.time_ns >= replay.snapshot_time_ns && shot.time_ns < replayer.time_ns()
-                    });
-                    let started = std::time::Instant::now();
-                    let mut replay_ticks = 0;
-                    let result = replayer.advance(
-                        epoch,
-                        &replay,
-                        rm_sim_server::prediction::MAX_CONTINUOUS_REPLAY_NS,
-                        rewind,
-                        &mut |event| match event {
-                            ReplayEvent::Rebuilt => {
-                                let Some(owner) =
-                                    replay.states.iter().find(|s| s.id == replay.chassis)
-                                else {
-                                    return;
-                                };
-                                history.compare(epoch, replay.snapshot_time_ns, owner);
-                                let age = replay
-                                    .snapshot_time_ns
-                                    .saturating_sub(replay.context_time_ns);
-                                history.stats.context_age_ns = Some(age);
-                                history.stats.context_hint = Some(if age > 100_000_000 {
-                                    "stale_collision_context"
-                                } else if replay.states.iter().any(|other| {
-                                    other.id != owner.id
-                                        && other
-                                            .pose
-                                            .translation_m
-                                            .iter()
-                                            .zip(owner.pose.translation_m)
-                                            .map(|(a, b)| (a - b).powi(2))
-                                            .sum::<f64>()
-                                            < 2.25
-                                }) {
-                                    "nearby_robot_possible_contact"
-                                } else if owner.wheels.iter().any(|wheel| wheel.contact.is_some()) {
-                                    "wheel_contact"
-                                } else {
-                                    "unknown"
-                                });
-                            }
-                            ReplayEvent::Before { time_ns, owner } => {
-                                shot_history.push_back((time_ns, owner.clone()));
-                                while shot_history.len() > 512 {
-                                    shot_history.pop_front();
-                                }
-                                for shot in shots.iter().filter(|s| s.time_ns == time_ns) {
-                                    muzzles.push((
-                                        epoch,
-                                        shot.id,
-                                        rm_sim_server::prediction::muzzle_for(owner, shot.aim),
-                                    ));
-                                }
-                            }
-                            ReplayEvent::After { time_ns, owner } => {
-                                replay_ticks += 1;
-                                history.record(time_ns, owner);
-                            }
-                        },
-                    );
+                    let completion = driver.run(epoch, &replay, shots, usize::MAX);
                     let Ok(mut mailbox) = worker.0.lock() else {
                         return;
                     };
-                    mailbox.completed += 1;
-                    mailbox.replay_ms = started.elapsed().as_secs_f64() * 1000.;
-                    mailbox.replay_ticks = replay_ticks;
-                    mailbox.correction = history.stats.clone();
-                    mailbox.muzzles = muzzles;
-                    if let Ok(state) = result {
-                        mailbox.result = Some((
-                            epoch,
-                            rm_sim_server::prediction::PredictionProof {
-                                snapshot_id: replay.snapshot_id,
-                                target_time_ns: replayer.time_ns(),
-                                last_input_sequence: replayer.last_input_sequence(),
-                            },
-                            state,
-                        ));
-                    }
+                    mailbox.complete(completion);
                     #[cfg(test)]
                     worker.1.notify_all();
                 }
             })?;
         Ok(Self {
             shared,
+            #[cfg(test)]
+            synchronous: false,
+        })
+    }
+    /// Create caller-driven browser replay; each exchange advances at most eight ticks.
+    #[cfg(target_arch = "wasm32")]
+    pub fn new(geometry: StaticGeometry, floor_height_m: f64) -> std::io::Result<Self> {
+        Ok(Self {
+            shared: Arc::new((Mutex::new(Mailbox::default()), Condvar::new())),
+            driver: Mutex::new(ReplayDriver::new(geometry, floor_height_m)),
             #[cfg(test)]
             synchronous: false,
         })
@@ -242,6 +154,7 @@ impl PredictionWorker {
     /// Post `replay` at `epoch` and return the previous result as
     /// `(epoch, proof, owner state)`. `None` means the worker held its lock, in
     /// which case the request was dropped, or that no result was ready yet.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn exchange(
         &self,
         epoch: u64,
@@ -276,6 +189,25 @@ impl PredictionWorker {
         }
         result
     }
+    /// Advance browser prediction with a fixed eight-tick integration budget.
+    #[cfg(target_arch = "wasm32")]
+    pub fn exchange(
+        &self,
+        epoch: u64,
+        replay: Replay,
+    ) -> Option<(
+        u64,
+        rm_sim_server::prediction::PredictionProof,
+        ChassisSnapshot,
+    )> {
+        let (previous, shots) = {
+            let mut mailbox = self.shared.0.try_lock().ok()?;
+            (mailbox.result.take(), std::mem::take(&mut mailbox.shots))
+        };
+        let completion = self.driver.try_lock().ok()?.run(epoch, &replay, shots, 8);
+        self.shared.0.try_lock().ok()?.complete(completion);
+        previous
+    }
 }
 impl Drop for PredictionWorker {
     fn drop(&mut self) {
@@ -283,8 +215,159 @@ impl Drop for PredictionWorker {
         if let Ok(mut mailbox) = self.shared.0.lock() {
             mailbox.stopped = true;
             mailbox.request = None;
+            #[cfg(not(target_arch = "wasm32"))]
             self.shared.1.notify_one();
         }
+    }
+}
+
+/// Physics state shared by native background and browser caller-driven execution.
+struct ReplayDriver {
+    replayer: Replayer,
+    history: rm_sim_server::network_stats::CorrectionHistory,
+    shot_history: std::collections::VecDeque<(u64, ChassisSnapshot)>,
+    shot_epoch: Option<u64>,
+}
+struct Completion {
+    result: Option<(
+        u64,
+        rm_sim_server::prediction::PredictionProof,
+        ChassisSnapshot,
+    )>,
+    muzzles: Vec<(u64, u64, rm_sim_world::Pose)>,
+    correction: rm_sim_server::network_stats::CorrectionStats,
+    replay_ms: f64,
+    replay_ticks: u64,
+}
+impl ReplayDriver {
+    fn new(geometry: StaticGeometry, floor_height_m: f64) -> Self {
+        Self {
+            replayer: Replayer::new(geometry, floor_height_m),
+            history: Default::default(),
+            shot_history: Default::default(),
+            shot_epoch: None,
+        }
+    }
+    fn run(
+        &mut self,
+        epoch: u64,
+        replay: &Replay,
+        shots: Vec<ShotSample>,
+        max_ticks: usize,
+    ) -> Completion {
+        if self.shot_epoch != Some(epoch) {
+            self.shot_history.clear();
+            self.shot_epoch = Some(epoch);
+        }
+        let mut muzzles = Vec::new();
+        for shot in &shots {
+            if let Some((_, owner)) = self
+                .shot_history
+                .iter()
+                .rev()
+                .find(|(t, _)| *t == shot.time_ns)
+            {
+                muzzles.push((
+                    epoch,
+                    shot.id,
+                    rm_sim_server::prediction::muzzle_for(owner, shot.aim),
+                ));
+            }
+        }
+        let shots: Vec<_> = shots
+            .into_iter()
+            .filter(|s| !muzzles.iter().any(|(_, id, _)| *id == s.id))
+            .collect();
+        // A shot sampled inside an interval this world already
+        // replayed has to be reached again, so rebuild and re-run it.
+        let rewind = shots.iter().any(|shot| {
+            shot.time_ns >= replay.snapshot_time_ns && shot.time_ns < self.replayer.time_ns()
+        });
+        let started = rm_sim_server::clock::Instant::now();
+        let mut replay_ticks = 0;
+        let result = self.replayer.advance_budgeted(
+            epoch,
+            replay,
+            rm_sim_server::prediction::MAX_CONTINUOUS_REPLAY_NS,
+            rewind,
+            max_ticks,
+            &mut |event| match event {
+                ReplayEvent::Rebuilt => {
+                    let Some(owner) = replay.states.iter().find(|s| s.id == replay.chassis) else {
+                        return;
+                    };
+                    self.history.compare(epoch, replay.snapshot_time_ns, owner);
+                    let age = replay
+                        .snapshot_time_ns
+                        .saturating_sub(replay.context_time_ns);
+                    self.history.stats.context_age_ns = Some(age);
+                    self.history.stats.context_hint = Some(if age > 100_000_000 {
+                        "stale_collision_context"
+                    } else if replay.states.iter().any(|other| {
+                        other.id != owner.id
+                            && other
+                                .pose
+                                .translation_m
+                                .iter()
+                                .zip(owner.pose.translation_m)
+                                .map(|(a, b)| (a - b).powi(2))
+                                .sum::<f64>()
+                                < 2.25
+                    }) {
+                        "nearby_robot_possible_contact"
+                    } else if owner.wheels.iter().any(|wheel| wheel.contact.is_some()) {
+                        "wheel_contact"
+                    } else {
+                        "unknown"
+                    });
+                }
+                ReplayEvent::Before { time_ns, owner } => {
+                    self.shot_history.push_back((time_ns, owner.clone()));
+                    while self.shot_history.len() > 512 {
+                        self.shot_history.pop_front();
+                    }
+                    for shot in shots.iter().filter(|s| s.time_ns == time_ns) {
+                        muzzles.push((
+                            epoch,
+                            shot.id,
+                            rm_sim_server::prediction::muzzle_for(owner, shot.aim),
+                        ));
+                    }
+                }
+                ReplayEvent::After { time_ns, owner } => {
+                    replay_ticks += 1;
+                    self.history.record(time_ns, owner);
+                }
+            },
+        );
+
+        Completion {
+            result: result.ok().map(|state| {
+                (
+                    epoch,
+                    rm_sim_server::prediction::PredictionProof {
+                        snapshot_id: replay.snapshot_id,
+                        target_time_ns: self.replayer.time_ns(),
+                        last_input_sequence: self.replayer.last_input_sequence(),
+                    },
+                    state,
+                )
+            }),
+            muzzles,
+            correction: self.history.stats.clone(),
+            replay_ms: started.elapsed().as_secs_f64() * 1000.,
+            replay_ticks,
+        }
+    }
+}
+impl Mailbox {
+    fn complete(&mut self, completion: Completion) {
+        self.completed += 1;
+        self.replay_ms = completion.replay_ms;
+        self.replay_ticks = completion.replay_ticks;
+        self.correction = completion.correction;
+        self.muzzles = completion.muzzles;
+        self.result = completion.result;
     }
 }
 
@@ -295,6 +378,83 @@ mod tests {
     use rm_sim_world::{
         ChassisCommand, ChassisConfig, ChassisPlacement, Field, FieldConfig, Pose, Team,
     };
+    #[test]
+    fn caller_budget_resumes_native_replay_and_epoch_replaces_the_world() {
+        let field = Field::new(&FieldConfig {
+            chassis: vec![ChassisPlacement {
+                config: ChassisConfig::default(),
+                team: Team::Red,
+                kind: rm_sim_world::RobotKind::Infantry,
+                performance: None,
+                spawn: Pose::at([0., 0., 1.]),
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        let snapshot = Arc::new(field.snapshot());
+        let tick = rm_sim_world::tick_ns();
+        let replay = Replay {
+            snapshot: Arc::clone(&snapshot),
+            context_id: 1,
+            context_time_ns: 0,
+            snapshot_id: 1,
+            chassis: 0,
+            states: snapshot.chassis.clone(),
+            snapshot_time_ns: 0,
+            target_time_ns: 20 * tick,
+            inputs: vec![PendingInput {
+                sequence: 1,
+                time_ns: 0,
+                command: ChassisCommand {
+                    forward_m_s: 2.,
+                    ..Default::default()
+                },
+            }],
+        };
+        let geometry = field.static_geometry_snapshot();
+        let mut expected = ReplayDriver::new(geometry.clone(), 0.);
+        let expected = expected
+            .run(1, &replay, Vec::new(), usize::MAX)
+            .result
+            .unwrap()
+            .2;
+        let mut driver = ReplayDriver::new(geometry, 0.);
+        for part in 1..=5 {
+            let completion = driver.run(1, &replay, Vec::new(), 4);
+            assert_eq!(
+                completion.replay_ticks, 4,
+                "integration budget, part {part}"
+            );
+            let (_, proof, state) = completion.result.unwrap();
+            assert_eq!(
+                proof.target_time_ns,
+                part * 4 * tick,
+                "partial proof uses reached time"
+            );
+            if part == 5 {
+                assert_eq!(
+                    state, expected,
+                    "partitioned and unbounded replay use the same physics"
+                );
+            }
+        }
+        let mut replaced = replay;
+        replaced.states[0].pose.translation_m[0] = 5.;
+        let completion = driver.run(2, &replaced, Vec::new(), 0);
+        let (epoch, proof, state) = completion.result.unwrap();
+        assert_eq!(epoch, 2);
+        assert_eq!(
+            proof.target_time_ns, 0,
+            "new epoch discards the previous continuation"
+        );
+        assert_eq!(state.pose.translation_m[0], 5.);
+        assert_eq!(
+            field.snapshot(),
+            *snapshot,
+            "prediction never mutates authority"
+        );
+    }
+
     #[test]
     fn moving_shot_capture_uses_its_exact_tick_even_after_prediction_passes_it() {
         let tick = rm_sim_world::tick_ns();

@@ -14,10 +14,12 @@
 #![deny(missing_docs)]
 
 extern crate self as rm_sim_server;
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 mod assembly;
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 mod assembly_rig;
+#[cfg(feature = "host-runtime")]
+pub mod assembly_worker;
 #[cfg(test)]
 #[cfg(feature = "native-host")]
 mod bandwidth_probe;
@@ -28,20 +30,20 @@ pub use rm_sim_assets::collision_mesh;
 pub mod compression;
 pub mod deployment;
 pub mod external_control;
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 pub mod host;
 pub mod host_args;
 #[cfg(feature = "native-host")]
 pub mod http;
 pub mod layout;
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 mod lifecycle;
 pub mod map_interaction;
 pub use rm_sim_assets::math;
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 pub mod navigation;
 /// Caller-visible navigation diagnostics without native planning workers.
-#[cfg(not(feature = "native-host"))]
+#[cfg(not(feature = "host-runtime"))]
 pub mod navigation {
     pub use rm_sim_control::navigation::{Bake, CELL_M, Phase, RADIUS_M, View};
 }
@@ -52,9 +54,9 @@ pub mod protocol;
 pub mod referee_protocol;
 pub mod rmuc_2027;
 pub mod roster;
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 pub mod sensor_stream;
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 pub mod simulation;
 pub mod snapshot_codec;
 pub mod zone_catalog;
@@ -99,3 +101,7 @@ pub mod websocket;
 #[cfg(not(feature = "native-host"))]
 #[path = "presentation_clock.rs"]
 pub mod presentation_clock;
+
+#[cfg(feature = "host-runtime")]
+#[path = "outbox.rs"]
+pub(crate) mod host_outbox;

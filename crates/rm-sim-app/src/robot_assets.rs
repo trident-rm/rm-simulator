@@ -19,7 +19,6 @@ pub fn source_chassis(root: &Path) -> std::io::Result<Option<rm_sim_world::Chass
 
 /// Apply the app's existing transform tuning to a copy of a verified source
 /// configuration. Legacy fitted presets remain selected by the host as before.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn tuned_source_chassis(
     descriptor: &rm_sim_assets::robots::RobotDescriptor,
 ) -> std::io::Result<Option<rm_sim_world::ChassisConfig>> {

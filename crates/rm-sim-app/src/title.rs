@@ -405,8 +405,8 @@ pub fn join_args(base: &Args, fields: &TitleFields, choice: Choice) -> Result<Ar
     }
 
     #[cfg(target_arch = "wasm32")]
-    if matches!(choice, Choice::Host | Choice::Practice) {
-        return Err("Browser clients connect to a native host. Open Multiplayer and enter its ws:// or wss:// address".into());
+    if matches!(choice, Choice::Host) {
+        return Err("Browser multiplayer hosting requires a native host. Single Player runs locally, or enter a ws:// or wss:// address".into());
     }
     match choice {
         Choice::Connect => {
@@ -1156,7 +1156,7 @@ fn spawn_title(mut commands: Commands, base: Res<BaseArgs>, mut state: ResMut<Ti
     commands.spawn((
         ChildOf(row),
         Text::new(if cfg!(target_arch = "wasm32") {
-            "Join a native host through WebSocket."
+            "Single Player runs locally. Multiplayer connects through WebSocket."
         } else {
             "Practice solo or join your team."
         }),

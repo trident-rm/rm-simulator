@@ -188,6 +188,16 @@ impl Simulation {
         add_terrain(&mut field, &terrain)?;
         let mut simulation = Self::new(field, paused);
         simulation.competition = competition;
+        simulation.prediction_scene = crate::prediction::PredictionScene::from_cad(
+            cad,
+            &LayoutOptions {
+                terrain: true,
+                referee,
+                rune: None,
+                outpost_speed_rad_s: 0.0,
+                projectile_policy: Default::default(),
+            },
+        );
         if let Some(config) = chassis {
             simulation = simulation.with_spawner(ChassisSpawner {
                 config,

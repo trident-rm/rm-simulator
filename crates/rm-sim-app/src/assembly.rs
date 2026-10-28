@@ -16,43 +16,16 @@ struct Assets {
     model: Model,
 }
 /// Register and verify the external source package before asset plugins start.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn register(app: &mut App, root: Option<&Path>) -> Result<(), String> {
     let Some(root) = root else {
         return Ok(());
     };
-    let manifest: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(root.join("manifest.json")).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    if manifest["profile"] != "pie-rmuc2027-assembly-workbench-v5" {
-        return Err("unsupported assembly source binding".into());
-    }
-    use sha2::{Digest, Sha256};
-    for file in [
-        "engineer",
-        "core-base",
-        "core-arm",
-        "core-head",
-        "unit",
-        "config",
-    ] {
-        let entry = &manifest["files"][file];
-        let name = entry["file"].as_str().ok_or("missing assembly file")?;
-        if Path::new(name).components().count() != 1 {
-            return Err("invalid assembly file path".into());
-        }
-        let bytes = std::fs::read(root.join(name)).map_err(|e| e.to_string())?;
-        if entry["sha256"] != format!("{:x}", Sha256::digest(&bytes)) {
-            return Err(format!("assembly {file} checksum mismatch"));
-        }
-    }
-    let mut model: Model = serde_json::from_slice(
-        &std::fs::read(root.join("assembly.json")).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
+    let source = rm_sim_assets::semantics::assembly::SourcePackage::load(root)
+        .map_err(|error| error.to_string())?;
+    let mut model = source.model().map_err(|error| error.to_string())?;
     model.core_envelope_m.clear();
-    let bytes = std::fs::read(root.join("engineer.glb")).map_err(|e| e.to_string())?;
+    let bytes =
+        rm_sim_assets::package_io::read(root.join("engineer.glb")).map_err(|e| e.to_string())?;
     let length = u32::from_le_bytes(
         bytes
             .get(12..16)
@@ -96,23 +69,26 @@ pub fn register(app: &mut App, root: Option<&Path>) -> Result<(), String> {
         }
     }
     app.insert_resource(rm_sim_render::team_robot::ReplacedArmMeshes(names));
-    let root = std::path::absolute(root).map_err(|e| e.to_string())?;
-    use bevy::asset::io::{AssetSourceBuilder, file::FileAssetReader};
-    app.register_asset_source(
-        "assembly",
-        AssetSourceBuilder::new(move || Box::new(FileAssetReader::new(root.clone()))),
-    );
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let root = std::path::absolute(root).map_err(|e| e.to_string())?;
+        use bevy::asset::io::{AssetSourceBuilder, file::FileAssetReader};
+        app.register_asset_source(
+            "assembly",
+            AssetSourceBuilder::new(move || Box::new(FileAssetReader::new(root.clone()))),
+        );
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use bevy::asset::io::AssetSourceBuilder;
+        let memory = crate::browser_assets::reader_at(root);
+        app.register_asset_source(
+            "assembly",
+            AssetSourceBuilder::new(move || Box::new(memory.clone())),
+        );
+    }
     app.insert_resource(Assets { model });
     Ok(())
-}
-/// Reject filesystem-only workbench packages in the browser before startup.
-#[cfg(target_arch = "wasm32")]
-pub fn register(_app: &mut App, root: Option<&Path>) -> Result<(), String> {
-    if root.is_some() {
-        Err("Browser assembly assets require a verified HTTP package; local filesystem packages are unavailable".into())
-    } else {
-        Ok(())
-    }
 }
 /// Adds a screen-scoped panel; all actions travel through the host protocol.
 pub struct AssemblyPlugin;

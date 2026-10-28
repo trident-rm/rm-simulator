@@ -12,8 +12,10 @@ in `rm-sim-physics`, which opts into the generic crate's Rapier extension API. T
 `Field` facade in `rm-sim-world` coordinates them with live rules and the
 referee on one explicit clock (128 Hz by default, with configurable in-process
 physical/rule stepping). Rendering consumes caller-owned appearance
-and has no dependency on physics or gameplay. The server host worker owns each
-live simulation and roster; app systems and transports submit commands to it.
+and has no dependency on physics or gameplay. The server host owner retains each live simulation and roster; app systems and
+transports submit commands through `HostHandle`. Native hosting runs that owner
+on a worker. Browser offline hosting drives the same owner through
+`CallerDrivenHost`, without a native thread or socket.
 
 `rm-sim-control` now owns navigation search/following and source assembly
 planning over explicit observations and shared geometry. Host workers, permissions
@@ -122,7 +124,10 @@ direct wheel controls and subsequent adapter boundaries.
 
 `PredictionState` owns the replay worker, geometry, checkpoint context, input
 history, accepted prediction and counters inside `Session`. Embedded and remote
-sessions both use `Client`; the embedded host still owns its simulation worker.
+sessions both use `Client`; embedded hosts retain the same authority owner.
+Native prediction uses background workers. Browser prediction drives the same
+whole-world replay in slices of eight chassis ticks and four projectile ticks
+per exchange. Restoring a checkpoint remains indivisible.
 
 Chassis ingestion builds an ID index once per frame and resolves `PresentedPose`,
 armor state and equipment-light state components. Transform and material systems

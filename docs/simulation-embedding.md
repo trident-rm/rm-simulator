@@ -196,3 +196,22 @@ Read [borrowed telemetry](telemetry.md) when a controller needs wheel or prescri
 joint state without cloning a complete checkpoint/model. [Scoped CPU workers](parallel-rollouts.md)
 parallelize independent session requests with explicit per-request results and
 no background work surviving a call; sensors and task/reward state remain external.
+
+## Caller-driven host authority
+
+`rm-sim-server` with `default-features = false, features = ["host-runtime"]`
+provides `host::CallerDrivenHost` without native GNS sockets. It owns the same
+host owner and processes the same admission and command requests as the native
+worker. App systems and transports still submit through `HostHandle`; they do
+not receive mutable simulation access.
+
+Call `advance(elapsed)` from the embedding event loop. Each call advances at
+most eight ordinary 128 Hz ticks and retains at most 250 ms of catch-up debt.
+Long browser suspensions discard older wall time; rules advance only through
+the explicit ticks that execute. `stats()` reports the actual ticks, remaining
+debt and measured advancement time. Startup readiness, pause, manual stepping,
+confirmation ordering and owner permissions use the existing host paths.
+
+The browser embedded client passes codec datagrams through `HostPeer` and the
+same client codec used remotely. Only the carrier and scheduling differ. Native
+`native-host` enables `host-runtime` plus native transports and worker services.

@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- Add browser offline Single Player through the existing host authority, bounded
+  chassis/projectile prediction and verified optional robot/assembly CAD loading.
+  Run automatic assembly planning in isolated workers and enable RMUL start/reset
+  keys and prediction scene admission.
+
 - Run the existing native title, staging, controls and HUD in the browser using
   a WebSocket-backed Session, verified HTTP packages and localStorage settings.
   Remove the separate HTML pilot HUD and fix RMUL staging regions and rosters.

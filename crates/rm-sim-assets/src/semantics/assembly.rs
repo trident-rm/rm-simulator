@@ -180,6 +180,18 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires RM_ASSEMBLY_PACKAGE and RM_ASSEMBLY_AREA source packages"]
+    fn actual_source_package_validates_visual_model_collision_and_area() {
+        let root = std::env::var_os("RM_ASSEMBLY_PACKAGE").expect("set RM_ASSEMBLY_PACKAGE");
+        let area = std::env::var_os("RM_ASSEMBLY_AREA").expect("set RM_ASSEMBLY_AREA");
+        let package = SourcePackage::load(Path::new(&root)).unwrap();
+        let model = package.model().unwrap();
+        model.validate().unwrap();
+        package.collision_scene().unwrap();
+        package.area_frame(Path::new(&area)).unwrap();
+    }
+
+    #[test]
     fn verified_snapshot_survives_source_replacement_and_deletion() {
         struct Fixture(std::path::PathBuf);
         impl Drop for Fixture {

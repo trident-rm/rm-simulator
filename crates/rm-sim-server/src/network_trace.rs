@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Bounded transport metadata tracing. Never records payloads, names or passwords.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 use crate::clock::Instant;
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 use crate::{
     clock::TimeSource,
     protocol::{ClientMessage, Command, ServerMessage},
 };
 use serde::Serialize;
 use std::{collections::BTreeMap, path::PathBuf};
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 use std::{
     fs::{File, OpenOptions},
     io::{self, BufWriter, Write},
@@ -55,11 +55,11 @@ impl EventSamples {
     }
 }
 
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 const CAPACITY: usize = 2048;
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 const FILE_LIMIT: u64 = 64 * 1024 * 1024;
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 static NEXT_FILE: AtomicU64 = AtomicU64::new(1);
 
 /// Counts for one stage and message class. Bytes exclude UDP/IP and GNS overhead.
@@ -93,7 +93,7 @@ pub struct Report {
     pub error: Option<String>,
 }
 /// One metadata observation. Optional identities allow correlation without payloads.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 #[derive(Clone, Default, Serialize)]
 pub(crate) struct Event {
     pub stage: &'static str,
@@ -131,14 +131,14 @@ pub(crate) struct Event {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub work_ns: Option<u64>,
 }
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 #[derive(Serialize)]
 struct Row {
     elapsed_ns: u64,
     #[serde(flatten)]
     event: Event,
 }
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 #[derive(Default)]
 struct Health {
     dropped: AtomicU64,
@@ -147,7 +147,7 @@ struct Health {
     error: Mutex<Option<String>>,
 }
 /// Local counters plus an optional nonblocking disk writer. No socket or simulation access.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 pub(crate) struct Observer {
     time: TimeSource,
     started: Instant,
@@ -156,7 +156,7 @@ pub(crate) struct Observer {
     health: Arc<Health>,
     writer: Option<std::thread::JoinHandle<()>>,
 }
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 impl Observer {
     pub(crate) fn new(label: &'static str, time: TimeSource) -> Self {
         let directory = std::env::var_os("RM_NET_TRACE_DIR").map(PathBuf::from);
@@ -261,6 +261,7 @@ impl Observer {
         report.error = self.health.error.try_lock().ok()?.clone();
         Some(report)
     }
+    #[cfg(feature = "native-host")]
     pub(crate) fn packet(&self, stage: &'static str, peer: Option<u32>, bytes: &[u8]) {
         let kind = match bytes.get(..4) {
             Some(b"RM11") => "owner",
@@ -287,6 +288,7 @@ impl Observer {
             ..Default::default()
         });
     }
+    #[cfg(feature = "native-host")]
     pub(crate) fn work(&self, kind: &'static str, elapsed: Duration) {
         self.record(Event {
             stage: "work",
@@ -402,7 +404,7 @@ impl Observer {
         self.record(event);
     }
 }
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 impl Drop for Observer {
     fn drop(&mut self) {
         drop(self.sender.take());
@@ -412,7 +414,7 @@ impl Drop for Observer {
     }
 }
 
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 fn write_trace(
     file: File,
     receiver: mpsc::Receiver<Row>,

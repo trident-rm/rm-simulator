@@ -15,12 +15,12 @@
 //! [`crate::compression::decompress`] recognizes both framings, so a raw peer
 //! runs the same baseline rotation, input batches and owner handshake without
 //! paying for ZSTD.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 use crate::host::{HostHandle, Outbound, PeerRegistration};
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
+use crate::host_outbox as outbox;
+#[cfg(feature = "host-runtime")]
 use crate::lifecycle::Stop;
-#[cfg(feature = "native-host")]
-use crate::net::outbox;
 use crate::pacing::{Datagram, Pacer};
 use crate::protocol::{ClientMessage, Command, Robot, Role, ServerMessage, Welcome};
 use crate::udp_snapshot::Feedback;
@@ -61,7 +61,7 @@ const INPUT_FRAME_BYTES: usize = 83;
 pub(crate) const MAX_INPUT_FRAMES: usize = 12;
 /// Bytes of the shared RMI6 batch header: chassis, input epoch and placement
 /// revision, which every compact frame in the batch inherits.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 const INPUT_HEADER_BYTES: usize = 20;
 /// Per-frame tag for a frame that keeps the fixed 83-byte encoding.
 const INPUT_FRAME_FIXED: u8 = 0x00;
@@ -78,15 +78,15 @@ const INPUT_FOLDED: u8 = 0x08;
 /// Largest inflated RMI6 body: the count, the shared header and twelve frames
 /// that each fall back to the fixed encoding. It bounds a hostile peer's
 /// allocation and proves the body still fits one datagram.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 const INPUT_BATCH_BODY_LIMIT: usize =
     1 + INPUT_HEADER_BYTES + MAX_INPUT_FRAMES * (1 + INPUT_FRAME_BYTES);
 /// Ceiling for inflating one compressed client command, so a hostile peer cannot
 /// force a larger allocation.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 const INPUT_BATCH_LIMIT: usize = 16 * 1024;
 /// Host frames queued past this native backlog skip their periodic checkpoint.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 pub(crate) const CONGESTED_PENDING_BYTES: u32 = 64 * 1024;
 /// Owner configurations one client keeps, so a received anchor can resolve the
 /// revision it names. Oldest first; a connection changes configuration rarely.
@@ -96,7 +96,7 @@ const CONFIG_FEEDBACK: usize = 8;
 /// Resend an unacknowledged owner configuration after this many anchor
 /// opportunities, mirroring the baseline `Retire` schedule. At the 32 ms
 /// broadcast period that is about half a second between attempts.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 const CONFIG_RESEND_FRAMES: u64 = 16;
 
 /// Host-side owner-configuration handshake for one peer.
@@ -107,7 +107,7 @@ const CONFIG_RESEND_FRAMES: u64 = 16;
 /// baseline retirement. The identity is a pure function of the configuration,
 /// so a changed configuration always starts a new handshake and can never be
 /// silently reused.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 #[derive(Default)]
 struct OwnerConfigSender {
     /// The configuration the peer acknowledged, if any.
@@ -117,7 +117,7 @@ struct OwnerConfigSender {
     /// Anchor opportunities since the pending frame was last sent.
     age: u64,
 }
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 impl OwnerConfigSender {
     /// True when an anchor may safely name `revision`.
     fn acknowledged(&self, revision: crate::owner_stream::ConfigRevision) -> bool {
@@ -279,7 +279,7 @@ fn fixed_frame(chassis: u32, frame: &crate::input_stream::InputFrame) -> [u8; IN
     bytes
 }
 /// Whether `payload` is a compact `RMI6` pilot input batch.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 fn is_input_batch(payload: &[u8]) -> bool {
     payload.starts_with(INPUT_BATCH_MAGIC)
 }
@@ -292,7 +292,7 @@ fn write_varint(bytes: &mut Vec<u8>, mut value: u64) {
     bytes.push(value as u8);
 }
 /// Reads one unsigned LEB128 varint, refusing a truncated or overflowing one.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 fn read_varint(bytes: &[u8], cursor: &mut usize) -> io::Result<u64> {
     let mut value = 0u64;
     for shift in (0..64).step_by(7) {
@@ -311,7 +311,7 @@ fn read_varint(bytes: &[u8], cursor: &mut usize) -> io::Result<u64> {
     Err(io_error("input batch varint overflow"))
 }
 /// Reads one little-endian u64 at `cursor` and advances it.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 fn read_u64(bytes: &[u8], cursor: &mut usize) -> io::Result<u64> {
     let slice = bytes
         .get(*cursor..*cursor + 8)
@@ -320,7 +320,7 @@ fn read_u64(bytes: &[u8], cursor: &mut usize) -> io::Result<u64> {
     Ok(u64::from_le_bytes(slice.try_into().unwrap()))
 }
 /// Decodes one fixed 83-byte frame. Refuses a non-finite command.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 fn decode_fixed_frame(frame: &[u8]) -> io::Result<Command> {
     let u64_at = |i| u64::from_le_bytes(frame[i..i + 8].try_into().unwrap());
     let f64_at = |i| f64::from_le_bytes(frame[i..i + 8].try_into().unwrap());
@@ -462,7 +462,7 @@ fn input_batch(inputs: &VecDeque<Command>, raw: bool) -> io::Result<Vec<u8>> {
 /// [`INPUT_BATCH_BODY_LIMIT`], a count outside 1..=12, a reserved mask or flag
 /// bit, a delta or command value with no in-batch base, a truncated frame, a
 /// trailing byte and any non-finite command.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 fn decode_inputs(packet: &[u8]) -> io::Result<Vec<Command>> {
     if packet.len() > CHUNK {
         return Err(io_error("input batch exceeds one datagram"));
@@ -476,7 +476,7 @@ fn decode_inputs(packet: &[u8]) -> io::Result<Vec<Command>> {
 /// entry per count. A compact frame inherits the header's identity and reuses the
 /// previous frame's sequence, sampled time and unchanged command values; a legacy
 /// frame carries all 80 bytes of its own.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 fn decode_compact_inputs(compressed: &[u8]) -> io::Result<Vec<Command>> {
     let bytes =
         crate::compression::decompress(compressed, INPUT_BATCH_BODY_LIMIT).map_err(io_error)?;
@@ -601,7 +601,7 @@ fn decode_compact_inputs(compressed: &[u8]) -> io::Result<Vec<Command>> {
 /// Every packet fits comfortably below the path MTU. GNS supplies encryption,
 /// congestion control and reliability; this header only assembles application
 /// frames and rejects stale state. Each connection has a fresh revision space.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 pub(crate) fn packets(revision: u64, reliable: bool, bytes: &[u8]) -> io::Result<Vec<Vec<u8>>> {
     if bytes.is_empty() || bytes.len() > MAX_WIRE {
         return Err(io_error("frame size exceeds limit"));
@@ -752,7 +752,7 @@ impl Frames {
 
 /// What one client datagram turned out to be, once framing, baseline feedback
 /// and input batches have been handled.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 pub(crate) enum PeerRequest {
     /// Baseline feedback, or a fragment that completed nothing. Nothing to do.
     Handled,
@@ -764,7 +764,7 @@ pub(crate) enum PeerRequest {
 
 /// The host's half of one peer's wire: framing in, paced datagrams out.
 /// Holds no socket and reads no clock; callers supply `now`.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 pub(crate) struct PeerCodec {
     admitted: Instant,
     chassis: Option<u32>,
@@ -777,7 +777,7 @@ pub(crate) struct PeerCodec {
     /// Emit uncompressed frames, for the in-process owner link.
     raw: bool,
 }
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 impl PeerCodec {
     /// Creates the host codec for a peer the carrier admitted at `admitted`.
     /// `rate_bytes_per_s` is the pacing budget; `raw` selects the uncompressed
@@ -963,7 +963,7 @@ impl PeerCodec {
 /// socket connection, `Server::connect_owner` drives one over the in-process
 /// loopback link, and a test drives one over a scripted link. Dropping it
 /// releases the seat, so a closed carrier never strands a chassis.
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 pub struct HostPeer {
     handle: HostHandle,
     codec: PeerCodec,
@@ -976,7 +976,7 @@ pub struct HostPeer {
     /// authority no network hello can claim. `None` for every socket peer.
     owner_spawn: Option<([f64; 3], f64)>,
 }
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 impl HostPeer {
     /// `admitted` is when the carrier accepted this peer; the hello timeout and
     /// the pacer both measure from it. `raw` selects the uncompressed framing
@@ -1066,7 +1066,7 @@ impl HostPeer {
         chassis: crate::protocol::Chassis,
         password: String,
     ) -> io::Result<()> {
-        let (sender, receiver) = outbox::channel(crate::net::OUTBOX_CAPACITY);
+        let (sender, receiver) = outbox::channel(outbox::DEFAULT_CAPACITY);
         let spawn = self.owner_spawn;
         let welcome = self
             .handle
@@ -1141,7 +1141,7 @@ impl HostPeer {
         self.codec.pacer.replaced
     }
 }
-#[cfg(feature = "native-host")]
+#[cfg(feature = "host-runtime")]
 impl Drop for HostPeer {
     fn drop(&mut self) {
         if let Some((id, _)) = &self.seat {

@@ -23,13 +23,16 @@ use crate::scene::{Appearance, publish_scene};
 use crate::screenshot::{ScreenshotRequest, take_screenshot};
 use crate::session::advance_world;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn run() -> AppExit {
-    #[cfg(feature = "steam")]
-    let steam_runtime = crate::steam_support::SteamRuntime::initialize();
     #[cfg(not(target_arch = "wasm32"))]
-    let mut args = Args::parse();
-    #[cfg(target_arch = "wasm32")]
-    let mut args = crate::browser::args();
+    let args = Args::parse();
+    run_with_args(args)
+}
+
+pub(crate) fn run_with_args(mut args: crate::args::Args) -> AppExit {
+    #[cfg(all(feature = "steam", not(target_arch = "wasm32")))]
+    let steam_runtime = crate::steam_support::SteamRuntime::initialize();
     if let Err(error) = args.resolve_asset_path() {
         eprintln!("resolving assets: {error}");
         return AppExit::error();
@@ -44,24 +47,50 @@ pub(crate) fn run() -> AppExit {
             AssetSourceBuilder::new(move || Box::new(memory.clone())),
         );
     }
-    #[cfg(feature = "steam")]
+    #[cfg(all(feature = "steam", not(target_arch = "wasm32")))]
     crate::steam_support::install(&mut app, steam_runtime);
-    #[cfg(not(target_arch = "wasm32"))]
     if let Some(path) = &args.hero_assets {
-        use bevy::asset::io::{AssetSourceBuilder, file::FileAssetReader};
+        use bevy::asset::io::AssetSourceBuilder;
+        #[cfg(not(target_arch = "wasm32"))]
+        use bevy::asset::io::file::FileAssetReader;
+        #[cfg(not(target_arch = "wasm32"))]
         let root = path.clone();
+        #[cfg(target_arch = "wasm32")]
+        let memory = crate::browser_assets::reader_at(path);
         app.register_asset_source(
             "hero-robot",
-            AssetSourceBuilder::new(move || Box::new(FileAssetReader::new(root.clone()))),
+            AssetSourceBuilder::new(move || {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    Box::new(FileAssetReader::new(root.clone()))
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    Box::new(memory.clone())
+                }
+            }),
         );
     }
-    #[cfg(not(target_arch = "wasm32"))]
     if let Some(path) = &args.robot_assets {
-        use bevy::asset::io::{AssetSourceBuilder, file::FileAssetReader};
+        use bevy::asset::io::AssetSourceBuilder;
+        #[cfg(not(target_arch = "wasm32"))]
+        use bevy::asset::io::file::FileAssetReader;
+        #[cfg(not(target_arch = "wasm32"))]
         let root = std::path::absolute(path).expect("robot asset path");
+        #[cfg(target_arch = "wasm32")]
+        let memory = crate::browser_assets::reader_at(path);
         app.register_asset_source(
             "robots",
-            AssetSourceBuilder::new(move || Box::new(FileAssetReader::new(root.clone()))),
+            AssetSourceBuilder::new(move || {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    Box::new(FileAssetReader::new(root.clone()))
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    Box::new(memory.clone())
+                }
+            }),
         );
         app.insert_resource(rm_sim_render::team_robot::TeamRobotAssets {
             file: "robots://neutral.glb".into(),

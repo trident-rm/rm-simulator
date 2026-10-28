@@ -5,7 +5,7 @@
 //! Transports submit typed requests through a bounded mailbox. The worker
 //! captures and queues snapshots in that same order; socket writers encode
 //! them afterwards. No caller can acquire or mutate the hosted simulation.
-use crate::clock::TimeSource;
+use crate::clock::{Instant, TimeSource};
 use crate::lifecycle::Stop;
 use crate::protocol::{
     ChassisAssignment, ClientMessage, Command, PROTOCOL_VERSION, PlayerInfo, Robot, Role,
@@ -17,8 +17,9 @@ use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(feature = "native-host")]
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const REQUEST_CAPACITY: usize = 256;
 /// Maximum UTF-8 bytes retained for one player display name.
@@ -133,7 +134,7 @@ pub(crate) struct PeerRegistration {
     /// degrees. `Some` also grants authority no network hello can claim.
     pub(crate) owner_spawn: Option<([f64; 3], f64)>,
     /// Bounded output queue the worker pushes this peer's messages onto.
-    pub(crate) outbox: crate::net::outbox::Sender,
+    pub(crate) outbox: crate::host_outbox::Sender,
     /// Cancellation the transport shares with this connection's worker.
     pub(crate) stream: Stop,
 }
@@ -141,7 +142,7 @@ struct Peer {
     info: PlayerInfo,
     owner: bool,
     last_telemetry: Instant,
-    outbox: crate::net::outbox::Sender,
+    outbox: crate::host_outbox::Sender,
     stream: Stop,
 }
 impl Peer {
@@ -224,7 +225,9 @@ struct Control {
 }
 
 /// Notify waiters even if terminal state capture or worker cleanup panics.
+#[cfg(feature = "native-host")]
 struct WorkerCompletion(Arc<Control>);
+#[cfg(feature = "native-host")]
 impl Drop for WorkerCompletion {
     fn drop(&mut self) {
         if thread::panicking() {
@@ -246,9 +249,11 @@ pub struct HostHandle {
     requests: SyncSender<Request>,
     control: Arc<Control>,
     request_limit: Option<(Instant, Stop)>,
+    immediate: Option<Arc<Mutex<Owner>>>,
 }
 impl HostHandle {
     /// Limit HTTP mailbox waits to the connection deadline and shutdown signal.
+    #[cfg(feature = "native-host")]
     pub(crate) fn for_http(&self, deadline: Instant, stop: Stop) -> Self {
         let mut handle = self.clone();
         handle.request_limit = Some((deadline, stop));
@@ -295,6 +300,16 @@ impl HostHandle {
             .ok_or_else(|| "request deadline exceeded".into())
     }
     fn send(&self, request: Request) -> Result<(), String> {
+        if self.is_stopped() {
+            return Err("host is stopped".into());
+        }
+        if let Some(owner) = &self.immediate {
+            owner
+                .lock()
+                .map_err(|_| "host owner poisoned")?
+                .process(request);
+            return Ok(());
+        }
         if let Some((deadline, stop)) = &self.request_limit {
             let mut request = Request::Bounded(Box::new(request), *deadline, stop.clone());
             loop {
@@ -319,6 +334,11 @@ impl HostHandle {
     fn request<T>(&self, build: impl FnOnce(Reply<T>) -> Request) -> Result<T, String> {
         let (reply, result) = mpsc::sync_channel(1);
         self.send(build(reply))?;
+        if self.immediate.is_some() {
+            return result
+                .try_recv()
+                .map_err(|_| "caller-driven host did not reply".into());
+        }
         if self.request_limit.is_some() {
             loop {
                 match result.recv_timeout(self.wait_budget()?) {
@@ -335,6 +355,9 @@ impl HostHandle {
             .map_err(|_| "host stopped before replying".into())
     }
     fn try_send(&self, request: Request) -> Result<(), String> {
+        if self.immediate.is_some() {
+            return self.send(request);
+        }
         if self.is_stopped() {
             return Err("host is stopped".into());
         }
@@ -466,10 +489,12 @@ impl HostHandle {
 
 /// Owns the worker lifetime. Handles never keep the worker alive after its host
 /// is dropped. Constructing a host starts request handling, but not its clock.
+#[cfg(feature = "native-host")]
 pub struct Host {
     handle: HostHandle,
     worker: Option<JoinHandle<()>>,
 }
+#[cfg(feature = "native-host")]
 impl Host {
     /// Take ownership of `simulation` on a new worker paced by the system
     /// clock. `ready` decides whether the clock may step and whether player
@@ -489,27 +514,13 @@ impl Host {
             requests,
             control: control.clone(),
             request_limit: None,
+            immediate: None,
         };
         let worker = thread::Builder::new()
             .name("rm-simulation".into())
             .spawn(move || {
                 let _completion = WorkerCompletion(control.clone());
-                let mut owner = Owner {
-                    simulation,
-                    peers: Vec::new(),
-                    map_markers: Default::default(),
-                    map_interactions: Default::default(),
-                    last_map_interaction: Default::default(),
-                    next_map_interaction: 1,
-                    next_id: 1,
-                    next_sequence: 0,
-                    next_snapshot_id: 1,
-                    next_hit_id: 1,
-                    clock: None,
-                    observer: crate::network_trace::Observer::new("simulation", time.clone()),
-                    time,
-                    control: control.clone(),
-                };
+                let mut owner = Owner::new(simulation, time, control.clone());
                 let result =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| owner.run(receiver)));
                 let error = match result {
@@ -565,9 +576,131 @@ impl Host {
         }
     }
 }
+#[cfg(feature = "native-host")]
 impl Drop for Host {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+/// Work observed during the caller-driven host's newest advance.
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+pub struct CallerDrivenStats {
+    /// Actual simulation ticks completed in the newest call.
+    pub ticks: u64,
+    /// Retained elapsed wall time, in nanoseconds, awaiting a later call.
+    pub backlog_ns: u64,
+    /// Measured time spent advancing, in milliseconds.
+    pub advance_ms: f64,
+}
+/// A caller-driven host using the same owner, admission and command processing as native hosting.
+/// No worker or socket is started. The caller supplies elapsed wall time to [`Self::advance`].
+pub struct CallerDrivenHost {
+    owner: Arc<Mutex<Owner>>,
+    handle: HostHandle,
+    time: crate::clock::ManualTime,
+    pending_ns: u64,
+    stats: CallerDrivenStats,
+}
+impl CallerDrivenHost {
+    /// Own a simulation with its startup readiness held or released explicitly.
+    pub fn new(simulation: Simulation, ready: bool) -> Self {
+        let time = crate::clock::ManualTime::new();
+        let control = Arc::new(Control {
+            ready: AtomicBool::new(ready),
+            ..Default::default()
+        });
+        let mut owner = Owner::new(simulation, time.source(), control.clone());
+        owner.clock = Some(Clock::new(ready, time.source().now()));
+        let owner = Arc::new(Mutex::new(owner));
+        let (requests, _) = mpsc::sync_channel(REQUEST_CAPACITY);
+        let handle = HostHandle {
+            requests,
+            control,
+            request_limit: None,
+            immediate: Some(owner.clone()),
+        };
+        Self {
+            owner,
+            handle,
+            time,
+            pending_ns: 0,
+            stats: CallerDrivenStats::default(),
+        }
+    }
+    /// Access the ordinary host request boundary. Requests complete on the caller's thread.
+    pub fn handle(&self) -> HostHandle {
+        self.handle.clone()
+    }
+    /// Work and catch-up debt measured during the newest advance.
+    pub fn stats(&self) -> CallerDrivenStats {
+        self.stats
+    }
+    /// Most recent host failure, if an advance failed.
+    pub fn failure(&self) -> Option<String> {
+        self.handle.control.failure.lock().ok()?.clone()
+    }
+    /// Transport metadata counters, without a browser disk recorder.
+    pub fn trace_report(&self) -> Option<crate::network_trace::Report> {
+        self.owner.lock().ok()?.observer.report()
+    }
+    /// Advance at most eight 128 Hz ticks per call, retaining at most 250 ms of catch-up debt.
+    ///
+    /// Older wall time is discarded after a long browser suspension. Match and physics
+    /// still advance only through ordinary explicit simulation ticks.
+    ///
+    /// # Errors
+    /// Returns an owner failure or a poisoned owner lock.
+    pub fn advance(&mut self, elapsed: Duration) -> Result<(), String> {
+        let started = Instant::now();
+        self.pending_ns = self
+            .pending_ns
+            .saturating_add(elapsed.as_nanos().min(u128::from(u64::MAX)) as u64)
+            .min(crate::simulation::MAX_ADVANCE_NS);
+        let budget = self.pending_ns.min(rm_sim_world::tick_ns() * 8);
+        self.pending_ns -= budget;
+        self.time.advance(Duration::from_nanos(budget));
+        let mut owner = self.owner.lock().map_err(|_| "host owner poisoned")?;
+        let tick = owner.simulation.field().tick();
+        owner.simulation.poll_navigation();
+        // Every caller interval is accounted now; do not accumulate an uncharged native polling interval.
+        if let Some(clock) = &mut owner.clock {
+            clock.next = self.time.source().now();
+        }
+        if let Err(error) = owner.advance_clock() {
+            *self
+                .handle
+                .control
+                .failure
+                .lock()
+                .map_err(|_| "host failure lock poisoned")? = Some(error.clone());
+            return Err(error);
+        }
+        self.stats = CallerDrivenStats {
+            ticks: owner.simulation.field().tick().saturating_sub(tick),
+            backlog_ns: self.pending_ns,
+            advance_ms: started.elapsed().as_secs_f64() * 1000.,
+        };
+        for result in owner.simulation.take_completed_shots() {
+            if let Some(client) = owner
+                .peers
+                .iter()
+                .find(|p| p.info.chassis == Some(result.shooter))
+                .map(|p| p.info.client_id)
+            {
+                owner.send_to(client, ServerMessage::ShotResult(result));
+            }
+        }
+        Ok(())
+    }
+}
+impl Drop for CallerDrivenHost {
+    fn drop(&mut self) {
+        self.handle.control.stop.request();
+        if let Ok(mut owner) = self.owner.lock() {
+            owner.close();
+        }
+        self.handle.control.completed.request();
     }
 }
 
@@ -607,6 +740,26 @@ struct Owner {
     control: Arc<Control>,
 }
 impl Owner {
+    fn new(simulation: Simulation, time: TimeSource, control: Arc<Control>) -> Self {
+        Self {
+            simulation,
+            peers: Vec::new(),
+            map_markers: Default::default(),
+            map_interactions: Default::default(),
+            last_map_interaction: Default::default(),
+            next_map_interaction: 1,
+            next_id: 1,
+            next_sequence: 0,
+            next_snapshot_id: 1,
+            next_hit_id: 1,
+            clock: None,
+            observer: crate::network_trace::Observer::new("simulation", time.clone()),
+            time,
+            control: control.clone(),
+        }
+    }
+
+    #[cfg(feature = "native-host")]
     fn run(&mut self, requests: Receiver<Request>) -> Result<(), String> {
         while !self.control.stop.wait(Duration::ZERO) {
             // Check the deadline between requests, even under a command flood.
@@ -1464,7 +1617,7 @@ impl Owner {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native-host"))]
 mod tests {
     use super::*;
     use crate::layout::ChassisSpawner;
@@ -1492,7 +1645,7 @@ mod tests {
         handle.roster().unwrap();
         handle.roster().unwrap();
     }
-    fn peer(handle: &HostHandle, role: Role) -> (Welcome, crate::net::outbox::Receiver) {
+    fn peer(handle: &HostHandle, role: Role) -> (Welcome, crate::host_outbox::Receiver) {
         robot_peer(handle, role, None, Robot::default())
     }
     fn robot_peer(
@@ -1500,8 +1653,8 @@ mod tests {
         role: Role,
         team: Option<Team>,
         robot: Robot,
-    ) -> (Welcome, crate::net::outbox::Receiver) {
-        let (outbox, messages) = crate::net::outbox::channel(64);
+    ) -> (Welcome, crate::host_outbox::Receiver) {
+        let (outbox, messages) = crate::host_outbox::channel(64);
         let welcome = handle
             .join(PeerRegistration {
                 password: String::new(),
@@ -1517,7 +1670,7 @@ mod tests {
             .unwrap();
         (welcome, messages)
     }
-    fn next(messages: &crate::net::outbox::Receiver) -> Arc<Outbound> {
+    fn next(messages: &crate::host_outbox::Receiver) -> Arc<Outbound> {
         messages.recv().unwrap()
     }
 
@@ -1534,7 +1687,7 @@ mod tests {
             let host = Host::new(sim, true).unwrap();
             let handle = host.handle();
             let request = |robot| {
-                let (outbox, _messages) = crate::net::outbox::channel(64);
+                let (outbox, _messages) = crate::host_outbox::channel(64);
                 handle.join(PeerRegistration {
                     password: String::new(),
                     name: "UL pilot".into(),
@@ -1584,7 +1737,7 @@ mod tests {
         let handle = host.handle();
         let (_, observer) = peer(&handle, Role::Spectator);
         for name in ["a".repeat(64), "界".repeat(21) + "a"] {
-            let (outbox, _messages) = crate::net::outbox::channel(64);
+            let (outbox, _messages) = crate::host_outbox::channel(64);
             let welcome = handle
                 .join(PeerRegistration {
                     password: String::new(),
@@ -1605,7 +1758,7 @@ mod tests {
         while observer.try_recv().is_some() {}
         let before = handle.roster().unwrap();
         for name in ["a".repeat(65), "界".repeat(22), "界".repeat(21) + "ab"] {
-            let (outbox, _messages) = crate::net::outbox::channel(64);
+            let (outbox, _messages) = crate::host_outbox::channel(64);
             let error = handle
                 .join(PeerRegistration {
                     password: String::new(),

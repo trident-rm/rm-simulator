@@ -259,11 +259,132 @@ def no_gpu(browser, origin):
         context.close()
 
 
+def offline_gameplay(browser, origin):
+    context, page, errors = launch_page(browser, f"{origin}/?field=1v1&inspect=1&play=1")
+    try:
+        wait_screen(page, "InMatch")
+        page.wait_for_function("document.querySelector('#status').dataset.pipelinesReady === 'true'", timeout=120000)
+        assert observed(page, "offline") == "true", "Offline launch connected remotely"
+        page.locator("#sim").focus()
+        page.keyboard.press("F5")
+        page.wait_for_function("document.querySelector('#status').dataset.phase === 'Running'", timeout=15000)
+        position = json.loads(observed(page, "position"))
+        page.mouse.click(800, 500)
+        page.wait_for_function("document.pointerLockElement?.id === 'sim'", timeout=15000)
+        page.keyboard.down("w")
+        try:
+            page.wait_for_function("""initial => {
+                const p = JSON.parse(document.querySelector('#status').dataset.position);
+                return Math.hypot(p[0]-initial[0],p[1]-initial[1]) > .1;
+            }""", arg=position, timeout=15000)
+        finally:
+            page.keyboard.up("w")
+        last_projectile = int(observed(page, "last-projectile") or -1)
+        page.mouse.down()
+        try:
+            page.wait_for_function("previous => Number(document.querySelector('#status').dataset.lastProjectile) > previous", arg=last_projectile, timeout=15000)
+        finally:
+            page.mouse.up()
+        page.keyboard.press("F6")
+        page.wait_for_function("document.querySelector('#status').dataset.paused === 'true'", timeout=15000)
+        wait_frames(page, 200)
+        paused_time = int(observed(page, "time"))
+        wait_frames(page, 250)
+        assert int(observed(page, "time")) == paused_time, "Paused offline host advanced time"
+        page.keyboard.press("F7")
+        page.wait_for_function("previous => Number(document.querySelector('#status').dataset.time) > previous", arg=paused_time, timeout=15000)
+        stepped_time = int(observed(page, "time"))
+        assert stepped_time - paused_time == 3 * 7_812_500, (paused_time, stepped_time)
+        page.keyboard.press("F6")
+        page.wait_for_function("document.querySelector('#status').dataset.paused === 'false'", timeout=15000)
+        wait_frames(page, 1000)
+        page.wait_for_function("() => { const v=JSON.parse(document.querySelector('#status').dataset.frameTiming || '{}'); return v.screen==='InMatch' && v.frames >= 240; }",timeout=30000)
+        network = json.loads(observed(page, "network") or "{}")
+        assert observed(page, "local-aim") == "true", "Browser prediction disabled"
+        assert network.get("prediction_results_accepted", 0) > 0, network
+        prediction = network.get("prediction_worker") or {}
+        assert prediction.get("last_replay_ticks", 999) <= 8, prediction
+        assert not errors, errors
+        print(json.dumps({"case":"offline-gameplay", "start_pause_step_resume":"passed", "prediction":prediction,
+                          "host_work":json.loads(observed(page,"host-work") or "{}"),
+                          "frame_timing":json.loads(observed(page,"frame-timing") or "{}"),
+                          "wasm_memory_bytes":int(observed(page,"wasm-memory-bytes") or 0)}),flush=True)
+        pause(page)
+        click_text(page, "Exit Match", exact=True)
+        wait_screen(page, "Title")
+    finally:
+        context.close()
+
+
+def assembly_worker(browser, origin, fixture):
+    context, page, errors = launch_page(browser, f"{origin}/?inspect=1")
+    try:
+        wait_screen(page, "Title")
+        result = page.evaluate(r"""async fixture => {
+            const root = fixture.replace(/\/$/, '');
+            const [request, expected, names] = await Promise.all(['request.json','expected.json','files.json'].map(file => fetch(`${root}/${file}`).then(r => { if(!r.ok) throw Error(`fixture HTTP ${r.status}`); return r.json(); })));
+            const files = await Promise.all(names.map(async path => ({path, bytes: await fetch(`${root}/files/${path}`).then(r => r.arrayBuffer())})));
+            let frames=0, active=true;
+            const frame=()=>{if(active){frames++; requestAnimationFrame(frame);}};
+            requestAnimationFrame(frame);
+            const started=performance.now();
+            const worker=new Worker('assembly-worker.js',{type:'module'});
+            try {
+                const reply=await new Promise((resolve,reject)=>{
+                    const timer=setTimeout(()=>reject(Error('assembly worker timeout')),60000);
+                    worker.onerror=event=>{clearTimeout(timer);reject(Error(event.message));};
+                    worker.onmessage=event=>{
+                        if(event.data.type==='ready') worker.postMessage({job:JSON.stringify(request),files},files.map(file=>file.bytes));
+                        else {clearTimeout(timer);resolve(JSON.parse(event.data.result));}
+                    };
+                });
+                if(Boolean(reply.Ok)!==Boolean(expected.Ok)) throw Error(`worker/native solver outcome differs: ${JSON.stringify(reply).slice(0,400)}`);
+                if(reply.Err && reply.Err !== expected.Err) throw Error(`worker error differs: ${reply.Err} / ${expected.Err}`);
+                if(reply.Ok && (!reply.Ok.frames.length || reply.Ok.frames.length>4096)) throw Error('invalid worker trajectory length');
+                if(reply.Ok) {
+                    for(const key of ['model_sha256','source_config_sha256']) {
+                        if(reply.Ok.start[key]!==expected.Ok.start[key] || reply.Ok.end[key]!==expected.Ok.end[key]) throw Error(`worker ${key} differs from native`);
+                    }
+                    if(reply.Ok.start.gripped!==expected.Ok.start.gripped || reply.Ok.end.gripped!==expected.Ok.end.gripped) throw Error('worker grasp differs from native');
+                    const actual=reply.Ok.end.unit_pose.translation_m, target=expected.Ok.end.unit_pose.translation_m;
+                    if(Math.hypot(...actual.map((v,i)=>v-target[i]))>1e-4) throw Error('worker endpoint differs from native');
+                }
+                return {outcome:reply.Ok?'planned':'solver-rejection',checks:reply.Ok?.checks,trajectory_frames:reply.Ok?.frames.length,ui_frames:frames,elapsed_ms:performance.now()-started};
+            } finally {active=false;worker.terminate();}
+        }""", fixture)
+        assert result["ui_frames"] > 2, result
+        assert not errors, errors
+        print(json.dumps({"case":"assembly-worker",**result}),flush=True)
+    finally:
+        context.close()
+
+
+def optional_cad(browser, origin):
+    query=urlencode({"field":"rmuc","play":"1","robot":"engineer","robot_assets":"robot","hero_assets":"hero","assembly_assets":"assembly","assembly_area":"area","inspect":"1"})
+    context,page,errors=launch_page(browser,f"{origin}/?{query}")
+    try:
+        wait_screen(page,"InMatch")
+        page.wait_for_function("document.querySelector('#status').dataset.pipelinesReady==='true'",timeout=120000)
+        assert observed(page,"robot-package")=="true", "Verified robot descriptors were not installed"
+        assert observed(page,"offline")=="true"
+        assert not errors, errors
+        print(json.dumps({"case":"optional-cad","robot_hero_assembly_area":"passed","chassis":observed(page,"chassis")}),flush=True)
+    except Exception:
+        print(json.dumps({"case":"optional-cad-failure","observations":page.locator('#status').evaluate("element=>({...element.dataset})"),"errors":errors}),flush=True)
+        raise
+    finally:
+        context.close()
+
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("local-assets/browser-native-app"))
     parser.add_argument("--executable", help="Optional Chromium executable")
     parser.add_argument("--server", help="Running native 1v1 practice (--no-referee) WebSocket URL")
+    parser.add_argument("--worker-fixture", help="Staged native assembly worker fixture URL path")
+    parser.add_argument("--cad", action="store_true", help="Exercise explicitly staged robot/hero/assembly/area packages")
+    parser.add_argument("--offline", action="store_true", help="Exercise caller-driven local hosting and prediction")
     parser.add_argument("--port", type=int, help="HTTP port (default: 8080 with --server, otherwise random)")
     args = parser.parse_args()
     root = args.root.resolve()
@@ -284,6 +405,12 @@ def main():
             try:
                 origin = f"http://127.0.0.1:{server.server_port}"
                 native_title(browser, origin)
+                if args.cad:
+                    optional_cad(browser, origin)
+                if args.worker_fixture:
+                    assembly_worker(browser, origin, args.worker_fixture)
+                if args.offline:
+                    offline_gameplay(browser, origin)
                 if args.server:
                     native_gameplay(browser, origin, args.server)
                     for case in ("missing", "checksum", "bindings"):

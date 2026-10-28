@@ -17,8 +17,10 @@ required-features = ["native-host"]
 
 [features]
 default = ["native-host"]
+# Authoritative host state without native sockets or worker ownership.
+host-runtime = []
 # Native sockets, host workers, filesystem construction and operator services.
-native-host = ["dep:game-networking-sockets", "dep:if-addrs", "dep:tungstenite"]
+native-host = ["host-runtime", "dep:game-networking-sockets", "dep:if-addrs", "dep:tungstenite"]
 
 [dependencies]
 rm-sim-control = { version = "0.1.0", path = "../rm-sim-control" }

@@ -5,18 +5,15 @@
 #[cfg(target_arch = "wasm32")]
 use crate::browser_client::Client;
 use bevy::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
+use rm_sim_server::net::{Client, Server};
 use rm_sim_server::protocol::describe_seat;
+use rm_sim_server::simulation::{BuildProgress, Simulation};
 use rm_sim_server::{
     cad_assets::CadAssets,
     clock::{Instant, TimeSource},
     protocol::{Command, PlayerInfo, Role, WeaponConfig},
 };
-#[cfg(not(target_arch = "wasm32"))]
-use rm_sim_server::{
-    net::{Client, Server},
-    simulation::{BuildProgress, Simulation},
-};
-#[cfg(not(target_arch = "wasm32"))]
 use rm_sim_world::ChassisConfig;
 use rm_sim_world::{ChassisCommand, ChassisSnapshot, FieldSnapshot, Team};
 use std::collections::VecDeque;
@@ -157,12 +154,26 @@ impl Session {
         args: &Args,
         cad: &CadAssets,
         spawn: [f64; 3],
-        _spawn_yaw_deg: f64,
+        spawn_yaw_deg: f64,
         progress: impl Fn(f32, &str),
     ) -> anyhow::Result<Opened> {
         progress(0.3, "Connecting to host");
-        let client = Client::connect(args).await?;
+        let client = if args.connect.is_some() {
+            Client::connect(args).await?
+        } else {
+            anyhow::ensure!(
+                args.host.listen.is_none(),
+                "browser hosting is local-only; use a native host for network multiplayer"
+            );
+            let simulation = Self::build_simulation(args, cad, &progress)?;
+            Client::connect_local(args, simulation, spawn, spawn_yaw_deg).await?
+        };
         Self::from_client(client, TimeSource::system(), args, cad, spawn, progress)
+    }
+    /// Caller-driven browser host measurements, absent for remote sessions.
+    #[cfg(target_arch = "wasm32")]
+    pub fn local_host_work(&self) -> Option<rm_sim_server::host::CallerDrivenStats> {
+        self.client.host_work()
     }
     /// Live 2027 rules from the authoritative checkpoint, including RFID expiry.
     pub fn rmuc_2027(&self) -> Option<&rm_sim_world::rmuc_2027::State> {
@@ -199,6 +210,8 @@ impl Session {
         if let Some(host) = &self.host {
             host.server.ready();
         }
+        #[cfg(target_arch = "wasm32")]
+        self.client.ready();
     }
 
     /// True once the host confirmed every command queued so far. Poll until
@@ -248,61 +261,7 @@ impl Session {
             )
         } else {
             let team: Team = args.team.into();
-            let options = args.host.layout_options();
-            let simulation = if args.host.competition.rmul_format().is_some() {
-                anyhow::ensure!(
-                    args.host.assembly_assets.is_none(),
-                    "UC assembly source assets are unavailable in RMUL practice"
-                );
-                Simulation::rmul_from_cad(
-                    cad,
-                    args.host.competition,
-                    !args.host.no_referee,
-                    Some(ChassisConfig::default()),
-                    args.host.start_paused,
-                )?
-            } else {
-                Simulation::from_cad(
-                    cad,
-                    &options,
-                    Some(if let Some(c) = &args.host.source_chassis {
-                        c.clone()
-                    } else if args.host.stair_heavy {
-                        ChassisConfig::stair_heavy()
-                    } else if args.host.folding_hero {
-                        ChassisConfig::folding_hero()
-                    } else if args.host.team_cad {
-                        ChassisConfig::team_cad()
-                    } else {
-                        ChassisConfig::default()
-                    }),
-                    args.host.start_paused,
-                    |stage| match stage {
-                        BuildProgress::ReadingTerrain => progress(0.3, "Reading terrain triangles"),
-                        BuildProgress::BuildingPhysics => progress(0.5, "Building field physics"),
-                        BuildProgress::TerrainReady(description) => println!("{description}"),
-                        BuildProgress::PreparingChassis => {
-                            progress(0.65, "Preparing chassis and session")
-                        }
-                    },
-                )?
-            }
-            .with_password(args.password.clone())
-            .with_assembly_assets(
-                args.host.assembly_assets.as_deref(),
-                args.host.assembly_area.as_deref(),
-                args.host.assembly_hints.as_deref(),
-                cad.floor_top_cad_m,
-            )
-            .map_err(anyhow::Error::msg)?
-            .with_weapon(args.host.weapon())
-            .map_err(anyhow::Error::msg)?
-            .with_weapon_limits(args.host.weapon_limits())
-            .map_err(anyhow::Error::msg)?
-            .with_hero_weapon(args.host.hero_weapon())
-            .map_err(anyhow::Error::msg)?
-            .with_hero_weapon_limits(args.host.hero_weapon_limits())
-            .map_err(anyhow::Error::msg)?;
+            let simulation = Self::build_simulation(args, cad, &progress)?;
             let address = args.host.listen.as_deref().unwrap_or("127.0.0.1:0");
             let server = if args.host.listen.is_none() && args.lobby_name.is_none() {
                 Server::in_process(simulation, false)
@@ -357,6 +316,69 @@ impl Session {
             Self::from_client(client, TimeSource::system(), args, cad, spawn, progress)?;
         opened.session.host = host;
         Ok(opened)
+    }
+
+    fn build_simulation(
+        args: &Args,
+        cad: &CadAssets,
+        progress: &impl Fn(f32, &str),
+    ) -> anyhow::Result<Simulation> {
+        let options = args.host.layout_options();
+        let simulation = if args.host.competition.rmul_format().is_some() {
+            anyhow::ensure!(
+                args.host.assembly_assets.is_none(),
+                "UC assembly source assets are unavailable in RMUL practice"
+            );
+            Simulation::rmul_from_cad(
+                cad,
+                args.host.competition,
+                !args.host.no_referee,
+                Some(ChassisConfig::default()),
+                args.host.start_paused,
+            )?
+        } else {
+            Simulation::from_cad(
+                cad,
+                &options,
+                Some(if let Some(c) = &args.host.source_chassis {
+                    c.clone()
+                } else if args.host.stair_heavy {
+                    ChassisConfig::stair_heavy()
+                } else if args.host.folding_hero {
+                    ChassisConfig::folding_hero()
+                } else if args.host.team_cad {
+                    ChassisConfig::team_cad()
+                } else {
+                    ChassisConfig::default()
+                }),
+                args.host.start_paused,
+                |stage| match stage {
+                    BuildProgress::ReadingTerrain => progress(0.3, "Reading terrain triangles"),
+                    BuildProgress::BuildingPhysics => progress(0.5, "Building field physics"),
+                    BuildProgress::TerrainReady(description) => println!("{description}"),
+                    BuildProgress::PreparingChassis => {
+                        progress(0.65, "Preparing chassis and session")
+                    }
+                },
+            )?
+        }
+        .with_password(args.password.clone())
+        .with_assembly_assets(
+            args.host.assembly_assets.as_deref(),
+            args.host.assembly_area.as_deref(),
+            args.host.assembly_hints.as_deref(),
+            cad.floor_top_cad_m,
+        )
+        .map_err(anyhow::Error::msg)?
+        .with_weapon(args.host.weapon())
+        .map_err(anyhow::Error::msg)?
+        .with_weapon_limits(args.host.weapon_limits())
+        .map_err(anyhow::Error::msg)?
+        .with_hero_weapon(args.host.hero_weapon())
+        .map_err(anyhow::Error::msg)?
+        .with_hero_weapon_limits(args.host.hero_weapon_limits())
+        .map_err(anyhow::Error::msg)?;
+        Ok(simulation)
     }
 
     /// Build the session around a connection the caller already has. `open`
@@ -477,8 +499,7 @@ impl Session {
         let roster = client.roster().to_vec();
         let mut remote_history = crate::interpolation::RemoteHistory::default();
         remote_history.push_identified(&snapshot, paused, state.snapshot_id);
-        let local_aim =
-            !cfg!(target_arch = "wasm32") && !args.no_prediction && args.screenshot.is_none();
+        let local_aim = !args.no_prediction && args.screenshot.is_none();
         let mut shots = shots::LocalShots::default();
         let prediction_geometry = welcome.prediction_scene.as_ref().and_then(|scene| {
             progress(0.8, "Preparing collision geometry");
@@ -631,7 +652,7 @@ impl Session {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            true
+            !self.client.is_local()
         }
     }
     /// May run the match: the referee, or anyone whose world is local.
@@ -1264,6 +1285,7 @@ impl Session {
             "input_lead_ms": self.client.input_lead_ns() as f64 / 1e6,
             "snapshot_clock_offset_ms": self.frame_time_ns.saturating_sub(self.snapshot.time_ns) as f64 / 1e6,
             "prediction_worker": self.prediction.worker.as_ref().and_then(|worker| worker.diagnostics()),
+            "projectile_prediction_worker": self.shots.worker.as_ref().and_then(|worker| worker.diagnostics()),
             "prediction_moving_frames": self.prediction.moving_frames,
             "prediction_held_moving_frames": self.prediction.held_moving_frames,
             "prediction_results_accepted": self.prediction.results_accepted,
@@ -1396,11 +1418,24 @@ pub fn advance_world(
         .controls
         .just_pressed(InputAction::Start, &keys, buttons.as_deref())
     {
-        match session.rmuc_2027().map(|r| r.game.phase) {
-            Some(Phase::Idle) => session.apply(Command::Referee(RefereeCommand::StartMatch)),
-            Some(Phase::Finished) => session.apply(Command::Referee(RefereeCommand::ResetMatch)),
-            Some(_) => session.notice("match in progress (reset from the referee panel)".into()),
-            None => session.notice("no referee on this field".into()),
+        if let Some(game) = &session.snapshot.rmul_2027 {
+            use rm_sim_world::gameplay::rmul_2027::Phase as RmulPhase;
+            match game.phase {
+                RmulPhase::Idle => session.apply(Command::Referee(RefereeCommand::StartMatch)),
+                RmulPhase::Finished => session.apply(Command::Referee(RefereeCommand::ResetMatch)),
+                _ => session.notice("match in progress (reset from the referee panel)".into()),
+            }
+        } else {
+            match session.rmuc_2027().map(|r| r.game.phase) {
+                Some(Phase::Idle) => session.apply(Command::Referee(RefereeCommand::StartMatch)),
+                Some(Phase::Finished) => {
+                    session.apply(Command::Referee(RefereeCommand::ResetMatch))
+                }
+                Some(_) => {
+                    session.notice("match in progress (reset from the referee panel)".into())
+                }
+                None => session.notice("no referee on this field".into()),
+            }
         }
     }
     if ui

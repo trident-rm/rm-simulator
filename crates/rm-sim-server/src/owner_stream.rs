@@ -135,7 +135,7 @@ pub(crate) struct AnchorRef<'a> {
     pub(crate) owner: &'a ChassisSnapshot,
 }
 impl<'a> AnchorRef<'a> {
-    #[cfg(feature = "native-host")]
+    #[cfg(feature = "host-runtime")]
     pub(crate) fn from_state(state: &'a SimulationState, chassis: u32) -> Option<Self> {
         Some(Self {
             snapshot_id: state.snapshot_id,

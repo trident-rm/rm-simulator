@@ -7,6 +7,8 @@ pub(super) const ENTRANCE_X: f64 = 0.05;
 pub(super) const SOCKET: [f64; 3] = [-0.05, 0.2, 0.6];
 mod area;
 mod inputs;
+mod transfer;
+pub use transfer::RigState;
 mod planner;
 use glam::DQuat;
 pub use inputs::{ArmPose, PayloadAttachment, PayloadObservation, PlaybackFrame};
@@ -443,7 +445,7 @@ impl Rig {
     /// Import numeric IK warm starts from a completed recording of the same source calibration.
     /// Hints never confer collision clearance; every proposed new path is checked normally.
     pub fn load_ik_hints(&mut self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        let text = std::fs::read_to_string(path)?;
+        let text = String::from_utf8(rm_sim_assets::package_io::read(path)?)?;
         let rows: Vec<serde_json::Value> = text
             .lines()
             .map(serde_json::from_str)

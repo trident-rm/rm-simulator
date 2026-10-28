@@ -31,7 +31,14 @@ thread_local! { static CARRIERS: RefCell<HashMap<u64, Carrier>> = RefCell::new(H
 static NEXT_CARRIER: AtomicU64 = AtomicU64::new(1);
 
 /// The session owns portable protocol state; browser objects stay on their JS thread.
+struct LocalCarrier {
+    host: rm_sim_server::host::CallerDrivenHost,
+    peer: rm_sim_server::udp_codec::HostPeer,
+    last: Instant,
+}
+
 pub(crate) struct Client {
+    local: Option<LocalCarrier>,
     id: u64,
     codec: ClientCodec,
     welcome: Option<Welcome>,
@@ -133,9 +140,34 @@ impl Client {
         });
         let time = TimeSource::system();
         let now = time.now();
-        let mut client = Self {
+        let mut client = Self::new(id, hello, time, false);
+        while client.welcome.is_none() || client.latest.is_none() {
+            client.poll();
+            if let Some(reason) = &client.disconnected {
+                anyhow::bail!("{reason}");
+            }
+            anyhow::ensure!(
+                now.elapsed() < Duration::from_secs(15),
+                "server admission timed out"
+            );
+            let promise = js_sys::Promise::new(&mut |resolve, _| {
+                if let Some(window) = web_sys::window() {
+                    let _ =
+                        window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 10);
+                }
+            });
+            wasm_bindgen_futures::JsFuture::from(promise)
+                .await
+                .map_err(|e| anyhow::anyhow!("browser timer: {e:?}"))?;
+        }
+        Ok(client)
+    }
+    fn new(id: u64, hello: Vec<u8>, time: TimeSource, raw: bool) -> Self {
+        let now = time.now();
+        Self {
+            local: None,
             id,
-            codec: ClientCodec::new(now, 1_000_000, 12, false),
+            codec: ClientCodec::new(now, 1_000_000, 12, raw),
             welcome: None,
             latest: None,
             roster: Vec::new(),
@@ -163,27 +195,120 @@ impl Client {
             results: Vec::new(),
             map: Vec::new(),
             notices: Vec::new(),
+        }
+    }
+    /// Connect an embedded owner through the ordinary host and client codecs.
+    pub async fn connect_local(
+        args: &crate::args::Args,
+        simulation: rm_sim_server::simulation::Simulation,
+        spawn: [f64; 3],
+        yaw_deg: f64,
+    ) -> anyhow::Result<Self> {
+        let host = rm_sim_server::host::CallerDrivenHost::new(simulation, false);
+        let time = TimeSource::system();
+        let now = time.now();
+        let peer = rm_sim_server::udp_codec::HostPeer::new(host.handle(), now, 1_000_000, true)
+            .with_owner_spawn(spawn, yaw_deg);
+        let role = if args.staging && !args.referee {
+            Role::Spectator
+        } else {
+            args.role()
         };
-        while client.welcome.is_none() || client.latest.is_none() {
+        let hello = ClientCodec::hello_with_chassis(
+            &args.name,
+            Some(args.team.into()),
+            role,
+            args.robot,
+            args.chassis,
+            &args.password,
+        )?;
+        let mut client = Self::new(0, hello, time, true);
+        client.local = Some(LocalCarrier {
+            host,
+            peer,
+            last: now,
+        });
+        loop {
             client.poll();
-            if let Some(reason) = &client.disconnected {
-                anyhow::bail!("{reason}");
+            if let Some(error) = &client.disconnected {
+                anyhow::bail!("{error}");
+            }
+            if client.welcome.is_some() && client.latest.is_some() {
+                return Ok(client);
             }
             anyhow::ensure!(
                 now.elapsed() < Duration::from_secs(15),
-                "server admission timed out"
+                "embedded host admission timed out"
             );
-            let promise = js_sys::Promise::new(&mut |resolve, _| {
+            // The same byte pacer as a native carrier needs real elapsed time to
+            // transmit the first checkpoint. Yield rather than spin its budget.
+            let delay = js_sys::Promise::new(&mut |resolve, _| {
                 if let Some(window) = web_sys::window() {
                     let _ =
                         window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 10);
                 }
             });
-            wasm_bindgen_futures::JsFuture::from(promise)
+            wasm_bindgen_futures::JsFuture::from(delay)
                 .await
                 .map_err(|e| anyhow::anyhow!("browser timer: {e:?}"))?;
         }
-        Ok(client)
+    }
+    /// Actual local host work, absent for a remote connection.
+    pub fn host_work(&self) -> Option<rm_sim_server::host::CallerDrivenStats> {
+        self.local.as_ref().map(|local| local.host.stats())
+    }
+    /// Whether this connection owns a caller-driven local host.
+    pub fn is_local(&self) -> bool {
+        self.local.is_some()
+    }
+    /// Release the embedded host's startup hold after scenery preparation.
+    pub fn ready(&self) {
+        if let Some(local) = &self.local {
+            local.host.handle().ready();
+        }
+    }
+    fn decode(&mut self, packet: &[u8], now: Instant) -> io::Result<()> {
+        self.last_packet = now;
+        match self.codec.receive(packet, now)? {
+            Some(ClientEvent::Welcome(welcome)) => self.welcome = Some(*welcome),
+            Some(ClientEvent::Anchor(anchor)) => {
+                self.clock.observe(
+                    anchor.input_epoch,
+                    self.elapsed_ns(),
+                    anchor.time_ns,
+                    anchor.paused,
+                );
+                self.owner = Some(*anchor);
+            }
+            Some(ClientEvent::Message(message)) => self.receive(message, now)?,
+            None => {}
+        }
+        Ok(())
+    }
+    fn pump_local(&mut self, now: Instant) -> io::Result<()> {
+        let mut local = self.local.take().expect("local pump owns a host");
+        let result = (|| {
+            let elapsed = now.saturating_duration_since(local.last);
+            local.last = now;
+            local.host.advance(elapsed).map_err(io::Error::other)?;
+            if let Some(hello) = self.hello.take() {
+                local.peer.deliver(&hello, now)?;
+            }
+            self.codec.acknowledge(now)?;
+            for _ in 0..64 {
+                let Some(packet) = self.codec.next(now)? else {
+                    break;
+                };
+                local.peer.deliver(&packet.bytes, now)?;
+            }
+            local.peer.pump(now, 0, 8, 64)?;
+            for packet in local.peer.take_outgoing() {
+                self.decode(&packet.bytes, now)?;
+            }
+            Ok(())
+        })();
+        self.local = Some(local);
+        result
     }
     /// The admitted host seat; construction completes only after this exists.
     pub fn welcome(&self) -> &Welcome {
@@ -257,6 +382,9 @@ impl Client {
     }
     fn pump(&mut self) -> io::Result<()> {
         let now = self.time.now();
+        if self.local.is_some() {
+            return self.pump_local(now);
+        }
         let (socket, incoming) = CARRIERS.with(|carriers| {
             let carriers = carriers.borrow();
             let carrier = carriers
@@ -288,23 +416,7 @@ impl Client {
             send(&hello)?;
         }
         for packet in incoming.borrow_mut().drain(..) {
-            self.last_packet = now;
-            match self.codec.receive(&packet, now)? {
-                Some(ClientEvent::Welcome(welcome)) => {
-                    self.welcome = Some(*welcome);
-                }
-                Some(ClientEvent::Anchor(anchor)) => {
-                    self.clock.observe(
-                        anchor.input_epoch,
-                        self.elapsed_ns(),
-                        anchor.time_ns,
-                        anchor.paused,
-                    );
-                    self.owner = Some(*anchor);
-                }
-                Some(ClientEvent::Message(message)) => self.receive(message, now)?,
-                None => {}
-            }
+            self.decode(&packet, now)?;
         }
         self.codec.acknowledge(now)?;
         if socket.buffered_amount() >= 256 * 1024 {
@@ -486,7 +598,9 @@ impl Client {
     }
     /// No native disk trace exists for the browser carrier.
     pub fn trace_report(&self) -> Option<rm_sim_server::network_trace::Report> {
-        None
+        self.local
+            .as_ref()
+            .and_then(|local| local.host.trace_report())
     }
     /// The latest actual host input-arrival sample, if published.
     pub fn host_telemetry(&self) -> Option<rm_sim_server::network_stats::HostTelemetry> {
@@ -566,7 +680,12 @@ impl Client {
         rm_sim_server::network_stats::NetworkStats {
             schema_version: 1,
             connection_generation: u64::from(self.welcome().client_id),
-            transport: "websocket".into(),
+            transport: if self.is_local() {
+                "browser-local"
+            } else {
+                "websocket"
+            }
+            .into(),
             sampled_elapsed_ms: self.elapsed_ns() as f64 / 1e6,
             stale: self.disconnected.is_some(),
             native_sample_age_ms: None,

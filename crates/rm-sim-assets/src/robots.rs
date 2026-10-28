@@ -317,7 +317,13 @@ fn validate_references(m: &Value) -> io::Result<()> {
     Ok(())
 }
 fn read_local(root: &Path, name: &str) -> io::Result<Vec<u8>> {
-    if !local_name(name) || !std::fs::symlink_metadata(root.join(name))?.is_file() {
+    if !local_name(name) {
+        return Err(io::Error::other(
+            "robot reference must be a local regular file",
+        ));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if !std::fs::symlink_metadata(root.join(name))?.is_file() {
         return Err(io::Error::other(
             "robot reference must be a local regular file",
         ));

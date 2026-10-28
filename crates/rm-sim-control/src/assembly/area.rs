@@ -18,13 +18,18 @@ impl Rig {
         package: &Path,
         directory: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let evidence: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(directory.join("area.json"))?)?;
+        let evidence: serde_json::Value = serde_json::from_slice(
+            &rm_sim_assets::package_io::read(directory.join("area.json"))?,
+        )?;
         let hash = |p: PathBuf| -> Result<String, std::io::Error> {
-            Ok(format!("{:x}", Sha256::digest(std::fs::read(p)?)))
+            Ok(format!(
+                "{:x}",
+                Sha256::digest(rm_sim_assets::package_io::read(p)?)
+            ))
         };
-        let manifest: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(package.join("manifest.json"))?)?;
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &rm_sim_assets::package_io::read(package.join("manifest.json"))?,
+        )?;
         if self.source_config_sha256.as_deref() != evidence["config_sha256"].as_str()
             || evidence["schema"] != 2
             || evidence["source_field_sha256"] != manifest["source_field_sha256"]
@@ -40,10 +45,12 @@ impl Rig {
             points_m: Vec<[f64; 3]>,
             triangles: Vec<[u32; 3]>,
         }
-        let terrain: Terrain =
-            serde_json::from_slice(&std::fs::read(directory.join("terrain.json"))?)?;
-        let mut collision: CollisionAsset =
-            serde_json::from_slice(&std::fs::read(package.join("collision.json"))?)?;
+        let terrain: Terrain = serde_json::from_slice(&rm_sim_assets::package_io::read(
+            directory.join("terrain.json"),
+        )?)?;
+        let mut collision: CollisionAsset = serde_json::from_slice(
+            &rm_sim_assets::package_io::read(package.join("collision.json"))?,
+        )?;
         let bottom = collision
             .bodies
             .iter()

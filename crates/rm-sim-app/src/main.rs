@@ -54,6 +54,8 @@ mod zone_debug;
 #[cfg(target_arch = "wasm32")]
 mod browser;
 #[cfg(target_arch = "wasm32")]
+mod browser_assembly_worker;
+#[cfg(target_arch = "wasm32")]
 mod browser_assets;
 #[cfg(target_arch = "wasm32")]
 mod browser_client;

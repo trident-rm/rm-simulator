@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 hxyulin <hxyulin@proton.me>
 //! Bounded peer output with replaceable periodic state.
+/// Maximum pending reliable/confirmation frames for one host peer.
+pub(crate) const DEFAULT_CAPACITY: usize = 256;
 use crate::host::Outbound;
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};

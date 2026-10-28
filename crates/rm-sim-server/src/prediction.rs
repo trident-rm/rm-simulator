@@ -265,6 +265,21 @@ impl Replayer {
         rewind: bool,
         observer: &mut dyn FnMut(ReplayEvent),
     ) -> Result<ChassisSnapshot, &'static str> {
+        self.advance_budgeted(epoch, replay, horizon_ns, rewind, usize::MAX, observer)
+    }
+    /// Advance at most `max_ticks` physics ticks, retaining partial replay state.
+    /// The returned owner and [`Self::time_ns`] describe the reached tick, which
+    /// may precede the request target. Restoring a changed checkpoint is indivisible.
+    /// The same request may be resumed with another explicit tick budget.
+    pub fn advance_budgeted(
+        &mut self,
+        epoch: u64,
+        replay: &Replay,
+        horizon_ns: u64,
+        rewind: bool,
+        max_ticks: usize,
+        observer: &mut dyn FnMut(ReplayEvent),
+    ) -> Result<ChassisSnapshot, &'static str> {
         if replay
             .snapshot
             .restore
@@ -286,6 +301,7 @@ impl Replayer {
         let end = replay
             .target_time_ns
             .min(start_ns.saturating_add(horizon_ns));
+        let mut ticks = 0;
         loop {
             for input in replay
                 .inputs
@@ -306,7 +322,7 @@ impl Replayer {
                 time_ns: self.time_ns,
                 owner: &owner,
             });
-            if self.time_ns.saturating_add(tick_ns()) > end {
+            if ticks >= max_ticks || self.time_ns.saturating_add(tick_ns()) > end {
                 return Ok(owner);
             }
             for remote in replay
@@ -326,6 +342,7 @@ impl Replayer {
             }
             field.step(1).map_err(|_| "replay stepping failed")?;
             self.time_ns = self.time_ns.saturating_add(tick_ns());
+            ticks += 1;
             let owner = field
                 .chassis_snapshot(replay.chassis)
                 .ok_or("prediction chassis missing")?;
