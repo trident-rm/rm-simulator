@@ -298,7 +298,7 @@ impl StaticGeometry {
                     return true;
                 }
                 rapier3d_f64::parry::query::intersection_test(&center, &ball, pose, shape.as_ref())
-                    .is_ok_and(|hit| !hit)
+                    .is_ok_and(|hit| !hit.intersecting)
             })
     }
 
@@ -402,7 +402,7 @@ impl StaticGeometry {
                         p,
                         s.as_ref(),
                     )
-                    .is_ok_and(|hit| !hit);
+                    .is_ok_and(|hit| !hit.intersecting);
                 }
                 rapier3d_f64::parry::query::cast_shapes(
                     &start,

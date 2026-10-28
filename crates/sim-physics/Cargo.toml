@@ -19,5 +19,5 @@ test-support = []
 
 [dependencies]
 sim-engine = { version = "0.1.0", path = "../sim-engine" }
-rapier3d-f64 = "0.35.3"
+rapier3d-f64 = "0.36.1"
 glam.workspace = true

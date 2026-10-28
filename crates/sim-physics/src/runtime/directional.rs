@@ -138,7 +138,7 @@ impl DirectionalContacts {
                 continue;
             };
             let axis = collider.position().rotation * law.axis;
-            for manifold in &pair.manifolds {
+            for manifold in pair.manifolds() {
                 let tangent = axis - manifold.data.normal * axis.dot(manifold.data.normal);
                 if tangent.length_squared() < 1e-12 {
                     continue;
@@ -277,8 +277,11 @@ impl PhysicsHooks for DirectionalContacts {
             context.bodies,
         ) {
             let axis = context.colliders[h].position().rotation * law.axis;
-            let tangent = axis - *context.normal * axis.dot(*context.normal);
-            *context.friction = if tangent.length_squared() < 1e-12 {
+            let Some(manifold) = context.rigid_mut() else {
+                return;
+            };
+            let tangent = axis - *manifold.normal * axis.dot(*manifold.normal);
+            *manifold.friction = if tangent.length_squared() < 1e-12 {
                 law.tread
             } else {
                 0.

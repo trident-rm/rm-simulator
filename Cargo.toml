@@ -42,7 +42,7 @@ sha2 = "0.10"
 glam = "0.33.12"
 # Wire-compression candidate: ZSTD with a trained checkpoint dictionary.
 # `legacy` and `arrays` are unused; `zdict_builder` trains the embedded dictionary.
-zstd = { version = "0.13", default-features = false, features = ["zdict_builder"] }
+zstd = { version = "0.14.3", default-features = false, features = ["zdict_builder"] }
 # Expand Bevy 0.20's `3d` / `3d_bevy_render` / `3d_api` bundles so KTX2
 # decoding uses our existing native Zstd backend. The bundles force zstd_rust
 # and ruzstd 0.8, affected by RUSTSEC-2026-0344; simply adding zstd_c is additive.

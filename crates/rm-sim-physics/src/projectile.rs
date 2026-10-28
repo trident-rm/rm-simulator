@@ -2685,7 +2685,7 @@ mod tests {
                         pose,
                         shape.as_ref(),
                     )
-                    .is_ok_and(|hit| !hit)
+                    .is_ok_and(|hit| !hit.intersecting)
                 });
                 assert_eq!(geometry.sphere_clear(point, 0.15), exhaustive, "{point:?}");
             }

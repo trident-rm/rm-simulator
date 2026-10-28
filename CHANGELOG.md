@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Update Rapier to 0.36.1, application Zstd to 0.14.3 and compatible locked
+  dependencies, including the Zstd Wasm allocator fix. Adapt native contact
+  hooks and shape queries to the new Rapier/Parry APIs.
+
 - Add a rest-pose field-task benchmark for nearest-hit LiDAR, overlap queries,
   CCD spheres and box contacts against hydrated packages or full-CAD meshes.
 

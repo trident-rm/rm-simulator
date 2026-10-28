@@ -276,3 +276,14 @@ Those bundles force `zstd_rust` and vulnerable `ruzstd` 0.8
 adding `zstd_c` alongside them does not remove the Rust backend. When changing
 Bevy features, inspect `cargo tree --workspace --all-features -i ruzstd` and the
 resolved feature graph, and smoke-test the renderer's compressed lookup textures.
+
+The October 2026 refresh uses Rapier 0.36.1 / Parry 0.31.1 and application
+Zstd 0.14.3. Bevy 0.20 still requires Zstd 0.13.3 for its C texture decoder,
+so its transitive Zstd/Zstd-safe advisories remain until that dependency moves.
+Zstd-sys 2.1.2 fixes the Wasm allocator advisory. No advisory exceptions were
+added for these versions.
+
+Keep Glam on Bevy's 0.33 release line to share vector types. SHA-2 0.11 removes
+hex formatting on digest outputs; migrate checksum formatting separately before
+raising its requirement. Native and web feature selection is a separate change
+from this dependency refresh.

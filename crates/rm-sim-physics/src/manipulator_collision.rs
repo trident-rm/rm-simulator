@@ -566,6 +566,7 @@ impl CollisionScene {
                             b.envelopes[yi].as_ref(),
                         )
                         .map_err(|_| "unsupported collision envelope query")?
+                        .intersecting
                         {
                             continue;
                         }
@@ -580,6 +581,7 @@ impl CollisionScene {
                                 y.as_ref(),
                             )
                             .map_err(|_| "unsupported source surface query")?
+                            .intersecting
                             {
                                 surface_hit = true;
                                 result.push(CollisionHit {
@@ -749,12 +751,14 @@ impl CollisionScene {
                                 &pb,
                                 b.envelopes[yi].as_ref(),
                             )
-                            .map_err(|_| "unsupported collision envelope distance")?;
+                            .map_err(|_| "unsupported collision envelope distance")?
+                            .distance;
                             let distance = if lower > 2e-6 {
                                 lower
                             } else {
                                 query::distance(&pa, x.as_ref(), &pb, y.as_ref())
                                     .map_err(|_| "unsupported collision distance query")?
+                                    .distance
                             };
                             if !distance.is_finite() {
                                 return Err("nonfinite collision distance");
