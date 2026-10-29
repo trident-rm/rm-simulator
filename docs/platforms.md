@@ -195,3 +195,6 @@ observations, not peak process memory or startup measurements. The source-backed
 assembly worker matched a native 1,053-frame plan with 854 checks while the page
 rendered 277 frames during the worker request. Use `--cad` and
 `--worker-fixture PATH` to opt into optional CAD and native-fixture parity checks.
+
+For repeatable startup and sampled Chromium process-memory measurements, see
+[browser performance](browser-performance.md).
