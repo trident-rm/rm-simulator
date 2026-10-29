@@ -60,3 +60,50 @@ The next useful work is to serve compressed Wasm and measure over a controlled
 network, then profile the largest renderer's code/heap allocations. Most of the
 sampled process memory already exists on the title screen. These measurements
 do not yet establish a CPU-only simulation budget or a deployment memory limit.
+
+## Gameplay stall investigation, 2026-10-29
+
+A separate local trial held forward movement and firing for eight seconds, then
+observed two seconds of settling. Each case used a fresh Chromium process, the
+same staged browser binary and viewport as above, `inspect=1`, and the Chrome
+CPU sampling profiler. These are single trials, not repeated benchmark medians.
+
+| Field | Prediction | p95 frame interval | p99 frame interval | Long tasks above 50 ms |
+|---|---|---|---|---|
+| 1v1 | On | 16.7 ms | 16.8 ms | 0 |
+| 1v1 | Off | 16.7 ms | 16.8 ms | 0 |
+| RMUC | On | 33.4 ms | 49.9 ms | 4 |
+| RMUC | Off | 16.7 ms | 16.8 ms | 0 |
+
+The RMUC prediction-on profile contained 6,520 CPU samples. Of these, 3,406
+(52%) had chassis `Replayer` in their ancestry, 1,503 (23%) had `Field::restore`,
+and 975 (15%) had convex-hull construction. These inclusive categories overlap;
+they must not be added. Payload preparation accounted for 864 of the hull
+samples through `WorldPhysics::add_payload`. Authoritative caller-driven host
+work appeared in 951 samples (15%). Sampling percentages are approximate CPU
+attribution, not per-frame durations.
+
+The browser `PredictionWorker::exchange` runs synchronously on the UI thread.
+`Replayer::advance_budgeted` restores the complete field whenever its checkpoint
+identity changes. The eight-tick limit applies after restoration, so it does not
+bound the cost of rebuilding the world or cooking payload hulls. Provisional
+projectile prediction also restores complete fields on this thread, although it
+was not the principal measured cost in this trial. Native prediction runs on
+background threads.
+
+The next fixes should cache immutable cooked payload shapes across restores and
+move browser prediction into isolated workers, retaining the complete world and
+existing checkpoint/cancellation contracts. Running the offline authority on a
+worker is a later option; its measured cost was smaller here. Disabling prediction
+is a diagnostic workaround through `?field=rmuc&play=1&prediction=0`, with the
+expected loss of local chassis and provisional-shot prediction.
+
+Maximum frame intervals still reached 83 ms with prediction disabled despite no
+recorded long tasks. This means not every presentation stall is explained by
+main-thread prediction. GPU submission/presentation and shader compilation need
+a separate graphics trace if those stalls persist. No leak, garbage-collection
+cause or network cause was established by this experiment.
+
+Profiles used names recovered from an otherwise identical wasm-bindgen output;
+the named and staged binaries had identical code-section SHA-256
+`362c6d9649d46a88220d5460cfc94dfbb318df6334c05c6473e5621de9a2957b`.
