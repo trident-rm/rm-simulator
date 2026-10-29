@@ -180,3 +180,62 @@ feature/build and bootstrap path, followed by shader/material/HUD validation.
 It should be evaluated for compatibility, not assumed to improve performance.
 See [wgpu's web backend documentation](https://wgpu.rs/doc/wgpu/documentation/platforms/web/index.html)
 for backend differences. No WebGL build or WebGL performance test was run here.
+
+## Cooked payloads and isolated prediction workers
+
+The runtime now reuses immutable `PreparedPayload` resources through a 16-entry
+per-thread LRU. The key compares exact bits for mass, expansion, ordered hull
+boundaries and every source vertex. Each restored world still owns its body
+handles, poses, velocities and attachment state. Invalid shapes never enter the
+cache. Native tests check changed mass/geometry, eviction, trajectory parity and
+sharing across real field restores without shared live state.
+
+Browser chassis and projectile replay now run in persistent Web Workers using
+the same replay drivers and whole-world restore path. Each realm loads and
+verifies its field sources once, without retaining an unused Bevy render asset
+copy. The projectile realm starts lazily. Only one job is active per worker;
+new pending jobs replace older unsent jobs. Initialization has a Booted/Ready
+handshake, bounded messages and monotonic progress deadlines. Leaving a session
+terminates its workers. Failure discards cached predictions and returns to
+authoritative presentation, without falling back to UI-thread physics.
+
+Repeat browser frame measurements with:
+
+```sh
+uv run --with playwright python scripts/profile-browser.py \
+  --root local-assets/browser --backend vulkan \
+  --out local-assets/browser-profile.json
+```
+
+Use `--backend metal` on macOS and `--executable` for an installed Chromium.
+The script records raw frame intervals, long-task durations, worker diagnostics,
+adapter identity, browser version and the exact Wasm hash.
+
+The Linux workstation from the previous section was measured with the original
+bundle and the final worker bundle. Both used Low at 1600 × 1000, the RMUC spawn,
+2.5 seconds of warmup and ten seconds of active observation:
+
+| Prediction on | Before | Worker bundle |
+|---|---:|---:|
+| Median frame interval | 50.1 ms | 16.7 ms |
+| p95 frame interval | 116.6 ms | 33.3 ms |
+| p99 frame interval | 116.7 ms | 66.7 ms |
+| Maximum frame interval | 133.4 ms | 83.4 ms |
+| Long tasks above 50 ms | 141 | 12 |
+
+These are individual runs, not guarantees or isolated measurements of cache and
+worker effects. Earlier runs varied: another baseline recorded 60 long tasks,
+and another worker run recorded zero. Remaining spikes are visible and need
+separate profiling of UI-thread authority, serialization and rendering.
+Diagnostics confirmed completed worker replay and accepted results, not disabled
+prediction. Both cases held forward/fire inputs, but this RMUC spawn produced no
+authoritative projectile launches; this is a movement/replay workload comparison.
+Actual firing, active chassis/projectile realms, injected worker-failure recovery
+and worker termination on leaving passed the independent 1v1 browser smoke.
+
+A separate macOS 1v1 observation without firing (the projectile worker had not
+started) and with one chassis worker recorded 1,656 MiB sampled Chromium-tree peak RSS over a
+five-second observation. Main-realm Wasm capacity was 155.3 MiB. This includes
+shared process pages and excludes GPU allocations; it does not measure the extra
+projectile realm or establish a memory ceiling. The run occurred alongside native
+validation, so its startup timing is not compared with the earlier measurements.

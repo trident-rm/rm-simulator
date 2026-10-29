@@ -7,7 +7,7 @@ use std::sync::{Arc, Condvar, Mutex};
 
 /// A local shot the replay has not placed yet: its flight id, the world time in
 /// ns the firing input was sampled at, and the chassis command in force then.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct ShotSample {
     /// The client's flight id, echoed back with the resolved muzzle.
     pub id: u64,
@@ -30,19 +30,20 @@ struct Mailbox {
     replay_ms: f64,
     replay_ticks: u64,
     stopped: bool,
+    #[cfg(target_arch = "wasm32")]
+    error: Option<String>,
     shots: Vec<ShotSample>,
     muzzles: Vec<(u64, u64, rm_sim_world::Pose)>,
 }
 /// Own-chassis replay using a native worker or bounded browser exchanges.
-/// Native requests and results each have one replaceable slot. The browser
-/// advances at most eight integration ticks per exchange on the calling thread;
-/// checkpoint restoration remains one indivisible operation.
+/// Native and browser workers retain replaceable requests/results. Browser
+/// replay advances at most eight ticks per request in its isolated realm.
 pub struct PredictionWorker {
     #[cfg(test)]
     synchronous: bool,
     shared: Arc<(Mutex<Mailbox>, Condvar)>,
     #[cfg(target_arch = "wasm32")]
-    driver: Mutex<ReplayDriver>,
+    worker: crate::browser_prediction_worker::Handle,
 }
 impl PredictionWorker {
     /// Spawn the worker. It restores a whole `Field` from each checkpoint plus
@@ -87,12 +88,25 @@ impl PredictionWorker {
             synchronous: false,
         })
     }
-    /// Create caller-driven browser replay; each exchange advances at most eight ticks.
+    /// Create persistent isolated browser replay. Geometry cooks and stepping stay off the UI thread.
     #[cfg(target_arch = "wasm32")]
-    pub fn new(geometry: StaticGeometry, floor_height_m: f64) -> std::io::Result<Self> {
+    pub fn new(_geometry: StaticGeometry, _floor_height_m: f64) -> std::io::Result<Self> {
+        let shared = Arc::new((Mutex::new(Mailbox::default()), Condvar::new()));
+        let output = Arc::clone(&shared);
+        let worker = crate::browser_prediction_worker::Handle::new(Box::new(move |reply| {
+            if let Ok(mut mailbox) = output.0.lock() {
+                match reply {
+                    Ok(crate::browser_prediction_worker::Response::Chassis(completion)) => {
+                        mailbox.complete(*completion)
+                    }
+                    Ok(_) => mailbox.error = Some("wrong chassis worker response".into()),
+                    Err(error) => mailbox.error = Some(error),
+                }
+            }
+        }))?;
         Ok(Self {
-            shared: Arc::new((Mutex::new(Mailbox::default()), Condvar::new())),
-            driver: Mutex::new(ReplayDriver::new(geometry, floor_height_m)),
+            shared,
+            worker,
             #[cfg(test)]
             synchronous: false,
         })
@@ -113,16 +127,35 @@ impl PredictionWorker {
         mailbox.shots = shots;
         std::mem::take(&mut mailbox.muzzles)
     }
+    /// Whether isolated execution has failed and its last output must be discarded.
+    pub fn failed(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.shared
+                .0
+                .try_lock()
+                .ok()
+                .is_some_and(|mailbox| mailbox.error.is_some())
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            false
+        }
+    }
     /// Replay counters for the console's `state` reply: how many replays have
     /// completed, and the duration in ms and tick count of the last one. `None`
     /// while the worker holds its lock.
     pub fn diagnostics(&self) -> Option<serde_json::Value> {
         self.shared.0.try_lock().ok().map(|m| {
-            serde_json::json!({
-                "completed": m.completed,
-                "last_replay_ms": m.replay_ms,
-                "last_replay_ticks": m.replay_ticks,
-            })
+            let value=serde_json::json!({"completed":m.completed,"last_replay_ms":m.replay_ms,"last_replay_ticks":m.replay_ticks,"execution":if cfg!(target_arch = "wasm32") {"web-worker"}else{"native-thread"}});
+            #[cfg(target_arch = "wasm32")]
+            let value={
+                let mut value=value;
+                value["worker"]=self.worker.diagnostics();
+                value["error"]=serde_json::json!(m.error);
+                value
+            };
+            value
         })
     }
     /// The newest comparison of the predicted owner against the host's
@@ -189,7 +222,7 @@ impl PredictionWorker {
         }
         result
     }
-    /// Advance browser prediction with a fixed eight-tick integration budget.
+    /// Submit the newest replay without waiting for the isolated browser worker.
     #[cfg(target_arch = "wasm32")]
     pub fn exchange(
         &self,
@@ -204,8 +237,17 @@ impl PredictionWorker {
             let mut mailbox = self.shared.0.try_lock().ok()?;
             (mailbox.result.take(), std::mem::take(&mut mailbox.shots))
         };
-        let completion = self.driver.try_lock().ok()?.run(epoch, &replay, shots, 8);
-        self.shared.0.try_lock().ok()?.complete(completion);
+        if let Err(error) = self
+            .worker
+            .post(crate::browser_prediction_worker::Request::Chassis {
+                epoch,
+                replay,
+                shots,
+            })
+            && let Ok(mut mailbox) = self.shared.0.lock()
+        {
+            mailbox.error = Some(error);
+        }
         previous
     }
 }
@@ -222,13 +264,14 @@ impl Drop for PredictionWorker {
 }
 
 /// Physics state shared by native background and browser caller-driven execution.
-struct ReplayDriver {
+pub(crate) struct ReplayDriver {
     replayer: Replayer,
     history: rm_sim_server::network_stats::CorrectionHistory,
     shot_history: std::collections::VecDeque<(u64, ChassisSnapshot)>,
     shot_epoch: Option<u64>,
 }
-struct Completion {
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct Completion {
     result: Option<(
         u64,
         rm_sim_server::prediction::PredictionProof,
@@ -240,7 +283,7 @@ struct Completion {
     replay_ticks: u64,
 }
 impl ReplayDriver {
-    fn new(geometry: StaticGeometry, floor_height_m: f64) -> Self {
+    pub(crate) fn new(geometry: StaticGeometry, floor_height_m: f64) -> Self {
         Self {
             replayer: Replayer::new(geometry, floor_height_m),
             history: Default::default(),
@@ -248,7 +291,7 @@ impl ReplayDriver {
             shot_epoch: None,
         }
     }
-    fn run(
+    pub(crate) fn run(
         &mut self,
         epoch: u64,
         replay: &Replay,
@@ -378,6 +421,73 @@ mod tests {
     use rm_sim_world::{
         ChassisCommand, ChassisConfig, ChassisPlacement, Field, FieldConfig, Pose, Team,
     };
+    #[test]
+    fn worker_json_roundtrip_preserves_rmuc_authority_and_replay_results() {
+        use rm_sim_world::rmuc_2027::{Config, Detector, Tower};
+        let detector = Detector {
+            pose: Pose::at([10., 0., 1.]),
+            half_m: [0.045, 0.044],
+        };
+        let field = Field::new(&FieldConfig {
+            rmuc_2027: Some(Config {
+                bases: [vec![detector.clone()], vec![detector.clone()]],
+                outposts: std::array::from_fn(|_| Tower {
+                    pivot_m: [10., 0., 1.],
+                    axis: [0., 0., 1.],
+                    detectors: vec![detector.clone(); 3],
+                }),
+                supply_zones: vec![],
+                vantage_zones: vec![],
+                terrain_zones: vec![],
+                runes: vec![],
+                zones: vec![],
+                rotor_direction: -1,
+            }),
+            chassis: vec![ChassisPlacement {
+                config: ChassisConfig::default(),
+                team: Team::Red,
+                kind: rm_sim_world::RobotKind::Infantry,
+                performance: None,
+                spawn: Pose::at([0., 0., 1.]),
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        let snapshot = Arc::new(field.snapshot());
+        let replay = Replay {
+            snapshot: Arc::clone(&snapshot),
+            context_id: 1,
+            context_time_ns: 0,
+            snapshot_id: 2,
+            chassis: 0,
+            states: snapshot.chassis.clone(),
+            snapshot_time_ns: 0,
+            target_time_ns: 4 * rm_sim_world::tick_ns(),
+            inputs: vec![PendingInput {
+                sequence: 1,
+                time_ns: 0,
+                command: ChassisCommand {
+                    forward_m_s: 1.,
+                    ..Default::default()
+                },
+            }],
+        };
+        let decoded: Replay =
+            serde_json::from_slice(&serde_json::to_vec(&replay).unwrap()).unwrap();
+        assert_eq!(
+            *decoded.snapshot, *snapshot,
+            "worker transfer retains hidden RMUC authority"
+        );
+        assert_eq!(decoded.inputs[0].command, replay.inputs[0].command);
+        let geometry = field.static_geometry_snapshot();
+        let expected = ReplayDriver::new(geometry.clone(), 0.).run(3, &replay, vec![], 8);
+        let actual = ReplayDriver::new(geometry, 0.).run(3, &decoded, vec![], 8);
+        let transferred: Completion =
+            serde_json::from_slice(&serde_json::to_vec(&actual).unwrap()).unwrap();
+        assert_eq!(transferred.result, expected.result);
+        assert_eq!(transferred.replay_ticks, 4);
+    }
+
     #[test]
     fn caller_budget_resumes_native_replay_and_epoch_replaces_the_world() {
         let field = Field::new(&FieldConfig {

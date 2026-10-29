@@ -15,8 +15,17 @@ pub(crate) fn reader() -> MemoryAssetReader {
     READER.get_or_init(MemoryAssetReader::default).clone()
 }
 async fn fetch(path: &str, limit: usize) -> anyhow::Result<Vec<u8>> {
-    let window = web_sys::window().ok_or_else(|| anyhow::anyhow!("missing browser window"))?;
-    let response: web_sys::Response = JsFuture::from(window.fetch_with_str(path))
+    let global = js_sys::global();
+    let fetch: js_sys::Function = js_sys::Reflect::get(&global, &"fetch".into())
+        .map_err(|_| anyhow::anyhow!("missing realm fetch"))?
+        .dyn_into()
+        .map_err(|_| anyhow::anyhow!("invalid realm fetch"))?;
+    let promise: js_sys::Promise = fetch
+        .call1(&global, &path.into())
+        .map_err(|e| anyhow::anyhow!("fetch {path}: {e:?}"))?
+        .dyn_into()
+        .map_err(|_| anyhow::anyhow!("invalid fetch promise"))?;
+    let response: web_sys::Response = JsFuture::from(promise)
         .await
         .map_err(|e| anyhow::anyhow!("fetch {path}: {e:?}"))?
         .dyn_into()
@@ -47,6 +56,16 @@ async fn fetch(path: &str, limit: usize) -> anyhow::Result<Vec<u8>> {
 }
 /// Fetch every approved package file, then run the unchanged admission loader.
 pub(crate) async fn load(args: &crate::args::Args) -> anyhow::Result<Arc<CadAssets>> {
+    load_inner(args, true).await
+}
+/// Verify worker sources without retaining an unused copy for Bevy rendering.
+pub(crate) async fn load_prediction(args: &crate::args::Args) -> anyhow::Result<Arc<CadAssets>> {
+    load_inner(args, false).await
+}
+async fn load_inner(
+    args: &crate::args::Args,
+    render_assets: bool,
+) -> anyhow::Result<Arc<CadAssets>> {
     use sha2::{Digest, Sha256};
     let root = args.host.cad_assets_path();
     let root = root
@@ -62,7 +81,7 @@ pub(crate) async fn load(args: &crate::args::Args) -> anyhow::Result<Arc<CadAsse
     let index: std::collections::BTreeMap<String, String> =
         serde_json::from_slice(&fetch(&format!("{root}/package-files.json"), 1024 * 1024).await?)?;
     anyhow::ensure!(index.len() <= 256, "package file count exceeds limit");
-    let memory = reader();
+    let memory = render_assets.then(reader);
     let mut total = 0;
     for (file, digest) in index {
         anyhow::ensure!(
@@ -78,8 +97,10 @@ pub(crate) async fn load(args: &crate::args::Args) -> anyhow::Result<Arc<CadAsse
             format!("{:x}", Sha256::digest(&bytes)) == digest,
             "{path}: package checksum mismatch"
         );
-        rm_sim_assets::package_io::install(&path, bytes.clone())?;
-        memory.root.insert_asset(Path::new(&path), bytes);
+        if let Some(memory) = &memory {
+            memory.root.insert_asset(Path::new(&path), bytes.clone());
+        }
+        rm_sim_assets::package_io::install(&path, bytes)?;
     }
     let cad = rm_sim_server::cad_assets::load(Path::new(root))?;
     Ok(Arc::new(cad))

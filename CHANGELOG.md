@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- Cache cooked payload shapes across restores and move browser chassis/projectile
+  prediction into persistent workers, with bounded queues and failure recovery.
+
 - Add browser offline Single Player through the existing host authority, bounded
   chassis/projectile prediction and verified optional robot/assembly CAD loading.
   Run automatic assembly planning in isolated workers and enable RMUL start/reset

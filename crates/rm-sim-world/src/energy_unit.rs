@@ -458,6 +458,25 @@ mod tests {
         (field, run.owner)
     }
     #[test]
+    fn repeated_field_restores_reuse_cooked_payload_shape_but_keep_live_state_independent() {
+        let (field, owner) = fixture();
+        let geometry = field.fixed_geometry_snapshot();
+        let snapshot = field.snapshot();
+        let original = field.physics.payload_telemetry(owner).unwrap();
+        for _ in 0..3 {
+            let mut restored = Field::restore(&snapshot, &geometry, 0.).unwrap();
+            let payload = restored.physics.payload_telemetry(owner).unwrap();
+            assert!(std::ptr::eq(original.shape, payload.shape));
+            assert_eq!(restored.energy_units(), field.energy_units());
+            restored.toggle_energy_grip(owner).unwrap();
+            restored.step(16).unwrap();
+            assert_eq!(field.energy_units()[0].attachment, Attachment::Held(owner));
+            assert_eq!(restored.energy_units()[0].attachment, Attachment::Free);
+            assert_ne!(restored.energy_units()[0].physical.pose, original.pose);
+        }
+        assert_eq!(field.snapshot(), snapshot);
+    }
+    #[test]
     fn repeated_deployments_refuse_excess_units_without_breaking_restore() {
         let (mut field, owner) = fixture();
         let model = field.arms()[0].model.clone();

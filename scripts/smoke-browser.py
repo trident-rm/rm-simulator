@@ -304,14 +304,32 @@ def offline_gameplay(browser, origin):
         assert network.get("prediction_results_accepted", 0) > 0, network
         prediction = network.get("prediction_worker") or {}
         assert prediction.get("last_replay_ticks", 999) <= 8, prediction
+        assert page.workers, "Prediction did not create an isolated browser worker"
         assert not errors, errors
         print(json.dumps({"case":"offline-gameplay", "start_pause_step_resume":"passed", "prediction":prediction,
+                          "active_workers":len(page.workers),
                           "host_work":json.loads(observed(page,"host-work") or "{}"),
                           "frame_timing":json.loads(observed(page,"frame-timing") or "{}"),
                           "wasm_memory_bytes":int(observed(page,"wasm-memory-bytes") or 0)}),flush=True)
+        # Fail the oldest worker after it has produced accepted poses. The session
+        # must discard that cached pose and keep authoritative controls moving.
+        page.workers[0].evaluate("setTimeout(() => { throw new Error('injected prediction worker failure'); }, 0)")
+        page.wait_for_function("document.querySelector('#status').dataset.localAim === 'false'", timeout=15000)
+        position = json.loads(observed(page, "position"))
+        page.keyboard.down("w")
+        try:
+            page.wait_for_function("""initial => {
+                const p=JSON.parse(document.querySelector('#status').dataset.position);
+                return Math.hypot(p[0]-initial[0],p[1]-initial[1]) > .1;
+            }""", arg=position, timeout=15000)
+        finally:
+            page.keyboard.up("w")
+        print(json.dumps({"case":"prediction-worker-failure", "authoritative_controls":"passed"}), flush=True)
         pause(page)
         click_text(page, "Exit Match", exact=True)
         wait_screen(page, "Title")
+        wait_frames(page, 250)
+        assert not page.workers, "Prediction workers survived leaving the match"
     finally:
         context.close()
 

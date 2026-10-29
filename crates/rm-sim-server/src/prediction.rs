@@ -87,7 +87,7 @@ pub const MAX_PREDICTION_NS: u64 = 200_000_000;
 /// One second of receipt silence, plus room for ordinary transit and scheduled input lead.
 pub const MAX_CONTINUOUS_REPLAY_NS: u64 = 1_500_000_000;
 /// One unfinalized control sample on the client's timeline.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PendingInput {
     /// Client-assigned identity. Replay skips an input whose sequence it has
     /// already applied in this rebuild, so a repeated frame cannot move the
@@ -151,8 +151,13 @@ impl InputHistory {
 
 /// One reconciliation request: the collision context the client last received,
 /// the owner checkpoint to start from, and the inputs to replay over it.
+#[derive(Serialize, Deserialize)]
 pub struct Replay {
     /// The last full snapshot, the whole field this replay is rebuilt from.
+    #[serde(
+        serialize_with = "serialize_snapshot",
+        deserialize_with = "deserialize_snapshot"
+    )]
     pub snapshot: Arc<FieldSnapshot>,
     /// Identity of the collision context the client last received. A change
     /// makes the replayer restore a different field.
@@ -174,6 +179,17 @@ pub struct Replay {
     pub target_time_ns: u64,
     /// Inputs to apply, in ascending intended time.
     pub inputs: Vec<PendingInput>,
+}
+fn serialize_snapshot<S: serde::Serializer>(
+    value: &Arc<FieldSnapshot>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    value.as_ref().serialize(serializer)
+}
+fn deserialize_snapshot<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Arc<FieldSnapshot>, D::Error> {
+    FieldSnapshot::deserialize(deserializer).map(Arc::new)
 }
 impl Replay {
     /// Replay once on a field of its own. The persistent client worker keeps a

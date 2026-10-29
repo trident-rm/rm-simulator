@@ -21,7 +21,7 @@ pub(crate) const PROVISIONAL_BIT: u64 = 1 << 63;
 
 /// One provisional ball the client draws for its own unconfirmed shot. It is
 /// presentation only; the host's accepted ball replaces it by shot id.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Flight {
     /// Client shot id, unique for the session and never reused. It keys the
     /// flight in a [`Request`] and the ball in an [`Output`].
@@ -43,6 +43,7 @@ pub struct Flight {
 }
 /// One replay request: the checkpoint to restore, the shooter's own prediction
 /// and the provisional flights to launch into that restore.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Request {
     /// Prediction epoch. A change makes the worker rebuild its field, and lets
     /// the caller drop an output that an older epoch produced.
@@ -68,6 +69,7 @@ pub struct Request {
     pub flights: Vec<Flight>,
 }
 /// Provisional ball states one request produced, for the caller to draw.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Output {
     /// Epoch of the request that produced this output. The caller drops the
     /// output when the prediction epoch has moved on.
@@ -83,17 +85,20 @@ struct Mailbox {
     request: Option<Request>,
     output: Option<Output>,
     stopped: bool,
+    #[cfg(target_arch = "wasm32")]
+    error: Option<String>,
     completed: u64,
     replay_ticks: u64,
 }
 /// One restored `Field` for provisional trajectories, never authoritative state.
-/// Native execution uses a detached background thread. Browser execution advances
-/// at most four integration ticks per exchange on the caller's thread; restoring
-/// a changed checkpoint remains indivisible.
+/// Native execution uses a detached background thread. Browser execution uses
+/// an isolated worker with at most four integration ticks per request.
 pub struct Worker {
     shared: Arc<(Mutex<Mailbox>, Condvar)>,
     #[cfg(target_arch = "wasm32")]
-    driver: Mutex<ProjectileDriver>,
+    worker: Mutex<Option<crate::browser_prediction_worker::Handle>>,
+    #[cfg(target_arch = "wasm32")]
+    idle: std::sync::atomic::AtomicBool,
 }
 /// One restored field the client fires its unconfirmed shots into. It is the
 /// whole field, so a provisional ball meets the same terrain, armor and moving
@@ -191,18 +196,46 @@ impl Worker {
             })?;
         Ok(Self { shared })
     }
-    /// Create caller-driven browser trajectory replay with four ticks per exchange.
+    /// Prepare lazy isolated browser trajectory replay with four ticks per request.
     #[cfg(target_arch = "wasm32")]
-    pub fn new(geometry: StaticGeometry, floor: f64) -> std::io::Result<Self> {
+    pub fn new(_geometry: StaticGeometry, _floor: f64) -> std::io::Result<Self> {
         Ok(Self {
             shared: Arc::new((Mutex::new(Mailbox::default()), Condvar::new())),
-            driver: Mutex::new(ProjectileDriver::new(geometry, floor)),
+            worker: Mutex::new(None),
+            idle: std::sync::atomic::AtomicBool::new(true),
         })
+    }
+    /// Whether isolated execution has failed and its last output must be discarded.
+    pub fn failed(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.shared
+                .0
+                .try_lock()
+                .ok()
+                .is_some_and(|mailbox| mailbox.error.is_some())
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            false
+        }
     }
     /// Completed trajectory replays and the last integration tick count.
     pub fn diagnostics(&self) -> Option<serde_json::Value> {
-        self.shared.0.try_lock().ok().map(|mailbox| serde_json::json!({ "completed": mailbox.completed, "last_replay_ticks": mailbox.replay_ticks }))
+        self.shared.0.try_lock().ok().map(|mailbox| {
+            let value=serde_json::json!({"completed":mailbox.completed,"last_replay_ticks":mailbox.replay_ticks});
+            #[cfg(target_arch = "wasm32")]
+            let value={
+                let mut value=value;
+                value["execution"]=serde_json::json!("web-worker");
+                value["error"]=serde_json::json!(mailbox.error);
+                value["worker"]=self.worker.lock().ok().and_then(|w|w.as_ref().map(|w|w.diagnostics())).unwrap_or(serde_json::Value::Null);
+                value
+            };
+            value
+        })
     }
+
     /// Hand a request to the worker and take the output of the previous one
     /// without blocking. Returns `None` while the worker holds the lock, so a
     /// caller that fell behind skips a frame instead of stalling the render
@@ -226,29 +259,63 @@ impl Worker {
         self.shared.1.notify_one();
         result
     }
-    /// Replay at most four browser physics ticks and return the preceding result.
+    /// Lazily start an isolated browser trajectory worker on the first provisional flight.
     #[cfg(target_arch = "wasm32")]
     pub fn exchange(&self, request: Request) -> Option<Output> {
-        let mut mailbox = self.shared.0.try_lock().ok()?;
+        let mut worker = self.worker.lock().ok()?;
         if request.flights.is_empty() {
-            mailbox.output = None;
-            self.driver.try_lock().ok()?.scene = None;
+            if !self.idle.swap(true, std::sync::atomic::Ordering::Relaxed)
+                && let Some(worker) = worker.as_ref()
+            {
+                let _ = worker.post(crate::browser_prediction_worker::Request::ClearProjectile {
+                    epoch: request.epoch,
+                });
+            }
+            self.shared.0.lock().ok()?.output = None;
             return Some(Output {
                 epoch: request.epoch,
                 projectiles: BTreeMap::new(),
             });
         }
-        let previous = mailbox.output.take();
-        drop(mailbox);
-        let (output, ticks) = {
-            let mut driver = self.driver.try_lock().ok()?;
-            let output = driver.run(&request, 4);
-            (output, driver.last_replay_ticks)
-        };
-        let mut mailbox = self.shared.0.try_lock().ok()?;
-        mailbox.completed += 1;
-        mailbox.replay_ticks = ticks;
-        mailbox.output = Some(output);
+        self.idle.store(false, std::sync::atomic::Ordering::Relaxed);
+        if worker.is_none() {
+            let output = Arc::clone(&self.shared);
+            match crate::browser_prediction_worker::Handle::new(Box::new(move |reply| {
+                if let Ok(mut mailbox) = output.0.lock() {
+                    match reply {
+                        Ok(crate::browser_prediction_worker::Response::Projectile {
+                            output,
+                            ticks,
+                        }) => {
+                            mailbox.completed += 1;
+                            mailbox.replay_ticks = ticks;
+                            mailbox.output = Some(output);
+                        }
+                        Ok(crate::browser_prediction_worker::Response::ClearedProjectile) => {
+                            mailbox.output = None
+                        }
+                        Ok(_) => mailbox.error = Some("wrong trajectory worker response".into()),
+                        Err(error) => mailbox.error = Some(error),
+                    }
+                }
+            })) {
+                Ok(handle) => *worker = Some(handle),
+                Err(error) => {
+                    self.shared.0.lock().ok()?.error = Some(error.to_string());
+                    return None;
+                }
+            }
+        }
+        let previous = self.shared.0.lock().ok()?.output.take();
+        if let Err(error) =
+            worker
+                .as_ref()?
+                .post(crate::browser_prediction_worker::Request::Projectile(
+                    Box::new(request),
+                ))
+        {
+            self.shared.0.lock().ok()?.error = Some(error);
+        }
         previous
     }
 }
@@ -263,14 +330,14 @@ impl Drop for Worker {
 }
 
 /// Full-field trajectory state used by both native and browser schedulers.
-struct ProjectileDriver {
+pub(crate) struct ProjectileDriver {
     scene: Option<Scene>,
     geometry: StaticGeometry,
     floor: f64,
-    last_replay_ticks: u64,
+    pub(crate) last_replay_ticks: u64,
 }
 impl ProjectileDriver {
-    fn new(geometry: StaticGeometry, floor: f64) -> Self {
+    pub(crate) fn new(geometry: StaticGeometry, floor: f64) -> Self {
         Self {
             scene: None,
             geometry,
@@ -278,7 +345,11 @@ impl ProjectileDriver {
             last_replay_ticks: 0,
         }
     }
-    fn run(&mut self, request: &Request, max_ticks: usize) -> Output {
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn clear(&mut self) {
+        self.scene = None;
+    }
+    pub(crate) fn run(&mut self, request: &Request, max_ticks: usize) -> Output {
         self.last_replay_ticks = 0;
         if self.scene.as_ref().is_none_or(|scene| {
             scene.epoch != request.epoch || scene.snapshot_id != request.snapshot_id
@@ -329,6 +400,62 @@ pub fn muzzle(own: &ChassisSnapshot, command: rm_sim_world::ChassisCommand) -> r
 mod tests {
     use super::*;
     use rm_sim_world::{Caliber, ChassisConfig, ChassisPlacement, FieldConfig, Pose, Team};
+    #[test]
+    fn worker_json_roundtrip_preserves_accepted_and_provisional_flights() {
+        let mut field = Field::new(&FieldConfig {
+            chassis: vec![ChassisPlacement {
+                config: ChassisConfig::default(),
+                team: Team::Red,
+                kind: rm_sim_world::RobotKind::Infantry,
+                performance: None,
+                spawn: Pose::at([-5., 0., 1.]),
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        let shot = Shot::at_limit(Caliber::Mm17);
+        let muzzle = Pose::at([0., 0., 2.]);
+        let accepted = field.fire(muzzle, shot, None).unwrap();
+        let snapshot = Arc::new(field.snapshot());
+        let request = Request {
+            epoch: 4,
+            snapshot_id: 3,
+            snapshot: Arc::clone(&snapshot),
+            peers: snapshot.chassis.clone(),
+            own: snapshot.chassis[0].clone(),
+            time_ns: 4 * tick_ns(),
+            flights: vec![
+                Flight {
+                    id: 1,
+                    muzzle,
+                    launched_ns: 0,
+                    shot,
+                    authoritative: Some(accepted),
+                },
+                Flight {
+                    id: 2,
+                    muzzle,
+                    launched_ns: 0,
+                    shot,
+                    authoritative: None,
+                },
+            ],
+        };
+        let decoded: Request =
+            serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
+        assert_eq!(*decoded.snapshot, *snapshot);
+        assert_eq!(decoded.flights[0].authoritative, Some(accepted));
+        assert_eq!(decoded.flights[1].authoritative, None);
+        let geometry = field.static_geometry_snapshot();
+        let expected = ProjectileDriver::new(geometry.clone(), 0.).run(&request, 4);
+        let actual = ProjectileDriver::new(geometry, 0.).run(&decoded, 4);
+        let transferred: Output =
+            serde_json::from_slice(&serde_json::to_vec(&actual).unwrap()).unwrap();
+        assert_eq!(transferred.epoch, 4);
+        assert_eq!(transferred.projectiles, expected.projectiles);
+        assert_eq!(transferred.projectiles.len(), 2);
+    }
+
     #[test]
     fn caller_budget_matches_native_trajectory_and_epoch_discards_old_flights() {
         let field = Field::new(&FieldConfig {

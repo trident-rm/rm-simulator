@@ -59,6 +59,8 @@ mod browser_assembly_worker;
 mod browser_assets;
 #[cfg(target_arch = "wasm32")]
 mod browser_client;
+#[cfg(target_arch = "wasm32")]
+mod browser_prediction_worker;
 mod native;
 
 #[cfg(not(target_arch = "wasm32"))]

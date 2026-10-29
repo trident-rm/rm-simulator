@@ -511,6 +511,10 @@ impl Session {
                 }
             }
         });
+        #[cfg(target_arch = "wasm32")]
+        if let Some(scene) = &welcome.prediction_scene {
+            crate::browser_prediction_worker::set_source(cad.root.clone(), scene.clone());
+        }
         let predictor = if (chassis_id.is_some() || args.staging) && local_aim {
             prediction_geometry.as_ref().and_then(|(geometry, floor)| {
                 progress(0.8, "Preparing chassis prediction");
@@ -1488,7 +1492,35 @@ pub fn predict_frame(mut session: ResMut<Session>) {
     session.predict_frame();
 }
 impl Session {
+    fn stop_chassis_prediction(&mut self) {
+        self.prediction.worker = None;
+        self.prediction.chassis = None;
+        self.prediction.proof = None;
+        self.prediction.context = None;
+        self.prediction.inputs.reset();
+        self.prediction.epoch = self.prediction.epoch.wrapping_add(1);
+        self.camera_offset_m = [0.; 3];
+        self.local_aim = false;
+        self.stop_projectile_prediction();
+    }
     fn predict_frame(&mut self) {
+        if self
+            .prediction
+            .worker
+            .as_ref()
+            .is_some_and(|worker| worker.failed())
+        {
+            warn!("Chassis prediction worker failed; presenting authoritative state");
+            self.stop_chassis_prediction();
+        } else if self
+            .shots
+            .worker
+            .as_ref()
+            .is_some_and(|worker| worker.failed())
+        {
+            warn!("Projectile prediction worker failed; presenting authoritative projectiles");
+            self.stop_projectile_prediction();
+        }
         let previous_prediction_time_ns = self.prediction.last_frame_time_ns;
         self.update_prediction();
         self.prediction.last_frame_time_ns = self.prediction.time_ns;
@@ -1756,6 +1788,25 @@ mod tests {
                 ..proof
             }
         ));
+    }
+
+    #[test]
+    fn failed_prediction_discards_cached_pose_and_returns_to_authority() {
+        let mut session = test_session(true);
+        let owner = session.own_chassis().unwrap().clone();
+        let mut stale = owner.clone();
+        stale.pose.translation_m[0] += 10.;
+        session.prediction.chassis = Some(stale);
+        session.camera_offset_m = [2.; 3];
+        session.local_aim = true;
+        let epoch = session.prediction.epoch;
+        session.stop_chassis_prediction();
+        assert_eq!(session.presented_chassis().unwrap().pose, owner.pose);
+        assert!(session.prediction.chassis.is_none());
+        assert!(session.prediction.proof.is_none());
+        assert_eq!(session.camera_offset_m, [0.; 3]);
+        assert!(!session.local_aim);
+        assert_eq!(session.prediction.epoch, epoch.wrapping_add(1));
     }
 
     #[test]

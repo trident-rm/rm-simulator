@@ -237,6 +237,9 @@ impl WorldPhysics {
         }
     }
     /// Install a persistent object; duplicate identities and invalid states are rejected.
+    /// Reuses up to sixteen immutable prepared shapes per thread/browser worker,
+    /// keyed by exact source vertices, hull order, mass and expansion. Live world
+    /// handles, identity and motion remain separate for every installation.
     pub fn add_payload(&mut self, state: &PayloadSnapshot) -> Result<(), &'static str> {
         if self.payloads.iter().any(|b| b.id == state.id)
             || !pose_is_valid(state.pose)
@@ -248,7 +251,7 @@ impl WorldPhysics {
         {
             return Err("invalid or duplicate payload");
         }
-        let prepared = PreparedPayload::new(state.shape.clone())?;
+        let prepared = preparation::cached(&state.shape)?;
         self.add_prepared_payload(
             state.id,
             &prepared,

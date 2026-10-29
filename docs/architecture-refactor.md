@@ -125,9 +125,13 @@ direct wheel controls and subsequent adapter boundaries.
 `PredictionState` owns the replay worker, geometry, checkpoint context, input
 history, accepted prediction and counters inside `Session`. Embedded and remote
 sessions both use `Client`; embedded hosts retain the same authority owner.
-Native prediction uses background workers. Browser prediction drives the same
-whole-world replay in slices of eight chassis ticks and four projectile ticks
-per exchange. Restoring a checkpoint remains indivisible.
+Native prediction uses background threads. Browser prediction uses persistent
+isolated Web Workers with the same whole-world replay drivers, capped at eight
+chassis ticks and four projectile ticks per job. Each worker verifies and loads
+its source geometry once. The UI retains one replaceable pending request per
+worker; checkpoint restoration and integration run outside the UI thread.
+Session teardown terminates both workers. Immutable cooked payload shapes use a
+bounded per-thread cache; live body handles and motion never enter that cache.
 
 Chassis ingestion builds an ID index once per frame and resolves `PresentedPose`,
 armor state and equipment-light state components. Transform and material systems

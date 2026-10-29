@@ -42,6 +42,14 @@ pub(super) struct LocalShots {
     pub unresolved_outcomes: u64,
 }
 impl Session {
+    /// Stop provisional trajectory drawing without discarding commands or confirmations.
+    pub(super) fn stop_projectile_prediction(&mut self) {
+        self.shots.worker = None;
+        self.shots.checkpoint = None;
+        for flight in self.shots.flights.values_mut() {
+            flight.projectile = None;
+        }
+    }
     /// Actual initial speed of this pilot's latest confirmed launch in m/s.
     /// Rejected shots and changes to settings do not change this reading.
     pub fn last_bullet_speed_m_s(&self) -> Option<f64> {

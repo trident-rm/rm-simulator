@@ -55,8 +55,9 @@ memory asset reader, without an unchecked second HTTP download.
 
 Browser sessions retain verified collision geometry for staging heights, aim
 queries and debug drawing. Chassis and provisional projectile prediction use the
-same whole-world replay as native, with at most eight chassis ticks and four
-projectile ticks per exchange. Checkpoint restoration remains indivisible.
+same whole-world replay as native in persistent isolated Web Workers, with at
+most eight chassis ticks and four projectile ticks per job. Workers verify and
+load their source geometry once. Checkpoint restoration runs inside the worker.
 `prediction=0` disables local prediction.
 
 Single Player runs locally through the same host authority and codecs, without
@@ -185,8 +186,8 @@ movement, firing, pause, exact manual stepping and bounded prediction. Opt-in
 `inspect=1` diagnostics include measured host/replay work, recent frame interval
 percentiles and Wasm linear-memory capacity. Linear memory is not browser-process
 RSS. Measurements include rendering and inspection overhead; they do not establish
-a hardware-independent budget. Heavy checkpoint restoration, map construction
-and a single navigation search are still indivisible operations.
+a hardware-independent budget. Map construction and a single navigation search
+remain indivisible operations on the caller thread.
 
 A local macOS Chromium run at 1600 × 1000, with one robot in the offline 1v1
 arena, recorded a 16.7 ms median frame interval and an 18.7 ms p95 over the latest
@@ -220,3 +221,9 @@ notices, workspace licenses and third-party notices.
 The default staged bundle is about 111 MiB. The workflow does not rely on custom
 HTTP headers or precompressed file negotiation. GitHub Pages serves the static
 application; multiplayer hosting remains a separate native service.
+
+Prediction workers retain one in-flight request and one replaceable pending
+request. Messages are capped at 16 MiB; initialization or an active job must make
+progress within 30 seconds. Dropping the session terminates its workers. The
+projectile worker starts on the first provisional flight. Worker failures appear
+in prediction diagnostics and do not trigger synchronous UI-thread replay.

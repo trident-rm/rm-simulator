@@ -192,6 +192,45 @@ pub struct CorrectionStats {
     pub aim_rad: Option<f64>,
 }
 
+impl<'de> Deserialize<'de> for CorrectionStats {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Owned {
+            context_age_ns: Option<u64>,
+            context_hint: Option<String>,
+            comparisons: u64,
+            unavailable: u64,
+            tick_ns: Option<u64>,
+            prediction_generation: u64,
+            position_m: Option<f64>,
+            orientation_rad: Option<f64>,
+            velocity_m_s: Option<f64>,
+            aim_rad: Option<f64>,
+        }
+        let value = Owned::deserialize(deserializer)?;
+        let context_hint = match value.context_hint.as_deref() {
+            None => None,
+            Some("stale_collision_context") => Some("stale_collision_context"),
+            Some("nearby_robot_possible_contact") => Some("nearby_robot_possible_contact"),
+            Some("wheel_contact") => Some("wheel_contact"),
+            Some("unknown") => Some("unknown"),
+            Some(_) => return Err(serde::de::Error::custom("unknown correction context hint")),
+        };
+        Ok(Self {
+            context_age_ns: value.context_age_ns,
+            context_hint,
+            comparisons: value.comparisons,
+            unavailable: value.unavailable,
+            tick_ns: value.tick_ns,
+            prediction_generation: value.prediction_generation,
+            position_m: value.position_m,
+            orientation_rad: value.orientation_rad,
+            velocity_m_s: value.velocity_m_s,
+            aim_rad: value.aim_rad,
+        })
+    }
+}
+
 /// One exact-tick prediction record: tick time in ns, the generation counter
 /// stamped when it was written, the owner pose, its body velocity in m/s and
 /// its held aim in rad.

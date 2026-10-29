@@ -81,6 +81,7 @@ def stage(output, profile, extra_packages=(), extra_files=()):
     output.mkdir(parents=True)
     shutil.copyfile(ROOT / "web/index.html", output / "index.html")
     shutil.copyfile(ROOT / "web/assembly-worker.js", output / "assembly-worker.js")
+    shutil.copyfile(ROOT / "web/prediction-worker.js", output / "prediction-worker.js")
     subprocess.run(["wasm-bindgen", "--target", "web", "--out-dir", str(output / "pkg"),
                     "--out-name", "rm_simulator", "--remove-name-section", "--remove-producers-section", str(binary)], check=True)
     for name, source in files.items():

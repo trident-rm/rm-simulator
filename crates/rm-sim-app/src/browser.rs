@@ -47,6 +47,9 @@ pub(crate) fn args() -> anyhow::Result<crate::args::Args> {
     crate::args::Args::try_parse_from(values).map_err(Into::into)
 }
 pub(crate) fn start() {
+    if crate::browser_prediction_worker::start_if_worker() {
+        return;
+    }
     if crate::browser_assembly_worker::start_if_worker() {
         return;
     }
