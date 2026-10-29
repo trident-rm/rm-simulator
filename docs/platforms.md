@@ -198,3 +198,25 @@ rendered 277 frames during the worker request. Use `--cad` and
 
 For repeatable startup and sampled Chromium process-memory measurements, see
 [browser performance](browser-performance.md).
+
+## GitHub Pages
+
+The manual `Browser Single Player Pages` workflow builds the Wasm app on `main`,
+hydrates the approved field packages through Git LFS and uploads the staged static
+bundle. It deploys through the `github-pages` environment. No native server or
+optional development CAD package is deployed. Single Player runs in the visitor's
+browser. It still requires WebGPU; loading the page once does not install it for
+use without an Internet connection.
+
+After authorizing publication, set the repository's Pages source to GitHub
+Actions, push the reviewed commits and dispatch `.github/workflows/pages.yml`
+on `main`. Deployment is manual; ordinary pushes do not publish the app.
+The expected project URL is `https://trident-rm.github.io/rm-simulator/`.
+The title screen offers Single Player; `?field=1v1&play=1` launches it directly.
+All runtime URLs stay relative to the page, including field bytes and workers.
+The build uses the existing field checksum inventories and retains their CAD
+notices, workspace licenses and third-party notices.
+
+The default staged bundle is about 111 MiB. The workflow does not rely on custom
+HTTP headers or precompressed file negotiation. GitHub Pages serves the static
+application; multiplayer hosting remains a separate native service.

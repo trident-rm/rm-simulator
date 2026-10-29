@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright (c) 2026 hxyulin <hxyulin@proton.me>
+name: Browser Single Player Pages
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CC_wasm32_unknown_unknown: clang
+      AR_wasm32_unknown_unknown: llvm-ar
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          lfs: true
+      - name: Install Wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          shared-key: browser-pages
+      - name: Install matching Wasm bindings generator
+        run: |
+          version=$(python3 -c 'import tomllib; lock=tomllib.load(open("Cargo.lock", "rb")); print(next(p["version"] for p in lock["package"] if p["name"] == "wasm-bindgen"))')
+          cargo install wasm-bindgen-cli --version "$version" --locked
+      - name: Build browser application
+        run: cargo build -p rm-sim-app --bin rm-simulator --target wasm32-unknown-unknown --profile web --locked
+      - name: Stage verified fields and ownership notices
+        run: python3 scripts/stage-browser.py --out local-assets/pages
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: local-assets/pages
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5
