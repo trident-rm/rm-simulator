@@ -107,3 +107,76 @@ cause or network cause was established by this experiment.
 Profiles used names recovered from an otherwise identical wasm-bindgen output;
 the named and staged binaries had identical code-section SHA-256
 `362c6d9649d46a88220d5460cfc94dfbb318df6334c05c6473e5621de9a2957b`.
+
+## Hardware WebGPU/Vulkan investigation, 2026-10-29
+
+The same staged browser app was tested on a Linux workstation with a Ryzen 9
+9950X3D and RTX 5090 using Chromium 156.0.8078.4. Chromium used Vulkan/ANGLE;
+`navigator.gpu.requestAdapter()` reported NVIDIA Blackwell and
+`adapter.info.isFallbackAdapter == false`. This was hardware WebGPU, not
+SwiftShader. These are headless browser measurements, not native Vulkan timings.
+
+The application used the browser's Low preset at 1600 × 1000. Each configuration
+had 2.5 seconds of phase warmup followed by ten seconds of observation. Active
+phases held forward and fire after F5; paused phases used F6. Results are single
+trials. Frame cadence comes from requestAnimationFrame, and long tasks from
+PerformanceObserver. Browser presentation caps the smooth cases near 60 Hz.
+
+| Prediction | Phase | p95 frame interval | p99 frame interval | Long tasks above 50 ms |
+|---|---|---|---|---|
+| Off | Paused | 16.7 ms | 16.8 ms | 0 |
+| Off | Active | 16.8 ms | 33.4 ms | 0 |
+| On | Paused | 16.7 ms | 16.8 ms | 0 |
+| On | Active | 100 ms | 150 ms | 80 |
+
+The stall persists without Metal. Pausing leaves the scene drawing while stopping
+replay/authority advancement. This supports fixing main-thread replay before
+changing graphics APIs. It does not measure GPU headroom: no GPU timestamps were
+captured, and camera positions differ after active driving. Rendering on smaller
+GPUs, higher presets or larger viewports may still be expensive.
+
+The tested Wasm SHA-256 is
+`31c608640ff12791f3c968ed7e8f61e8fa830a22db1c155cdd3520c1a33c206b`.
+
+### Installed geometry and backend
+
+Counting triangle indices in each visual GLB's active scene, following node mesh
+instances and multiplying by manifest placements, gives 131,824 field/equipment
+triangles. This excludes the robot and generated visuals. The same traversal
+counts 1,008 primitive occurrences. These are not measured draw calls: Bevy may
+batch instances, cull them or render them in multiple passes.
+
+| Visual group | Placed triangles |
+|---|---:|
+| Floor | 464 |
+| Static arena | 63,935 |
+| Rune | 12,689 |
+| Outposts | 14,626 |
+| Bases | 27,148 |
+| Energy Cores | 12,962 |
+
+The approved package already contains the sibling map tools' reviewed visual
+reductions. An older map-tools comparison describing 355,542 installed visual
+triangles is historical. Its Rune collision profile report's 120,151-triangle
+figure describes physical meshes, not rendering geometry. A different lightweight
+visual candidate needs its own manifest/hash comparison before substitution.
+No map or collision package changed during this investigation.
+
+Triangle processing still occurs on the GPU in a Wasm app. Wasm does not execute
+vertex shaders on the CPU. Browser CPU submission, entity/material preparation,
+GPU memory, shading, overdraw and shadows can matter independently of triangle
+count. Given the existing reduced map, inspect actual render batches/materials
+before assuming another small triangle reduction will resolve frame spikes.
+
+The current browser build enables Bevy `webgpu`; the workspace also inherits
+`webgl2` through `default_platform`. Bevy 0.20's renderer selects
+`Backends::BROWSER_WEBGPU` when `webgpu` is enabled and only selects WebGL when
+it is absent. The HTML bootstrap additionally rejects browsers without
+`navigator.gpu`. There is no working automatic WebGL fallback in this app.
+
+The active path is Bevy → wgpu → browser WebGPU → browser graphics implementation
+→ Vulkan on this workstation (Metal on macOS). WebGL2 would require a separate
+feature/build and bootstrap path, followed by shader/material/HUD validation.
+It should be evaluated for compatibility, not assumed to improve performance.
+See [wgpu's web backend documentation](https://wgpu.rs/doc/wgpu/documentation/platforms/web/index.html)
+for backend differences. No WebGL build or WebGL performance test was run here.
