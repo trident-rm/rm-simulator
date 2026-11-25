@@ -32,6 +32,7 @@ pub struct CadRuneFace {
 /// let light = CadTargetLight {
 ///     node: "source-detector".into(), target: 7,
 ///     source_color: Color::srgb(1., 0., 0.),
+///     alternate_source_color: None,
 /// };
 /// assert_eq!(light.target, 7);
 /// ```
@@ -43,6 +44,8 @@ pub struct CadTargetLight {
     pub target: u64,
     /// Original optical tint; other materials on the same body remain unchanged.
     pub source_color: Color,
+    /// Optional second CAD swatch for the same optical surface.
+    pub alternate_source_color: Option<Color>,
 }
 /// What one imported glTF scene contributes, and how its nodes are treated.
 #[derive(Clone, Debug, PartialEq)]
@@ -398,10 +401,14 @@ fn loaded(
                         continue;
                     };
                     let actual = original.base_color.to_srgba();
-                    let expected = light.source_color.to_srgba();
-                    if (actual.red - expected.red).abs() > 0.01
-                        || (actual.green - expected.green).abs() > 0.01
-                        || (actual.blue - expected.blue).abs() > 0.01
+                    let matches = |color: Color| {
+                        let expected = color.to_srgba();
+                        (actual.red - expected.red).abs() <= 0.01
+                            && (actual.green - expected.green).abs() <= 0.01
+                            && (actual.blue - expected.blue).abs() <= 0.01
+                    };
+                    if !matches(light.source_color)
+                        && !light.alternate_source_color.is_some_and(matches)
                     {
                         continue;
                     }
@@ -1090,6 +1097,7 @@ mod tests {
         let appearance = |angle_rad| RuneAppearance {
             hub_pose: crate::PoseFlu::default(),
             angle_rad,
+            overlay_angle_rad: None,
             active_blades: [false; 5],
             activated_blades: [false; 5],
             fully_activated: false,

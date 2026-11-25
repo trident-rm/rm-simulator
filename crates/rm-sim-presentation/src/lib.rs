@@ -3,7 +3,7 @@
 //! Pure RoboMaster snapshot-to-renderer adaptation, with caller-owned time and outputs.
 //! No host, transport, UI, or session clock is required.
 #![deny(missing_docs)]
-use glam::{DQuat, DVec3};
+use glam::{DMat3, DQuat, DVec3};
 use rm_sim_render::{
     PoseFlu, TeamColor,
     armor::ArmorPattern,
@@ -489,6 +489,7 @@ pub fn scene_state_into(
             RuneAppearance {
                 hub_pose: pose_flu(rune.hub_pose),
                 angle_rad: rune.presentation_angle_rad(presentation_ns),
+                overlay_angle_rad: None,
                 active_blades: rune.active_blades,
                 // Big Rune shows hit blades only once the whole rune is activated.
                 activated_blades: rune.activated.map(|hit| hit && lit && (!big || activated)),
@@ -569,14 +570,35 @@ pub fn native_scene_into(
             .runes
             .extend(state.config.runes.iter().enumerate().map(|(i, geometry)| {
                 let r = &state.game.runes[i];
+                use rm_sim_world::gameplay::rmuc_2027::rune::{Phase, Stage};
+                let target = geometry.targets[0];
+                let normal = dquat(target.rotation_wxyz) * DVec3::X;
+                let pivot = DVec3::from_array(geometry.pivot_m);
+                let offset = DVec3::from_array(target.translation_m) - pivot;
+                let face_center = pivot + normal * offset.dot(normal);
+                let up = (DVec3::from_array(target.translation_m) - face_center).normalize();
+                let right = up.cross(normal);
+                // The generated wheel has its first blade along local Bevy +Y
+                // and faces local +Z. In FLU those axes are +Z and -X.
+                let rotation = DQuat::from_mat3(&DMat3::from_cols(-normal, -right, up));
+                let activated = r.phase == Phase::Activated;
+                let big = r.stage == Stage::Big;
                 RuneAppearance {
-                    hub_pose: pose_flu(rm_sim_world::Pose::at(geometry.pivot_m)),
+                    hub_pose: PoseFlu {
+                        // The CAD disk and light strips extend 6.5 mm
+                        // past the detector plane on the bound field.
+                        translation_m: (face_center + normal * 0.008).to_array(),
+                        rotation_wxyz: wxyz(rotation),
+                    },
                     angle_rad: r.angle_at(round_ns),
+                    overlay_angle_rad: Some(
+                        r.angle_at(round_ns)
+                            * normal.dot(DVec3::from_array(geometry.axis)).signum(),
+                    ),
                     active_blades: r.targets,
-                    activated_blades: r.completed_blades,
-                    progress_stages: std::array::from_fn(|n| n < usize::from(r.groups)),
-                    fully_activated: r.phase
-                        == rm_sim_world::gameplay::rmuc_2027::rune::Phase::Activated,
+                    activated_blades: r.completed_blades.map(|hit| hit && (!big || activated)),
+                    progress_stages: std::array::from_fn(|n| big && n < usize::from(r.groups)),
+                    fully_activated: activated,
                     hit_flash: std::array::from_fn(|blade| {
                         hits.iter().any(|h| {
                             h.target
@@ -591,14 +613,16 @@ pub fn native_scene_into(
         for side in Team::BOTH {
             let i = side.index();
             if let Some(geometry) = state.config.runes.get(i) {
-                let r = &state.game.runes[i];
+                let rim_lit = scene.runes[i].activated_blades;
                 for (blade, rest) in geometry.targets.iter().enumerate() {
                     targets.push(rm_sim_render::targets::TargetAppearance {
                         id: (512 + i * 5 + blade) as u64,
                         pose: pose_flu(state.rune_pose_at(side, *rest, round_ns)),
                         size_m: [0.3; 2],
                         team: team_color(side),
-                        disabled: !r.targets[blade] && !r.completed_blades[blade],
+                        // The live cue uses inner rings and flowing arrows.
+                        // The source CAD rim belongs to the completed-arm cue.
+                        disabled: !rim_lit[blade],
                         flash: hits.iter().any(|h| {
                             h.target
                                 == ArmorTarget::Rune {

@@ -26,8 +26,10 @@ pub struct SourceTime {
 pub struct RuneAppearance {
     /// Hub pose in world FLU metres, before the wheel angle is applied.
     pub hub_pose: PoseFlu,
-    /// Wheel rotation about the hub's local Z, in radians.
+    /// Wheel rotation in radians, in the source asset's joint convention.
     pub angle_rad: f64,
+    /// Overlay rotation about its outward local Z, in radians. Defaults to the source angle.
+    pub overlay_angle_rad: Option<f64>,
     /// One flag per blade, true while that blade shows an available target.
     pub active_blades: [bool; 5],
     /// One flag per blade, true once its arm is completed.
@@ -381,7 +383,7 @@ fn sync_rune(
         };
         let mut wanted = *transform;
         apply_pose(&mut wanted, rune.hub_pose);
-        wanted.rotate_local_z(rune.angle_rad as f32);
+        wanted.rotate_local_z(rune.overlay_angle_rad.unwrap_or(rune.angle_rad) as f32);
         transform.set_if_neq(wanted);
     }
     let visibility = |visible| {
@@ -522,6 +524,7 @@ mod tests {
             runes: vec![RuneAppearance {
                 hub_pose: PoseFlu::default(),
                 angle_rad: 0.,
+                overlay_angle_rad: None,
                 active_blades: [false; 5],
                 activated_blades: [false; 5],
                 progress_stages: [false; 5],
@@ -584,6 +587,7 @@ mod tests {
             runes: vec![RuneAppearance {
                 hub_pose: PoseFlu::default(),
                 angle_rad: 0.0,
+                overlay_angle_rad: None,
                 active_blades: [false; 5],
                 activated_blades: [true; 5],
                 progress_stages: [false; 5],
@@ -833,6 +837,7 @@ mod tests {
         let appearance = RuneAppearance {
             hub_pose: pose([5., 0., 2.]),
             angle_rad: 0.9,
+            overlay_angle_rad: None,
             active_blades: [true, false, true, false, false],
             activated_blades: [false, true, false, false, true],
             fully_activated: false,

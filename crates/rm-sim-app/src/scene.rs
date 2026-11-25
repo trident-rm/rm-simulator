@@ -136,6 +136,10 @@ fn cad_instances_inner(cad: &CadAssets, rune_faces: bool, base_plates: bool) -> 
                                                 } else {
                                                     Color::srgb(0., 0., 1.)
                                                 },
+                                                // The released CAD uses a second red swatch
+                                                // on part of each red Rune arm's light strip.
+                                                alternate_source_color: (i == 0)
+                                                    .then_some(Color::srgb(1., 0.0271, 0.0271)),
                                             }
                                         })
                                     })
@@ -158,6 +162,7 @@ fn cad_instances_inner(cad: &CadAssets, rune_faces: bool, base_plates: bool) -> 
                                     node: format!("source_body_{body}"),
                                     target: offset + (side * 32 + index) as u64,
                                     source_color,
+                                    alternate_source_color: None,
                                 })
                                 .collect::<Vec<_>>()
                         })
@@ -490,9 +495,21 @@ pub fn setup(
             }
         }
     }
-    for (index, rune) in snapshot.runes.iter().enumerate() {
-        let team = referee_team(snapshot, |r| &r.rune_teams, index)
-            .unwrap_or_else(|| rune_team(&rune.hub_pose));
+    let rune_teams = snapshot.rmuc_2027.as_ref().map_or_else(
+        || {
+            snapshot
+                .runes
+                .iter()
+                .enumerate()
+                .map(|(index, rune)| {
+                    referee_team(snapshot, |r| &r.rune_teams, index)
+                        .unwrap_or_else(|| rune_team(&rune.hub_pose))
+                })
+                .collect::<Vec<_>>()
+        },
+        |native| Team::BOTH[..native.config.runes.len()].to_vec(),
+    );
+    for (index, team) in rune_teams.into_iter().enumerate() {
         rune::spawn_rune(
             &mut commands,
             &mut meshes,
